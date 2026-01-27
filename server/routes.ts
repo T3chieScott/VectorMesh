@@ -326,7 +326,12 @@ export async function registerRoutes(
 
   app.post("/api/screens", requireAuth, async (req, res) => {
     try {
-      const data = insertScreenSchema.parse(req.body);
+      const body = {
+        ...req.body,
+        displayProfileId: req.body.displayProfileId || null,
+        currentEventId: req.body.currentEventId || null,
+      };
+      const data = insertScreenSchema.parse(body);
       const screen = await storage.createScreen(data);
       res.status(201).json(screen);
     } catch (error) {
@@ -340,7 +345,12 @@ export async function registerRoutes(
 
   app.patch("/api/screens/:id", requireAuth, async (req, res) => {
     try {
-      const data = insertScreenSchema.partial().parse(req.body);
+      const body = {
+        ...req.body,
+        displayProfileId: req.body.displayProfileId || null,
+        currentEventId: req.body.currentEventId || null,
+      };
+      const data = insertScreenSchema.partial().parse(body);
       const screen = await storage.updateScreen(req.params.id, data);
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
