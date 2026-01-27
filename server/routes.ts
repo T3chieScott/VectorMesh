@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
 import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
-import { getSignedUploadUrl, getPublicUrl } from "./objectStorage";
+import { getSignedUploadUrl, getPublicUrl, objectStorageService } from "./objectStorage";
 import { isAuthenticated } from "./replit_integrations/auth";
 
 const requireAuth = isAuthenticated;
@@ -437,6 +437,29 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deleting media asset:", error);
       res.status(500).json({ error: "Failed to delete media asset" });
+    }
+  });
+
+  // Serve media files from object storage
+  app.get("/api/media/:id/file", requireAuth, async (req, res) => {
+    try {
+      const asset = await storage.getMediaAsset(req.params.id);
+      if (!asset) {
+        return res.status(404).json({ error: "Media asset not found" });
+      }
+
+      // Get the normalized path and serve the file
+      const normalizedPath = objectStorageService.normalizeObjectEntityPath(asset.originalPath);
+      if (normalizedPath.startsWith("/objects/")) {
+        const file = await objectStorageService.getObjectEntityFile(normalizedPath);
+        await objectStorageService.downloadObject(file, res);
+      } else {
+        // For external URLs, redirect
+        res.redirect(asset.originalPath);
+      }
+    } catch (error) {
+      console.error("Error serving media file:", error);
+      res.status(500).json({ error: "Failed to serve media file" });
     }
   });
 

@@ -50,6 +50,10 @@ function formatDuration(seconds: number | null | undefined): string {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
+function getMediaUrl(asset: MediaAsset): string {
+  return `/api/media/${asset.id}/file`;
+}
+
 function MediaCard({
   asset,
   viewMode,
@@ -101,9 +105,9 @@ function MediaCard({
             <div
               className={`flex h-12 w-12 items-center justify-center rounded-lg ${getMediaTypeColor()}`}
             >
-              {asset.thumbnailPath ? (
+              {asset.thumbnailPath || asset.mediaType === "image" ? (
                 <img
-                  src={asset.thumbnailPath}
+                  src={getMediaUrl(asset)}
                   alt={asset.name}
                   className="h-12 w-12 rounded-lg object-cover"
                 />
@@ -149,7 +153,7 @@ function MediaCard({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem asChild>
-                  <a href={asset.originalPath} download>
+                  <a href={getMediaUrl(asset)} download={asset.name}>
                     <Download className="mr-2 h-4 w-4" />
                     Download
                   </a>
@@ -174,13 +178,13 @@ function MediaCard({
             <div className="flex items-center justify-center bg-muted/50 rounded-lg p-4">
               {asset.mediaType === "video" ? (
                 <video
-                  src={asset.originalPath}
+                  src={getMediaUrl(asset)}
                   controls
                   className="max-h-[60vh] rounded-lg"
                 />
               ) : (
                 <img
-                  src={asset.originalPath}
+                  src={getMediaUrl(asset)}
                   alt={asset.name}
                   className="max-h-[60vh] rounded-lg object-contain"
                 />
@@ -198,7 +202,7 @@ function MediaCard({
         <div className="relative aspect-video bg-muted">
           {asset.thumbnailPath || asset.mediaType === "image" ? (
             <img
-              src={asset.thumbnailPath || asset.originalPath}
+              src={getMediaUrl(asset)}
               alt={asset.name}
               className="h-full w-full object-cover"
             />
@@ -244,7 +248,7 @@ function MediaCard({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem asChild>
-                  <a href={asset.originalPath} download>
+                  <a href={getMediaUrl(asset)} download={asset.name}>
                     <Download className="mr-2 h-4 w-4" />
                     Download
                   </a>
@@ -270,13 +274,13 @@ function MediaCard({
           <div className="flex items-center justify-center bg-muted/50 rounded-lg p-4">
             {asset.mediaType === "video" ? (
               <video
-                src={asset.originalPath}
+                src={getMediaUrl(asset)}
                 controls
                 className="max-h-[60vh] rounded-lg"
               />
             ) : (
               <img
-                src={asset.originalPath}
+                src={getMediaUrl(asset)}
                 alt={asset.name}
                 className="max-h-[60vh] rounded-lg object-contain"
               />
