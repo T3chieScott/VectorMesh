@@ -1,18 +1,431 @@
-import { sql } from "drizzle-orm";
-import { pgTable, text, varchar } from "drizzle-orm/pg-core";
+import { sql, relations } from "drizzle-orm";
+import { pgTable, text, varchar, integer, boolean, timestamp, jsonb, pgEnum } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const users = pgTable("users", {
+// Re-export auth models
+export * from "./models/auth";
+
+// ============ ENUMS ============
+
+export const userRoleEnum = pgEnum("user_role", ["admin", "editor", "viewer"]);
+export const screenTypeEnum = pgEnum("screen_type", ["standard", "led_wall"]);
+export const orientationEnum = pgEnum("orientation", ["landscape", "portrait"]);
+export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "gif"]);
+export const programmeStatusEnum = pgEnum("programme_status", ["draft", "published"]);
+export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html"]);
+export const scaleModeEnum = pgEnum("scale_mode", ["contain", "cover"]);
+
+// ============ CLIENTS ============
+
+export const clients = pgTable("clients", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  logoUrl: text("logo_url"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertUserSchema = createInsertSchema(users).pick({
-  username: true,
-  password: true,
+export const clientsRelations = relations(clients, ({ many }) => ({
+  events: many(events),
+}));
+
+export const insertClientSchema = createInsertSchema(clients).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertClient = z.infer<typeof insertClientSchema>;
+export type Client = typeof clients.$inferSelect;
+
+// ============ EVENTS ============
+
+export const events = pgTable("events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description"),
+  startDate: timestamp("start_date").notNull(),
+  endDate: timestamp("end_date").notNull(),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export type InsertUser = z.infer<typeof insertUserSchema>;
-export type User = typeof users.$inferSelect;
+export const eventsRelations = relations(events, ({ one, many }) => ({
+  client: one(clients, { fields: [events.clientId], references: [clients.id] }),
+  brandPack: many(brandPacks),
+  programmes: many(programmes),
+  mediaAssets: many(mediaAssets),
+  layoutTemplates: many(layoutTemplates),
+}));
+
+export const insertEventSchema = createInsertSchema(events).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertEvent = z.infer<typeof insertEventSchema>;
+export type Event = typeof events.$inferSelect;
+
+// ============ BRAND PACKS ============
+
+export const brandPacks = pgTable("brand_packs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  version: integer("version").default(1),
+  primaryColor: text("primary_color").default("#3B82F6"),
+  secondaryColor: text("secondary_color").default("#10B981"),
+  accentColor: text("accent_color").default("#F59E0B"),
+  backgroundColor: text("background_color").default("#1F2937"),
+  textColor: text("text_color").default("#FFFFFF"),
+  fontPrimary: text("font_primary").default("Inter"),
+  fontSecondary: text("font_secondary").default("Inter"),
+  logoLightUrl: text("logo_light_url"),
+  logoDarkUrl: text("logo_dark_url"),
+  defaultBackgroundUrl: text("default_background_url"),
+  standbyConfig: jsonb("standby_config"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const brandPacksRelations = relations(brandPacks, ({ one }) => ({
+  event: one(events, { fields: [brandPacks.eventId], references: [events.id] }),
+}));
+
+export const insertBrandPackSchema = createInsertSchema(brandPacks).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertBrandPack = z.infer<typeof insertBrandPackSchema>;
+export type BrandPack = typeof brandPacks.$inferSelect;
+
+// ============ DISPLAY PROFILES ============
+
+export const displayProfiles = pgTable("display_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  width: integer("width").notNull().default(1920),
+  height: integer("height").notNull().default(1080),
+  orientation: orientationEnum("orientation").default("landscape"),
+  safePadding: integer("safe_padding").default(0),
+  screenType: screenTypeEnum("screen_type").default("standard"),
+  refreshRate: integer("refresh_rate").default(60),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertDisplayProfileSchema = createInsertSchema(displayProfiles).omit({ id: true, createdAt: true });
+export type InsertDisplayProfile = z.infer<typeof insertDisplayProfileSchema>;
+export type DisplayProfile = typeof displayProfiles.$inferSelect;
+
+// ============ SCREEN GROUPS ============
+
+export const screenGroups = pgTable("screen_groups", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertScreenGroupSchema = createInsertSchema(screenGroups).omit({ id: true, createdAt: true });
+export type InsertScreenGroup = z.infer<typeof insertScreenGroupSchema>;
+export type ScreenGroup = typeof screenGroups.$inferSelect;
+
+// ============ SCREENS ============
+
+export const screens = pgTable("screens", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  location: text("location"),
+  displayProfileId: varchar("display_profile_id").references(() => displayProfiles.id),
+  pairingCode: varchar("pairing_code", { length: 6 }),
+  isPaired: boolean("is_paired").default(false),
+  isOnline: boolean("is_online").default(false),
+  lastSeen: timestamp("last_seen"),
+  ipAddress: text("ip_address"),
+  hardwareClass: text("hardware_class"),
+  currentEventId: varchar("current_event_id").references(() => events.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const screensRelations = relations(screens, ({ one, many }) => ({
+  displayProfile: one(displayProfiles, { fields: [screens.displayProfileId], references: [displayProfiles.id] }),
+  currentEvent: one(events, { fields: [screens.currentEventId], references: [events.id] }),
+  groupMemberships: many(screenGroupMemberships),
+  heartbeats: many(playerHeartbeats),
+}));
+
+export const insertScreenSchema = createInsertSchema(screens).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertScreen = z.infer<typeof insertScreenSchema>;
+export type Screen = typeof screens.$inferSelect;
+
+// ============ SCREEN GROUP MEMBERSHIPS ============
+
+export const screenGroupMemberships = pgTable("screen_group_memberships", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  screenId: varchar("screen_id").notNull().references(() => screens.id, { onDelete: "cascade" }),
+  groupId: varchar("group_id").notNull().references(() => screenGroups.id, { onDelete: "cascade" }),
+});
+
+export const screenGroupMembershipsRelations = relations(screenGroupMemberships, ({ one }) => ({
+  screen: one(screens, { fields: [screenGroupMemberships.screenId], references: [screens.id] }),
+  group: one(screenGroups, { fields: [screenGroupMemberships.groupId], references: [screenGroups.id] }),
+}));
+
+// ============ MEDIA ASSETS ============
+
+export const mediaAssets = pgTable("media_assets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventId: varchar("event_id").references(() => events.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  originalPath: text("original_path").notNull(),
+  thumbnailPath: text("thumbnail_path"),
+  mediaType: mediaTypeEnum("media_type").notNull(),
+  mimeType: text("mime_type"),
+  width: integer("width"),
+  height: integer("height"),
+  duration: integer("duration"),
+  fileSize: integer("file_size"),
+  checksum: text("checksum"),
+  tags: text("tags").array(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const mediaAssetsRelations = relations(mediaAssets, ({ one }) => ({
+  event: one(events, { fields: [mediaAssets.eventId], references: [events.id] }),
+}));
+
+export const insertMediaAssetSchema = createInsertSchema(mediaAssets).omit({ id: true, createdAt: true });
+export type InsertMediaAsset = z.infer<typeof insertMediaAssetSchema>;
+export type MediaAsset = typeof mediaAssets.$inferSelect;
+
+// ============ LAYOUT TEMPLATES ============
+
+export const layoutTemplates = pgTable("layout_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventId: varchar("event_id").references(() => events.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  version: integer("version").default(1),
+  zones: jsonb("zones").notNull().$type<LayoutZone[]>(),
+  profileOverrides: jsonb("profile_overrides"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const layoutTemplatesRelations = relations(layoutTemplates, ({ one }) => ({
+  event: one(events, { fields: [layoutTemplates.eventId], references: [events.id] }),
+}));
+
+export const insertLayoutTemplateSchema = createInsertSchema(layoutTemplates).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertLayoutTemplate = z.infer<typeof insertLayoutTemplateSchema>;
+export type LayoutTemplate = typeof layoutTemplates.$inferSelect;
+
+// Zone type definitions
+export interface LayoutZone {
+  id: string;
+  name: string;
+  type: "media" | "ticker" | "clock" | "logo" | "html";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scaleMode?: "contain" | "cover";
+  backgroundColor?: string;
+  zIndex?: number;
+}
+
+// ============ PROGRAMMES ============
+
+export const programmes = pgTable("programmes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const programmesRelations = relations(programmes, ({ one, many }) => ({
+  event: one(events, { fields: [programmes.eventId], references: [events.id] }),
+  versions: many(programmeVersions),
+}));
+
+export const insertProgrammeSchema = createInsertSchema(programmes).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertProgramme = z.infer<typeof insertProgrammeSchema>;
+export type Programme = typeof programmes.$inferSelect;
+
+// ============ PROGRAMME VERSIONS ============
+
+export const programmeVersions = pgTable("programme_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  programmeId: varchar("programme_id").notNull().references(() => programmes.id, { onDelete: "cascade" }),
+  versionNumber: integer("version_number").notNull().default(1),
+  status: programmeStatusEnum("status").default("draft"),
+  publishedAt: timestamp("published_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const programmeVersionsRelations = relations(programmeVersions, ({ one, many }) => ({
+  programme: one(programmes, { fields: [programmeVersions.programmeId], references: [programmes.id] }),
+  scheduleBlocks: many(scheduleBlocks),
+}));
+
+export const insertProgrammeVersionSchema = createInsertSchema(programmeVersions).omit({ id: true, createdAt: true });
+export type InsertProgrammeVersion = z.infer<typeof insertProgrammeVersionSchema>;
+export type ProgrammeVersion = typeof programmeVersions.$inferSelect;
+
+// ============ SCHEDULE BLOCKS ============
+
+export const scheduleBlocks = pgTable("schedule_blocks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  programmeVersionId: varchar("programme_version_id").notNull().references(() => programmeVersions.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  priority: integer("priority").default(0),
+  layoutTemplateId: varchar("layout_template_id").references(() => layoutTemplates.id),
+  targets: jsonb("targets").$type<ScheduleTarget[]>(),
+  timeRules: jsonb("time_rules").$type<TimeRule[]>(),
+  zoneSources: jsonb("zone_sources").$type<ZoneSource[]>(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const scheduleBlocksRelations = relations(scheduleBlocks, ({ one }) => ({
+  programmeVersion: one(programmeVersions, { fields: [scheduleBlocks.programmeVersionId], references: [programmeVersions.id] }),
+  layoutTemplate: one(layoutTemplates, { fields: [scheduleBlocks.layoutTemplateId], references: [layoutTemplates.id] }),
+}));
+
+export const insertScheduleBlockSchema = createInsertSchema(scheduleBlocks).omit({ id: true, createdAt: true });
+export type InsertScheduleBlock = z.infer<typeof insertScheduleBlockSchema>;
+export type ScheduleBlock = typeof scheduleBlocks.$inferSelect;
+
+// Schedule block type definitions
+export interface ScheduleTarget {
+  type: "screen" | "group";
+  id: string;
+}
+
+export interface TimeRule {
+  startDate?: string;
+  endDate?: string;
+  startTime?: string;
+  endTime?: string;
+  daysOfWeek?: number[];
+}
+
+export interface ZoneSource {
+  zoneId: string;
+  type: "playlist" | "widget";
+  mediaAssetIds?: string[];
+  widgetType?: "weather" | "clock" | "date" | "html";
+  widgetConfig?: Record<string, unknown>;
+  rotationInterval?: number;
+}
+
+// ============ PLAYLISTS ============
+
+export const playlists = pgTable("playlists", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventId: varchar("event_id").references(() => events.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const playlistsRelations = relations(playlists, ({ one, many }) => ({
+  event: one(events, { fields: [playlists.eventId], references: [events.id] }),
+  items: many(playlistItems),
+}));
+
+export const insertPlaylistSchema = createInsertSchema(playlists).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertPlaylist = z.infer<typeof insertPlaylistSchema>;
+export type Playlist = typeof playlists.$inferSelect;
+
+// ============ PLAYLIST ITEMS ============
+
+export const playlistItems = pgTable("playlist_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  playlistId: varchar("playlist_id").notNull().references(() => playlists.id, { onDelete: "cascade" }),
+  mediaAssetId: varchar("media_asset_id").notNull().references(() => mediaAssets.id, { onDelete: "cascade" }),
+  order: integer("order").default(0),
+  duration: integer("duration"),
+});
+
+export const playlistItemsRelations = relations(playlistItems, ({ one }) => ({
+  playlist: one(playlists, { fields: [playlistItems.playlistId], references: [playlists.id] }),
+  mediaAsset: one(mediaAssets, { fields: [playlistItems.mediaAssetId], references: [mediaAssets.id] }),
+}));
+
+// ============ LIVE OVERRIDES ============
+
+export const liveOverrides = pgTable("live_overrides", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventId: varchar("event_id").references(() => events.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  priority: integer("priority").default(100),
+  targets: jsonb("targets").$type<ScheduleTarget[]>(),
+  layoutTemplateId: varchar("layout_template_id").references(() => layoutTemplates.id),
+  zoneSources: jsonb("zone_sources").$type<ZoneSource[]>(),
+  startTime: timestamp("start_time").notNull(),
+  endTime: timestamp("end_time").notNull(),
+  isActive: boolean("is_active").default(true),
+  createdById: varchar("created_by_id").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Import users from auth
+import { users } from "./models/auth";
+
+export const liveOverridesRelations = relations(liveOverrides, ({ one }) => ({
+  event: one(events, { fields: [liveOverrides.eventId], references: [events.id] }),
+  layoutTemplate: one(layoutTemplates, { fields: [liveOverrides.layoutTemplateId], references: [layoutTemplates.id] }),
+  createdBy: one(users, { fields: [liveOverrides.createdById], references: [users.id] }),
+}));
+
+export const insertLiveOverrideSchema = createInsertSchema(liveOverrides).omit({ id: true, createdAt: true });
+export type InsertLiveOverride = z.infer<typeof insertLiveOverrideSchema>;
+export type LiveOverride = typeof liveOverrides.$inferSelect;
+
+// ============ PLAYER HEARTBEATS ============
+
+export const playerHeartbeats = pgTable("player_heartbeats", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  screenId: varchar("screen_id").notNull().references(() => screens.id, { onDelete: "cascade" }),
+  timestamp: timestamp("timestamp").defaultNow(),
+  temperature: integer("temperature"),
+  storageFree: integer("storage_free"),
+  uptime: integer("uptime"),
+  currentBlockId: varchar("current_block_id"),
+  currentItemId: varchar("current_item_id"),
+  errors: jsonb("errors"),
+});
+
+export const playerHeartbeatsRelations = relations(playerHeartbeats, ({ one }) => ({
+  screen: one(screens, { fields: [playerHeartbeats.screenId], references: [screens.id] }),
+}));
+
+export const insertPlayerHeartbeatSchema = createInsertSchema(playerHeartbeats).omit({ id: true });
+export type InsertPlayerHeartbeat = z.infer<typeof insertPlayerHeartbeatSchema>;
+export type PlayerHeartbeat = typeof playerHeartbeats.$inferSelect;
+
+// ============ AUDIT LOG ============
+
+export const auditLogs = pgTable("audit_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id),
+  action: text("action").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: varchar("entity_id"),
+  payload: jsonb("payload"),
+  timestamp: timestamp("timestamp").defaultNow(),
+});
+
+export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
+  user: one(users, { fields: [auditLogs.userId], references: [users.id] }),
+}));
+
+export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, timestamp: true });
+export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+export type AuditLog = typeof auditLogs.$inferSelect;
+
+// ============ WEATHER CACHE ============
+
+export const weatherCache = pgTable("weather_cache", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  location: text("location").notNull().unique(),
+  data: jsonb("data").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type WeatherCache = typeof weatherCache.$inferSelect;

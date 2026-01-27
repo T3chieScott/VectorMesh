@@ -1,0 +1,508 @@
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { ObjectUploader } from "@/components/ObjectUploader";
+import { useToast } from "@/hooks/use-toast";
+import {
+  Upload,
+  MoreHorizontal,
+  Trash2,
+  Image as ImageIcon,
+  Video,
+  FileImage,
+  Search,
+  Grid3X3,
+  List,
+  Eye,
+  Download,
+  Clock,
+} from "lucide-react";
+import type { MediaAsset } from "@shared/schema";
+
+function formatFileSize(bytes: number | null | undefined): string {
+  if (!bytes) return "Unknown";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDuration(seconds: number | null | undefined): string {
+  if (!seconds) return "";
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function MediaCard({
+  asset,
+  viewMode,
+}: {
+  asset: MediaAsset;
+  viewMode: "grid" | "list";
+}) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const { toast } = useToast();
+
+  const deleteMutation = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/media/${asset.id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/media"] });
+      toast({ title: "Media deleted successfully" });
+    },
+    onError: () => {
+      toast({ title: "Failed to delete media", variant: "destructive" });
+    },
+  });
+
+  const getMediaIcon = () => {
+    switch (asset.mediaType) {
+      case "video":
+        return <Video className="h-5 w-5" />;
+      case "gif":
+        return <FileImage className="h-5 w-5" />;
+      default:
+        return <ImageIcon className="h-5 w-5" />;
+    }
+  };
+
+  const getMediaTypeColor = () => {
+    switch (asset.mediaType) {
+      case "video":
+        return "bg-purple-500/10 text-purple-600";
+      case "gif":
+        return "bg-amber-500/10 text-amber-600";
+      default:
+        return "bg-blue-500/10 text-blue-600";
+    }
+  };
+
+  if (viewMode === "list") {
+    return (
+      <>
+        <div className="flex items-center justify-between p-4 rounded-lg border bg-card hover-elevate transition-all">
+          <div className="flex items-center gap-4">
+            <div
+              className={`flex h-12 w-12 items-center justify-center rounded-lg ${getMediaTypeColor()}`}
+            >
+              {asset.thumbnailPath ? (
+                <img
+                  src={asset.thumbnailPath}
+                  alt={asset.name}
+                  className="h-12 w-12 rounded-lg object-cover"
+                />
+              ) : (
+                getMediaIcon()
+              )}
+            </div>
+            <div>
+              <p className="font-medium" data-testid={`text-media-name-${asset.id}`}>{asset.name}</p>
+              <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                <span>{formatFileSize(asset.fileSize)}</span>
+                {asset.width && asset.height && (
+                  <span>
+                    {asset.width}x{asset.height}
+                  </span>
+                )}
+                {asset.duration && (
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {formatDuration(asset.duration)}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className={getMediaTypeColor()}>
+              {asset.mediaType}
+            </Badge>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setPreviewOpen(true)}
+              data-testid={`button-preview-media-${asset.id}`}
+            >
+              <Eye className="h-4 w-4" />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" data-testid={`button-media-menu-${asset.id}`}>
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <a href={asset.originalPath} download>
+                    <Download className="mr-2 h-4 w-4" />
+                    Download
+                  </a>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onSelect={() => deleteMutation.mutate()}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+
+        <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle>{asset.name}</DialogTitle>
+            </DialogHeader>
+            <div className="flex items-center justify-center bg-muted/50 rounded-lg p-4">
+              {asset.mediaType === "video" ? (
+                <video
+                  src={asset.originalPath}
+                  controls
+                  className="max-h-[60vh] rounded-lg"
+                />
+              ) : (
+                <img
+                  src={asset.originalPath}
+                  alt={asset.name}
+                  className="max-h-[60vh] rounded-lg object-contain"
+                />
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Card className="group overflow-hidden hover-elevate transition-all">
+        <div className="relative aspect-video bg-muted">
+          {asset.thumbnailPath || asset.mediaType === "image" ? (
+            <img
+              src={asset.thumbnailPath || asset.originalPath}
+              alt={asset.name}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center">
+              {getMediaIcon()}
+            </div>
+          )}
+          {asset.duration && (
+            <Badge
+              variant="secondary"
+              className="absolute bottom-2 right-2 bg-black/70 text-white"
+            >
+              {formatDuration(asset.duration)}
+            </Badge>
+          )}
+          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setPreviewOpen(true)}
+              data-testid={`button-preview-media-${asset.id}`}
+            >
+              <Eye className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+        <CardContent className="p-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="font-medium text-sm truncate" data-testid={`text-media-name-${asset.id}`}>
+                {asset.name}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {formatFileSize(asset.fileSize)}
+              </p>
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8" data-testid={`button-media-menu-${asset.id}`}>
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <a href={asset.originalPath} download>
+                    <Download className="mr-2 h-4 w-4" />
+                    Download
+                  </a>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onSelect={() => deleteMutation.mutate()}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>{asset.name}</DialogTitle>
+          </DialogHeader>
+          <div className="flex items-center justify-center bg-muted/50 rounded-lg p-4">
+            {asset.mediaType === "video" ? (
+              <video
+                src={asset.originalPath}
+                controls
+                className="max-h-[60vh] rounded-lg"
+              />
+            ) : (
+              <img
+                src={asset.originalPath}
+                alt={asset.name}
+                className="max-h-[60vh] rounded-lg object-contain"
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+export default function MediaPage() {
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterType, setFilterType] = useState<string>("all");
+  const { toast } = useToast();
+
+  const { data: media = [], isLoading } = useQuery<MediaAsset[]>({
+    queryKey: ["/api/media"],
+  });
+
+  const filteredMedia = media.filter((asset) => {
+    const matchesSearch = asset.name
+      .toLowerCase()
+      .includes(searchQuery.toLowerCase());
+    const matchesType =
+      filterType === "all" || asset.mediaType === filterType;
+    return matchesSearch && matchesType;
+  });
+
+  const handleUploadComplete = async (result: any) => {
+    if (result.successful?.length > 0) {
+      for (const file of result.successful) {
+        const uploadURL = file.response?.body?.uploadURL || file.uploadURL;
+        if (uploadURL) {
+          try {
+            await apiRequest("POST", "/api/media", {
+              name: file.name,
+              originalPath: uploadURL.split("?")[0],
+              mediaType: file.type?.startsWith("video/")
+                ? "video"
+                : file.type === "image/gif"
+                ? "gif"
+                : "image",
+              mimeType: file.type,
+              fileSize: file.size,
+            });
+          } catch (e) {
+            console.error("Failed to save media record:", e);
+          }
+        }
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/media"] });
+      toast({ title: "Media uploaded successfully" });
+    }
+  };
+
+  const handleGetUploadParameters = async (file: any) => {
+    const res = await fetch("/api/uploads/request-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: file.name,
+        size: file.size,
+        contentType: file.type,
+      }),
+    });
+    const { uploadURL } = await res.json();
+    return {
+      method: "PUT" as const,
+      url: uploadURL,
+      headers: { "Content-Type": file.type },
+    };
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold" data-testid="text-media-title">Media Library</h1>
+          <p className="text-muted-foreground">
+            Upload and manage images, videos, and GIFs
+          </p>
+        </div>
+        <ObjectUploader
+          maxNumberOfFiles={10}
+          maxFileSize={104857600}
+          onGetUploadParameters={handleGetUploadParameters}
+          onComplete={handleUploadComplete}
+        >
+          <Upload className="mr-2 h-4 w-4" />
+          Upload Media
+        </ObjectUploader>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-4">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search media..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-9"
+            data-testid="input-search-media"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant={filterType === "all" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setFilterType("all")}
+            data-testid="button-filter-all"
+          >
+            All
+          </Button>
+          <Button
+            variant={filterType === "image" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setFilterType("image")}
+            data-testid="button-filter-images"
+          >
+            <ImageIcon className="mr-1.5 h-3.5 w-3.5" />
+            Images
+          </Button>
+          <Button
+            variant={filterType === "video" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setFilterType("video")}
+            data-testid="button-filter-videos"
+          >
+            <Video className="mr-1.5 h-3.5 w-3.5" />
+            Videos
+          </Button>
+          <Button
+            variant={filterType === "gif" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setFilterType("gif")}
+            data-testid="button-filter-gifs"
+          >
+            <FileImage className="mr-1.5 h-3.5 w-3.5" />
+            GIFs
+          </Button>
+          <div className="border-l pl-2 ml-2">
+            <Button
+              variant={viewMode === "grid" ? "secondary" : "ghost"}
+              size="icon"
+              onClick={() => setViewMode("grid")}
+              data-testid="button-view-grid"
+            >
+              <Grid3X3 className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={viewMode === "list" ? "secondary" : "ghost"}
+              size="icon"
+              onClick={() => setViewMode("list")}
+              data-testid="button-view-list"
+            >
+              <List className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      {isLoading ? (
+        <div
+          className={
+            viewMode === "grid"
+              ? "grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
+              : "space-y-2"
+          }
+        >
+          {[...Array(8)].map((_, i) =>
+            viewMode === "grid" ? (
+              <Card key={i}>
+                <Skeleton className="aspect-video" />
+                <CardContent className="p-3">
+                  <Skeleton className="h-4 w-32 mb-1" />
+                  <Skeleton className="h-3 w-16" />
+                </CardContent>
+              </Card>
+            ) : (
+              <Skeleton key={i} className="h-20 rounded-lg" />
+            )
+          )}
+        </div>
+      ) : filteredMedia.length === 0 ? (
+        <Card className="py-12">
+          <CardContent className="flex flex-col items-center justify-center text-center">
+            <ImageIcon className="h-12 w-12 text-muted-foreground/50 mb-4" />
+            <h3 className="text-lg font-semibold mb-2">
+              {media.length === 0 ? "No media yet" : "No results found"}
+            </h3>
+            <p className="text-sm text-muted-foreground mb-4 max-w-sm">
+              {media.length === 0
+                ? "Upload images, videos, or GIFs to use in your digital signage content."
+                : "Try adjusting your search or filters."}
+            </p>
+            {media.length === 0 && (
+              <ObjectUploader
+                maxNumberOfFiles={10}
+                maxFileSize={104857600}
+                onGetUploadParameters={handleGetUploadParameters}
+                onComplete={handleUploadComplete}
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                Upload Media
+              </ObjectUploader>
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+        <div
+          className={
+            viewMode === "grid"
+              ? "grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
+              : "space-y-2"
+          }
+        >
+          {filteredMedia.map((asset) => (
+            <MediaCard key={asset.id} asset={asset} viewMode={viewMode} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
