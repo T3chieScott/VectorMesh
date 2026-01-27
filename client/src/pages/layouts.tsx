@@ -119,7 +119,10 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
 
   const updateMutation = useMutation({
     mutationFn: (data: LayoutFormValues) =>
-      apiRequest("PATCH", `/api/layouts/${layout.id}`, data),
+      apiRequest("PATCH", `/api/layouts/${layout.id}`, {
+        ...data,
+        eventId: data.eventId === "global" || !data.eventId ? null : data.eventId,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
       setEditOpen(false);
@@ -207,7 +210,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              <SelectItem value="">Global</SelectItem>
+                              <SelectItem value="global">Global</SelectItem>
                               {events.map((e) => (
                                 <SelectItem key={e.id} value={e.id}>
                                   {e.name}
@@ -261,7 +264,7 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
     mutationFn: (data: LayoutFormValues) =>
       apiRequest("POST", "/api/layouts", {
         ...data,
-        eventId: data.eventId || null,
+        eventId: data.eventId === "global" || !data.eventId ? null : data.eventId,
         zones: defaultZones,
       }),
     onSuccess: () => {
@@ -318,7 +321,7 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="">Global</SelectItem>
+                      <SelectItem value="global">Global</SelectItem>
                       {events.map((e) => (
                         <SelectItem key={e.id} value={e.id}>
                           {e.name}
