@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -39,6 +39,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus,
@@ -51,8 +56,12 @@ import {
   FileEdit,
   Upload,
   History,
+  ChevronDown,
+  ChevronUp,
+  Layers,
+  Clock,
 } from "lucide-react";
-import type { Programme, Event, ProgrammeVersion } from "@shared/schema";
+import type { Programme, Event, ProgrammeVersion, ScheduleBlock, LayoutTemplate, Playlist } from "@shared/schema";
 
 const programmeFormSchema = z.object({
   eventId: z.string().min(1, "Event is required"),
@@ -62,14 +71,315 @@ const programmeFormSchema = z.object({
 
 type ProgrammeFormValues = z.infer<typeof programmeFormSchema>;
 
+const blockFormSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  priority: z.number().min(0).optional(),
+  layoutTemplateId: z.string().optional(),
+});
+
+type BlockFormValues = z.infer<typeof blockFormSchema>;
+
+function BlockEditorDialog({
+  versionId,
+  block,
+  layouts,
+  open,
+  onOpenChange,
+}: {
+  versionId: string;
+  block?: ScheduleBlock;
+  layouts: LayoutTemplate[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const isEditing = !!block;
+
+  const form = useForm<BlockFormValues>({
+    resolver: zodResolver(blockFormSchema),
+    defaultValues: {
+      name: "",
+      priority: 0,
+      layoutTemplateId: "",
+    },
+  });
+
+  // Reset form when block changes (for edit vs add mode)
+  useEffect(() => {
+    if (open) {
+      if (block) {
+        form.reset({
+          name: block.name,
+          priority: block.priority ?? 0,
+          layoutTemplateId: block.layoutTemplateId || "",
+        });
+      } else {
+        form.reset({
+          name: "",
+          priority: 0,
+          layoutTemplateId: "",
+        });
+      }
+    }
+  }, [open, block, form]);
+
+  const saveMutation = useMutation({
+    mutationFn: (data: BlockFormValues) => {
+      const payload = {
+        ...data,
+        layoutTemplateId: data.layoutTemplateId === "none" || !data.layoutTemplateId ? null : data.layoutTemplateId,
+      };
+      if (isEditing) {
+        return apiRequest("PATCH", `/api/schedule-blocks/${block.id}`, payload);
+      }
+      return apiRequest("POST", `/api/programme-versions/${versionId}/blocks`, payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/programme-versions", versionId, "blocks"] });
+      onOpenChange(false);
+      form.reset();
+      toast({ title: isEditing ? "Block updated" : "Block added" });
+    },
+    onError: () => {
+      toast({ title: "Failed to save block", variant: "destructive" });
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{isEditing ? "Edit Schedule Block" : "Add Schedule Block"}</DialogTitle>
+        </DialogHeader>
+        <Form {...form}>
+          <form
+            onSubmit={form.handleSubmit((data) => saveMutation.mutate(data))}
+            className="space-y-4"
+          >
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Block Name</FormLabel>
+                  <FormControl>
+                    <Input placeholder="e.g., Morning Session" {...field} data-testid="input-block-name" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="priority"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Priority (higher = more important)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      {...field}
+                      onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                      data-testid="input-block-priority"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="layoutTemplateId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Layout Template (optional)</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value || "none"}>
+                    <FormControl>
+                      <SelectTrigger data-testid="select-block-layout">
+                        <SelectValue placeholder="Select layout" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="none">No layout</SelectItem>
+                      {layouts.map((layout) => (
+                        <SelectItem key={layout.id} value={layout.id}>
+                          {layout.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={saveMutation.isPending} data-testid="button-save-block">
+                {saveMutation.isPending ? "Saving..." : isEditing ? "Update" : "Add"}
+              </Button>
+            </div>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ScheduleBlockRow({
+  block,
+  layout,
+  onEdit,
+  onDelete,
+}: {
+  block: ScheduleBlock;
+  layout?: LayoutTemplate;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 p-2 rounded-md bg-muted/50">
+      <div className="flex items-center gap-3">
+        <div className="flex items-center justify-center w-8 h-8 rounded bg-primary/10">
+          <Layers className="h-4 w-4 text-primary" />
+        </div>
+        <div>
+          <p className="text-sm font-medium" data-testid={`text-block-name-${block.id}`}>{block.name}</p>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Priority: {block.priority}</span>
+            {layout && <span>Layout: {layout.name}</span>}
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-1">
+        <Button variant="ghost" size="icon" onClick={onEdit} data-testid={`button-edit-block-${block.id}`}>
+          <Pencil className="h-4 w-4" />
+        </Button>
+        <Button variant="ghost" size="icon" onClick={onDelete} data-testid={`button-delete-block-${block.id}`}>
+          <Trash2 className="h-4 w-4 text-destructive" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ScheduleBlocksSection({
+  version,
+  layouts,
+}: {
+  version: ProgrammeVersion;
+  layouts: LayoutTemplate[];
+}) {
+  const [blocksOpen, setBlocksOpen] = useState(false);
+  const [blockDialogOpen, setBlockDialogOpen] = useState(false);
+  const [editingBlock, setEditingBlock] = useState<ScheduleBlock | undefined>();
+  const { toast } = useToast();
+
+  const { data: blocks = [] } = useQuery<ScheduleBlock[]>({
+    queryKey: ["/api/programme-versions", version.id, "blocks"],
+    queryFn: () => fetch(`/api/programme-versions/${version.id}/blocks`, { credentials: "include" }).then((r) => r.json()),
+    enabled: blocksOpen,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (blockId: string) => apiRequest("DELETE", `/api/schedule-blocks/${blockId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/programme-versions", version.id, "blocks"] });
+      toast({ title: "Block deleted" });
+    },
+    onError: () => {
+      toast({ title: "Failed to delete block", variant: "destructive" });
+    },
+  });
+
+  const layoutMap = new Map(layouts.map((l) => [l.id, l]));
+
+  const handleAddBlock = () => {
+    setEditingBlock(undefined);
+    setBlockDialogOpen(true);
+  };
+
+  const handleEditBlock = (block: ScheduleBlock) => {
+    setEditingBlock(block);
+    setBlockDialogOpen(true);
+  };
+
+  return (
+    <>
+      <Collapsible open={blocksOpen} onOpenChange={setBlocksOpen}>
+        <CollapsibleTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="flex items-center gap-2 text-xs"
+            data-testid={`button-toggle-blocks-${version.id}`}
+          >
+            <Layers className="h-3 w-3" />
+            {blocksOpen ? "Hide Blocks" : "Manage Blocks"}
+            {blocksOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="mt-3 space-y-2 p-3 bg-muted/30 rounded-md">
+            {blocks.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-2">
+                No schedule blocks. Add blocks to define content timing.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {blocks.map((block) => (
+                  <ScheduleBlockRow
+                    key={block.id}
+                    block={block}
+                    layout={block.layoutTemplateId ? layoutMap.get(block.layoutTemplateId) : undefined}
+                    onEdit={() => handleEditBlock(block)}
+                    onDelete={() => deleteMutation.mutate(block.id)}
+                  />
+                ))}
+              </div>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={handleAddBlock}
+              data-testid={`button-add-block-${version.id}`}
+            >
+              <Plus className="mr-2 h-3 w-3" />
+              Add Block
+            </Button>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+
+      <BlockEditorDialog
+        versionId={version.id}
+        block={editingBlock}
+        layouts={layouts}
+        open={blockDialogOpen}
+        onOpenChange={(open) => {
+          setBlockDialogOpen(open);
+          if (!open) setEditingBlock(undefined);
+        }}
+      />
+    </>
+  );
+}
+
 function ProgrammeCard({
   programme,
   event,
   versions,
+  layouts,
 }: {
   programme: Programme;
   event?: Event;
   versions: ProgrammeVersion[];
+  layouts: LayoutTemplate[];
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
@@ -276,7 +586,7 @@ function ProgrammeCard({
           </DropdownMenuContent>
         </DropdownMenu>
       </CardHeader>
-      <CardContent className="pt-0">
+      <CardContent className="pt-0 space-y-3">
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
           <div className="flex items-center gap-1.5">
             <History className="h-4 w-4" />
@@ -288,6 +598,13 @@ function ProgrammeCard({
             </span>
           )}
         </div>
+        {/* Schedule blocks for draft or published version */}
+        {(draftVersion || publishedVersion) && (
+          <ScheduleBlocksSection
+            version={draftVersion || publishedVersion!}
+            layouts={layouts}
+          />
+        )}
       </CardContent>
     </Card>
   );
@@ -431,6 +748,10 @@ export default function ProgrammesPage() {
     queryKey: ["/api/programme-versions"],
   });
 
+  const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
+    queryKey: ["/api/layouts"],
+  });
+
   const isLoading = programmesLoading || eventsLoading;
 
   const eventMap = new Map(events.map((e) => [e.id, e]));
@@ -489,6 +810,7 @@ export default function ProgrammesPage() {
               programme={programme}
               event={eventMap.get(programme.eventId)}
               versions={versions}
+              layouts={layouts}
             />
           ))}
         </div>

@@ -2,7 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
+import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, insertScheduleBlockSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
 import { getSignedUploadUrl, getPublicUrl, objectStorageService } from "./objectStorage";
 import { isAuthenticated } from "./replit_integrations/auth";
 
@@ -669,6 +669,110 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deleting playlist:", error);
       res.status(500).json({ error: "Failed to delete playlist" });
+    }
+  });
+
+  // ============ PLAYLIST ITEMS ============
+  app.get("/api/playlists/:playlistId/items", requireAuth, async (req, res) => {
+    try {
+      const items = await storage.getPlaylistItems(req.params.playlistId);
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching playlist items:", error);
+      res.status(500).json({ error: "Failed to fetch playlist items" });
+    }
+  });
+
+  app.post("/api/playlists/:playlistId/items", requireAuth, async (req, res) => {
+    try {
+      const data = insertPlaylistItemSchema.parse({
+        ...req.body,
+        playlistId: req.params.playlistId,
+      });
+      const item = await storage.createPlaylistItem(data);
+      res.status(201).json(item);
+    } catch (error) {
+      console.error("Error creating playlist item:", error);
+      res.status(500).json({ error: "Failed to create playlist item" });
+    }
+  });
+
+  app.patch("/api/playlist-items/:id", requireAuth, async (req, res) => {
+    try {
+      const data = insertPlaylistItemSchema.partial().parse(req.body);
+      const item = await storage.updatePlaylistItem(req.params.id, data);
+      if (!item) {
+        return res.status(404).json({ error: "Playlist item not found" });
+      }
+      res.json(item);
+    } catch (error) {
+      console.error("Error updating playlist item:", error);
+      res.status(500).json({ error: "Failed to update playlist item" });
+    }
+  });
+
+  app.delete("/api/playlist-items/:id", requireAuth, async (req, res) => {
+    try {
+      const deleted = await storage.deletePlaylistItem(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Playlist item not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting playlist item:", error);
+      res.status(500).json({ error: "Failed to delete playlist item" });
+    }
+  });
+
+  // ============ SCHEDULE BLOCKS ============
+  app.get("/api/programme-versions/:versionId/blocks", requireAuth, async (req, res) => {
+    try {
+      const blocks = await storage.getScheduleBlocks(req.params.versionId);
+      res.json(blocks);
+    } catch (error) {
+      console.error("Error fetching schedule blocks:", error);
+      res.status(500).json({ error: "Failed to fetch schedule blocks" });
+    }
+  });
+
+  app.post("/api/programme-versions/:versionId/blocks", requireAuth, async (req, res) => {
+    try {
+      const data = insertScheduleBlockSchema.parse({
+        ...req.body,
+        programmeVersionId: req.params.versionId,
+      });
+      const block = await storage.createScheduleBlock(data);
+      res.status(201).json(block);
+    } catch (error) {
+      console.error("Error creating schedule block:", error);
+      res.status(500).json({ error: "Failed to create schedule block" });
+    }
+  });
+
+  app.patch("/api/schedule-blocks/:id", requireAuth, async (req, res) => {
+    try {
+      const data = insertScheduleBlockSchema.partial().parse(req.body);
+      const block = await storage.updateScheduleBlock(req.params.id, data);
+      if (!block) {
+        return res.status(404).json({ error: "Schedule block not found" });
+      }
+      res.json(block);
+    } catch (error) {
+      console.error("Error updating schedule block:", error);
+      res.status(500).json({ error: "Failed to update schedule block" });
+    }
+  });
+
+  app.delete("/api/schedule-blocks/:id", requireAuth, async (req, res) => {
+    try {
+      const deleted = await storage.deleteScheduleBlock(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Schedule block not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting schedule block:", error);
+      res.status(500).json({ error: "Failed to delete schedule block" });
     }
   });
 

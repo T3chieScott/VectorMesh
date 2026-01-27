@@ -38,9 +38,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, MoreHorizontal, Pencil, Trash2, FolderOpen, Image, Calendar } from "lucide-react";
-import type { Playlist, Event } from "@shared/schema";
+import { Plus, MoreHorizontal, Pencil, Trash2, FolderOpen, Image, Calendar, ChevronDown, ChevronUp, ListVideo, Clock } from "lucide-react";
+import type { Playlist, Event, MediaAsset, PlaylistItem } from "@shared/schema";
 
 const playlistFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -50,7 +55,302 @@ const playlistFormSchema = z.object({
 
 type PlaylistFormValues = z.infer<typeof playlistFormSchema>;
 
-function PlaylistCard({ playlist, event }: { playlist: Playlist; event?: Event }) {
+const itemFormSchema = z.object({
+  mediaAssetId: z.string().min(1, "Media is required"),
+  duration: z.number().min(1, "Duration must be at least 1 second").optional(),
+  order: z.number().min(0).optional(),
+});
+
+type ItemFormValues = z.infer<typeof itemFormSchema>;
+
+function ItemEditorDialog({
+  playlistId,
+  item,
+  mediaAssets,
+  open,
+  onOpenChange,
+}: {
+  playlistId: string;
+  item?: PlaylistItem;
+  mediaAssets: MediaAsset[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const isEditing = !!item;
+
+  const form = useForm<ItemFormValues>({
+    resolver: zodResolver(itemFormSchema),
+    defaultValues: item
+      ? {
+          mediaAssetId: item.mediaAssetId,
+          duration: item.duration ?? 10,
+          order: item.order ?? 0,
+        }
+      : {
+          mediaAssetId: "",
+          duration: 10,
+          order: 0,
+        },
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: (data: ItemFormValues) => {
+      if (isEditing) {
+        return apiRequest("PATCH", `/api/playlist-items/${item.id}`, data);
+      }
+      return apiRequest("POST", `/api/playlists/${playlistId}/items`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/playlists", playlistId, "items"] });
+      onOpenChange(false);
+      form.reset();
+      toast({ title: isEditing ? "Item updated" : "Item added" });
+    },
+    onError: () => {
+      toast({ title: "Failed to save item", variant: "destructive" });
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{isEditing ? "Edit Item" : "Add Item"}</DialogTitle>
+        </DialogHeader>
+        <Form {...form}>
+          <form
+            onSubmit={form.handleSubmit((data) => saveMutation.mutate(data))}
+            className="space-y-4"
+          >
+            <FormField
+              control={form.control}
+              name="mediaAssetId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Media</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                      <SelectTrigger data-testid="select-item-media">
+                        <SelectValue placeholder="Select media" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {mediaAssets.map((asset) => (
+                        <SelectItem key={asset.id} value={asset.id}>
+                          {asset.filename} ({asset.type})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="duration"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Duration (seconds)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      {...field}
+                      onChange={(e) => field.onChange(parseInt(e.target.value) || 10)}
+                      data-testid="input-item-duration"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="order"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Order</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      {...field}
+                      onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                      data-testid="input-item-order"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={saveMutation.isPending} data-testid="button-save-item">
+                {saveMutation.isPending ? "Saving..." : isEditing ? "Update" : "Add"}
+              </Button>
+            </div>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PlaylistItemRow({
+  item,
+  mediaAsset,
+  onEdit,
+  onDelete,
+}: {
+  item: PlaylistItem;
+  mediaAsset?: MediaAsset;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 p-2 rounded-md bg-muted/50">
+      <div className="flex items-center gap-3">
+        <div className="flex items-center justify-center w-8 h-8 rounded bg-primary/10">
+          <Image className="h-4 w-4 text-primary" />
+        </div>
+        <div>
+          <p className="text-sm font-medium" data-testid={`text-item-name-${item.id}`}>
+            {mediaAsset?.filename || "Unknown media"}
+          </p>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            {item.duration && (
+              <span className="flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                {item.duration}s
+              </span>
+            )}
+            <span>Order: {item.order}</span>
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-1">
+        <Button variant="ghost" size="icon" onClick={onEdit} data-testid={`button-edit-item-${item.id}`}>
+          <Pencil className="h-4 w-4" />
+        </Button>
+        <Button variant="ghost" size="icon" onClick={onDelete} data-testid={`button-delete-item-${item.id}`}>
+          <Trash2 className="h-4 w-4 text-destructive" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function PlaylistItemsSection({
+  playlist,
+  mediaAssets,
+}: {
+  playlist: Playlist;
+  mediaAssets: MediaAsset[];
+}) {
+  const [itemsOpen, setItemsOpen] = useState(false);
+  const [itemDialogOpen, setItemDialogOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<PlaylistItem | undefined>();
+  const { toast } = useToast();
+
+  const { data: items = [] } = useQuery<PlaylistItem[]>({
+    queryKey: ["/api/playlists", playlist.id, "items"],
+    queryFn: () => fetch(`/api/playlists/${playlist.id}/items`, { credentials: "include" }).then((r) => r.json()),
+    enabled: itemsOpen,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (itemId: string) => apiRequest("DELETE", `/api/playlist-items/${itemId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/playlists", playlist.id, "items"] });
+      toast({ title: "Item deleted" });
+    },
+    onError: () => {
+      toast({ title: "Failed to delete item", variant: "destructive" });
+    },
+  });
+
+  const mediaMap = new Map(mediaAssets.map((m) => [m.id, m]));
+
+  const handleAddItem = () => {
+    setEditingItem(undefined);
+    setItemDialogOpen(true);
+  };
+
+  const handleEditItem = (item: PlaylistItem) => {
+    setEditingItem(item);
+    setItemDialogOpen(true);
+  };
+
+  return (
+    <>
+      <Collapsible open={itemsOpen} onOpenChange={setItemsOpen}>
+        <CollapsibleTrigger asChild>
+          <Button
+            variant="ghost"
+            className="w-full flex items-center justify-between px-4 py-2 border-t rounded-none"
+            data-testid={`button-toggle-items-${playlist.id}`}
+          >
+            <span className="flex items-center gap-2">
+              <ListVideo className="h-4 w-4" />
+              Manage Items
+            </span>
+            {itemsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="p-4 space-y-3 border-t bg-muted/30">
+            {items.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-2">
+                No items yet. Add media to this playlist.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {items.map((item) => (
+                  <PlaylistItemRow
+                    key={item.id}
+                    item={item}
+                    mediaAsset={mediaMap.get(item.mediaAssetId)}
+                    onEdit={() => handleEditItem(item)}
+                    onDelete={() => deleteMutation.mutate(item.id)}
+                  />
+                ))}
+              </div>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={handleAddItem}
+              disabled={mediaAssets.length === 0}
+              data-testid={`button-add-item-${playlist.id}`}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              {mediaAssets.length === 0 ? "Upload media first" : "Add Item"}
+            </Button>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+
+      <ItemEditorDialog
+        playlistId={playlist.id}
+        item={editingItem}
+        mediaAssets={mediaAssets}
+        open={itemDialogOpen}
+        onOpenChange={(open) => {
+          setItemDialogOpen(open);
+          if (!open) setEditingItem(undefined);
+        }}
+      />
+    </>
+  );
+}
+
+function PlaylistCard({ playlist, event, mediaAssets }: { playlist: Playlist; event?: Event; mediaAssets: MediaAsset[] }) {
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
 
@@ -222,7 +522,7 @@ function PlaylistCard({ playlist, event }: { playlist: Playlist; event?: Event }
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
           <div className="flex items-center gap-1.5">
             <Image className="h-4 w-4" />
-            <span>0 items</span>
+            <span>Media playlist</span>
           </div>
           {event && (
             <div className="flex items-center gap-1.5">
@@ -232,6 +532,7 @@ function PlaylistCard({ playlist, event }: { playlist: Playlist; event?: Event }
           )}
         </div>
       </CardContent>
+      <PlaylistItemsSection playlist={playlist} mediaAssets={mediaAssets} />
     </Card>
   );
 }
@@ -374,6 +675,10 @@ export default function PlaylistsPage() {
     queryKey: ["/api/events"],
   });
 
+  const { data: mediaAssets = [] } = useQuery<MediaAsset[]>({
+    queryKey: ["/api/media"],
+  });
+
   const eventMap = new Map(events.map((e) => [e.id, e]));
 
   return (
@@ -428,6 +733,7 @@ export default function PlaylistsPage() {
               key={playlist.id}
               playlist={playlist}
               event={playlist.eventId ? eventMap.get(playlist.eventId) : undefined}
+              mediaAssets={mediaAssets}
             />
           ))}
         </div>

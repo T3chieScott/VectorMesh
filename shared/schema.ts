@@ -347,6 +347,10 @@ export const playlistItemsRelations = relations(playlistItems, ({ one }) => ({
   mediaAsset: one(mediaAssets, { fields: [playlistItems.mediaAssetId], references: [mediaAssets.id] }),
 }));
 
+export const insertPlaylistItemSchema = createInsertSchema(playlistItems).omit({ id: true });
+export type InsertPlaylistItem = z.infer<typeof insertPlaylistItemSchema>;
+export type PlaylistItem = typeof playlistItems.$inferSelect;
+
 // ============ LIVE OVERRIDES ============
 
 export const liveOverrides = pgTable("live_overrides", {

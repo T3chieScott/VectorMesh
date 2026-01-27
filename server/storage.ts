@@ -48,6 +48,8 @@ import {
   type InsertPlayerHeartbeat,
   type AuditLog,
   type InsertAuditLog,
+  type PlaylistItem,
+  type InsertPlaylistItem,
 } from "@shared/schema";
 import { users, type User, type UpsertUser } from "@shared/models/auth";
 
@@ -132,6 +134,20 @@ export interface IStorage {
   createPlaylist(data: InsertPlaylist): Promise<Playlist>;
   updatePlaylist(id: string, data: Partial<InsertPlaylist>): Promise<Playlist | undefined>;
   deletePlaylist(id: string): Promise<boolean>;
+
+  // Playlist Items
+  getPlaylistItems(playlistId: string): Promise<PlaylistItem[]>;
+  getPlaylistItem(id: string): Promise<PlaylistItem | undefined>;
+  createPlaylistItem(data: InsertPlaylistItem): Promise<PlaylistItem>;
+  updatePlaylistItem(id: string, data: Partial<InsertPlaylistItem>): Promise<PlaylistItem | undefined>;
+  deletePlaylistItem(id: string): Promise<boolean>;
+
+  // Schedule Blocks
+  getScheduleBlocks(programmeVersionId: string): Promise<ScheduleBlock[]>;
+  getScheduleBlock(id: string): Promise<ScheduleBlock | undefined>;
+  createScheduleBlock(data: InsertScheduleBlock): Promise<ScheduleBlock>;
+  updateScheduleBlock(id: string, data: Partial<InsertScheduleBlock>): Promise<ScheduleBlock | undefined>;
+  deleteScheduleBlock(id: string): Promise<boolean>;
 
   // Live Overrides
   getLiveOverrides(): Promise<LiveOverride[]>;
@@ -486,6 +502,64 @@ export class DatabaseStorage implements IStorage {
 
   async deletePlaylist(id: string): Promise<boolean> {
     const result = await db.delete(playlists).where(eq(playlists.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Playlist Items
+  async getPlaylistItems(playlistId: string): Promise<PlaylistItem[]> {
+    return db.select().from(playlistItems).where(eq(playlistItems.playlistId, playlistId)).orderBy(playlistItems.order);
+  }
+
+  async getPlaylistItem(id: string): Promise<PlaylistItem | undefined> {
+    const [item] = await db.select().from(playlistItems).where(eq(playlistItems.id, id));
+    return item;
+  }
+
+  async createPlaylistItem(data: InsertPlaylistItem): Promise<PlaylistItem> {
+    const [item] = await db.insert(playlistItems).values(data).returning();
+    return item;
+  }
+
+  async updatePlaylistItem(id: string, data: Partial<InsertPlaylistItem>): Promise<PlaylistItem | undefined> {
+    const [item] = await db
+      .update(playlistItems)
+      .set(data)
+      .where(eq(playlistItems.id, id))
+      .returning();
+    return item;
+  }
+
+  async deletePlaylistItem(id: string): Promise<boolean> {
+    const result = await db.delete(playlistItems).where(eq(playlistItems.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Schedule Blocks
+  async getScheduleBlocks(programmeVersionId: string): Promise<ScheduleBlock[]> {
+    return db.select().from(scheduleBlocks).where(eq(scheduleBlocks.programmeVersionId, programmeVersionId)).orderBy(desc(scheduleBlocks.priority));
+  }
+
+  async getScheduleBlock(id: string): Promise<ScheduleBlock | undefined> {
+    const [block] = await db.select().from(scheduleBlocks).where(eq(scheduleBlocks.id, id));
+    return block;
+  }
+
+  async createScheduleBlock(data: InsertScheduleBlock): Promise<ScheduleBlock> {
+    const [block] = await db.insert(scheduleBlocks).values(data).returning();
+    return block;
+  }
+
+  async updateScheduleBlock(id: string, data: Partial<InsertScheduleBlock>): Promise<ScheduleBlock | undefined> {
+    const [block] = await db
+      .update(scheduleBlocks)
+      .set(data)
+      .where(eq(scheduleBlocks.id, id))
+      .returning();
+    return block;
+  }
+
+  async deleteScheduleBlock(id: string): Promise<boolean> {
+    const result = await db.delete(scheduleBlocks).where(eq(scheduleBlocks.id, id));
     return (result.rowCount ?? 0) > 0;
   }
 
