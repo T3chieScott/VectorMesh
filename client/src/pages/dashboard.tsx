@@ -16,24 +16,17 @@ import {
   CheckCircle2,
   AlertCircle,
   Clock,
+  XCircle,
 } from "lucide-react";
 import type { Client, Event, Screen, MediaAsset, Programme, LiveOverride } from "@shared/schema";
 
-interface DashboardStats {
-  totalClients: number;
-  activeEvents: number;
-  onlineScreens: number;
-  totalScreens: number;
-  mediaAssets: number;
-  activeProgrammes: number;
-  activeOverrides: number;
-}
-
-interface RecentActivity {
-  id: string;
-  type: "screen_online" | "screen_offline" | "programme_published" | "override_started" | "media_uploaded";
-  message: string;
+interface HealthData {
+  status: "healthy" | "unhealthy";
   timestamp: string;
+  database: string;
+  screensOnline: number;
+  totalScreens: number;
+  activeOverrides: number;
 }
 
 function StatCard({
@@ -221,6 +214,75 @@ function QuickActionsCard() {
   );
 }
 
+function SystemHealthCard({ health, isLoading }: { health?: HealthData; isLoading: boolean }) {
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <Skeleton className="h-5 w-32" />
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {[...Array(3)].map((_, i) => (
+            <Skeleton key={i} className="h-6" />
+          ))}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const isHealthy = health?.status === "healthy";
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base font-semibold">System Health</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {isHealthy ? (
+              <CheckCircle2 className="h-4 w-4 text-green-500" />
+            ) : (
+              <XCircle className="h-4 w-4 text-red-500" />
+            )}
+            <span className="text-sm">API Server</span>
+          </div>
+          <Badge variant="secondary" className={isHealthy ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}>
+            {isHealthy ? "Healthy" : "Unhealthy"}
+          </Badge>
+        </div>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {health?.database === "connected" ? (
+              <CheckCircle2 className="h-4 w-4 text-green-500" />
+            ) : (
+              <XCircle className="h-4 w-4 text-red-500" />
+            )}
+            <span className="text-sm">Database</span>
+          </div>
+          <Badge variant="secondary" className={health?.database === "connected" ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}>
+            {health?.database === "connected" ? "Connected" : "Disconnected"}
+          </Badge>
+        </div>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-primary" />
+            <span className="text-sm">Screens Online</span>
+          </div>
+          <Badge variant="secondary">
+            {health?.screensOnline || 0}/{health?.totalScreens || 0}
+          </Badge>
+        </div>
+        <Link href="/diagnostics" className="block pt-2">
+          <Button variant="outline" className="w-full" size="sm" data-testid="button-view-diagnostics">
+            View Diagnostics
+          </Button>
+        </Link>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Dashboard() {
   const { data: clients = [], isLoading: clientsLoading } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
@@ -244,6 +306,11 @@ export default function Dashboard() {
 
   const { data: overrides = [], isLoading: overridesLoading } = useQuery<LiveOverride[]>({
     queryKey: ["/api/live-overrides"],
+  });
+
+  const { data: health, isLoading: healthLoading } = useQuery<HealthData>({
+    queryKey: ["/api/health"],
+    refetchInterval: 30000,
   });
 
   const isLoading = clientsLoading || eventsLoading || screensLoading || mediaLoading || programmesLoading || overridesLoading;
@@ -359,45 +426,7 @@ export default function Dashboard() {
         </div>
 
         {/* System Health */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">System Health</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-green-500" />
-                <span className="text-sm">API Server</span>
-              </div>
-              <Badge variant="secondary" className="bg-green-500/10 text-green-600">
-                Healthy
-              </Badge>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-green-500" />
-                <span className="text-sm">Database</span>
-              </div>
-              <Badge variant="secondary" className="bg-green-500/10 text-green-600">
-                Connected
-              </Badge>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Activity className="h-4 w-4 text-primary" />
-                <span className="text-sm">Player Sync</span>
-              </div>
-              <Badge variant="secondary">
-                Active
-              </Badge>
-            </div>
-            <Link href="/diagnostics" className="block pt-2">
-              <Button variant="outline" className="w-full" size="sm" data-testid="button-view-diagnostics">
-                View Diagnostics
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
+        <SystemHealthCard health={health} isLoading={healthLoading} />
       </div>
     </div>
   );
