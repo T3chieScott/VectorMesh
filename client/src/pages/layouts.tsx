@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -120,8 +120,22 @@ function ZoneEditorDialog({
 
   const form = useForm<ZoneFormValues>({
     resolver: zodResolver(zoneFormSchema),
-    defaultValues: zone
-      ? {
+    defaultValues: {
+      name: "",
+      type: "media",
+      x: 0,
+      y: 0,
+      width: 50,
+      height: 50,
+      zIndex: 1,
+    },
+  });
+
+  // Reset form when zone changes (for edit vs add mode)
+  useEffect(() => {
+    if (open) {
+      if (zone) {
+        form.reset({
           name: zone.name,
           type: zone.type,
           x: zone.x,
@@ -129,8 +143,9 @@ function ZoneEditorDialog({
           width: zone.width,
           height: zone.height,
           zIndex: zone.zIndex,
-        }
-      : {
+        });
+      } else {
+        form.reset({
           name: "",
           type: "media",
           x: 0,
@@ -138,8 +153,10 @@ function ZoneEditorDialog({
           width: 50,
           height: 50,
           zIndex: 1,
-        },
-  });
+        });
+      }
+    }
+  }, [open, zone, form]);
 
   const saveMutation = useMutation({
     mutationFn: (data: ZoneFormValues) => {
@@ -204,7 +221,7 @@ function ZoneEditorDialog({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Zone Type</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value}>
                     <FormControl>
                       <SelectTrigger data-testid="select-zone-type">
                         <SelectValue placeholder="Select type" />
