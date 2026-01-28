@@ -66,7 +66,10 @@ const zoneTypeIcons: Record<string, typeof Image> = {
 function TickerWidget({ content }: { content?: string }) {
   return (
     <div className="h-full w-full bg-gradient-to-r from-primary/90 to-primary flex items-center overflow-hidden">
-      <div className="animate-marquee whitespace-nowrap text-primary-foreground font-medium px-4">
+      <div 
+        className="animate-marquee whitespace-nowrap text-primary-foreground font-medium px-4"
+        style={{ fontSize: "clamp(12px, 50cqh, 24px)" }}
+      >
         {content || "Welcome to SignageHub • Breaking news and updates scroll here • Stay informed with live content"}
       </div>
     </div>
@@ -82,12 +85,18 @@ function ClockWidget() {
   }, []);
 
   return (
-    <div className="h-full w-full bg-black/80 flex flex-col items-center justify-center text-white">
-      <div className="text-4xl font-bold tabular-nums">
+    <div className="h-full w-full bg-black/80 flex flex-col items-center justify-center text-white overflow-hidden p-1">
+      <div 
+        className="font-bold tabular-nums leading-none"
+        style={{ fontSize: "clamp(12px, 25cqh, 48px)" }}
+      >
         {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
       </div>
-      <div className="text-sm text-white/70 mt-1">
-        {time.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })}
+      <div 
+        className="text-white/70 mt-0.5 truncate max-w-full"
+        style={{ fontSize: "clamp(8px, 12cqh, 16px)" }}
+      >
+        {time.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
       </div>
     </div>
   );
@@ -95,10 +104,20 @@ function ClockWidget() {
 
 function LogoWidget() {
   return (
-    <div className="h-full w-full flex items-center justify-center bg-black/50">
+    <div className="h-full w-full flex items-center justify-center bg-black/50 overflow-hidden p-1">
       <div className="text-center">
-        <div className="text-2xl font-bold text-white">SignageHub</div>
-        <div className="text-xs text-white/60">Digital Signage</div>
+        <div 
+          className="font-bold text-white leading-tight"
+          style={{ fontSize: "clamp(10px, 18cqh, 28px)" }}
+        >
+          SignageHub
+        </div>
+        <div 
+          className="text-white/60"
+          style={{ fontSize: "clamp(6px, 10cqh, 14px)" }}
+        >
+          Digital Signage
+        </div>
       </div>
     </div>
   );
@@ -171,11 +190,14 @@ function WeatherWidget({
 
   if (!lat || !lng) {
     return (
-      <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center text-white">
+      <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center text-white overflow-hidden">
         <div className="text-center">
-          <CloudSun className="h-12 w-12 mx-auto mb-2 opacity-70" />
-          <p className="text-sm opacity-70">Weather widget</p>
-          <p className="text-xs opacity-50">Configure location</p>
+          <CloudSun 
+            className="mx-auto mb-1 opacity-70" 
+            style={{ width: "clamp(20px, 20cqh, 48px)", height: "clamp(20px, 20cqh, 48px)" }}
+          />
+          <p style={{ fontSize: "clamp(10px, 3cqh, 16px)" }} className="opacity-70">Weather</p>
+          <p style={{ fontSize: "clamp(8px, 2cqh, 12px)" }} className="opacity-50">Configure location</p>
         </div>
       </div>
     );
@@ -183,10 +205,13 @@ function WeatherWidget({
 
   if (error) {
     return (
-      <div className="h-full w-full bg-gradient-to-br from-gray-600 to-gray-800 flex items-center justify-center text-white">
+      <div className="h-full w-full bg-gradient-to-br from-gray-600 to-gray-800 flex items-center justify-center text-white overflow-hidden">
         <div className="text-center">
-          <AlertTriangle className="h-8 w-8 mx-auto mb-2 opacity-70" />
-          <p className="text-sm opacity-70">{error}</p>
+          <AlertTriangle 
+            className="mx-auto mb-1 opacity-70" 
+            style={{ width: "clamp(16px, 15cqh, 32px)", height: "clamp(16px, 15cqh, 32px)" }}
+          />
+          <p style={{ fontSize: "clamp(10px, 3cqh, 14px)" }} className="opacity-70">{error}</p>
         </div>
       </div>
     );
@@ -194,8 +219,11 @@ function WeatherWidget({
 
   if (!weather) {
     return (
-      <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center text-white">
-        <RefreshCw className="h-8 w-8 animate-spin opacity-50" />
+      <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center text-white overflow-hidden">
+        <RefreshCw 
+          className="animate-spin opacity-50" 
+          style={{ width: "clamp(16px, 15cqh, 32px)", height: "clamp(16px, 15cqh, 32px)" }}
+        />
       </div>
     );
   }
@@ -203,19 +231,40 @@ function WeatherWidget({
   const WeatherIcon = weatherIcons[weather.icon] || Cloud;
 
   return (
-    <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex flex-col items-center justify-center text-white p-4">
-      <p className="text-sm font-medium opacity-80 mb-1">{location}</p>
-      <WeatherIcon className="h-16 w-16 mb-2" />
-      <div className="text-5xl font-bold">{weather.temperature}{weather.unit}</div>
-      <p className="text-lg mt-1">{weather.condition}</p>
-      <div className="flex items-center gap-4 mt-3 text-sm opacity-80">
-        <div className="flex items-center gap-1">
-          <Droplets className="h-4 w-4" />
+    <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex flex-col items-center justify-center text-white p-2 overflow-hidden">
+      <p 
+        className="font-medium opacity-80 leading-tight truncate max-w-full"
+        style={{ fontSize: "clamp(8px, 2cqh, 14px)" }}
+      >
+        {location}
+      </p>
+      <WeatherIcon 
+        className="my-1 flex-shrink-0" 
+        style={{ width: "clamp(24px, 15cqh, 64px)", height: "clamp(24px, 15cqh, 64px)" }}
+      />
+      <div 
+        className="font-bold leading-none"
+        style={{ fontSize: "clamp(16px, 8cqh, 48px)" }}
+      >
+        {weather.temperature}{weather.unit}
+      </div>
+      <p 
+        className="mt-0.5 truncate max-w-full"
+        style={{ fontSize: "clamp(10px, 3cqh, 18px)" }}
+      >
+        {weather.condition}
+      </p>
+      <div 
+        className="flex items-center gap-2 mt-1 opacity-80"
+        style={{ fontSize: "clamp(8px, 2cqh, 12px)" }}
+      >
+        <div className="flex items-center gap-0.5">
+          <Droplets style={{ width: "clamp(8px, 2cqh, 16px)", height: "clamp(8px, 2cqh, 16px)" }} />
           {weather.humidity}%
         </div>
-        <div className="flex items-center gap-1">
-          <Wind className="h-4 w-4" />
-          {weather.windSpeed} km/h
+        <div className="flex items-center gap-0.5">
+          <Wind style={{ width: "clamp(8px, 2cqh, 16px)", height: "clamp(8px, 2cqh, 16px)" }} />
+          {weather.windSpeed}km/h
         </div>
       </div>
     </div>
@@ -265,11 +314,14 @@ function NewsWidget({
 
   if (!rssUrl) {
     return (
-      <div className="h-full w-full bg-gradient-to-r from-red-700 to-red-900 flex items-center justify-center text-white">
+      <div className="h-full w-full bg-gradient-to-r from-red-700 to-red-900 flex items-center justify-center text-white overflow-hidden">
         <div className="text-center">
-          <Newspaper className="h-12 w-12 mx-auto mb-2 opacity-70" />
-          <p className="text-sm opacity-70">News widget</p>
-          <p className="text-xs opacity-50">Configure RSS feed</p>
+          <Newspaper 
+            className="mx-auto mb-1 opacity-70" 
+            style={{ width: "clamp(20px, 20cqh, 48px)", height: "clamp(20px, 20cqh, 48px)" }}
+          />
+          <p style={{ fontSize: "clamp(10px, 3cqh, 16px)" }} className="opacity-70">News</p>
+          <p style={{ fontSize: "clamp(8px, 2cqh, 12px)" }} className="opacity-50">Configure RSS feed</p>
         </div>
       </div>
     );
@@ -277,10 +329,13 @@ function NewsWidget({
 
   if (error) {
     return (
-      <div className="h-full w-full bg-gradient-to-r from-gray-600 to-gray-800 flex items-center justify-center text-white">
+      <div className="h-full w-full bg-gradient-to-r from-gray-600 to-gray-800 flex items-center justify-center text-white overflow-hidden">
         <div className="text-center">
-          <AlertTriangle className="h-8 w-8 mx-auto mb-2 opacity-70" />
-          <p className="text-sm opacity-70">{error}</p>
+          <AlertTriangle 
+            className="mx-auto mb-1 opacity-70" 
+            style={{ width: "clamp(16px, 15cqh, 32px)", height: "clamp(16px, 15cqh, 32px)" }}
+          />
+          <p style={{ fontSize: "clamp(10px, 3cqh, 14px)" }} className="opacity-70">{error}</p>
         </div>
       </div>
     );
@@ -288,8 +343,11 @@ function NewsWidget({
 
   if (news.length === 0) {
     return (
-      <div className="h-full w-full bg-gradient-to-r from-red-700 to-red-900 flex items-center justify-center text-white">
-        <RefreshCw className="h-8 w-8 animate-spin opacity-50" />
+      <div className="h-full w-full bg-gradient-to-r from-red-700 to-red-900 flex items-center justify-center text-white overflow-hidden">
+        <RefreshCw 
+          className="animate-spin opacity-50" 
+          style={{ width: "clamp(16px, 15cqh, 32px)", height: "clamp(16px, 15cqh, 32px)" }}
+        />
       </div>
     );
   }
@@ -299,14 +357,23 @@ function NewsWidget({
 
   return (
     <div className="h-full w-full bg-gradient-to-r from-red-700 to-red-900 flex flex-col overflow-hidden">
-      <div className="bg-black/30 px-3 py-1 flex items-center gap-2">
-        <Newspaper className="h-4 w-4 text-white" />
-        <span className="text-white text-sm font-semibold">{feedTitle}</span>
+      <div className="bg-black/30 px-2 py-0.5 flex items-center gap-1 flex-shrink-0">
+        <Newspaper 
+          className="text-white flex-shrink-0" 
+          style={{ width: "clamp(12px, 4cqh, 20px)", height: "clamp(12px, 4cqh, 20px)" }}
+        />
+        <span 
+          className="text-white font-semibold truncate"
+          style={{ fontSize: "clamp(10px, 3cqh, 16px)" }}
+        >
+          {feedTitle}
+        </span>
       </div>
-      <div className="flex-1 flex items-center overflow-hidden">
+      <div className="flex-1 flex items-center overflow-hidden min-h-0">
         <div 
-          className="whitespace-nowrap text-white text-xl font-medium"
+          className="whitespace-nowrap text-white font-medium"
           style={{
+            fontSize: "clamp(12px, 5cqh, 24px)",
             animation: `marquee ${animationDuration}s linear infinite`,
           }}
         >
@@ -428,6 +495,7 @@ function ZoneRenderer({
         width: `${zone.width}%`,
         height: `${zone.height}%`,
         zIndex: zone.zIndex || 1,
+        containerType: "size",
       }}
       data-testid={`zone-${zone.id}`}
     >
