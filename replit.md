@@ -12,6 +12,7 @@ Key capabilities:
 - Timeline scheduling with programme blocks
 - Live override mode for temporary takeovers
 - Player health monitoring and fallback behavior
+- Player Simulator for testing content layouts before deployment
 
 ## User Preferences
 
