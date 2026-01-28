@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -63,6 +63,7 @@ import {
   Newspaper,
   MapPin,
   Rss,
+  Move,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone } from "@shared/schema";
 
@@ -753,6 +754,269 @@ function LayoutPreview({ zones }: { zones: LayoutZone[] }) {
   );
 }
 
+type DragState = {
+  zoneId: string;
+  type: "move" | "resize";
+  handle?: "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+  startX: number;
+  startY: number;
+  startZone: { x: number; y: number; width: number; height: number };
+};
+
+type SnapLine = {
+  type: "horizontal" | "vertical";
+  position: number;
+};
+
+const SNAP_THRESHOLD = 2; // percentage
+
+function InteractiveLayoutPreview({
+  layout,
+  zones,
+  onZoneUpdate,
+}: {
+  layout: LayoutTemplate;
+  zones: LayoutZone[];
+  onZoneUpdate: (zoneId: string, updates: Partial<LayoutZone>) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dragState, setDragState] = useState<DragState | null>(null);
+  const [localZones, setLocalZones] = useState<LayoutZone[]>(zones);
+  const [snapLines, setSnapLines] = useState<SnapLine[]>([]);
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocalZones(zones);
+  }, [zones]);
+
+  const getSnapPoints = useCallback((excludeZoneId: string) => {
+    const points = {
+      x: [0, 100] as number[],
+      y: [0, 100] as number[],
+    };
+    
+    localZones.forEach((zone) => {
+      if (zone.id === excludeZoneId) return;
+      points.x.push(zone.x, zone.x + zone.width);
+      points.y.push(zone.y, zone.y + zone.height);
+    });
+    
+    return points;
+  }, [localZones]);
+
+  const snapValue = useCallback((value: number, snapPoints: number[]): { value: number; snapped: boolean } => {
+    for (const point of snapPoints) {
+      if (Math.abs(value - point) < SNAP_THRESHOLD) {
+        return { value: point, snapped: true };
+      }
+    }
+    return { value, snapped: false };
+  }, []);
+
+  const handleMouseDown = useCallback((
+    e: React.MouseEvent,
+    zoneId: string,
+    type: "move" | "resize",
+    handle?: DragState["handle"]
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const zone = localZones.find(z => z.id === zoneId);
+    if (!zone || !containerRef.current) return;
+
+    setSelectedZoneId(zoneId);
+    setDragState({
+      zoneId,
+      type,
+      handle,
+      startX: e.clientX,
+      startY: e.clientY,
+      startZone: { x: zone.x, y: zone.y, width: zone.width, height: zone.height },
+    });
+  }, [localZones]);
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!dragState || !containerRef.current) return;
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const deltaXPercent = ((e.clientX - dragState.startX) / rect.width) * 100;
+    const deltaYPercent = ((e.clientY - dragState.startY) / rect.height) * 100;
+
+    const snapPoints = getSnapPoints(dragState.zoneId);
+    const newSnapLines: SnapLine[] = [];
+
+    let newX = dragState.startZone.x;
+    let newY = dragState.startZone.y;
+    let newWidth = dragState.startZone.width;
+    let newHeight = dragState.startZone.height;
+
+    if (dragState.type === "move") {
+      newX = Math.max(0, Math.min(100 - dragState.startZone.width, dragState.startZone.x + deltaXPercent));
+      newY = Math.max(0, Math.min(100 - dragState.startZone.height, dragState.startZone.y + deltaYPercent));
+
+      const leftSnap = snapValue(newX, snapPoints.x);
+      const rightSnap = snapValue(newX + newWidth, snapPoints.x);
+      const topSnap = snapValue(newY, snapPoints.y);
+      const bottomSnap = snapValue(newY + newHeight, snapPoints.y);
+
+      if (leftSnap.snapped) {
+        newX = leftSnap.value;
+        newSnapLines.push({ type: "vertical", position: leftSnap.value });
+      } else if (rightSnap.snapped) {
+        newX = rightSnap.value - newWidth;
+        newSnapLines.push({ type: "vertical", position: rightSnap.value });
+      }
+
+      if (topSnap.snapped) {
+        newY = topSnap.value;
+        newSnapLines.push({ type: "horizontal", position: topSnap.value });
+      } else if (bottomSnap.snapped) {
+        newY = bottomSnap.value - newHeight;
+        newSnapLines.push({ type: "horizontal", position: bottomSnap.value });
+      }
+    } else if (dragState.type === "resize" && dragState.handle) {
+      const handle = dragState.handle;
+
+      if (handle.includes("w")) {
+        const proposedX = dragState.startZone.x + deltaXPercent;
+        const snap = snapValue(proposedX, snapPoints.x);
+        newX = Math.max(0, Math.min(dragState.startZone.x + dragState.startZone.width - 1, snap.value));
+        newWidth = dragState.startZone.width - (newX - dragState.startZone.x);
+        if (snap.snapped) newSnapLines.push({ type: "vertical", position: snap.value });
+      }
+      if (handle.includes("e")) {
+        const proposedRight = dragState.startZone.x + dragState.startZone.width + deltaXPercent;
+        const snap = snapValue(proposedRight, snapPoints.x);
+        newWidth = Math.max(1, Math.min(100 - newX, snap.value - newX));
+        if (snap.snapped) newSnapLines.push({ type: "vertical", position: snap.value });
+      }
+      if (handle.includes("n")) {
+        const proposedY = dragState.startZone.y + deltaYPercent;
+        const snap = snapValue(proposedY, snapPoints.y);
+        newY = Math.max(0, Math.min(dragState.startZone.y + dragState.startZone.height - 1, snap.value));
+        newHeight = dragState.startZone.height - (newY - dragState.startZone.y);
+        if (snap.snapped) newSnapLines.push({ type: "horizontal", position: snap.value });
+      }
+      if (handle.includes("s")) {
+        const proposedBottom = dragState.startZone.y + dragState.startZone.height + deltaYPercent;
+        const snap = snapValue(proposedBottom, snapPoints.y);
+        newHeight = Math.max(1, Math.min(100 - newY, snap.value - newY));
+        if (snap.snapped) newSnapLines.push({ type: "horizontal", position: snap.value });
+      }
+    }
+
+    setSnapLines(newSnapLines);
+    setLocalZones(prev => prev.map(z => 
+      z.id === dragState.zoneId 
+        ? { ...z, x: Math.round(newX), y: Math.round(newY), width: Math.round(newWidth), height: Math.round(newHeight) }
+        : z
+    ));
+  }, [dragState, getSnapPoints, snapValue]);
+
+  const handleMouseUp = useCallback(() => {
+    if (dragState) {
+      const zone = localZones.find(z => z.id === dragState.zoneId);
+      if (zone) {
+        onZoneUpdate(dragState.zoneId, {
+          x: zone.x,
+          y: zone.y,
+          width: zone.width,
+          height: zone.height,
+        });
+      }
+    }
+    setDragState(null);
+    setSnapLines([]);
+  }, [dragState, localZones, onZoneUpdate]);
+
+  useEffect(() => {
+    if (dragState) {
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+      return () => {
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+      };
+    }
+  }, [dragState, handleMouseMove, handleMouseUp]);
+
+  const resizeHandles: Array<{ position: DragState["handle"]; cursor: string; style: React.CSSProperties }> = [
+    { position: "nw", cursor: "nwse-resize", style: { top: -4, left: -4 } },
+    { position: "n", cursor: "ns-resize", style: { top: -4, left: "50%", transform: "translateX(-50%)" } },
+    { position: "ne", cursor: "nesw-resize", style: { top: -4, right: -4 } },
+    { position: "e", cursor: "ew-resize", style: { top: "50%", right: -4, transform: "translateY(-50%)" } },
+    { position: "se", cursor: "nwse-resize", style: { bottom: -4, right: -4 } },
+    { position: "s", cursor: "ns-resize", style: { bottom: -4, left: "50%", transform: "translateX(-50%)" } },
+    { position: "sw", cursor: "nesw-resize", style: { bottom: -4, left: -4 } },
+    { position: "w", cursor: "ew-resize", style: { top: "50%", left: -4, transform: "translateY(-50%)" } },
+  ];
+
+  return (
+    <div 
+      ref={containerRef}
+      className="relative w-full aspect-video bg-slate-900 rounded-lg overflow-hidden select-none"
+      onClick={() => setSelectedZoneId(null)}
+      data-testid="interactive-layout-preview"
+    >
+      {snapLines.map((line, i) => (
+        <div
+          key={i}
+          className="absolute bg-cyan-400 z-50 pointer-events-none"
+          style={line.type === "vertical" 
+            ? { left: `${line.position}%`, top: 0, bottom: 0, width: 2 }
+            : { top: `${line.position}%`, left: 0, right: 0, height: 2 }
+          }
+        />
+      ))}
+      
+      {localZones.map((zone, idx) => {
+        const Icon = zoneTypeIcons[zone.type] || Grid3X3;
+        const isSelected = selectedZoneId === zone.id;
+        const isDragging = dragState?.zoneId === zone.id;
+        
+        return (
+          <div
+            key={zone.id}
+            className={`absolute flex items-center justify-center border-2 transition-shadow ${
+              isSelected ? "border-cyan-400 shadow-lg shadow-cyan-400/30" : "border-white/30"
+            } ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+            style={{
+              left: `${zone.x}%`,
+              top: `${zone.y}%`,
+              width: `${zone.width}%`,
+              height: `${zone.height}%`,
+              backgroundColor: `hsl(${(idx * 60) % 360} 70% 50% / 0.4)`,
+              zIndex: isSelected ? 100 : zone.zIndex || 1,
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedZoneId(zone.id);
+            }}
+            onMouseDown={(e) => handleMouseDown(e, zone.id, "move")}
+            data-testid={`draggable-zone-${zone.id}`}
+          >
+            <div className="flex flex-col items-center gap-1 text-white/90 pointer-events-none">
+              <Icon className="h-5 w-5" />
+              <span className="text-xs font-medium">{zone.name}</span>
+            </div>
+            
+            {isSelected && resizeHandles.map(({ position, cursor, style }) => (
+              <div
+                key={position}
+                className="absolute w-3 h-3 bg-cyan-400 border border-white rounded-sm hover:bg-cyan-300 z-10"
+                style={{ ...style, cursor }}
+                onMouseDown={(e) => handleMouseDown(e, zone.id, "resize", position)}
+                data-testid={`resize-handle-${zone.id}-${position}`}
+              />
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[] }) {
   const [editOpen, setEditOpen] = useState(false);
   const [zonesOpen, setZonesOpen] = useState(false);
@@ -808,11 +1072,34 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
     },
   });
 
+  const updateZoneMutation = useMutation({
+    mutationFn: ({ zoneId, updates }: { zoneId: string; updates: Partial<LayoutZone> }) => {
+      const updatedZones = zones.map(z => 
+        z.id === zoneId ? { ...z, ...updates } : z
+      );
+      return apiRequest("PATCH", `/api/layouts/${layout.id}`, { zones: updatedZones });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+    },
+    onError: () => {
+      toast({ title: "Failed to update zone", variant: "destructive" });
+    },
+  });
+
+  const handleZoneUpdate = (zoneId: string, updates: Partial<LayoutZone>) => {
+    updateZoneMutation.mutate({ zoneId, updates });
+  };
+
   return (
     <>
       <Card className="overflow-hidden transition-all">
         <div className="p-3">
-          <LayoutPreview zones={zones} />
+          <InteractiveLayoutPreview 
+            layout={layout} 
+            zones={zones} 
+            onZoneUpdate={handleZoneUpdate}
+          />
         </div>
         <CardHeader className="flex flex-row items-start justify-between gap-4 pt-0 pb-3">
           <div>
