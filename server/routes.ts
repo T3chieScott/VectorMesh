@@ -440,6 +440,19 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/media/:id", requireAuth, async (req, res) => {
+    try {
+      const updated = await storage.updateMediaAsset(req.params.id, req.body);
+      if (!updated) {
+        return res.status(404).json({ error: "Media asset not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating media asset:", error);
+      res.status(500).json({ error: "Failed to update media asset" });
+    }
+  });
+
   // Serve media files from object storage
   app.get("/api/media/:id/file", requireAuth, async (req, res) => {
     try {

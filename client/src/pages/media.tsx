@@ -33,6 +33,8 @@ import {
   Eye,
   Download,
   Clock,
+  Maximize,
+  Minimize2,
 } from "lucide-react";
 import type { MediaAsset } from "@shared/schema";
 
@@ -72,6 +74,20 @@ function MediaCard({
     },
     onError: () => {
       toast({ title: "Failed to delete media", variant: "destructive" });
+    },
+  });
+
+  const toggleDisplayModeMutation = useMutation({
+    mutationFn: () => {
+      const newMode = asset.displayMode === "cover" ? "contain" : "cover";
+      return apiRequest("PATCH", `/api/media/${asset.id}`, { displayMode: newMode });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/media"] });
+      toast({ title: `Display mode changed to ${asset.displayMode === "cover" ? "Fit" : "Fill"}` });
+    },
+    onError: () => {
+      toast({ title: "Failed to update display mode", variant: "destructive" });
     },
   });
 
@@ -137,6 +153,9 @@ function MediaCard({
             <Badge variant="secondary" className={getMediaTypeColor()}>
               {asset.mediaType}
             </Badge>
+            <Badge variant="outline" className="text-xs">
+              {asset.displayMode === "contain" ? "Fit" : "Fill"}
+            </Badge>
             <Button
               variant="ghost"
               size="icon"
@@ -157,6 +176,22 @@ function MediaCard({
                     <Download className="mr-2 h-4 w-4" />
                     Download
                   </a>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => toggleDisplayModeMutation.mutate()}
+                  data-testid={`button-toggle-display-${asset.id}`}
+                >
+                  {asset.displayMode === "cover" ? (
+                    <>
+                      <Minimize2 className="mr-2 h-4 w-4" />
+                      Switch to Fit
+                    </>
+                  ) : (
+                    <>
+                      <Maximize className="mr-2 h-4 w-4" />
+                      Switch to Fill
+                    </>
+                  )}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="text-destructive focus:text-destructive"
@@ -254,6 +289,22 @@ function MediaCard({
                   </a>
                 </DropdownMenuItem>
                 <DropdownMenuItem
+                  onSelect={() => toggleDisplayModeMutation.mutate()}
+                  data-testid={`button-toggle-display-${asset.id}`}
+                >
+                  {asset.displayMode === "cover" ? (
+                    <>
+                      <Minimize2 className="mr-2 h-4 w-4" />
+                      Switch to Fit
+                    </>
+                  ) : (
+                    <>
+                      <Maximize className="mr-2 h-4 w-4" />
+                      Switch to Fill
+                    </>
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuItem
                   className="text-destructive focus:text-destructive"
                   onSelect={() => deleteMutation.mutate()}
                 >
@@ -263,6 +314,9 @@ function MediaCard({
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
+          <Badge variant="outline" className="text-xs mt-1">
+            {asset.displayMode === "contain" ? "Fit" : "Fill"}
+          </Badge>
         </CardContent>
       </Card>
 

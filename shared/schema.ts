@@ -180,6 +180,7 @@ export const mediaAssets = pgTable("media_assets", {
   fileSize: integer("file_size"),
   checksum: text("checksum"),
   tags: text("tags").array(),
+  displayMode: scaleModeEnum("display_mode").default("cover"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
