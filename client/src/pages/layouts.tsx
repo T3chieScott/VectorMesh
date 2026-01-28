@@ -117,6 +117,7 @@ const zoneFormSchema = z.object({
   newsRssUrl: z.string().optional(),
   newsScrollSpeed: z.number().min(10).max(200).optional(),
   newsItemCount: z.number().min(1).max(50).optional(),
+  newsTextSize: z.enum(["small", "medium", "large"]).optional(),
 }).refine((data) => {
   // Require lat/lng for weather zones
   if (data.type === "weather") {
@@ -171,6 +172,7 @@ function ZoneEditorDialog({
       newsRssUrl: "",
       newsScrollSpeed: 50,
       newsItemCount: 10,
+      newsTextSize: "medium",
     },
   });
 
@@ -193,6 +195,7 @@ function ZoneEditorDialog({
           newsRssUrl: zone.newsRssUrl || "",
           newsScrollSpeed: zone.newsScrollSpeed || 50,
           newsItemCount: zone.newsItemCount || 10,
+          newsTextSize: zone.newsTextSize || "medium",
         });
       } else {
         form.reset({
@@ -210,6 +213,7 @@ function ZoneEditorDialog({
           newsRssUrl: "",
           newsScrollSpeed: 50,
           newsItemCount: 10,
+          newsTextSize: "medium",
         });
       }
     }
@@ -494,6 +498,31 @@ function ZoneEditorDialog({
                             data-testid="input-news-item-count" 
                           />
                         </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="newsTextSize"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Text Size</FormLabel>
+                        <Select
+                          value={field.value || "medium"}
+                          onValueChange={field.onChange}
+                        >
+                          <FormControl>
+                            <SelectTrigger data-testid="select-news-text-size">
+                              <SelectValue placeholder="Select size" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="small">Small</SelectItem>
+                            <SelectItem value="medium">Medium</SelectItem>
+                            <SelectItem value="large">Large</SelectItem>
+                          </SelectContent>
+                        </Select>
                         <FormMessage />
                       </FormItem>
                     )}

@@ -281,12 +281,21 @@ interface NewsItem {
 function NewsWidget({ 
   rssUrl, 
   scrollSpeed = 50,
-  itemCount = 10 
+  itemCount = 10,
+  textSize = "medium"
 }: { 
   rssUrl?: string; 
   scrollSpeed?: number;
   itemCount?: number;
+  textSize?: "small" | "medium" | "large";
 }) {
+  // Text size multipliers for different settings
+  const sizeConfig = {
+    small: { headline: "clamp(10px, min(5cqh, 3cqw), 18px)", header: "clamp(8px, min(3cqh, 2cqw), 12px)" },
+    medium: { headline: "clamp(14px, min(8cqh, 5cqw), 28px)", header: "clamp(10px, min(4cqh, 3cqw), 16px)" },
+    large: { headline: "clamp(18px, min(12cqh, 7cqw), 40px)", header: "clamp(12px, min(5cqh, 4cqw), 20px)" },
+  };
+  const sizes = sizeConfig[textSize] || sizeConfig.medium;
   const [news, setNews] = useState<NewsItem[]>([]);
   const [feedTitle, setFeedTitle] = useState<string>("News");
   const [error, setError] = useState<string | null>(null);
@@ -360,11 +369,11 @@ function NewsWidget({
       <div className="bg-black/30 px-2 py-0.5 flex items-center gap-1 flex-shrink-0">
         <Newspaper 
           className="text-white flex-shrink-0" 
-          style={{ width: "clamp(10px, min(4cqh, 3cqw), 18px)", height: "clamp(10px, min(4cqh, 3cqw), 18px)" }}
+          style={{ width: sizes.header, height: sizes.header }}
         />
         <span 
           className="text-white font-semibold truncate"
-          style={{ fontSize: "clamp(8px, min(3cqh, 2cqw), 14px)" }}
+          style={{ fontSize: sizes.header }}
         >
           {feedTitle}
         </span>
@@ -373,7 +382,7 @@ function NewsWidget({
         <div 
           className="whitespace-nowrap text-white font-medium"
           style={{
-            fontSize: "clamp(10px, min(5cqh, 3cqw), 20px)",
+            fontSize: sizes.headline,
             animation: `marquee ${animationDuration}s linear infinite`,
           }}
         >
@@ -475,6 +484,7 @@ function ZoneRenderer({
             rssUrl={zone.newsRssUrl} 
             scrollSpeed={zone.newsScrollSpeed}
             itemCount={zone.newsItemCount}
+            textSize={zone.newsTextSize}
           />
         );
       default:

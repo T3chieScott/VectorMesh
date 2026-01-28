@@ -234,6 +234,7 @@ export interface LayoutZone {
   newsRssUrl?: string;
   newsScrollSpeed?: number;
   newsItemCount?: number;
+  newsTextSize?: "small" | "medium" | "large";
 }
 
 // ============ PROGRAMMES ============
