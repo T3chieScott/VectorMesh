@@ -59,6 +59,10 @@ import {
   ChevronDown,
   ChevronUp,
   Settings2,
+  CloudSun,
+  Newspaper,
+  MapPin,
+  Rss,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone } from "@shared/schema";
 
@@ -82,6 +86,8 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   clock: Clock,
   logo: Grid3X3,
   html: Code,
+  weather: CloudSun,
+  news: Newspaper,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -90,16 +96,45 @@ const zoneTypeLabels: Record<string, string> = {
   clock: "Clock widget",
   logo: "Logo widget",
   html: "HTML widget",
+  weather: "Weather widget",
+  news: "News (RSS feed)",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(1).max(100),
   height: z.number().min(1).max(100),
   zIndex: z.number().min(0).max(100),
+  // Weather widget configuration
+  weatherLocation: z.string().optional(),
+  weatherLat: z.number().optional(),
+  weatherLng: z.number().optional(),
+  weatherUnit: z.enum(["celsius", "fahrenheit"]).optional(),
+  // News widget configuration
+  newsRssUrl: z.string().optional(),
+  newsScrollSpeed: z.number().min(10).max(200).optional(),
+  newsItemCount: z.number().min(1).max(50).optional(),
+}).refine((data) => {
+  // Require lat/lng for weather zones
+  if (data.type === "weather") {
+    return data.weatherLat !== undefined && data.weatherLng !== undefined;
+  }
+  return true;
+}, {
+  message: "Weather widget requires location coordinates. Enter a location and click the pin button to find coordinates.",
+  path: ["weatherLat"],
+}).refine((data) => {
+  // Require RSS URL for news zones
+  if (data.type === "news") {
+    return data.newsRssUrl && data.newsRssUrl.trim().length > 0;
+  }
+  return true;
+}, {
+  message: "News widget requires an RSS feed URL",
+  path: ["newsRssUrl"],
 });
 
 type ZoneFormValues = z.infer<typeof zoneFormSchema>;
@@ -117,6 +152,7 @@ function ZoneEditorDialog({
 }) {
   const { toast } = useToast();
   const isEditing = !!zone;
+  const [isGeocoding, setIsGeocoding] = useState(false);
 
   const form = useForm<ZoneFormValues>({
     resolver: zodResolver(zoneFormSchema),
@@ -128,6 +164,13 @@ function ZoneEditorDialog({
       width: 50,
       height: 50,
       zIndex: 1,
+      weatherLocation: "",
+      weatherLat: undefined,
+      weatherLng: undefined,
+      weatherUnit: "celsius",
+      newsRssUrl: "",
+      newsScrollSpeed: 50,
+      newsItemCount: 10,
     },
   });
 
@@ -143,6 +186,13 @@ function ZoneEditorDialog({
           width: zone.width,
           height: zone.height,
           zIndex: zone.zIndex,
+          weatherLocation: zone.weatherLocation || "",
+          weatherLat: zone.weatherLat,
+          weatherLng: zone.weatherLng,
+          weatherUnit: zone.weatherUnit || "celsius",
+          newsRssUrl: zone.newsRssUrl || "",
+          newsScrollSpeed: zone.newsScrollSpeed || 50,
+          newsItemCount: zone.newsItemCount || 10,
         });
       } else {
         form.reset({
@@ -153,6 +203,13 @@ function ZoneEditorDialog({
           width: 50,
           height: 50,
           zIndex: 1,
+          weatherLocation: "",
+          weatherLat: undefined,
+          weatherLng: undefined,
+          weatherUnit: "celsius",
+          newsRssUrl: "",
+          newsScrollSpeed: 50,
+          newsItemCount: 10,
         });
       }
     }
@@ -239,6 +296,204 @@ function ZoneEditorDialog({
                 </FormItem>
               )}
             />
+
+            {/* Weather Widget Configuration */}
+            {form.watch("type") === "weather" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <CloudSun className="h-4 w-4" />
+                  Weather Widget Settings
+                </div>
+                <FormField
+                  control={form.control}
+                  name="weatherLocation"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Location Name</FormLabel>
+                      <FormControl>
+                        <div className="flex gap-2">
+                          <Input 
+                            placeholder="e.g., London, UK" 
+                            {...field} 
+                            data-testid="input-weather-location" 
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            disabled={isGeocoding || !field.value?.trim()}
+                            onClick={async () => {
+                              const location = field.value;
+                              if (!location?.trim()) {
+                                toast({ title: "Enter a location first", variant: "destructive" });
+                                return;
+                              }
+                              setIsGeocoding(true);
+                              try {
+                                const res = await fetch(`/api/widgets/geocode?location=${encodeURIComponent(location)}`);
+                                if (!res.ok) throw new Error("Geocoding failed");
+                                const data = await res.json();
+                                form.setValue("weatherLocation", data.name);
+                                form.setValue("weatherLat", data.lat);
+                                form.setValue("weatherLng", data.lng);
+                                toast({ title: `Found: ${data.name}` });
+                              } catch {
+                                toast({ title: "Could not find location", variant: "destructive" });
+                              } finally {
+                                setIsGeocoding(false);
+                              }
+                            }}
+                            data-testid="button-geocode"
+                          >
+                            {isGeocoding ? (
+                              <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                            ) : (
+                              <MapPin className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="weatherLat"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Latitude</FormLabel>
+                        <FormControl>
+                          <Input 
+                            type="number" 
+                            step="0.0001"
+                            placeholder="e.g., 51.5074" 
+                            value={field.value ?? ""} 
+                            onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
+                            data-testid="input-weather-lat" 
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="weatherLng"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Longitude</FormLabel>
+                        <FormControl>
+                          <Input 
+                            type="number" 
+                            step="0.0001"
+                            placeholder="e.g., -0.1278" 
+                            value={field.value ?? ""} 
+                            onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
+                            data-testid="input-weather-lng" 
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name="weatherUnit"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Temperature Unit</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || "celsius"}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-weather-unit">
+                            <SelectValue placeholder="Select unit" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="celsius">Celsius (°C)</SelectItem>
+                          <SelectItem value="fahrenheit">Fahrenheit (°F)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+
+            {/* News Widget Configuration */}
+            {form.watch("type") === "news" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Rss className="h-4 w-4" />
+                  News Widget Settings
+                </div>
+                <FormField
+                  control={form.control}
+                  name="newsRssUrl"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>RSS Feed URL</FormLabel>
+                      <FormControl>
+                        <Input 
+                          placeholder="https://feeds.example.com/rss" 
+                          {...field} 
+                          data-testid="input-news-rss-url" 
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="newsScrollSpeed"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Scroll Speed</FormLabel>
+                        <FormControl>
+                          <div className="space-y-2">
+                            <Slider
+                              value={[field.value || 50]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={10}
+                              max={200}
+                              step={10}
+                              data-testid="slider-news-scroll-speed"
+                            />
+                            <span className="text-sm text-muted-foreground">{field.value || 50} (slower → faster)</span>
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="newsItemCount"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Headlines Count</FormLabel>
+                        <FormControl>
+                          <Input 
+                            type="number" 
+                            min={1}
+                            max={50}
+                            value={field.value ?? 10} 
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 10)}
+                            data-testid="input-news-item-count" 
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <FormField
