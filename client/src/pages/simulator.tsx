@@ -31,7 +31,7 @@ import {
   Code,
   RefreshCw,
 } from "lucide-react";
-import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone } from "@shared/schema";
+import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
 
 interface SimulatorState {
   isPlaying: boolean;
@@ -153,12 +153,14 @@ function ZoneRenderer({
   mediaIndex,
   isPlaying,
   showBorder,
+  playlistName,
 }: {
   zone: LayoutZone;
   media: MediaAsset[];
   mediaIndex: number;
   isPlaying: boolean;
   showBorder: boolean;
+  playlistName?: string;
 }) {
   const ZoneIcon = zoneTypeIcons[zone.type] || Layers;
 
@@ -200,6 +202,9 @@ function ZoneRenderer({
         <div className="absolute top-1 left-1 bg-black/70 text-white text-xs px-1.5 py-0.5 rounded flex items-center gap-1">
           <ZoneIcon className="h-3 w-3" />
           {zone.name}
+          {playlistName && zone.type === "media" && (
+            <span className="text-white/60 ml-1">({playlistName})</span>
+          )}
         </div>
       )}
     </div>
@@ -210,18 +215,20 @@ function PlayerDisplay({
   screen,
   profile,
   layout,
-  media,
   state,
-  mediaIndex,
   liveOverride,
+  getZoneMedia,
+  getZoneMediaIndex,
+  getPlaylistName,
 }: {
   screen: Screen | null;
   profile: DisplayProfile | null;
   layout: LayoutTemplate | null;
-  media: MediaAsset[];
   state: SimulatorState;
-  mediaIndex: number;
   liveOverride: LiveOverride | null;
+  getZoneMedia: (zoneId: string) => MediaAsset[];
+  getZoneMediaIndex: (zoneId: string) => number;
+  getPlaylistName: (zoneId: string) => string | undefined;
 }) {
   const zones = (layout?.zones as LayoutZone[]) || [];
   const aspectRatio = profile ? `${profile.width} / ${profile.height}` : "16 / 9";
@@ -251,10 +258,11 @@ function PlayerDisplay({
           <ZoneRenderer
             key={zone.id}
             zone={zone}
-            media={media}
-            mediaIndex={mediaIndex}
+            media={getZoneMedia(zone.id)}
+            mediaIndex={getZoneMediaIndex(zone.id)}
             isPlaying={state.isPlaying}
             showBorder={state.showZoneBorders}
+            playlistName={getPlaylistName(zone.id)}
           />
         ))
       ) : layout ? (
@@ -331,6 +339,8 @@ export default function SimulatorPage() {
   const [selectedScreenId, setSelectedScreenId] = useState<string>("none");
   const [selectedLayoutId, setSelectedLayoutId] = useState<string>("none");
   const [mediaIndex, setMediaIndex] = useState(0);
+  const [zoneMediaIndices, setZoneMediaIndices] = useState<Record<string, number>>({});
+  const [zonePlaylistAssignments, setZonePlaylistAssignments] = useState<Record<string, string>>({});
   const [state, setState] = useState<SimulatorState>({
     isPlaying: true,
     currentTime: "",
@@ -359,6 +369,30 @@ export default function SimulatorPage() {
     queryKey: ["/api/live-overrides"],
   });
 
+  const { data: playlists = [] } = useQuery<Playlist[]>({
+    queryKey: ["/api/playlists"],
+  });
+
+  // Get playlist items for assigned playlists
+  const assignedPlaylistIds = Object.values(zonePlaylistAssignments).filter(id => id && id !== "none");
+  const { data: playlistItemsMap = {} } = useQuery<Record<string, PlaylistItem[]>>({
+    queryKey: ["/api/playlist-items-batch", assignedPlaylistIds],
+    queryFn: async () => {
+      if (assignedPlaylistIds.length === 0) return {};
+      const results: Record<string, PlaylistItem[]> = {};
+      await Promise.all(
+        assignedPlaylistIds.map(async (playlistId) => {
+          const res = await fetch(`/api/playlists/${playlistId}/items`);
+          if (res.ok) {
+            results[playlistId] = await res.json();
+          }
+        })
+      );
+      return results;
+    },
+    enabled: assignedPlaylistIds.length > 0,
+  });
+
   const selectedScreen = selectedScreenId !== "none" ? screens.find((s) => s.id === selectedScreenId) : null;
   const selectedProfile = selectedScreen
     ? profiles.find((p) => p.id === selectedScreen.displayProfileId)
@@ -377,6 +411,30 @@ export default function SimulatorPage() {
       new Date(o.startTime) <= new Date()
   );
 
+  // Helper to get zone-specific media based on playlist assignment
+  const getZoneMedia = (zoneId: string): MediaAsset[] => {
+    const playlistId = zonePlaylistAssignments[zoneId];
+    if (!playlistId || playlistId === "none") {
+      return media; // Fall back to all media
+    }
+    const playlistItems = playlistItemsMap[playlistId] || [];
+    // Sort by order and get media assets
+    const sortedItems = [...playlistItems].sort((a, b) => (a.order || 0) - (b.order || 0));
+    return sortedItems
+      .map(item => media.find(m => m.id === item.mediaAssetId))
+      .filter((m): m is MediaAsset => m !== undefined);
+  };
+
+  const getZoneMediaIndex = (zoneId: string): number => {
+    return zoneMediaIndices[zoneId] || 0;
+  };
+
+  const getPlaylistName = (zoneId: string): string | undefined => {
+    const playlistId = zonePlaylistAssignments[zoneId];
+    if (!playlistId || playlistId === "none") return undefined;
+    return playlists.find(p => p.id === playlistId)?.name;
+  };
+
   // Update time every second
   useEffect(() => {
     const updateTime = () => {
@@ -393,16 +451,35 @@ export default function SimulatorPage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-advance media zones
+  // Auto-advance media zones (both global and per-zone)
+  const zones = (selectedLayout?.zones as LayoutZone[]) || [];
   useEffect(() => {
-    if (!state.isPlaying || media.length === 0) return;
+    if (!state.isPlaying) return;
 
     const interval = setInterval(() => {
-      setMediaIndex((prev) => (prev + 1) % media.length);
+      // Advance global media index
+      if (media.length > 0) {
+        setMediaIndex((prev) => (prev + 1) % media.length);
+      }
+      // Advance zone-specific indices
+      if (zones.length > 0) {
+        setZoneMediaIndices((prev) => {
+          const next = { ...prev };
+          zones.forEach(zone => {
+            if (zone.type === "media") {
+              const zoneMedia = getZoneMedia(zone.id);
+              if (zoneMedia.length > 0) {
+                next[zone.id] = ((prev[zone.id] || 0) + 1) % zoneMedia.length;
+              }
+            }
+          });
+          return next;
+        });
+      }
     }, 8000);
 
     return () => clearInterval(interval);
-  }, [state.isPlaying, media.length]);
+  }, [state.isPlaying, media.length, zones.length, zonePlaylistAssignments, playlistItemsMap]);
 
   const handlePlayPause = () => {
     setState((prev) => ({ ...prev, isPlaying: !prev.isPlaying }));
@@ -604,10 +681,11 @@ export default function SimulatorPage() {
                 screen={selectedScreen || null}
                 profile={selectedProfile || null}
                 layout={selectedLayout || null}
-                media={media}
                 state={state}
-                mediaIndex={mediaIndex}
                 liveOverride={activeLiveOverride || null}
+                getZoneMedia={getZoneMedia}
+                getZoneMediaIndex={getZoneMediaIndex}
+                getPlaylistName={getPlaylistName}
               />
             </CardContent>
           </Card>
@@ -624,29 +702,58 @@ export default function SimulatorPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {((selectedLayout.zones as LayoutZone[]) || []).map((zone) => {
                 const ZoneIcon = zoneTypeIcons[zone.type] || Layers;
+                const zoneMedia = getZoneMedia(zone.id);
+                const playlistId = zonePlaylistAssignments[zone.id] || "none";
                 return (
                   <div
                     key={zone.id}
-                    className="p-3 rounded-lg border bg-card hover-elevate"
+                    className="p-3 rounded-lg border bg-card"
                     data-testid={`zone-info-${zone.id}`}
                   >
                     <div className="flex items-center gap-2 mb-2">
                       <div className="p-1.5 rounded bg-primary/10">
                         <ZoneIcon className="h-4 w-4 text-primary" />
                       </div>
-                      <span className="font-medium text-sm truncate">{zone.name}</span>
+                      <span className="font-medium text-sm truncate flex-1">{zone.name}</span>
+                      <Badge variant="secondary" className="text-xs">{zone.type}</Badge>
                     </div>
-                    <div className="grid grid-cols-2 gap-1 text-xs text-muted-foreground">
-                      <span>Type: {zone.type}</span>
-                      <span>Z: {zone.zIndex}</span>
-                      <span>X: {zone.x}%</span>
-                      <span>Y: {zone.y}%</span>
-                      <span>W: {zone.width}%</span>
-                      <span>H: {zone.height}%</span>
+                    <div className="grid grid-cols-4 gap-1 text-xs text-muted-foreground mb-2">
+                      <span>X:{zone.x}%</span>
+                      <span>Y:{zone.y}%</span>
+                      <span>W:{zone.width}%</span>
+                      <span>H:{zone.height}%</span>
                     </div>
+                    {zone.type === "media" && (
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Playlist Source</Label>
+                        <Select
+                          value={playlistId}
+                          onValueChange={(value) => 
+                            setZonePlaylistAssignments(prev => ({ ...prev, [zone.id]: value }))
+                          }
+                        >
+                          <SelectTrigger className="h-8 text-xs" data-testid={`select-zone-playlist-${zone.id}`}>
+                            <SelectValue placeholder="Select playlist" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">All media ({media.length} items)</SelectItem>
+                            {playlists.map((playlist) => (
+                              <SelectItem key={playlist.id} value={playlist.id}>
+                                {playlist.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {playlistId !== "none" && (
+                          <div className="text-xs text-muted-foreground">
+                            {zoneMedia.length} media item{zoneMedia.length !== 1 ? "s" : ""} loaded
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
