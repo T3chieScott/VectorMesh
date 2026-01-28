@@ -330,13 +330,20 @@ function ZoneEditorDialog({
                               }
                               setIsGeocoding(true);
                               try {
-                                const res = await fetch(`/api/widgets/geocode?location=${encodeURIComponent(location)}`);
+                                const res = await fetch(`/api/widgets/geocode?q=${encodeURIComponent(location)}`);
                                 if (!res.ok) throw new Error("Geocoding failed");
                                 const data = await res.json();
-                                form.setValue("weatherLocation", data.name);
-                                form.setValue("weatherLat", data.lat);
-                                form.setValue("weatherLng", data.lng);
-                                toast({ title: `Found: ${data.name}` });
+                                if (!data.results || data.results.length === 0) {
+                                  throw new Error("No results found");
+                                }
+                                const result = data.results[0];
+                                const displayName = result.admin1 
+                                  ? `${result.name}, ${result.admin1}, ${result.country}` 
+                                  : `${result.name}, ${result.country}`;
+                                form.setValue("weatherLocation", displayName);
+                                form.setValue("weatherLat", result.lat);
+                                form.setValue("weatherLng", result.lng);
+                                toast({ title: `Found: ${displayName}` });
                               } catch {
                                 toast({ title: "Could not find location", variant: "destructive" });
                               } finally {
