@@ -334,4 +334,14 @@
   .animate-marquee {
     animation: marquee 15s linear infinite;
   }
+
+  /* Seamless ticker scroll - text starts visible and loops seamlessly */
+  @keyframes ticker-scroll {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
 }

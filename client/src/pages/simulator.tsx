@@ -362,7 +362,7 @@ function NewsWidget({
   }
 
   const headlinesText = news.map(item => item.title).join("  •  ");
-  const animationDuration = Math.max(headlinesText.length / scrollSpeed * 2, 20);
+  const animationDuration = Math.max(headlinesText.length / scrollSpeed, 15);
 
   return (
     <div className="h-full w-full bg-gradient-to-r from-red-700 to-red-900 flex flex-col overflow-hidden">
@@ -380,13 +380,14 @@ function NewsWidget({
       </div>
       <div className="flex-1 flex items-center overflow-hidden min-h-0">
         <div 
-          className="whitespace-nowrap text-white font-medium"
+          className="whitespace-nowrap text-white font-medium inline-flex"
           style={{
             fontSize: sizes.headline,
-            animation: `marquee ${animationDuration}s linear infinite`,
+            animation: `ticker-scroll ${animationDuration}s linear infinite`,
           }}
         >
-          {headlinesText}  •  {headlinesText}
+          <span className="pr-8">{headlinesText}</span>
+          <span className="pr-8">{headlinesText}</span>
         </div>
       </div>
     </div>
