@@ -234,36 +234,36 @@ function WeatherWidget({
     <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex flex-col items-center justify-center text-white p-2 overflow-hidden">
       <p 
         className="font-medium opacity-80 leading-tight truncate max-w-full"
-        style={{ fontSize: "clamp(6px, min(2cqh, 3cqw), 12px)" }}
+        style={{ fontSize: "clamp(8px, min(5cqh, 4cqw), 18px)" }}
       >
         {location}
       </p>
       <WeatherIcon 
         className="my-1 flex-shrink-0" 
-        style={{ width: "clamp(16px, min(12cqh, 15cqw), 48px)", height: "clamp(16px, min(12cqh, 15cqw), 48px)" }}
+        style={{ width: "clamp(24px, min(25cqh, 20cqw), 80px)", height: "clamp(24px, min(25cqh, 20cqw), 80px)" }}
       />
       <div 
         className="font-bold leading-none"
-        style={{ fontSize: "clamp(12px, min(7cqh, 12cqw), 36px)" }}
+        style={{ fontSize: "clamp(16px, min(15cqh, 14cqw), 56px)" }}
       >
         {weather.temperature}{weather.unit}
       </div>
       <p 
         className="mt-0.5 truncate max-w-full"
-        style={{ fontSize: "clamp(8px, min(2.5cqh, 4cqw), 14px)" }}
+        style={{ fontSize: "clamp(10px, min(5cqh, 5cqw), 20px)" }}
       >
         {weather.condition}
       </p>
       <div 
-        className="flex items-center gap-1 mt-0.5 opacity-80 flex-wrap justify-center"
-        style={{ fontSize: "clamp(6px, min(1.5cqh, 2.5cqw), 10px)" }}
+        className="flex items-center gap-2 mt-1 opacity-80 flex-wrap justify-center"
+        style={{ fontSize: "clamp(8px, min(4cqh, 4cqw), 16px)" }}
       >
         <div className="flex items-center gap-0.5">
-          <Droplets style={{ width: "clamp(6px, min(1.5cqh, 2cqw), 12px)", height: "clamp(6px, min(1.5cqh, 2cqw), 12px)" }} />
+          <Droplets style={{ width: "clamp(8px, min(3cqh, 3cqw), 16px)", height: "clamp(8px, min(3cqh, 3cqw), 16px)" }} />
           {weather.humidity}%
         </div>
         <div className="flex items-center gap-0.5">
-          <Wind style={{ width: "clamp(6px, min(1.5cqh, 2cqw), 12px)", height: "clamp(6px, min(1.5cqh, 2cqw), 12px)" }} />
+          <Wind style={{ width: "clamp(8px, min(3cqh, 3cqw), 16px)", height: "clamp(8px, min(3cqh, 3cqw), 16px)" }} />
           {weather.windSpeed}km/h
         </div>
       </div>
