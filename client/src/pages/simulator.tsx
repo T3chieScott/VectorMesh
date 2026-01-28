@@ -115,6 +115,208 @@ function HtmlWidget({ content }: { content?: string }) {
   );
 }
 
+interface WeatherData {
+  temperature: number;
+  unit: string;
+  condition: string;
+  icon: string;
+  humidity: number;
+  windSpeed: number;
+}
+
+const weatherIcons: Record<string, typeof Sun> = {
+  sun: Sun,
+  cloud: Cloud,
+  "cloud-sun": CloudSun,
+  "cloud-rain": CloudRain,
+  "cloud-drizzle": CloudDrizzle,
+  "cloud-fog": CloudFog,
+  "cloud-lightning": CloudLightning,
+  snowflake: Snowflake,
+};
+
+function WeatherWidget({ 
+  lat, 
+  lng, 
+  unit = "celsius",
+  location = "Weather"
+}: { 
+  lat?: number; 
+  lng?: number; 
+  unit?: "celsius" | "fahrenheit";
+  location?: string;
+}) {
+  const [weather, setWeather] = useState<WeatherData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!lat || !lng) return;
+    
+    const fetchWeather = async () => {
+      try {
+        const res = await fetch(`/api/widgets/weather?lat=${lat}&lng=${lng}&unit=${unit}`);
+        if (!res.ok) throw new Error("Failed to fetch weather");
+        const data = await res.json();
+        setWeather(data);
+        setError(null);
+      } catch (e) {
+        setError("Unable to load weather");
+      }
+    };
+
+    fetchWeather();
+    const interval = setInterval(fetchWeather, 10 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [lat, lng, unit]);
+
+  if (!lat || !lng) {
+    return (
+      <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center text-white">
+        <div className="text-center">
+          <CloudSun className="h-12 w-12 mx-auto mb-2 opacity-70" />
+          <p className="text-sm opacity-70">Weather widget</p>
+          <p className="text-xs opacity-50">Configure location</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-full w-full bg-gradient-to-br from-gray-600 to-gray-800 flex items-center justify-center text-white">
+        <div className="text-center">
+          <AlertTriangle className="h-8 w-8 mx-auto mb-2 opacity-70" />
+          <p className="text-sm opacity-70">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!weather) {
+    return (
+      <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center text-white">
+        <RefreshCw className="h-8 w-8 animate-spin opacity-50" />
+      </div>
+    );
+  }
+
+  const WeatherIcon = weatherIcons[weather.icon] || Cloud;
+
+  return (
+    <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex flex-col items-center justify-center text-white p-4">
+      <p className="text-sm font-medium opacity-80 mb-1">{location}</p>
+      <WeatherIcon className="h-16 w-16 mb-2" />
+      <div className="text-5xl font-bold">{weather.temperature}{weather.unit}</div>
+      <p className="text-lg mt-1">{weather.condition}</p>
+      <div className="flex items-center gap-4 mt-3 text-sm opacity-80">
+        <div className="flex items-center gap-1">
+          <Droplets className="h-4 w-4" />
+          {weather.humidity}%
+        </div>
+        <div className="flex items-center gap-1">
+          <Wind className="h-4 w-4" />
+          {weather.windSpeed} km/h
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface NewsItem {
+  title: string;
+  link: string;
+  pubDate: string;
+  source: string;
+}
+
+function NewsWidget({ 
+  rssUrl, 
+  scrollSpeed = 50,
+  itemCount = 10 
+}: { 
+  rssUrl?: string; 
+  scrollSpeed?: number;
+  itemCount?: number;
+}) {
+  const [news, setNews] = useState<NewsItem[]>([]);
+  const [feedTitle, setFeedTitle] = useState<string>("News");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!rssUrl) return;
+    
+    const fetchNews = async () => {
+      try {
+        const res = await fetch(`/api/widgets/news?url=${encodeURIComponent(rssUrl)}&count=${itemCount}`);
+        if (!res.ok) throw new Error("Failed to fetch news");
+        const data = await res.json();
+        setNews(data.items);
+        setFeedTitle(data.title);
+        setError(null);
+      } catch (e) {
+        setError("Unable to load news");
+      }
+    };
+
+    fetchNews();
+    const interval = setInterval(fetchNews, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [rssUrl, itemCount]);
+
+  if (!rssUrl) {
+    return (
+      <div className="h-full w-full bg-gradient-to-r from-red-700 to-red-900 flex items-center justify-center text-white">
+        <div className="text-center">
+          <Newspaper className="h-12 w-12 mx-auto mb-2 opacity-70" />
+          <p className="text-sm opacity-70">News widget</p>
+          <p className="text-xs opacity-50">Configure RSS feed</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-full w-full bg-gradient-to-r from-gray-600 to-gray-800 flex items-center justify-center text-white">
+        <div className="text-center">
+          <AlertTriangle className="h-8 w-8 mx-auto mb-2 opacity-70" />
+          <p className="text-sm opacity-70">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (news.length === 0) {
+    return (
+      <div className="h-full w-full bg-gradient-to-r from-red-700 to-red-900 flex items-center justify-center text-white">
+        <RefreshCw className="h-8 w-8 animate-spin opacity-50" />
+      </div>
+    );
+  }
+
+  const headlinesText = news.map(item => item.title).join("  •  ");
+  const animationDuration = Math.max(headlinesText.length / scrollSpeed * 2, 20);
+
+  return (
+    <div className="h-full w-full bg-gradient-to-r from-red-700 to-red-900 flex flex-col overflow-hidden">
+      <div className="bg-black/30 px-3 py-1 flex items-center gap-2">
+        <Newspaper className="h-4 w-4 text-white" />
+        <span className="text-white text-sm font-semibold">{feedTitle}</span>
+      </div>
+      <div className="flex-1 flex items-center overflow-hidden">
+        <div 
+          className="whitespace-nowrap text-white text-xl font-medium"
+          style={{
+            animation: `marquee ${animationDuration}s linear infinite`,
+          }}
+        >
+          {headlinesText}  •  {headlinesText}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MediaWidget({
   media,
   mediaIndex,
@@ -191,6 +393,23 @@ function ZoneRenderer({
         return <LogoWidget />;
       case "html":
         return <HtmlWidget />;
+      case "weather":
+        return (
+          <WeatherWidget 
+            lat={zone.weatherLat} 
+            lng={zone.weatherLng} 
+            unit={zone.weatherUnit}
+            location={zone.weatherLocation}
+          />
+        );
+      case "news":
+        return (
+          <NewsWidget 
+            rssUrl={zone.newsRssUrl} 
+            scrollSpeed={zone.newsScrollSpeed}
+            itemCount={zone.newsItemCount}
+          />
+        );
       default:
         return (
           <div className="h-full w-full bg-muted/30 flex items-center justify-center">
