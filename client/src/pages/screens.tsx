@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { addMinutes } from "date-fns";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
@@ -49,8 +51,9 @@ import {
   MapPin,
   RefreshCw,
   Copy,
+  Zap,
 } from "lucide-react";
-import type { Screen, DisplayProfile } from "@shared/schema";
+import type { Screen, DisplayProfile, LiveOverride } from "@shared/schema";
 
 const screenFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -67,14 +70,49 @@ function generatePairingCode(): string {
 function ScreenCard({
   screen,
   profiles,
+  activeOverride,
 }: {
   screen: Screen;
   profiles: DisplayProfile[];
+  activeOverride: LiveOverride | null;
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
 
   const profile = profiles.find((p) => p.id === screen.displayProfileId);
+
+  const quickOverrideMutation = useMutation({
+    mutationFn: (duration: number) => {
+      const now = new Date();
+      const endTime = addMinutes(now, duration);
+      return apiRequest("POST", "/api/live-overrides", {
+        name: `Quick Override: ${screen.name}`,
+        priority: 100,
+        targets: [{ type: "screen", id: screen.id }],
+        startTime: now.toISOString(),
+        endTime: endTime.toISOString(),
+        isActive: true,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/live-overrides"] });
+      toast({ title: "Override activated", description: `${screen.name} is now under live override` });
+    },
+    onError: () => {
+      toast({ title: "Failed to create override", variant: "destructive" });
+    },
+  });
+
+  const stopOverrideMutation = useMutation({
+    mutationFn: async () => {
+      if (!activeOverride) return;
+      await apiRequest("PATCH", `/api/live-overrides/${activeOverride.id}`, { isActive: false });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/live-overrides"] });
+      toast({ title: "Override stopped" });
+    },
+  });
 
   const form = useForm<ScreenFormValues>({
     resolver: zodResolver(screenFormSchema),
@@ -153,6 +191,12 @@ function ScreenCard({
               <CardTitle className="text-base" data-testid={`text-screen-name-${screen.id}`}>
                 {screen.name}
               </CardTitle>
+              {activeOverride && (
+                <Badge className="bg-amber-500/10 text-amber-600 gap-1">
+                  <Zap className="h-3 w-3" />
+                  Override
+                </Badge>
+              )}
               {screen.isOnline ? (
                 <Badge className="bg-green-500/10 text-green-600 gap-1">
                   <Wifi className="h-3 w-3" />
@@ -281,6 +325,32 @@ function ScreenCard({
                 Regenerate Code
               </DropdownMenuItem>
             )}
+            <DropdownMenuSeparator />
+            {activeOverride ? (
+              <DropdownMenuItem
+                className="text-amber-600"
+                onSelect={() => stopOverrideMutation.mutate()}
+              >
+                <Zap className="mr-2 h-4 w-4" />
+                Stop Override
+              </DropdownMenuItem>
+            ) : (
+              <>
+                <DropdownMenuItem onSelect={() => quickOverrideMutation.mutate(5)}>
+                  <Zap className="mr-2 h-4 w-4" />
+                  Override 5 min
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => quickOverrideMutation.mutate(15)}>
+                  <Zap className="mr-2 h-4 w-4" />
+                  Override 15 min
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => quickOverrideMutation.mutate(30)}>
+                  <Zap className="mr-2 h-4 w-4" />
+                  Override 30 min
+                </DropdownMenuItem>
+              </>
+            )}
+            <DropdownMenuSeparator />
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onSelect={() => deleteMutation.mutate()}
@@ -464,6 +534,23 @@ export default function ScreensPage() {
     queryKey: ["/api/display-profiles"],
   });
 
+  const { data: liveOverrides = [] } = useQuery<LiveOverride[]>({
+    queryKey: ["/api/live-overrides"],
+    refetchInterval: 10000,
+  });
+
+  const getActiveOverrideForScreen = (screenId: string): LiveOverride | null => {
+    const now = new Date();
+    return liveOverrides.find(o => {
+      if (!o.isActive || new Date(o.endTime) <= now) return false;
+      const targets = o.targets as any[] | undefined;
+      if (!targets || targets.length === 0) return false;
+      return targets.some(t => 
+        t.type === "screen" && t.id === screenId
+      );
+    }) || null;
+  };
+
   const isLoading = screensLoading || profilesLoading;
 
   const onlineCount = screens.filter((s) => s.isOnline).length;
@@ -533,7 +620,12 @@ export default function ScreensPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {screens.map((screen) => (
-            <ScreenCard key={screen.id} screen={screen} profiles={profiles} />
+            <ScreenCard 
+              key={screen.id} 
+              screen={screen} 
+              profiles={profiles} 
+              activeOverride={getActiveOverrideForScreen(screen.id)}
+            />
           ))}
         </div>
       )}

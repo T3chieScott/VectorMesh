@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { format, addHours } from "date-fns";
+import { format, addMinutes, addHours } from "date-fns";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { Progress } from "@/components/ui/progress";
 import {
   Dialog,
   DialogContent,
@@ -43,8 +44,21 @@ import {
   StopCircle,
   Play,
   AlertCircle,
+  Timer,
+  RotateCw,
+  Image,
+  Video,
 } from "lucide-react";
-import type { LiveOverride, Screen, ScreenGroup, LayoutTemplate } from "@shared/schema";
+import type { LiveOverride, Screen, ScreenGroup, LayoutTemplate, MediaAsset, Playlist } from "@shared/schema";
+
+const DURATION_PRESETS = [
+  { label: "5 min", value: 5 },
+  { label: "15 min", value: 15 },
+  { label: "30 min", value: 30 },
+  { label: "1 hour", value: 60 },
+  { label: "2 hours", value: 120 },
+  { label: "4 hours", value: 240 },
+];
 
 const overrideFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -57,15 +71,58 @@ const overrideFormSchema = z.object({
 
 type OverrideFormValues = z.infer<typeof overrideFormSchema>;
 
+function formatCountdown(seconds: number): string {
+  if (seconds <= 0) return "0:00";
+  const hours = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  if (hours > 0) {
+    return `${hours}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  }
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
 function OverrideCard({ override }: { override: LiveOverride }) {
   const { toast } = useToast();
+  const [secondsRemaining, setSecondsRemaining] = useState(0);
 
-  const now = new Date();
+  const startTime = new Date(override.startTime);
   const endTime = new Date(override.endTime);
-  const isExpired = endTime < now;
-  const timeRemaining = isExpired
-    ? 0
-    : Math.floor((endTime.getTime() - now.getTime()) / 1000 / 60);
+  const totalDuration = (endTime.getTime() - startTime.getTime()) / 1000;
+  
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      const end = new Date(override.endTime);
+      const remaining = Math.max(0, Math.floor((end.getTime() - now.getTime()) / 1000));
+      setSecondsRemaining(remaining);
+    };
+    
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, [override.startTime, override.endTime]);
+
+  const isExpired = secondsRemaining <= 0;
+  const progressPercent = totalDuration > 0 
+    ? Math.max(0, Math.min(100, ((totalDuration - secondsRemaining) / totalDuration) * 100))
+    : 100;
+
+  const extendMutation = useMutation({
+    mutationFn: (minutes: number) => {
+      const newEndTime = addMinutes(new Date(override.endTime), minutes);
+      return apiRequest("PATCH", `/api/live-overrides/${override.id}`, { 
+        endTime: newEndTime.toISOString() 
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/live-overrides"] });
+      toast({ title: "Override extended" });
+    },
+    onError: () => {
+      toast({ title: "Failed to extend override", variant: "destructive" });
+    },
+  });
 
   const deactivateMutation = useMutation({
     mutationFn: () =>
@@ -160,16 +217,31 @@ function OverrideCard({ override }: { override: LiveOverride }) {
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="pt-0">
-        <div className="flex items-center gap-4 text-sm text-muted-foreground">
-          <div className="flex items-center gap-1.5">
-            <Clock className="h-4 w-4" />
-            <span>
-              {override.isActive && !isExpired
-                ? `${timeRemaining}m remaining`
-                : format(endTime, "MMM d, HH:mm")}
-            </span>
+      <CardContent className="pt-0 space-y-3">
+        {override.isActive && !isExpired && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-1.5 text-amber-600 font-medium">
+                <Timer className="h-4 w-4" />
+                <span data-testid={`text-countdown-${override.id}`}>
+                  {formatCountdown(secondsRemaining)}
+                </span>
+              </div>
+              <span className="text-muted-foreground text-xs">
+                Ends {format(endTime, "HH:mm")}
+              </span>
+            </div>
+            <Progress value={progressPercent} className="h-1.5" />
           </div>
+        )}
+        
+        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+          {!override.isActive || isExpired ? (
+            <div className="flex items-center gap-1.5">
+              <Clock className="h-4 w-4" />
+              <span>{format(endTime, "MMM d, HH:mm")}</span>
+            </div>
+          ) : null}
           {override.targets && (
             <div className="flex items-center gap-1.5">
               <Monitor className="h-4 w-4" />
@@ -179,6 +251,25 @@ function OverrideCard({ override }: { override: LiveOverride }) {
             </div>
           )}
         </div>
+        
+        {override.isActive && !isExpired && (
+          <div className="flex items-center gap-2 pt-1">
+            <span className="text-xs text-muted-foreground">Extend:</span>
+            {[5, 15, 30].map((mins) => (
+              <Button
+                key={mins}
+                variant="ghost"
+                size="sm"
+                onClick={() => extendMutation.mutate(mins)}
+                disabled={extendMutation.isPending}
+                data-testid={`button-extend-${override.id}-${mins}`}
+              >
+                <RotateCw className="h-3 w-3 mr-1" />
+                +{mins}m
+              </Button>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -382,34 +473,51 @@ function CreateOverrideDialog({
               )}
             />
 
-            <div className="grid grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="duration"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Duration (minutes)</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={480}
-                        {...field}
-                        onChange={(e) => field.onChange(parseInt(e.target.value))}
-                        data-testid="input-override-duration"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+            <FormField
+              control={form.control}
+              name="duration"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Duration</FormLabel>
+                  <div className="flex flex-wrap gap-2">
+                    {DURATION_PRESETS.map((preset) => (
+                      <Button
+                        key={preset.value}
+                        type="button"
+                        variant={field.value === preset.value ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => field.onChange(preset.value)}
+                        data-testid={`button-duration-${preset.value}`}
+                      >
+                        {preset.label}
+                      </Button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-sm text-muted-foreground">Custom:</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={480}
+                      value={field.value}
+                      onChange={(e) => field.onChange(parseInt(e.target.value) || 30)}
+                      className="w-20"
+                      data-testid="input-override-duration"
+                    />
+                    <span className="text-sm text-muted-foreground">minutes</span>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-              <FormField
-                control={form.control}
-                name="priority"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Priority</FormLabel>
+            <FormField
+              control={form.control}
+              name="priority"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Priority (higher = takes precedence)</FormLabel>
+                  <div className="flex items-center gap-4">
                     <FormControl>
                       <Input
                         type="number"
@@ -417,14 +525,18 @@ function CreateOverrideDialog({
                         max={1000}
                         {...field}
                         onChange={(e) => field.onChange(parseInt(e.target.value))}
+                        className="w-24"
                         data-testid="input-override-priority"
                       />
                     </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+                    <span className="text-sm text-muted-foreground">
+                      Default scheduled content uses priority 0-100
+                    </span>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             <div className="flex justify-end gap-2">
               <Button

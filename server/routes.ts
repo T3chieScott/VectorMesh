@@ -789,7 +789,12 @@ export async function registerRoutes(
 
   app.post("/api/live-overrides", requireAuth, async (req, res) => {
     try {
-      const data = insertLiveOverrideSchema.parse(req.body);
+      const body = {
+        ...req.body,
+        startTime: req.body.startTime ? new Date(req.body.startTime) : undefined,
+        endTime: req.body.endTime ? new Date(req.body.endTime) : undefined,
+      };
+      const data = insertLiveOverrideSchema.parse(body);
       const override = await storage.createLiveOverride(data);
       res.status(201).json(override);
     } catch (error) {
@@ -803,7 +808,12 @@ export async function registerRoutes(
 
   app.patch("/api/live-overrides/:id", requireAuth, async (req, res) => {
     try {
-      const data = insertLiveOverrideSchema.partial().parse(req.body);
+      const body = {
+        ...req.body,
+        ...(req.body.startTime && { startTime: new Date(req.body.startTime) }),
+        ...(req.body.endTime && { endTime: new Date(req.body.endTime) }),
+      };
+      const data = insertLiveOverrideSchema.partial().parse(body);
       const override = await storage.updateLiveOverride(req.params.id, data);
       if (!override) {
         return res.status(404).json({ error: "Live override not found" });
