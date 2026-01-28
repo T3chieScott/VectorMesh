@@ -124,13 +124,14 @@ function MediaWidget({
   }
 
   const mediaUrl = `/api/media/${currentMedia.id}/file`;
+  const objectFit = currentMedia.displayMode === "contain" ? "object-contain" : "object-cover";
 
   if (currentMedia.mediaType === "video") {
     return (
       <video
         key={currentMedia.id}
         src={mediaUrl}
-        className="w-full h-full object-cover"
+        className={`w-full h-full ${objectFit}`}
         autoPlay={isPlaying}
         loop
         muted
@@ -142,7 +143,7 @@ function MediaWidget({
     <img
       src={mediaUrl}
       alt={currentMedia.name}
-      className="w-full h-full object-cover"
+      className={`w-full h-full ${objectFit}`}
     />
   );
 }
