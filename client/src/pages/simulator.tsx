@@ -30,6 +30,18 @@ import {
   Type,
   Code,
   RefreshCw,
+  CloudSun,
+  Newspaper,
+  Sun,
+  Cloud,
+  CloudRain,
+  CloudSnow,
+  CloudLightning,
+  CloudFog,
+  CloudDrizzle,
+  Snowflake,
+  Droplets,
+  Wind,
 } from "lucide-react";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
 
@@ -47,6 +59,8 @@ const zoneTypeIcons: Record<string, typeof Image> = {
   clock: Clock,
   logo: Image,
   html: Code,
+  weather: CloudSun,
+  news: Newspaper,
 };
 
 function TickerWidget({ content }: { content?: string }) {

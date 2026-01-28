@@ -920,5 +920,165 @@ export async function registerRoutes(
     }
   });
 
+  // ============ WEATHER WIDGET ============
+  // Cache weather data for 10 minutes to reduce API calls
+  const weatherCache = new Map<string, { data: any; timestamp: number }>();
+  const WEATHER_CACHE_TTL = 10 * 60 * 1000;
+
+  app.get("/api/widgets/weather", requireAuth, async (req, res) => {
+    try {
+      const lat = parseFloat(req.query.lat as string);
+      const lng = parseFloat(req.query.lng as string);
+      const unit = (req.query.unit as string) || "celsius";
+
+      if (isNaN(lat) || isNaN(lng)) {
+        return res.status(400).json({ error: "Invalid latitude or longitude" });
+      }
+
+      const cacheKey = `${lat},${lng},${unit}`;
+      const cached = weatherCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < WEATHER_CACHE_TTL) {
+        return res.json(cached.data);
+      }
+
+      // Use Open-Meteo API (free, no API key required)
+      const tempUnit = unit === "fahrenheit" ? "fahrenheit" : "celsius";
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&temperature_unit=${tempUnit}&timezone=auto`;
+      
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error("Weather API request failed");
+      }
+
+      const data = await response.json();
+      const current = data.current;
+      
+      // Map weather codes to conditions
+      const weatherConditions: Record<number, { condition: string; icon: string }> = {
+        0: { condition: "Clear", icon: "sun" },
+        1: { condition: "Mainly Clear", icon: "sun" },
+        2: { condition: "Partly Cloudy", icon: "cloud-sun" },
+        3: { condition: "Overcast", icon: "cloud" },
+        45: { condition: "Foggy", icon: "cloud-fog" },
+        48: { condition: "Rime Fog", icon: "cloud-fog" },
+        51: { condition: "Light Drizzle", icon: "cloud-drizzle" },
+        53: { condition: "Drizzle", icon: "cloud-drizzle" },
+        55: { condition: "Dense Drizzle", icon: "cloud-drizzle" },
+        61: { condition: "Light Rain", icon: "cloud-rain" },
+        63: { condition: "Rain", icon: "cloud-rain" },
+        65: { condition: "Heavy Rain", icon: "cloud-rain" },
+        71: { condition: "Light Snow", icon: "snowflake" },
+        73: { condition: "Snow", icon: "snowflake" },
+        75: { condition: "Heavy Snow", icon: "snowflake" },
+        80: { condition: "Rain Showers", icon: "cloud-rain" },
+        81: { condition: "Heavy Rain Showers", icon: "cloud-rain" },
+        82: { condition: "Violent Rain", icon: "cloud-rain" },
+        95: { condition: "Thunderstorm", icon: "cloud-lightning" },
+        96: { condition: "Thunderstorm with Hail", icon: "cloud-lightning" },
+        99: { condition: "Severe Thunderstorm", icon: "cloud-lightning" },
+      };
+
+      const weatherInfo = weatherConditions[current.weather_code] || { condition: "Unknown", icon: "cloud" };
+      
+      const weatherData = {
+        temperature: Math.round(current.temperature_2m),
+        unit: unit === "fahrenheit" ? "°F" : "°C",
+        condition: weatherInfo.condition,
+        icon: weatherInfo.icon,
+        humidity: current.relative_humidity_2m,
+        windSpeed: Math.round(current.wind_speed_10m),
+        timestamp: new Date().toISOString(),
+      };
+
+      weatherCache.set(cacheKey, { data: weatherData, timestamp: Date.now() });
+      res.json(weatherData);
+    } catch (error) {
+      console.error("Error fetching weather:", error);
+      res.status(500).json({ error: "Failed to fetch weather data" });
+    }
+  });
+
+  // ============ NEWS WIDGET ============
+  // Cache RSS feeds for 5 minutes
+  const newsCache = new Map<string, { data: any; timestamp: number }>();
+  const NEWS_CACHE_TTL = 5 * 60 * 1000;
+
+  app.get("/api/widgets/news", requireAuth, async (req, res) => {
+    try {
+      const rssUrl = req.query.url as string;
+      const itemCount = Math.min(parseInt(req.query.count as string) || 10, 50);
+
+      if (!rssUrl) {
+        return res.status(400).json({ error: "RSS URL is required" });
+      }
+
+      const cacheKey = `${rssUrl},${itemCount}`;
+      const cached = newsCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < NEWS_CACHE_TTL) {
+        return res.json(cached.data);
+      }
+
+      // Dynamic import for rss-parser
+      const Parser = (await import("rss-parser")).default;
+      const parser = new Parser({
+        timeout: 10000,
+        headers: {
+          "User-Agent": "Digital Signage RSS Reader/1.0",
+        },
+      });
+
+      const feed = await parser.parseURL(rssUrl);
+      
+      const newsData = {
+        title: feed.title || "News Feed",
+        items: feed.items.slice(0, itemCount).map((item) => ({
+          title: item.title || "",
+          link: item.link || "",
+          pubDate: item.pubDate || item.isoDate || "",
+          source: feed.title || "",
+        })),
+        timestamp: new Date().toISOString(),
+      };
+
+      newsCache.set(cacheKey, { data: newsData, timestamp: Date.now() });
+      res.json(newsData);
+    } catch (error) {
+      console.error("Error fetching news:", error);
+      res.status(500).json({ error: "Failed to fetch news feed" });
+    }
+  });
+
+  // Geocoding endpoint to convert location names to coordinates
+  app.get("/api/widgets/geocode", requireAuth, async (req, res) => {
+    try {
+      const query = req.query.q as string;
+      if (!query) {
+        return res.status(400).json({ error: "Location query is required" });
+      }
+
+      // Use Open-Meteo geocoding API (free, no API key required)
+      const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5&language=en&format=json`;
+      
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error("Geocoding API request failed");
+      }
+
+      const data = await response.json();
+      const results = (data.results || []).map((r: any) => ({
+        name: r.name,
+        country: r.country,
+        admin1: r.admin1,
+        lat: r.latitude,
+        lng: r.longitude,
+      }));
+
+      res.json({ results });
+    } catch (error) {
+      console.error("Error geocoding:", error);
+      res.status(500).json({ error: "Failed to geocode location" });
+    }
+  });
+
   return httpServer;
 }

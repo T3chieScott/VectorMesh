@@ -13,7 +13,7 @@ export const screenTypeEnum = pgEnum("screen_type", ["standard", "led_wall"]);
 export const orientationEnum = pgEnum("orientation", ["landscape", "portrait"]);
 export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "gif"]);
 export const programmeStatusEnum = pgEnum("programme_status", ["draft", "published"]);
-export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html"]);
+export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news"]);
 export const scaleModeEnum = pgEnum("scale_mode", ["contain", "cover"]);
 
 // ============ CLIENTS ============
@@ -217,7 +217,7 @@ export type LayoutTemplate = typeof layoutTemplates.$inferSelect;
 export interface LayoutZone {
   id: string;
   name: string;
-  type: "media" | "ticker" | "clock" | "logo" | "html";
+  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news";
   x: number;
   y: number;
   width: number;
@@ -225,6 +225,15 @@ export interface LayoutZone {
   scaleMode?: "contain" | "cover";
   backgroundColor?: string;
   zIndex?: number;
+  // Weather widget configuration
+  weatherLocation?: string;
+  weatherLat?: number;
+  weatherLng?: number;
+  weatherUnit?: "celsius" | "fahrenheit";
+  // News widget configuration
+  newsRssUrl?: string;
+  newsScrollSpeed?: number;
+  newsItemCount?: number;
 }
 
 // ============ PROGRAMMES ============
