@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -532,20 +532,75 @@ function PlayerDisplay({
   getZoneMediaIndex: (zoneId: string) => number;
   getPlaylistName: (zoneId: string) => string | undefined;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(0.5);
   const zones = (layout?.zones as LayoutZone[]) || [];
-  const aspectRatio = profile ? `${profile.width} / ${profile.height}` : "16 / 9";
   const hasLiveOverride = liveOverride && liveOverride.isActive && new Date(liveOverride.endTime) > new Date();
 
+  // True pixel dimensions from display profile
+  const trueWidth = profile?.width || 1920;
+  const trueHeight = profile?.height || 1080;
+
+  // Calculate scale to fit container while preserving true dimensions
+  useEffect(() => {
+    const updateScale = () => {
+      if (!containerRef.current) return;
+      const containerRect = containerRef.current.getBoundingClientRect();
+      
+      // Use actual container dimensions with small padding
+      const availableWidth = containerRect.width - 16;
+      const availableHeight = containerRect.height - 16;
+      
+      if (availableWidth <= 0 || availableHeight <= 0) return;
+      
+      const scaleX = availableWidth / trueWidth;
+      const scaleY = availableHeight / trueHeight;
+      const newScale = Math.min(scaleX, scaleY, 1); // Never scale up beyond 1
+      setScale(Math.max(0.05, newScale)); // Minimum 5% scale
+    };
+
+    // Initial delay to allow container to render with proper height
+    const timeoutId = setTimeout(updateScale, 50);
+    
+    // Use ResizeObserver to detect container size changes
+    const resizeObserver = new ResizeObserver(updateScale);
+    if (containerRef.current) {
+      resizeObserver.observe(containerRef.current);
+    }
+    
+    return () => {
+      clearTimeout(timeoutId);
+      resizeObserver.disconnect();
+    };
+  }, [trueWidth, trueHeight, state.isFullscreen]);
+
+  // Scaled dimensions for the wrapper
+  const scaledWidth = trueWidth * scale;
+  const scaledHeight = trueHeight * scale;
+
   return (
-    <div
-      className="relative bg-black rounded-lg overflow-hidden shadow-2xl mx-auto"
-      style={{
-        aspectRatio,
-        maxHeight: state.isFullscreen ? "100vh" : "60vh",
-        maxWidth: state.isFullscreen ? "100vw" : "100%",
-      }}
-      data-testid="player-display"
+    <div 
+      ref={containerRef} 
+      className="w-full h-full flex items-center justify-center"
     >
+      <div
+        className="relative bg-black rounded-lg overflow-hidden shadow-2xl"
+        style={{
+          width: `${scaledWidth}px`,
+          height: `${scaledHeight}px`,
+        }}
+        data-testid="player-display"
+      >
+        {/* Inner content at true pixel dimensions, scaled down */}
+        <div
+          style={{
+            width: `${trueWidth}px`,
+            height: `${trueHeight}px`,
+            transform: `scale(${scale})`,
+            transformOrigin: "top left",
+          }}
+          className="relative"
+        >
       {/* Live Override Banner */}
       {hasLiveOverride && (
         <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white px-3 py-1.5 flex items-center justify-center gap-2 text-sm font-medium">
@@ -612,28 +667,30 @@ function PlayerDisplay({
         </div>
       )}
 
-      {/* Connection Status */}
-      <div className="absolute top-3 right-3 z-40">
-        <Badge
-          variant="secondary"
-          className={`gap-1 ${
-            screen?.isOnline !== false
-              ? "bg-green-500/20 text-green-400"
-              : "bg-red-500/20 text-red-400"
-          }`}
-        >
-          {screen?.isOnline !== false ? (
-            <>
-              <Wifi className="h-3 w-3" />
-              Online
-            </>
-          ) : (
-            <>
-              <WifiOff className="h-3 w-3" />
-              Offline
-            </>
-          )}
-        </Badge>
+          {/* Connection Status */}
+          <div className="absolute top-3 right-3 z-40">
+            <Badge
+              variant="secondary"
+              className={`gap-1 ${
+                screen?.isOnline !== false
+                  ? "bg-green-500/20 text-green-400"
+                  : "bg-red-500/20 text-red-400"
+              }`}
+            >
+              {screen?.isOnline !== false ? (
+                <>
+                  <Wifi className="h-3 w-3" />
+                  Online
+                </>
+              ) : (
+                <>
+                  <WifiOff className="h-3 w-3" />
+                  Offline
+                </>
+              )}
+            </Badge>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -967,8 +1024,8 @@ export default function SimulatorPage() {
 
         {/* Player Display */}
         <div className="lg:col-span-3">
-          <Card className="overflow-hidden">
-            <CardHeader className="border-b py-3">
+          <Card className="overflow-hidden flex flex-col" style={{ height: state.isFullscreen ? "100vh" : "60vh", minHeight: "400px" }}>
+            <CardHeader className="border-b py-3 flex-shrink-0">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base font-semibold flex items-center gap-2">
                   <Tv2 className="h-4 w-4" />
@@ -980,7 +1037,7 @@ export default function SimulatorPage() {
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="p-4 player-container bg-muted/30">
+            <CardContent className="p-4 player-container bg-muted/30 flex-1 min-h-0">
               <PlayerDisplay
                 screen={selectedScreen || null}
                 profile={selectedProfile || null}
