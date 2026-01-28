@@ -85,16 +85,16 @@ function ClockWidget() {
   }, []);
 
   return (
-    <div className="h-full w-full bg-black/80 flex flex-col items-center justify-center text-white overflow-hidden p-1">
+    <div className="h-full w-full bg-black/80 flex flex-col items-center justify-center text-white overflow-hidden p-2">
       <div 
         className="font-bold tabular-nums leading-none"
-        style={{ fontSize: "clamp(12px, 25cqh, 48px)" }}
+        style={{ fontSize: "clamp(16px, 45cqh, 96px)" }}
       >
         {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
       </div>
       <div 
-        className="text-white/70 mt-0.5 truncate max-w-full"
-        style={{ fontSize: "clamp(8px, 12cqh, 16px)" }}
+        className="text-white/70 mt-1 truncate max-w-full"
+        style={{ fontSize: "clamp(10px, 18cqh, 32px)" }}
       >
         {time.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
       </div>
@@ -585,30 +585,32 @@ function PlayerDisplay({
         </div>
       )}
 
-      {/* Status Bar */}
-      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3 z-40">
-        <div className="flex items-center justify-between text-white text-sm">
-          <div className="flex items-center gap-2">
-            <Badge variant="secondary" className="bg-white/20 text-xs">
-              {screen?.name || "Preview Mode"}
-            </Badge>
-            {profile && (
-              <span className="text-xs text-white/60">
-                {profile.width}×{profile.height}
-              </span>
-            )}
-            {layout && (
-              <span className="text-xs text-white/60">
-                {layout.name}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="tabular-nums">{state.currentTime}</span>
-            <span className="text-white/50 hidden sm:inline">{state.currentDate}</span>
+      {/* Status Bar - hidden when Show Labels is off */}
+      {state.showZoneBorders && (
+        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3 z-40">
+          <div className="flex items-center justify-between text-white text-sm">
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="bg-white/20 text-xs">
+                {screen?.name || "Preview Mode"}
+              </Badge>
+              {profile && (
+                <span className="text-xs text-white/60">
+                  {profile.width}×{profile.height}
+                </span>
+              )}
+              {layout && (
+                <span className="text-xs text-white/60">
+                  {layout.name}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="tabular-nums">{state.currentTime}</span>
+              <span className="text-white/50 hidden sm:inline">{state.currentDate}</span>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Connection Status */}
       <div className="absolute top-3 right-3 z-40">
@@ -906,15 +908,15 @@ export default function SimulatorPage() {
               </div>
             </div>
 
-            {/* Debug Toggle */}
+            {/* Labels Toggle - controls zone borders and footer */}
             <div className="flex items-center justify-between pt-2">
-              <Label className="text-sm">Show zone borders</Label>
+              <Label className="text-sm">Show Labels</Label>
               <Switch
                 checked={state.showZoneBorders}
                 onCheckedChange={(checked) =>
                   setState((prev) => ({ ...prev, showZoneBorders: checked }))
                 }
-                data-testid="switch-zone-borders"
+                data-testid="switch-show-labels"
               />
             </div>
 
