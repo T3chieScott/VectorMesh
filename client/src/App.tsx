@@ -23,6 +23,7 @@ import ProgrammesPage from "@/pages/programmes";
 import LiveOverridePage from "@/pages/live-override";
 import DiagnosticsPage from "@/pages/diagnostics";
 import SimulatorPage from "@/pages/simulator";
+import SchedulePage from "@/pages/schedule";
 import SettingsPage from "@/pages/settings";
 
 function AuthenticatedRouter() {
@@ -40,6 +41,7 @@ function AuthenticatedRouter() {
       <Route path="/live-override" component={LiveOverridePage} />
       <Route path="/diagnostics" component={DiagnosticsPage} />
       <Route path="/simulator" component={SimulatorPage} />
+      <Route path="/schedule" component={SchedulePage} />
       <Route path="/settings" component={SettingsPage} />
       <Route component={NotFound} />
     </Switch>

@@ -3,6 +3,7 @@ import {
   Monitor,
   Users,
   Calendar,
+  CalendarClock,
   Image,
   Layout,
   PlayCircle,
@@ -88,6 +89,11 @@ const displayNavItems = [
 ];
 
 const systemNavItems = [
+  {
+    title: "Schedule Timeline",
+    url: "/schedule",
+    icon: CalendarClock,
+  },
   {
     title: "Diagnostics",
     url: "/diagnostics",
