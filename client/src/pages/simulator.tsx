@@ -68,7 +68,7 @@ function TickerWidget({ content }: { content?: string }) {
     <div className="h-full w-full bg-gradient-to-r from-primary/90 to-primary flex items-center overflow-hidden">
       <div 
         className="animate-marquee whitespace-nowrap text-primary-foreground font-medium px-4"
-        style={{ fontSize: "clamp(12px, 50cqh, 24px)" }}
+        style={{ fontSize: "clamp(10px, min(50cqh, 3cqw), 24px)" }}
       >
         {content || "Welcome to SignageHub • Breaking news and updates scroll here • Stay informed with live content"}
       </div>
@@ -87,14 +87,14 @@ function ClockWidget() {
   return (
     <div className="h-full w-full bg-black/80 flex flex-col items-center justify-center text-white overflow-hidden p-2">
       <div 
-        className="font-bold tabular-nums leading-none"
-        style={{ fontSize: "clamp(16px, 45cqh, 96px)" }}
+        className="font-bold tabular-nums leading-none whitespace-nowrap"
+        style={{ fontSize: "clamp(12px, min(40cqh, 18cqw), 72px)" }}
       >
         {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
       </div>
       <div 
-        className="text-white/70 mt-1 truncate max-w-full"
-        style={{ fontSize: "clamp(10px, 18cqh, 32px)" }}
+        className="text-white/70 mt-1 truncate max-w-full whitespace-nowrap"
+        style={{ fontSize: "clamp(8px, min(15cqh, 7cqw), 24px)" }}
       >
         {time.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
       </div>
@@ -107,14 +107,14 @@ function LogoWidget() {
     <div className="h-full w-full flex items-center justify-center bg-black/50 overflow-hidden p-1">
       <div className="text-center">
         <div 
-          className="font-bold text-white leading-tight"
-          style={{ fontSize: "clamp(10px, 18cqh, 28px)" }}
+          className="font-bold text-white leading-tight whitespace-nowrap"
+          style={{ fontSize: "clamp(8px, min(16cqh, 10cqw), 24px)" }}
         >
           SignageHub
         </div>
         <div 
-          className="text-white/60"
-          style={{ fontSize: "clamp(6px, 10cqh, 14px)" }}
+          className="text-white/60 whitespace-nowrap"
+          style={{ fontSize: "clamp(6px, min(10cqh, 6cqw), 12px)" }}
         >
           Digital Signage
         </div>
@@ -234,36 +234,36 @@ function WeatherWidget({
     <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex flex-col items-center justify-center text-white p-2 overflow-hidden">
       <p 
         className="font-medium opacity-80 leading-tight truncate max-w-full"
-        style={{ fontSize: "clamp(8px, 2cqh, 14px)" }}
+        style={{ fontSize: "clamp(6px, min(2cqh, 3cqw), 12px)" }}
       >
         {location}
       </p>
       <WeatherIcon 
         className="my-1 flex-shrink-0" 
-        style={{ width: "clamp(24px, 15cqh, 64px)", height: "clamp(24px, 15cqh, 64px)" }}
+        style={{ width: "clamp(16px, min(12cqh, 15cqw), 48px)", height: "clamp(16px, min(12cqh, 15cqw), 48px)" }}
       />
       <div 
         className="font-bold leading-none"
-        style={{ fontSize: "clamp(16px, 8cqh, 48px)" }}
+        style={{ fontSize: "clamp(12px, min(7cqh, 12cqw), 36px)" }}
       >
         {weather.temperature}{weather.unit}
       </div>
       <p 
         className="mt-0.5 truncate max-w-full"
-        style={{ fontSize: "clamp(10px, 3cqh, 18px)" }}
+        style={{ fontSize: "clamp(8px, min(2.5cqh, 4cqw), 14px)" }}
       >
         {weather.condition}
       </p>
       <div 
-        className="flex items-center gap-2 mt-1 opacity-80"
-        style={{ fontSize: "clamp(8px, 2cqh, 12px)" }}
+        className="flex items-center gap-1 mt-0.5 opacity-80 flex-wrap justify-center"
+        style={{ fontSize: "clamp(6px, min(1.5cqh, 2.5cqw), 10px)" }}
       >
         <div className="flex items-center gap-0.5">
-          <Droplets style={{ width: "clamp(8px, 2cqh, 16px)", height: "clamp(8px, 2cqh, 16px)" }} />
+          <Droplets style={{ width: "clamp(6px, min(1.5cqh, 2cqw), 12px)", height: "clamp(6px, min(1.5cqh, 2cqw), 12px)" }} />
           {weather.humidity}%
         </div>
         <div className="flex items-center gap-0.5">
-          <Wind style={{ width: "clamp(8px, 2cqh, 16px)", height: "clamp(8px, 2cqh, 16px)" }} />
+          <Wind style={{ width: "clamp(6px, min(1.5cqh, 2cqw), 12px)", height: "clamp(6px, min(1.5cqh, 2cqw), 12px)" }} />
           {weather.windSpeed}km/h
         </div>
       </div>
@@ -360,11 +360,11 @@ function NewsWidget({
       <div className="bg-black/30 px-2 py-0.5 flex items-center gap-1 flex-shrink-0">
         <Newspaper 
           className="text-white flex-shrink-0" 
-          style={{ width: "clamp(12px, 4cqh, 20px)", height: "clamp(12px, 4cqh, 20px)" }}
+          style={{ width: "clamp(10px, min(4cqh, 3cqw), 18px)", height: "clamp(10px, min(4cqh, 3cqw), 18px)" }}
         />
         <span 
           className="text-white font-semibold truncate"
-          style={{ fontSize: "clamp(10px, 3cqh, 16px)" }}
+          style={{ fontSize: "clamp(8px, min(3cqh, 2cqw), 14px)" }}
         >
           {feedTitle}
         </span>
@@ -373,7 +373,7 @@ function NewsWidget({
         <div 
           className="whitespace-nowrap text-white font-medium"
           style={{
-            fontSize: "clamp(12px, 5cqh, 24px)",
+            fontSize: "clamp(10px, min(5cqh, 3cqw), 20px)",
             animation: `marquee ${animationDuration}s linear infinite`,
           }}
         >
