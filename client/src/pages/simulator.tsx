@@ -231,39 +231,39 @@ function WeatherWidget({
   const WeatherIcon = weatherIcons[weather.icon] || Cloud;
 
   return (
-    <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex flex-col items-center justify-center text-white p-2 overflow-hidden">
+    <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex flex-col items-center justify-center text-white p-3 overflow-hidden">
       <p 
         className="font-medium opacity-80 leading-tight truncate max-w-full"
-        style={{ fontSize: "clamp(8px, min(5cqh, 4cqw), 18px)" }}
+        style={{ fontSize: "clamp(10px, min(8cqh, 6cqw), 24px)" }}
       >
         {location}
       </p>
       <WeatherIcon 
-        className="my-1 flex-shrink-0" 
-        style={{ width: "clamp(24px, min(25cqh, 20cqw), 80px)", height: "clamp(24px, min(25cqh, 20cqw), 80px)" }}
+        className="my-2 flex-shrink-0" 
+        style={{ width: "clamp(32px, min(35cqh, 28cqw), 120px)", height: "clamp(32px, min(35cqh, 28cqw), 120px)" }}
       />
       <div 
         className="font-bold leading-none"
-        style={{ fontSize: "clamp(16px, min(15cqh, 14cqw), 56px)" }}
+        style={{ fontSize: "clamp(20px, min(22cqh, 18cqw), 80px)" }}
       >
         {weather.temperature}{weather.unit}
       </div>
       <p 
-        className="mt-0.5 truncate max-w-full"
-        style={{ fontSize: "clamp(10px, min(5cqh, 5cqw), 20px)" }}
+        className="mt-1 truncate max-w-full"
+        style={{ fontSize: "clamp(12px, min(8cqh, 7cqw), 28px)" }}
       >
         {weather.condition}
       </p>
       <div 
-        className="flex items-center gap-2 mt-1 opacity-80 flex-wrap justify-center"
-        style={{ fontSize: "clamp(8px, min(4cqh, 4cqw), 16px)" }}
+        className="flex items-center gap-3 mt-2 opacity-80 flex-wrap justify-center"
+        style={{ fontSize: "clamp(10px, min(6cqh, 5cqw), 20px)" }}
       >
-        <div className="flex items-center gap-0.5">
-          <Droplets style={{ width: "clamp(8px, min(3cqh, 3cqw), 16px)", height: "clamp(8px, min(3cqh, 3cqw), 16px)" }} />
+        <div className="flex items-center gap-1">
+          <Droplets style={{ width: "clamp(10px, min(5cqh, 4cqw), 20px)", height: "clamp(10px, min(5cqh, 4cqw), 20px)" }} />
           {weather.humidity}%
         </div>
-        <div className="flex items-center gap-0.5">
-          <Wind style={{ width: "clamp(8px, min(3cqh, 3cqw), 16px)", height: "clamp(8px, min(3cqh, 3cqw), 16px)" }} />
+        <div className="flex items-center gap-1">
+          <Wind style={{ width: "clamp(10px, min(5cqh, 4cqw), 20px)", height: "clamp(10px, min(5cqh, 4cqw), 20px)" }} />
           {weather.windSpeed}km/h
         </div>
       </div>
@@ -293,9 +293,9 @@ function NewsWidget({
 }) {
   // Text size multipliers for different settings
   const sizeConfig = {
-    small: { headline: "clamp(10px, min(5cqh, 3cqw), 18px)", header: "clamp(8px, min(3cqh, 2cqw), 12px)" },
-    medium: { headline: "clamp(14px, min(8cqh, 5cqw), 28px)", header: "clamp(10px, min(4cqh, 3cqw), 16px)" },
-    large: { headline: "clamp(18px, min(12cqh, 7cqw), 40px)", header: "clamp(12px, min(5cqh, 4cqw), 20px)" },
+    small: { headline: "clamp(14px, min(20cqh, 4cqw), 28px)", header: "clamp(10px, min(12cqh, 3cqw), 18px)" },
+    medium: { headline: "clamp(18px, min(35cqh, 5cqw), 42px)", header: "clamp(12px, min(15cqh, 4cqw), 22px)" },
+    large: { headline: "clamp(24px, min(50cqh, 7cqw), 60px)", header: "clamp(16px, min(20cqh, 5cqw), 28px)" },
   };
   const sizes = sizeConfig[textSize] || sizeConfig.medium;
   const [news, setNews] = useState<NewsItem[]>([]);
