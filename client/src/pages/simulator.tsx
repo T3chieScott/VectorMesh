@@ -367,23 +367,22 @@ function NewsWidget({
   const animationDuration = Math.max(headlinesText.length / scrollSpeed, 15);
 
   return (
-    <div className="h-full w-full bg-gradient-to-r from-red-700 to-red-900 flex flex-col overflow-hidden">
-      <div 
-        className="bg-black/30 px-2 py-0.5 flex items-center gap-1 flex-shrink-0"
-        style={{ visibility: showHeader ? "visible" : "hidden" }}
-      >
-        <Newspaper 
-          className="text-white flex-shrink-0" 
-          style={{ width: sizes.header, height: sizes.header }}
-        />
-        <span 
-          className="text-white font-semibold truncate"
-          style={{ fontSize: sizes.header }}
-        >
-          {feedTitle}
-        </span>
-      </div>
-      <div className="flex-1 overflow-hidden flex items-center">
+    <div className="h-full w-full bg-gradient-to-r from-red-700 to-red-900 relative overflow-hidden">
+      {showHeader && (
+        <div className="absolute top-0 left-0 right-0 bg-black/30 px-2 py-0.5 flex items-center gap-1 z-10">
+          <Newspaper 
+            className="text-white flex-shrink-0" 
+            style={{ width: sizes.header, height: sizes.header }}
+          />
+          <span 
+            className="text-white font-semibold truncate"
+            style={{ fontSize: sizes.header }}
+          >
+            {feedTitle}
+          </span>
+        </div>
+      )}
+      <div className="absolute inset-0 flex items-center overflow-hidden">
         <div 
           className="whitespace-nowrap text-white font-medium"
           style={{
