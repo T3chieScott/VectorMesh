@@ -5,6 +5,7 @@ import { z } from "zod";
 import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, insertScheduleBlockSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
 import { getSignedUploadUrl, getPublicUrl, objectStorageService } from "./objectStorage";
 import { isAuthenticated } from "./replit_integrations/auth";
+import { find as findTimezone } from "geo-tz";
 
 const requireAuth = isAuthenticated;
 
@@ -980,6 +981,9 @@ export async function registerRoutes(
 
       const weatherInfo = weatherConditions[current.weather_code] || { condition: "Unknown", icon: "cloud" };
       
+      const timezones = findTimezone(lat, lng);
+      const timezone = timezones.length > 0 ? timezones[0] : "UTC";
+      
       const weatherData = {
         temperature: Math.round(current.temperature_2m),
         unit: unit === "fahrenheit" ? "°F" : "°C",
@@ -988,6 +992,7 @@ export async function registerRoutes(
         humidity: current.relative_humidity_2m,
         windSpeed: Math.round(current.wind_speed_10m),
         timestamp: new Date().toISOString(),
+        timezone,
       };
 
       weatherCache.set(cacheKey, { data: weatherData, timestamp: Date.now() });

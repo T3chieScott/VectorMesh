@@ -58,6 +58,7 @@
     "express": "^5.0.1",
     "express-session": "^1.19.0",
     "framer-motion": "^11.13.1",
+    "geo-tz": "^8.1.5",
     "google-auth-library": "^10.5.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.453.0",

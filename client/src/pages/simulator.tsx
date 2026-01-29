@@ -76,7 +76,7 @@ function TickerWidget({ content }: { content?: string }) {
   );
 }
 
-function ClockWidget() {
+function ClockWidget({ timezone }: { timezone?: string }) {
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
@@ -84,19 +84,32 @@ function ClockWidget() {
     return () => clearInterval(interval);
   }, []);
 
+  const timeOptions: Intl.DateTimeFormatOptions = { 
+    hour: "2-digit", 
+    minute: "2-digit",
+    ...(timezone && { timeZone: timezone })
+  };
+  
+  const dateOptions: Intl.DateTimeFormatOptions = { 
+    weekday: "short", 
+    month: "short", 
+    day: "numeric",
+    ...(timezone && { timeZone: timezone })
+  };
+
   return (
     <div className="h-full w-full bg-black/80 flex flex-col items-center justify-center text-white overflow-hidden p-2">
       <div 
         className="font-bold tabular-nums leading-none whitespace-nowrap"
         style={{ fontSize: "clamp(12px, min(40cqh, 18cqw), 72px)" }}
       >
-        {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        {time.toLocaleTimeString([], timeOptions)}
       </div>
       <div 
         className="text-white/70 mt-1 truncate max-w-full whitespace-nowrap"
         style={{ fontSize: "clamp(8px, min(15cqh, 7cqw), 24px)" }}
       >
-        {time.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
+        {time.toLocaleDateString([], dateOptions)}
       </div>
     </div>
   );
@@ -453,6 +466,7 @@ function ZoneRenderer({
   isPlaying,
   showBorder,
   playlistName,
+  timezone,
 }: {
   zone: LayoutZone;
   media: MediaAsset[];
@@ -460,6 +474,7 @@ function ZoneRenderer({
   isPlaying: boolean;
   showBorder: boolean;
   playlistName?: string;
+  timezone?: string;
 }) {
   const ZoneIcon = zoneTypeIcons[zone.type] || Layers;
 
@@ -470,7 +485,7 @@ function ZoneRenderer({
       case "ticker":
         return <TickerWidget />;
       case "clock":
-        return <ClockWidget />;
+        return <ClockWidget timezone={timezone} />;
       case "logo":
         return <LogoWidget />;
       case "html":
@@ -551,8 +566,26 @@ function PlayerDisplay({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0.5);
+  const [weatherTimezone, setWeatherTimezone] = useState<string | undefined>(undefined);
   const zones = (layout?.zones as LayoutZone[]) || [];
   const hasLiveOverride = liveOverride && liveOverride.isActive && new Date(liveOverride.endTime) > new Date();
+
+  // Find weather zone and fetch its timezone
+  useEffect(() => {
+    const weatherZone = zones.find(z => z.type === "weather" && z.weatherLat && z.weatherLng);
+    if (weatherZone && weatherZone.weatherLat && weatherZone.weatherLng) {
+      fetch(`/api/widgets/weather?lat=${weatherZone.weatherLat}&lng=${weatherZone.weatherLng}&unit=${weatherZone.weatherUnit || "celsius"}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.timezone) {
+            setWeatherTimezone(data.timezone);
+          }
+        })
+        .catch(() => {});
+    } else {
+      setWeatherTimezone(undefined);
+    }
+  }, [zones]);
 
   // True pixel dimensions from display profile
   const trueWidth = profile?.width || 1920;
@@ -637,6 +670,7 @@ function PlayerDisplay({
             isPlaying={state.isPlaying}
             showBorder={state.showZoneBorders}
             playlistName={getPlaylistName(zone.id)}
+            timezone={weatherTimezone}
           />
         ))
       ) : layout ? (
