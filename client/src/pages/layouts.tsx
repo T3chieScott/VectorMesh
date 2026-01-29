@@ -2167,7 +2167,7 @@ function InteractiveLayoutPreview({
         />
       ))}
       
-      {localZones.map((zone, idx) => {
+      {localZones.map((zone) => {
         const Icon = zoneTypeIcons[zone.type] || Grid3X3;
         const isSelected = selectedZoneId === zone.id;
         const isDragging = dragState?.zoneId === zone.id;
@@ -2175,27 +2175,40 @@ function InteractiveLayoutPreview({
         return (
           <div
             key={zone.id}
-            className={`absolute flex items-center justify-center border-2 transition-shadow ${
-              isSelected ? "border-cyan-400 shadow-lg shadow-cyan-400/30" : "border-white/30"
-            } ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+            className="absolute overflow-hidden"
             style={{
               left: `${zone.x}%`,
               top: `${zone.y}%`,
               width: `${zone.width}%`,
               height: `${zone.height}%`,
-              backgroundColor: `hsl(${(idx * 60) % 360} 70% 50% / 0.4)`,
               zIndex: isSelected ? 100 : zone.zIndex || 1,
             }}
-            onClick={(e) => {
-              e.stopPropagation();
-              setSelectedZoneId(zone.id);
-            }}
-            onMouseDown={(e) => handleMouseDown(e, zone.id, "move")}
             data-testid={`draggable-zone-${zone.id}`}
           >
-            <div className="flex flex-col items-center gap-1 text-white/90 pointer-events-none">
-              <Icon className="h-5 w-5" />
-              <span className="text-xs font-medium">{zone.name}</span>
+            <ZoneRenderer
+              zone={zone}
+              showBorder={false}
+              isPlaying={true}
+            />
+            
+            <div
+              className={`absolute inset-0 border-2 transition-all ${
+                isSelected 
+                  ? "border-cyan-400 shadow-lg shadow-cyan-400/30 bg-cyan-400/10" 
+                  : "border-transparent hover:border-white/40 hover:bg-white/5"
+              } ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedZoneId(zone.id);
+              }}
+              onMouseDown={(e) => handleMouseDown(e, zone.id, "move")}
+            >
+              {isSelected && (
+                <div className="absolute top-1 left-1 flex items-center gap-1 bg-cyan-500/90 text-white text-[10px] px-1.5 py-0.5 rounded pointer-events-none">
+                  <Icon className="h-3 w-3" />
+                  <span className="font-medium">{zone.name}</span>
+                </div>
+              )}
             </div>
             
             {isSelected && resizeHandles.map(({ position, cursor, style }) => (
