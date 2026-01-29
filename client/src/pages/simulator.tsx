@@ -136,6 +136,235 @@ function LogoWidget() {
   );
 }
 
+// Shader presets - GLSL fragment shader code
+const shaderPresets: Record<string, string> = {
+  gradient: `
+    void main() {
+      vec2 uv = gl_FragCoord.xy / u_resolution;
+      float wave = sin(uv.x * 3.0 + u_time) * 0.5 + 0.5;
+      vec3 color1 = vec3(0.1, 0.3, 0.8);
+      vec3 color2 = vec3(0.8, 0.2, 0.5);
+      vec3 color = mix(color1, color2, uv.y + wave * 0.3);
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `,
+  plasma: `
+    void main() {
+      vec2 uv = gl_FragCoord.xy / u_resolution;
+      float v = 0.0;
+      v += sin((uv.x * 10.0 + u_time));
+      v += sin((uv.y * 10.0 + u_time) / 2.0);
+      v += sin((uv.x * 10.0 + uv.y * 10.0 + u_time) / 2.0);
+      float cx = uv.x + 0.5 * sin(u_time / 5.0);
+      float cy = uv.y + 0.5 * cos(u_time / 3.0);
+      v += sin(sqrt(100.0 * (cx * cx + cy * cy) + 1.0) + u_time);
+      v = v / 2.0;
+      vec3 color = vec3(sin(v * 3.14159), sin(v * 3.14159 + 2.09), sin(v * 3.14159 + 4.18));
+      color = color * 0.5 + 0.5;
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `,
+  waves: `
+    void main() {
+      vec2 uv = gl_FragCoord.xy / u_resolution;
+      float wave1 = sin(uv.x * 8.0 - u_time * 2.0 + uv.y * 2.0) * 0.1;
+      float wave2 = sin(uv.x * 4.0 + u_time * 1.5 + uv.y * 4.0) * 0.05;
+      float y = uv.y + wave1 + wave2;
+      vec3 deep = vec3(0.0, 0.1, 0.3);
+      vec3 surface = vec3(0.0, 0.5, 0.8);
+      vec3 foam = vec3(0.9, 0.95, 1.0);
+      vec3 color = mix(deep, surface, y);
+      if (y > 0.7) color = mix(surface, foam, (y - 0.7) * 3.0);
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `,
+  noise: `
+    float random(vec2 st) {
+      return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+    }
+    float noise(vec2 st) {
+      vec2 i = floor(st);
+      vec2 f = fract(st);
+      float a = random(i);
+      float b = random(i + vec2(1.0, 0.0));
+      float c = random(i + vec2(0.0, 1.0));
+      float d = random(i + vec2(1.0, 1.0));
+      vec2 u = f * f * (3.0 - 2.0 * f);
+      return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+    }
+    void main() {
+      vec2 uv = gl_FragCoord.xy / u_resolution;
+      float n = noise(uv * 5.0 + u_time * 0.5);
+      n += noise(uv * 10.0 - u_time * 0.3) * 0.5;
+      n += noise(uv * 20.0 + u_time * 0.2) * 0.25;
+      n = n / 1.75;
+      vec3 color = vec3(n * 0.3, n * 0.5 + 0.2, n * 0.8 + 0.2);
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `,
+  aurora: `
+    void main() {
+      vec2 uv = gl_FragCoord.xy / u_resolution;
+      float t = u_time * 0.5;
+      float wave = sin(uv.x * 5.0 + t) * cos(uv.x * 3.0 - t * 0.7);
+      wave += sin(uv.x * 7.0 - t * 1.3) * 0.5;
+      wave = wave * 0.15 + 0.5;
+      float dist = abs(uv.y - wave);
+      float glow = 0.02 / dist;
+      glow = clamp(glow, 0.0, 1.0);
+      vec3 green = vec3(0.2, 1.0, 0.5);
+      vec3 purple = vec3(0.5, 0.2, 1.0);
+      vec3 color = mix(green, purple, sin(uv.x * 3.0 + t) * 0.5 + 0.5);
+      color *= glow;
+      vec3 bg = vec3(0.02, 0.02, 0.08);
+      color = mix(bg, color, glow);
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `,
+};
+
+function ShaderWidget({ 
+  preset = "gradient", 
+  customCode,
+  speed = 1
+}: { 
+  preset?: "gradient" | "plasma" | "waves" | "noise" | "aurora" | "custom";
+  customCode?: string;
+  speed?: number;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animationRef = useRef<number>(0);
+  const glRef = useRef<WebGLRenderingContext | null>(null);
+  const programRef = useRef<WebGLProgram | null>(null);
+  const startTimeRef = useRef<number>(Date.now());
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const gl = canvas.getContext("webgl");
+    if (!gl) {
+      console.warn("WebGL not supported");
+      return;
+    }
+    glRef.current = gl;
+
+    // Get shader code
+    const fragmentSource = preset === "custom" && customCode 
+      ? customCode 
+      : shaderPresets[preset] || shaderPresets.gradient;
+
+    // Vertex shader
+    const vertexShaderSource = `
+      attribute vec2 a_position;
+      void main() {
+        gl_Position = vec4(a_position, 0.0, 1.0);
+      }
+    `;
+
+    // Fragment shader with uniforms
+    const fragmentShaderSource = `
+      precision mediump float;
+      uniform float u_time;
+      uniform vec2 u_resolution;
+      ${fragmentSource}
+    `;
+
+    // Compile shaders
+    const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+    const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+    if (!vertexShader || !fragmentShader) return;
+
+    gl.shaderSource(vertexShader, vertexShaderSource);
+    gl.compileShader(vertexShader);
+    if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+      console.error("Vertex shader error:", gl.getShaderInfoLog(vertexShader));
+      return;
+    }
+
+    gl.shaderSource(fragmentShader, fragmentShaderSource);
+    gl.compileShader(fragmentShader);
+    if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+      console.error("Fragment shader error:", gl.getShaderInfoLog(fragmentShader));
+      return;
+    }
+
+    // Create program
+    const program = gl.createProgram();
+    if (!program) return;
+
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.error("Program link error:", gl.getProgramInfoLog(program));
+      return;
+    }
+
+    programRef.current = program;
+    gl.useProgram(program);
+
+    // Create fullscreen quad
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1, 1, -1, -1, 1,
+      -1, 1, 1, -1, 1, 1
+    ]), gl.STATIC_DRAW);
+
+    const positionLocation = gl.getAttribLocation(program, "a_position");
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+    startTimeRef.current = Date.now();
+
+    // Animation loop
+    const render = () => {
+      if (!gl || !programRef.current) return;
+
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      // Resize canvas to match display size
+      const displayWidth = canvas.clientWidth;
+      const displayHeight = canvas.clientHeight;
+      if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+        canvas.width = displayWidth;
+        canvas.height = displayHeight;
+        gl.viewport(0, 0, displayWidth, displayHeight);
+      }
+
+      const time = ((Date.now() - startTimeRef.current) / 1000) * speed;
+      
+      const timeLocation = gl.getUniformLocation(programRef.current, "u_time");
+      const resolutionLocation = gl.getUniformLocation(programRef.current, "u_resolution");
+      
+      gl.uniform1f(timeLocation, time);
+      gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
+
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      animationRef.current = requestAnimationFrame(render);
+    };
+
+    render();
+
+    return () => {
+      cancelAnimationFrame(animationRef.current);
+      if (gl && program) {
+        gl.deleteProgram(program);
+      }
+    };
+  }, [preset, customCode, speed]);
+
+  return (
+    <canvas 
+      ref={canvasRef}
+      className="w-full h-full"
+      style={{ display: "block" }}
+    />
+  );
+}
+
 function TextWidget({ 
   content, 
   fontSize = "medium", 
@@ -578,6 +807,14 @@ function ZoneRenderer({
             fontSize={zone.textFontSize}
             align={zone.textAlign}
             verticalAlign={zone.textVerticalAlign}
+          />
+        );
+      case "shader":
+        return (
+          <ShaderWidget 
+            preset={zone.shaderPreset}
+            customCode={zone.shaderCode}
+            speed={zone.shaderSpeed}
           />
         );
       default:

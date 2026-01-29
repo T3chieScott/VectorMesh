@@ -217,7 +217,7 @@ export type LayoutTemplate = typeof layoutTemplates.$inferSelect;
 export interface LayoutZone {
   id: string;
   name: string;
-  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text";
+  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader";
   x: number;
   y: number;
   width: number;
@@ -247,6 +247,10 @@ export interface LayoutZone {
   textFontSize?: "small" | "medium" | "large" | "xlarge";
   textAlign?: "left" | "center" | "right";
   textVerticalAlign?: "top" | "middle" | "bottom";
+  // Shader widget configuration
+  shaderPreset?: "gradient" | "plasma" | "waves" | "noise" | "aurora" | "custom";
+  shaderCode?: string;
+  shaderSpeed?: number;
 }
 
 // ============ PROGRAMMES ============

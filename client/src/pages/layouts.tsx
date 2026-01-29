@@ -66,6 +66,7 @@ import {
   Rss,
   Move,
   Palette,
+  Sparkles,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone } from "@shared/schema";
 
@@ -92,6 +93,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   weather: CloudSun,
   news: Newspaper,
   text: Type,
+  shader: Sparkles,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -103,11 +105,12 @@ const zoneTypeLabels: Record<string, string> = {
   weather: "Weather widget",
   news: "News (RSS feed)",
   text: "Text (static content)",
+  shader: "Shader (GPU effects)",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(1).max(100),
@@ -136,6 +139,10 @@ const zoneFormSchema = z.object({
   textFontSize: z.enum(["small", "medium", "large", "xlarge"]).optional(),
   textAlign: z.enum(["left", "center", "right"]).optional(),
   textVerticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
+  // Shader widget configuration
+  shaderPreset: z.enum(["gradient", "plasma", "waves", "noise", "aurora", "custom"]).optional(),
+  shaderCode: z.string().optional(),
+  shaderSpeed: z.number().min(0.1).max(5).optional(),
 }).refine((data) => {
   // Require lat/lng for weather zones
   if (data.type === "weather") {
@@ -202,6 +209,9 @@ function ZoneEditorDialog({
       textFontSize: "medium",
       textAlign: "center",
       textVerticalAlign: "middle",
+      shaderPreset: "gradient",
+      shaderCode: "",
+      shaderSpeed: 1,
     },
   });
 
@@ -236,6 +246,9 @@ function ZoneEditorDialog({
           textFontSize: zone.textFontSize || "medium",
           textAlign: zone.textAlign || "center",
           textVerticalAlign: zone.textVerticalAlign || "middle",
+          shaderPreset: zone.shaderPreset || "gradient",
+          shaderCode: zone.shaderCode || "",
+          shaderSpeed: zone.shaderSpeed || 1,
         });
       } else {
         form.reset({
@@ -265,6 +278,9 @@ function ZoneEditorDialog({
           textFontSize: "medium",
           textAlign: "center",
           textVerticalAlign: "middle",
+          shaderPreset: "gradient",
+          shaderCode: "",
+          shaderSpeed: 1,
         });
       }
     }
@@ -865,6 +881,93 @@ function ZoneEditorDialog({
                     )}
                   />
                 </div>
+              </div>
+            )}
+
+            {/* Shader Widget Configuration */}
+            {form.watch("type") === "shader" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Sparkles className="h-4 w-4" />
+                  Shader Widget Settings
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="shaderPreset"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Preset Effect</FormLabel>
+                        <Select
+                          value={field.value || "gradient"}
+                          onValueChange={field.onChange}
+                        >
+                          <FormControl>
+                            <SelectTrigger data-testid="select-shader-preset">
+                              <SelectValue placeholder="Select effect" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="gradient">Gradient Wave</SelectItem>
+                            <SelectItem value="plasma">Plasma</SelectItem>
+                            <SelectItem value="waves">Ocean Waves</SelectItem>
+                            <SelectItem value="noise">Noise Pattern</SelectItem>
+                            <SelectItem value="aurora">Aurora Borealis</SelectItem>
+                            <SelectItem value="custom">Custom GLSL</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="shaderSpeed"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Animation Speed</FormLabel>
+                        <FormControl>
+                          <div className="space-y-2">
+                            <Slider
+                              value={[field.value || 1]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={0.1}
+                              max={5}
+                              step={0.1}
+                              data-testid="slider-shader-speed"
+                            />
+                            <span className="text-sm text-muted-foreground">{(field.value || 1).toFixed(1)}x</span>
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                {form.watch("shaderPreset") === "custom" && (
+                  <FormField
+                    control={form.control}
+                    name="shaderCode"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>GLSL Fragment Shader Code</FormLabel>
+                        <FormControl>
+                          <textarea 
+                            placeholder={`// Available uniforms:\n// uniform float u_time;\n// uniform vec2 u_resolution;\n\nvoid main() {\n  vec2 uv = gl_FragCoord.xy / u_resolution;\n  gl_FragColor = vec4(uv.x, uv.y, 0.5, 1.0);\n}`}
+                            className="w-full min-h-[200px] p-3 rounded-md border border-input bg-background font-mono text-sm resize-y"
+                            {...field}
+                            value={field.value || ""}
+                            data-testid="input-shader-code" 
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Write GLSL fragment shader code. Use u_time for animation and u_resolution for coordinates.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
               </div>
             )}
 
