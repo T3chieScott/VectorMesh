@@ -22,6 +22,31 @@ import {
 } from "lucide-react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
 
+// Convert GCS URLs to local /objects/ path for serving through the sidecar
+function getMediaUrl(originalPath: string | undefined): string {
+  if (!originalPath) return "";
+  
+  // If already a relative path, return as is
+  if (originalPath.startsWith("/objects/")) return originalPath;
+  
+  // Extract upload ID from GCS URL format:
+  // https://storage.googleapis.com/bucket-name/.private/uploads/uuid
+  // We need just the "uploads/uuid" part since PRIVATE_OBJECT_DIR already includes ".private"
+  const uploadsMatch = originalPath.match(/\/uploads\/([a-f0-9-]+)$/i);
+  if (uploadsMatch) {
+    return `/objects/uploads/${uploadsMatch[1]}`;
+  }
+  
+  // Fallback: try to extract anything after .private/
+  const privateMatch = originalPath.match(/\.private\/(.+)/);
+  if (privateMatch) {
+    return `/objects/${privateMatch[1]}`;
+  }
+  
+  // Return original if not a recognizable GCS URL
+  return originalPath;
+}
+
 export const zoneTypeIcons: Record<string, typeof Image> = {
   media: Image,
   ticker: Type,
@@ -546,11 +571,13 @@ function MediaWidget({
   const currentMedia = media[mediaIndex % media.length];
   if (!currentMedia) return null;
 
+  const mediaUrl = getMediaUrl(currentMedia.originalPath);
+  
   if (currentMedia.mediaType === "video") {
     return (
       <video
         key={currentMedia.id}
-        src={currentMedia.originalPath}
+        src={mediaUrl}
         className="h-full w-full object-contain"
         autoPlay={isPlaying}
         loop
@@ -563,7 +590,7 @@ function MediaWidget({
   return (
     <img
       key={currentMedia.id}
-      src={currentMedia.originalPath}
+      src={mediaUrl}
       alt={currentMedia.name}
       className="h-full w-full object-contain"
     />
@@ -595,11 +622,12 @@ function MontageWidget({
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [displayOrder, setDisplayOrder] = useState<string[]>(mediaIds);
   const [kenBurnsState, setKenBurnsState] = useState({ scale: 1, x: 0, y: 0 });
+  const [hasError, setHasError] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 
-  const { data: allMedia = [] } = useQuery<MediaAsset[]>({
+  const { data: allMedia = [], isLoading: isMediaLoading } = useQuery<MediaAsset[]>({
     queryKey: ["/api/media"],
   });
 
@@ -676,13 +704,24 @@ function MontageWidget({
     );
   }
 
+  if (isMediaLoading) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-muted/30">
+        <div className="text-center">
+          <Images className="h-8 w-8 mx-auto mb-2 text-muted-foreground animate-pulse" />
+          <p className="text-sm text-muted-foreground">Loading photos...</p>
+        </div>
+      </div>
+    );
+  }
+
   const currentMediaId = displayOrder[currentIndex];
   const nextIndex = (currentIndex + 1) % displayOrder.length;
   const nextMediaId = displayOrder[nextIndex];
 
-  const getMediaUrl = (id: string) => {
+  const getMontageMediaUrl = (id: string) => {
     const asset = allMedia.find(m => m.id === id);
-    return asset?.originalPath || "";
+    return getMediaUrl(asset?.originalPath);
   };
 
   const getTransitionStyle = (isActive: boolean, isNext: boolean): React.CSSProperties => {
@@ -744,8 +783,8 @@ function MontageWidget({
     };
   };
 
-  const currentUrl = getMediaUrl(currentMediaId);
-  const nextUrl = getMediaUrl(nextMediaId);
+  const currentUrl = getMontageMediaUrl(currentMediaId);
+  const nextUrl = getMontageMediaUrl(nextMediaId);
 
   if (!currentUrl) {
     return (
@@ -753,6 +792,17 @@ function MontageWidget({
         <div className="text-center">
           <Images className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">Media not found</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (hasError) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-muted/30">
+        <div className="text-center">
+          <Images className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">Image load failed</p>
         </div>
       </div>
     );
@@ -767,10 +817,7 @@ function MontageWidget({
             alt=""
             className="h-full w-full"
             style={{ objectFit: fitMode, border: "none" }}
-            onError={(e) => {
-              const target = e.target as HTMLImageElement;
-              target.style.display = "none";
-            }}
+            onError={() => setHasError(true)}
           />
         </div>
       </div>

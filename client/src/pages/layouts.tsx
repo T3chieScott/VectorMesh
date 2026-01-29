@@ -1979,8 +1979,8 @@ function InteractiveLayoutPreview({
 
   const getSnapPoints = useCallback((excludeZoneId: string) => {
     const points = {
-      x: [0, 100] as number[],
-      y: [0, 100] as number[],
+      x: [0, 50, 100] as number[],
+      y: [0, 50, 100] as number[],
     };
     
     localZones.forEach((zone) => {
@@ -2045,10 +2045,15 @@ function InteractiveLayoutPreview({
 
       const leftSnap = snapValue(newX, snapPoints.x);
       const rightSnap = snapValue(newX + newWidth, snapPoints.x);
+      const centerXSnap = snapValue(newX + newWidth / 2, snapPoints.x);
       const topSnap = snapValue(newY, snapPoints.y);
       const bottomSnap = snapValue(newY + newHeight, snapPoints.y);
+      const centerYSnap = snapValue(newY + newHeight / 2, snapPoints.y);
 
-      if (leftSnap.snapped) {
+      if (centerXSnap.snapped) {
+        newX = centerXSnap.value - newWidth / 2;
+        newSnapLines.push({ type: "vertical", position: centerXSnap.value });
+      } else if (leftSnap.snapped) {
         newX = leftSnap.value;
         newSnapLines.push({ type: "vertical", position: leftSnap.value });
       } else if (rightSnap.snapped) {
@@ -2056,7 +2061,10 @@ function InteractiveLayoutPreview({
         newSnapLines.push({ type: "vertical", position: rightSnap.value });
       }
 
-      if (topSnap.snapped) {
+      if (centerYSnap.snapped) {
+        newY = centerYSnap.value - newHeight / 2;
+        newSnapLines.push({ type: "horizontal", position: centerYSnap.value });
+      } else if (topSnap.snapped) {
         newY = topSnap.value;
         newSnapLines.push({ type: "horizontal", position: topSnap.value });
       } else if (bottomSnap.snapped) {

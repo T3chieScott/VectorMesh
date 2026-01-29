@@ -5,6 +5,7 @@ import { z } from "zod";
 import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, insertScheduleBlockSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
 import { getSignedUploadUrl, getPublicUrl, objectStorageService } from "./objectStorage";
 import { isAuthenticated } from "./replit_integrations/auth";
+import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { find as findTimezone } from "geo-tz";
 
 const requireAuth = isAuthenticated;
@@ -18,7 +19,8 @@ export async function registerRoutes(
   await setupAuth(app);
   registerAuthRoutes(app);
 
-  // Note: Object storage routes are handled via /api/uploads/request-url endpoint below
+  // Setup object storage routes for serving uploaded files
+  registerObjectStorageRoutes(app);
 
   // ============ HEALTH CHECK ============
   app.get("/api/health", async (req, res) => {
