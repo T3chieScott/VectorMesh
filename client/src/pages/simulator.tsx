@@ -53,6 +53,19 @@ interface SimulatorState {
   isFullscreen: boolean;
 }
 
+// Helper to get aspect ratio dimensions
+function getAspectRatioDimensions(aspectRatio: string, customWidth?: number | null, customHeight?: number | null): { width: number; height: number } {
+  switch (aspectRatio) {
+    case "16:9": return { width: 16, height: 9 };
+    case "9:16": return { width: 9, height: 16 };
+    case "4:3": return { width: 4, height: 3 };
+    case "1:1": return { width: 1, height: 1 };
+    case "custom":
+      return { width: customWidth || 16, height: customHeight || 9 };
+    default: return { width: 16, height: 9 };
+  }
+}
+
 const zoneTypeIcons: Record<string, typeof Image> = {
   media: Image,
   ticker: Type,
@@ -925,9 +938,36 @@ function PlayerDisplay({
     }
   }, [zones]);
 
-  // True pixel dimensions from display profile
-  const trueWidth = profile?.width || 1920;
-  const trueHeight = profile?.height || 1080;
+  // Calculate true dimensions based on layout aspect ratio
+  const baseWidth = profile?.width || 1920;
+  const baseHeight = profile?.height || 1080;
+  
+  const layoutAspect = layout 
+    ? getAspectRatioDimensions(
+        layout.aspectRatio || "16:9",
+        layout.customWidth,
+        layout.customHeight
+      )
+    : null;
+  
+  // If layout has aspect ratio, calculate dimensions to fit within profile while preserving ratio
+  let trueWidth = baseWidth;
+  let trueHeight = baseHeight;
+  
+  if (layoutAspect) {
+    const layoutRatio = layoutAspect.width / layoutAspect.height;
+    const profileRatio = baseWidth / baseHeight;
+    
+    if (layoutRatio > profileRatio) {
+      // Layout is wider - use full width, calculate height
+      trueWidth = baseWidth;
+      trueHeight = Math.round(baseWidth / layoutRatio);
+    } else {
+      // Layout is taller - use full height, calculate width
+      trueHeight = baseHeight;
+      trueWidth = Math.round(baseHeight * layoutRatio);
+    }
+  }
 
   // Calculate scale to fit container while preserving true dimensions
   useEffect(() => {

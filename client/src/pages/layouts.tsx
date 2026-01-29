@@ -1421,10 +1421,19 @@ function InteractiveLayoutPreview({
     { position: "w", cursor: "ew-resize", style: { top: "50%", left: -4, transform: "translateY(-50%)" } },
   ];
 
+  // Calculate aspect ratio for this layout
+  const aspectDims = getAspectRatioDimensions(
+    layout.aspectRatio || "16:9",
+    layout.customWidth,
+    layout.customHeight
+  );
+  const aspectPadding = (aspectDims.height / aspectDims.width) * 100;
+
   return (
     <div 
       ref={containerRef}
-      className="relative w-full aspect-video bg-slate-900 rounded-lg overflow-hidden select-none"
+      className="relative w-full bg-slate-900 rounded-lg overflow-hidden select-none"
+      style={{ paddingBottom: `${aspectPadding}%` }}
       onClick={() => setSelectedZoneId(null)}
       data-testid="interactive-layout-preview"
     >
@@ -1556,6 +1565,9 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
       apiRequest("POST", "/api/layouts", {
         name: `${layout.name} (Copy)`,
         eventId: layout.eventId,
+        aspectRatio: layout.aspectRatio || "16:9",
+        customWidth: layout.customWidth,
+        customHeight: layout.customHeight,
         zones: zones.map(z => ({ ...z, id: `zone-${Date.now()}-${Math.random().toString(36).substr(2, 9)}` })),
       }),
     onSuccess: () => {
@@ -1601,8 +1613,13 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
             <CardTitle className="text-base" data-testid={`text-layout-name-${layout.id}`}>
               {layout.name}
             </CardTitle>
-            <div className="flex items-center gap-2 mt-1">
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
               <Badge variant="secondary">{zones.length} zones</Badge>
+              <Badge variant="outline">
+                {layout.aspectRatio === "custom" && layout.customWidth && layout.customHeight
+                  ? `${layout.customWidth}:${layout.customHeight}`
+                  : layout.aspectRatio || "16:9"}
+              </Badge>
               {event && (
                 <span className="text-xs text-muted-foreground">{event.name}</span>
               )}
