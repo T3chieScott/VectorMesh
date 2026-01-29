@@ -231,6 +231,10 @@ export interface LayoutZone {
   backgroundColor?: string;
   backgroundImage?: string;
   backgroundVideo?: string;
+  // Gradient background options
+  gradientEnabled?: boolean;
+  gradientDirection?: "to-t" | "to-b" | "to-l" | "to-r" | "to-tl" | "to-tr" | "to-bl" | "to-br";
+  gradientEndColor?: string;
   textColor?: string;
   borderColor?: string;
   borderWidth?: number;
