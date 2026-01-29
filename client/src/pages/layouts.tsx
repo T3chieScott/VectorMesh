@@ -3122,6 +3122,27 @@ function LayoutEditorPanel({
     },
   });
 
+  const cloneZoneMutation = useMutation({
+    mutationFn: (zoneToClone: LayoutZone) => {
+      const clonedZone: LayoutZone = {
+        ...zoneToClone,
+        id: `zone-${Date.now()}`,
+        name: `${zoneToClone.name} (Copy)`,
+        x: Math.min(zoneToClone.x + 5, 100 - zoneToClone.width),
+        y: Math.min(zoneToClone.y + 5, 100 - zoneToClone.height),
+      };
+      const updatedZones = [...zones, clonedZone];
+      return apiRequest("PATCH", `/api/layouts/${layout.id}`, { zones: updatedZones });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      toast({ title: "Zone cloned" });
+    },
+    onError: () => {
+      toast({ title: "Failed to clone zone", variant: "destructive" });
+    },
+  });
+
   const updateZoneMutation = useMutation({
     mutationFn: (updatedZones: LayoutZone[]) => {
       return apiRequest("PATCH", `/api/layouts/${layout.id}`, { zones: updatedZones });
@@ -3242,6 +3263,18 @@ function LayoutEditorPanel({
                       {zoneTypeLabels[zone.type] || zone.type} • {zone.width}% × {zone.height}%
                     </p>
                   </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="flex-shrink-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      cloneZoneMutation.mutate(zone);
+                    }}
+                    data-testid={`button-clone-zone-${zone.id}`}
+                  >
+                    <Copy className="h-4 w-4 text-muted-foreground" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"
