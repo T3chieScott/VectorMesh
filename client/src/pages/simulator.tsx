@@ -136,6 +136,68 @@ function LogoWidget() {
   );
 }
 
+function TextWidget({ 
+  content, 
+  fontSize = "medium", 
+  align = "center", 
+  verticalAlign = "middle" 
+}: { 
+  content?: string; 
+  fontSize?: "small" | "medium" | "large" | "xlarge"; 
+  align?: "left" | "center" | "right"; 
+  verticalAlign?: "top" | "middle" | "bottom";
+}) {
+  const fontSizeMap = {
+    small: "clamp(10px, min(3cqh, 2cqw), 16px)",
+    medium: "clamp(14px, min(5cqh, 3cqw), 24px)",
+    large: "clamp(20px, min(8cqh, 5cqw), 36px)",
+    xlarge: "clamp(28px, min(12cqh, 8cqw), 56px)",
+  };
+
+  const alignItems = {
+    top: "flex-start",
+    middle: "center",
+    bottom: "flex-end",
+  };
+
+  const justifyContent = {
+    left: "flex-start",
+    center: "center",
+    right: "flex-end",
+  };
+
+  if (!content) {
+    return (
+      <div className="h-full w-full flex items-center justify-center text-white/50 p-2">
+        <span style={{ fontSize: "clamp(10px, min(4cqh, 3cqw), 18px)" }}>
+          No text content
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div 
+      className="h-full w-full flex p-2 overflow-hidden"
+      style={{
+        alignItems: alignItems[verticalAlign],
+        justifyContent: justifyContent[align],
+        textAlign: align,
+      }}
+    >
+      <div 
+        className="whitespace-pre-wrap break-words"
+        style={{ 
+          fontSize: fontSizeMap[fontSize],
+          lineHeight: 1.3,
+        }}
+      >
+        {content}
+      </div>
+    </div>
+  );
+}
+
 function HtmlWidget({ content }: { content?: string }) {
   return (
     <div className="h-full w-full bg-white/10 p-2 overflow-hidden">
@@ -507,6 +569,15 @@ function ZoneRenderer({
             itemCount={zone.newsItemCount}
             textSize={zone.newsTextSize}
             showHeader={showBorder}
+          />
+        );
+      case "text":
+        return (
+          <TextWidget 
+            content={zone.textContent}
+            fontSize={zone.textFontSize}
+            align={zone.textAlign}
+            verticalAlign={zone.textVerticalAlign}
           />
         );
       default:

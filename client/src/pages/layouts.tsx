@@ -91,6 +91,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   html: Code,
   weather: CloudSun,
   news: Newspaper,
+  text: Type,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -101,11 +102,12 @@ const zoneTypeLabels: Record<string, string> = {
   html: "HTML widget",
   weather: "Weather widget",
   news: "News (RSS feed)",
+  text: "Text (static content)",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(1).max(100),
@@ -129,6 +131,11 @@ const zoneFormSchema = z.object({
   newsScrollSpeed: z.number().min(10).max(200).optional(),
   newsItemCount: z.number().min(1).max(50).optional(),
   newsTextSize: z.enum(["small", "medium", "large"]).optional(),
+  // Text widget configuration
+  textContent: z.string().optional(),
+  textFontSize: z.enum(["small", "medium", "large", "xlarge"]).optional(),
+  textAlign: z.enum(["left", "center", "right"]).optional(),
+  textVerticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
 }).refine((data) => {
   // Require lat/lng for weather zones
   if (data.type === "weather") {
@@ -191,6 +198,10 @@ function ZoneEditorDialog({
       newsScrollSpeed: 50,
       newsItemCount: 10,
       newsTextSize: "medium",
+      textContent: "",
+      textFontSize: "medium",
+      textAlign: "center",
+      textVerticalAlign: "middle",
     },
   });
 
@@ -221,6 +232,10 @@ function ZoneEditorDialog({
           newsScrollSpeed: zone.newsScrollSpeed || 50,
           newsItemCount: zone.newsItemCount || 10,
           newsTextSize: zone.newsTextSize || "medium",
+          textContent: zone.textContent || "",
+          textFontSize: zone.textFontSize || "medium",
+          textAlign: zone.textAlign || "center",
+          textVerticalAlign: zone.textVerticalAlign || "middle",
         });
       } else {
         form.reset({
@@ -246,6 +261,10 @@ function ZoneEditorDialog({
           newsScrollSpeed: 50,
           newsItemCount: 10,
           newsTextSize: "medium",
+          textContent: "",
+          textFontSize: "medium",
+          textAlign: "center",
+          textVerticalAlign: "middle",
         });
       }
     }
@@ -731,6 +750,114 @@ function ZoneEditorDialog({
                             <SelectItem value="small">Small</SelectItem>
                             <SelectItem value="medium">Medium</SelectItem>
                             <SelectItem value="large">Large</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Text Widget Configuration */}
+            {form.watch("type") === "text" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Type className="h-4 w-4" />
+                  Text Widget Settings
+                </div>
+                <FormField
+                  control={form.control}
+                  name="textContent"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Text Content</FormLabel>
+                      <FormControl>
+                        <textarea 
+                          placeholder="Enter your text here..." 
+                          className="w-full min-h-[100px] p-3 rounded-md border border-input bg-background resize-y"
+                          {...field}
+                          value={field.value || ""}
+                          data-testid="input-text-content" 
+                        />
+                      </FormControl>
+                      <FormDescription>The text to display in this zone</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="grid grid-cols-3 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="textFontSize"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Font Size</FormLabel>
+                        <Select
+                          value={field.value || "medium"}
+                          onValueChange={field.onChange}
+                        >
+                          <FormControl>
+                            <SelectTrigger data-testid="select-text-font-size">
+                              <SelectValue placeholder="Select size" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="small">Small</SelectItem>
+                            <SelectItem value="medium">Medium</SelectItem>
+                            <SelectItem value="large">Large</SelectItem>
+                            <SelectItem value="xlarge">Extra Large</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="textAlign"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Horizontal Align</FormLabel>
+                        <Select
+                          value={field.value || "center"}
+                          onValueChange={field.onChange}
+                        >
+                          <FormControl>
+                            <SelectTrigger data-testid="select-text-align">
+                              <SelectValue placeholder="Select alignment" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="left">Left</SelectItem>
+                            <SelectItem value="center">Center</SelectItem>
+                            <SelectItem value="right">Right</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="textVerticalAlign"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Vertical Align</FormLabel>
+                        <Select
+                          value={field.value || "middle"}
+                          onValueChange={field.onChange}
+                        >
+                          <FormControl>
+                            <SelectTrigger data-testid="select-text-vertical-align">
+                              <SelectValue placeholder="Select alignment" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="top">Top</SelectItem>
+                            <SelectItem value="middle">Middle</SelectItem>
+                            <SelectItem value="bottom">Bottom</SelectItem>
                           </SelectContent>
                         </Select>
                         <FormMessage />

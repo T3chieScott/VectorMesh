@@ -217,7 +217,7 @@ export type LayoutTemplate = typeof layoutTemplates.$inferSelect;
 export interface LayoutZone {
   id: string;
   name: string;
-  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news";
+  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text";
   x: number;
   y: number;
   width: number;
@@ -242,6 +242,11 @@ export interface LayoutZone {
   newsScrollSpeed?: number;
   newsItemCount?: number;
   newsTextSize?: "small" | "medium" | "large";
+  // Text widget configuration
+  textContent?: string;
+  textFontSize?: "small" | "medium" | "large" | "xlarge";
+  textAlign?: "left" | "center" | "right";
+  textVerticalAlign?: "top" | "middle" | "bottom";
 }
 
 // ============ PROGRAMMES ============
