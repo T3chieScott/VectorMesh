@@ -74,8 +74,23 @@ function ClockWidget({ timezone, label }: { timezone?: string; label?: string })
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
-    const timer = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(timer);
+    // Sync to the second boundary so all clocks tick together
+    const now = new Date();
+    const msUntilNextSecond = 1000 - now.getMilliseconds();
+    
+    let timer: ReturnType<typeof setInterval> | null = null;
+    
+    // First, wait until the next second boundary
+    const initialTimeout = setTimeout(() => {
+      setTime(new Date());
+      // Then update every second on the boundary
+      timer = setInterval(() => setTime(new Date()), 1000);
+    }, msUntilNextSecond);
+
+    return () => {
+      clearTimeout(initialTimeout);
+      if (timer) clearInterval(timer);
+    };
   }, []);
 
   const formatTime = (date: Date) => {
