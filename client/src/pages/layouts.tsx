@@ -174,6 +174,9 @@ const zoneFormSchema = z.object({
   borderColor: z.string().optional(),
   borderWidth: z.number().min(0).max(20).optional(),
   borderRadius: z.number().min(0).max(50).optional(),
+  // Clock widget configuration
+  clockTimezone: z.string().optional(),
+  clockLabel: z.string().optional(),
   // Weather widget configuration
   weatherLocation: z.string().optional(),
   weatherLat: z.number().optional(),
@@ -424,6 +427,8 @@ function ZoneEditorDialog({
       borderColor: "",
       borderWidth: 0,
       borderRadius: 0,
+      clockTimezone: "",
+      clockLabel: "",
       weatherLocation: "",
       weatherLat: undefined,
       weatherLng: undefined,
@@ -479,6 +484,8 @@ function ZoneEditorDialog({
           borderColor: zone.borderColor || "",
           borderWidth: zone.borderWidth || 0,
           borderRadius: zone.borderRadius || 0,
+          clockTimezone: zone.clockTimezone || "",
+          clockLabel: zone.clockLabel || "",
           weatherLocation: zone.weatherLocation || "",
           weatherLat: zone.weatherLat,
           weatherLng: zone.weatherLng,
@@ -529,6 +536,8 @@ function ZoneEditorDialog({
           borderColor: "",
           borderWidth: 0,
           borderRadius: 0,
+          clockTimezone: "",
+          clockLabel: "",
           weatherLocation: "",
           weatherLat: undefined,
           weatherLng: undefined,
@@ -1061,6 +1070,84 @@ function ZoneEditorDialog({
                 />
               </div>
             </div>
+
+            {/* Clock Widget Configuration */}
+            {form.watch("type") === "clock" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Clock className="h-4 w-4" />
+                  Clock Widget Settings
+                </div>
+                <FormField
+                  control={form.control}
+                  name="clockTimezone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Timezone</FormLabel>
+                      <Select 
+                        onValueChange={field.onChange} 
+                        value={field.value || ""}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-clock-timezone">
+                            <SelectValue placeholder="Local time (device timezone)" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="">Local time (device timezone)</SelectItem>
+                          <SelectItem value="UTC">UTC</SelectItem>
+                          <SelectItem value="Europe/London">London (GMT/BST)</SelectItem>
+                          <SelectItem value="Europe/Paris">Paris (CET/CEST)</SelectItem>
+                          <SelectItem value="Europe/Berlin">Berlin (CET/CEST)</SelectItem>
+                          <SelectItem value="Europe/Amsterdam">Amsterdam (CET/CEST)</SelectItem>
+                          <SelectItem value="Europe/Madrid">Madrid (CET/CEST)</SelectItem>
+                          <SelectItem value="Europe/Rome">Rome (CET/CEST)</SelectItem>
+                          <SelectItem value="Europe/Moscow">Moscow (MSK)</SelectItem>
+                          <SelectItem value="Asia/Dubai">Dubai (GST)</SelectItem>
+                          <SelectItem value="Asia/Kolkata">India (IST)</SelectItem>
+                          <SelectItem value="Asia/Singapore">Singapore (SGT)</SelectItem>
+                          <SelectItem value="Asia/Hong_Kong">Hong Kong (HKT)</SelectItem>
+                          <SelectItem value="Asia/Shanghai">Shanghai (CST)</SelectItem>
+                          <SelectItem value="Asia/Tokyo">Tokyo (JST)</SelectItem>
+                          <SelectItem value="Australia/Sydney">Sydney (AEST/AEDT)</SelectItem>
+                          <SelectItem value="Australia/Perth">Perth (AWST)</SelectItem>
+                          <SelectItem value="Pacific/Auckland">Auckland (NZST/NZDT)</SelectItem>
+                          <SelectItem value="America/New_York">New York (EST/EDT)</SelectItem>
+                          <SelectItem value="America/Chicago">Chicago (CST/CDT)</SelectItem>
+                          <SelectItem value="America/Denver">Denver (MST/MDT)</SelectItem>
+                          <SelectItem value="America/Los_Angeles">Los Angeles (PST/PDT)</SelectItem>
+                          <SelectItem value="America/Toronto">Toronto (EST/EDT)</SelectItem>
+                          <SelectItem value="America/Vancouver">Vancouver (PST/PDT)</SelectItem>
+                          <SelectItem value="America/Mexico_City">Mexico City (CST)</SelectItem>
+                          <SelectItem value="America/Sao_Paulo">São Paulo (BRT)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="clockLabel"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Display Label (Optional)</FormLabel>
+                      <FormControl>
+                        <Input 
+                          placeholder="e.g., New York, London, Tokyo" 
+                          {...field} 
+                          data-testid="input-clock-label" 
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Shows a location name above the clock
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
 
             {/* Weather Widget Configuration */}
             {form.watch("type") === "weather" && (

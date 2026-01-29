@@ -247,6 +247,9 @@ export interface LayoutZone {
   borderColor?: string;
   borderWidth?: number;
   borderRadius?: number;
+  // Clock widget configuration
+  clockTimezone?: string;  // IANA timezone e.g., "America/New_York", "Europe/London"
+  clockLabel?: string;     // Optional label e.g., "New York", "London"
   // Weather widget configuration
   weatherLocation?: string;
   weatherLat?: number;

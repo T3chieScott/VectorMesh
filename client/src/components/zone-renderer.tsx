@@ -70,7 +70,7 @@ function TickerWidget({ content }: { content?: string }) {
   );
 }
 
-function ClockWidget({ timezone }: { timezone?: string }) {
+function ClockWidget({ timezone, label }: { timezone?: string; label?: string }) {
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
@@ -101,6 +101,9 @@ function ClockWidget({ timezone }: { timezone?: string }) {
 
   return (
     <div className="h-full w-full flex flex-col items-center justify-center text-center p-2">
+      {label && (
+        <div className="font-semibold opacity-90" style={{ fontSize: "max(10px, 3.5cqh)" }}>{label}</div>
+      )}
       <div className="font-mono font-bold" style={{ fontSize: "max(16px, 8cqh)" }}>{formatTime(time)}</div>
       <div className="opacity-80" style={{ fontSize: "max(10px, 3cqh)" }}>{formatDate(time)}</div>
     </div>
@@ -869,7 +872,7 @@ export function ZoneRenderer({
       case "ticker":
         return <TickerWidget />;
       case "clock":
-        return <ClockWidget timezone={timezone} />;
+        return <ClockWidget timezone={zone.clockTimezone || timezone} label={zone.clockLabel} />;
       case "logo":
         return <LogoWidget />;
       case "html":
