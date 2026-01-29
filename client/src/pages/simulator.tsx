@@ -642,7 +642,7 @@ function NewsWidget({
 
   if (!rssUrl) {
     return (
-      <div className="h-full w-full bg-gradient-to-r from-red-700 to-red-900 flex items-center justify-center text-white overflow-hidden">
+      <div className="h-full w-full flex items-center justify-center overflow-hidden">
         <div className="text-center">
           <Newspaper 
             className="mx-auto mb-1 opacity-70" 
@@ -657,7 +657,7 @@ function NewsWidget({
 
   if (error) {
     return (
-      <div className="h-full w-full bg-gradient-to-r from-gray-600 to-gray-800 flex items-center justify-center text-white overflow-hidden">
+      <div className="h-full w-full flex items-center justify-center overflow-hidden">
         <div className="text-center">
           <AlertTriangle 
             className="mx-auto mb-1 opacity-70" 
@@ -671,7 +671,7 @@ function NewsWidget({
 
   if (news.length === 0) {
     return (
-      <div className="h-full w-full bg-gradient-to-r from-red-700 to-red-900 flex items-center justify-center text-white overflow-hidden">
+      <div className="h-full w-full flex items-center justify-center overflow-hidden">
         <RefreshCw 
           className="animate-spin opacity-50" 
           style={{ width: "clamp(16px, 15cqh, 32px)", height: "clamp(16px, 15cqh, 32px)" }}
@@ -684,7 +684,7 @@ function NewsWidget({
   const animationDuration = Math.max(headlinesText.length / scrollSpeed, 15);
 
   return (
-    <div className="h-full w-full bg-gradient-to-r from-red-700 to-red-900 relative overflow-hidden">
+    <div className="h-full w-full relative overflow-hidden">
       {showHeader && (
         <div className="absolute top-0 left-0 right-0 bg-black/30 px-2 py-0.5 flex items-center gap-1 z-10">
           <Newspaper 
