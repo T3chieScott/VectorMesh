@@ -2175,7 +2175,7 @@ function InteractiveLayoutPreview({
         return (
           <div
             key={zone.id}
-            className="absolute overflow-hidden"
+            className="absolute"
             style={{
               left: `${zone.x}%`,
               top: `${zone.y}%`,
@@ -2185,17 +2185,20 @@ function InteractiveLayoutPreview({
             }}
             data-testid={`draggable-zone-${zone.id}`}
           >
-            <ZoneRenderer
-              zone={zone}
-              showBorder={false}
-              isPlaying={true}
-            />
+            <div className="absolute inset-0 overflow-hidden">
+              <ZoneRenderer
+                zone={zone}
+                showBorder={false}
+                isPlaying={true}
+                fillContainer={true}
+              />
+            </div>
             
             <div
-              className={`absolute inset-0 border-2 transition-all ${
+              className={`absolute inset-0 transition-all pointer-events-auto ${
                 isSelected 
-                  ? "border-cyan-400 shadow-lg shadow-cyan-400/30 bg-cyan-400/10" 
-                  : "border-transparent hover:border-white/40 hover:bg-white/5"
+                  ? "ring-2 ring-cyan-400 ring-inset shadow-lg shadow-cyan-400/30" 
+                  : "ring-1 ring-transparent hover:ring-white/30"
               } ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
               onClick={(e) => {
                 e.stopPropagation();
@@ -2204,7 +2207,7 @@ function InteractiveLayoutPreview({
               onMouseDown={(e) => handleMouseDown(e, zone.id, "move")}
             >
               {isSelected && (
-                <div className="absolute top-1 left-1 flex items-center gap-1 bg-cyan-500/90 text-white text-[10px] px-1.5 py-0.5 rounded pointer-events-none">
+                <div className="absolute top-1 left-1 flex items-center gap-1 bg-cyan-500 text-white text-[10px] px-1.5 py-0.5 rounded pointer-events-none z-10">
                   <Icon className="h-3 w-3" />
                   <span className="font-medium">{zone.name}</span>
                 </div>
@@ -2214,7 +2217,7 @@ function InteractiveLayoutPreview({
             {isSelected && resizeHandles.map(({ position, cursor, style }) => (
               <div
                 key={position}
-                className="absolute w-3 h-3 bg-cyan-400 border border-white rounded-sm hover:bg-cyan-300 z-10"
+                className="absolute w-3 h-3 bg-cyan-400 border-2 border-white rounded-sm hover:bg-cyan-300 z-20"
                 style={{ ...style, cursor }}
                 onMouseDown={(e) => handleMouseDown(e, zone.id, "resize", position)}
                 data-testid={`resize-handle-${zone.id}-${position}`}

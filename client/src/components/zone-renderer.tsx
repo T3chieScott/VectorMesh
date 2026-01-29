@@ -744,25 +744,47 @@ function MontageWidget({
     };
   };
 
+  const currentUrl = getMediaUrl(currentMediaId);
+  const nextUrl = getMediaUrl(nextMediaId);
+
+  if (!currentUrl) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-muted/30">
+        <div className="text-center">
+          <Images className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">Media not found</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="h-full w-full relative overflow-hidden">
+    <div className="h-full w-full relative overflow-hidden bg-black/20">
       <div style={getTransitionStyle(true, false)}>
         <div className="h-full w-full" style={getKenBurnsStyle()}>
           <img
-            src={getMediaUrl(currentMediaId)}
+            src={currentUrl}
             alt=""
             className="h-full w-full"
-            style={{ objectFit: fitMode }}
+            style={{ objectFit: fitMode, border: "none" }}
+            onError={(e) => {
+              const target = e.target as HTMLImageElement;
+              target.style.display = "none";
+            }}
           />
         </div>
       </div>
-      {displayOrder.length > 1 && (
+      {displayOrder.length > 1 && nextUrl && (
         <div style={getTransitionStyle(false, true)}>
           <img
-            src={getMediaUrl(nextMediaId)}
+            src={nextUrl}
             alt=""
             className="h-full w-full"
-            style={{ objectFit: fitMode }}
+            style={{ objectFit: fitMode, border: "none" }}
+            onError={(e) => {
+              const target = e.target as HTMLImageElement;
+              target.style.display = "none";
+            }}
           />
         </div>
       )}
@@ -778,6 +800,7 @@ export interface ZoneRendererProps {
   showBorder?: boolean;
   playlistName?: string;
   timezone?: string;
+  fillContainer?: boolean;
 }
 
 export function ZoneRenderer({
@@ -788,6 +811,7 @@ export function ZoneRenderer({
   showBorder = false,
   playlistName,
   timezone,
+  fillContainer = false,
 }: ZoneRendererProps) {
   const ZoneIcon = zoneTypeIcons[zone.type] || Layers;
 
@@ -946,12 +970,7 @@ export function ZoneRenderer({
     return {};
   };
 
-  const zoneStyle: React.CSSProperties = {
-    left: `${zone.x}%`,
-    top: `${zone.y}%`,
-    width: `${zone.width}%`,
-    height: `${zone.height}%`,
-    zIndex: zone.zIndex || 1,
+  const baseStyle: React.CSSProperties = {
     containerType: "size" as const,
     ...getBackgroundStyle(),
     ...(zone.textColor && { color: zone.textColor }),
@@ -961,6 +980,22 @@ export function ZoneRenderer({
     ...(zone.borderWidth && { borderWidth: `${zone.borderWidth}px`, borderStyle: "solid" }),
     ...(zone.borderRadius && { borderRadius: `${zone.borderRadius}px` }),
   };
+
+  const zoneStyle: React.CSSProperties = fillContainer
+    ? {
+        ...baseStyle,
+        inset: 0,
+        width: "100%",
+        height: "100%",
+      }
+    : {
+        ...baseStyle,
+        left: `${zone.x}%`,
+        top: `${zone.y}%`,
+        width: `${zone.width}%`,
+        height: `${zone.height}%`,
+        zIndex: zone.zIndex || 1,
+      };
 
   return (
     <div
