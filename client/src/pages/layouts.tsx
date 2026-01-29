@@ -1085,8 +1085,8 @@ function ZoneEditorDialog({
                     <FormItem>
                       <FormLabel>Timezone</FormLabel>
                       <Select 
-                        onValueChange={field.onChange} 
-                        value={field.value || ""}
+                        onValueChange={(val) => field.onChange(val === "local" ? "" : val)} 
+                        value={field.value || "local"}
                       >
                         <FormControl>
                           <SelectTrigger data-testid="select-clock-timezone">
@@ -1094,7 +1094,7 @@ function ZoneEditorDialog({
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="">Local time (device timezone)</SelectItem>
+                          <SelectItem value="local">Local time (device timezone)</SelectItem>
                           <SelectItem value="UTC">UTC</SelectItem>
                           <SelectItem value="Europe/London">London (GMT/BST)</SelectItem>
                           <SelectItem value="Europe/Paris">Paris (CET/CEST)</SelectItem>
