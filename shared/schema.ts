@@ -199,6 +199,9 @@ export const layoutTemplates = pgTable("layout_templates", {
   eventId: varchar("event_id").references(() => events.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   version: integer("version").default(1),
+  aspectRatio: text("aspect_ratio").notNull().default("16:9"), // "16:9", "9:16", "4:3", "1:1", "custom"
+  customWidth: integer("custom_width"), // Only used when aspectRatio is "custom"
+  customHeight: integer("custom_height"), // Only used when aspectRatio is "custom"
   zones: jsonb("zones").notNull().$type<LayoutZone[]>(),
   profileOverrides: jsonb("profile_overrides"),
   createdAt: timestamp("created_at").defaultNow(),

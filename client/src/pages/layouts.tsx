@@ -71,12 +71,41 @@ import {
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone } from "@shared/schema";
 
+const ASPECT_RATIO_OPTIONS = [
+  { value: "16:9", label: "16:9 (Landscape)", description: "Standard widescreen" },
+  { value: "9:16", label: "9:16 (Portrait)", description: "Vertical displays" },
+  { value: "4:3", label: "4:3 (Standard)", description: "Traditional format" },
+  { value: "1:1", label: "1:1 (Square)", description: "Square displays" },
+  { value: "custom", label: "Custom", description: "Custom ratio" },
+];
+
 const layoutFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   eventId: z.string().optional(),
-});
+  aspectRatio: z.string().default("16:9"),
+  customWidth: z.number().optional(),
+  customHeight: z.number().optional(),
+}).refine((data) => {
+  if (data.aspectRatio === "custom") {
+    return data.customWidth && data.customWidth > 0 && data.customHeight && data.customHeight > 0;
+  }
+  return true;
+}, { message: "Custom width and height are required for custom aspect ratio", path: ["customWidth"] });
 
 type LayoutFormValues = z.infer<typeof layoutFormSchema>;
+
+// Helper to get aspect ratio dimensions
+function getAspectRatioDimensions(aspectRatio: string, customWidth?: number | null, customHeight?: number | null): { width: number; height: number } {
+  switch (aspectRatio) {
+    case "16:9": return { width: 16, height: 9 };
+    case "9:16": return { width: 9, height: 16 };
+    case "4:3": return { width: 4, height: 3 };
+    case "1:1": return { width: 1, height: 1 };
+    case "custom":
+      return { width: customWidth || 16, height: customHeight || 9 };
+    default: return { width: 16, height: 9 };
+  }
+}
 
 const defaultZones: LayoutZone[] = [
   { id: "main", name: "Main Content", type: "media", x: 0, y: 0, width: 100, height: 85, zIndex: 1 },
@@ -1485,14 +1514,21 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
     defaultValues: {
       name: layout.name,
       eventId: layout.eventId || "",
+      aspectRatio: layout.aspectRatio || "16:9",
+      customWidth: layout.customWidth || undefined,
+      customHeight: layout.customHeight || undefined,
     },
   });
+  
+  const watchAspectRatio = form.watch("aspectRatio");
 
   const updateMutation = useMutation({
     mutationFn: (data: LayoutFormValues) =>
       apiRequest("PATCH", `/api/layouts/${layout.id}`, {
         ...data,
         eventId: data.eventId === "global" || !data.eventId ? null : data.eventId,
+        customWidth: data.aspectRatio === "custom" ? data.customWidth : null,
+        customHeight: data.aspectRatio === "custom" ? data.customHeight : null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
@@ -1633,6 +1669,77 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                           </FormItem>
                         )}
                       />
+                      <FormField
+                        control={form.control}
+                        name="aspectRatio"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Aspect Ratio</FormLabel>
+                            <Select onValueChange={field.onChange} defaultValue={field.value}>
+                              <FormControl>
+                                <SelectTrigger data-testid="select-edit-layout-aspect-ratio">
+                                  <SelectValue placeholder="Select aspect ratio" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {ASPECT_RATIO_OPTIONS.map((opt) => (
+                                  <SelectItem key={opt.value} value={opt.value}>
+                                    <div className="flex flex-col">
+                                      <span>{opt.label}</span>
+                                      <span className="text-xs text-muted-foreground">{opt.description}</span>
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      {watchAspectRatio === "custom" && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <FormField
+                            control={form.control}
+                            name="customWidth"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Width</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    {...field}
+                                    value={field.value || ""}
+                                    onChange={(e) => field.onChange(parseInt(e.target.value) || undefined)}
+                                    data-testid="input-edit-layout-custom-width"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="customHeight"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Height</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    {...field}
+                                    value={field.value || ""}
+                                    onChange={(e) => field.onChange(parseInt(e.target.value) || undefined)}
+                                    data-testid="input-edit-layout-custom-height"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                      )}
                       <div className="flex justify-end gap-2">
                         <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
                           Cancel
@@ -1740,8 +1847,13 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
     defaultValues: {
       name: "",
       eventId: "",
+      aspectRatio: "16:9",
+      customWidth: undefined,
+      customHeight: undefined,
     },
   });
+  
+  const watchAspectRatio = form.watch("aspectRatio");
 
   const createMutation = useMutation({
     mutationFn: (data: LayoutFormValues) =>
@@ -1749,6 +1861,8 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
         ...data,
         eventId: data.eventId === "global" || !data.eventId ? null : data.eventId,
         zones: defaultZones,
+        customWidth: data.aspectRatio === "custom" ? data.customWidth : null,
+        customHeight: data.aspectRatio === "custom" ? data.customHeight : null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
@@ -1816,6 +1930,79 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
                 </FormItem>
               )}
             />
+            <FormField
+              control={form.control}
+              name="aspectRatio"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Aspect Ratio</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                      <SelectTrigger data-testid="select-layout-aspect-ratio">
+                        <SelectValue placeholder="Select aspect ratio" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {ASPECT_RATIO_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          <div className="flex flex-col">
+                            <span>{opt.label}</span>
+                            <span className="text-xs text-muted-foreground">{opt.description}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            {watchAspectRatio === "custom" && (
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="customWidth"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Width</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          min={1}
+                          placeholder="e.g., 21"
+                          {...field}
+                          value={field.value || ""}
+                          onChange={(e) => field.onChange(parseInt(e.target.value) || undefined)}
+                          data-testid="input-layout-custom-width"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="customHeight"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Height</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          min={1}
+                          placeholder="e.g., 9"
+                          {...field}
+                          value={field.value || ""}
+                          onChange={(e) => field.onChange(parseInt(e.target.value) || undefined)}
+                          data-testid="input-layout-custom-height"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                 Cancel
