@@ -839,6 +839,32 @@ function ZoneRenderer({
     }
   };
 
+  // Map gradient direction to CSS
+  const gradientDirectionMap: Record<string, string> = {
+    "to-t": "to top",
+    "to-b": "to bottom",
+    "to-l": "to left",
+    "to-r": "to right",
+    "to-tl": "to top left",
+    "to-tr": "to top right",
+    "to-bl": "to bottom left",
+    "to-br": "to bottom right",
+  };
+
+  // Build background style (gradient or solid)
+  const getBackgroundStyle = (): React.CSSProperties => {
+    if (zone.gradientEnabled && zone.backgroundColor && zone.gradientEndColor) {
+      const direction = gradientDirectionMap[zone.gradientDirection || "to-b"] || "to bottom";
+      return {
+        background: `linear-gradient(${direction}, ${zone.backgroundColor}, ${zone.gradientEndColor})`,
+      };
+    }
+    if (zone.backgroundColor) {
+      return { backgroundColor: zone.backgroundColor };
+    }
+    return {};
+  };
+
   // Build zone styling from schema properties
   const zoneStyle: React.CSSProperties = {
     left: `${zone.x}%`,
@@ -847,7 +873,7 @@ function ZoneRenderer({
     height: `${zone.height}%`,
     zIndex: zone.zIndex || 1,
     containerType: "size" as const,
-    ...(zone.backgroundColor && { backgroundColor: zone.backgroundColor }),
+    ...getBackgroundStyle(),
     ...(zone.textColor && { color: zone.textColor }),
     ...(zone.borderColor && zone.borderWidth && { borderColor: zone.borderColor }),
     ...(zone.borderWidth && { borderWidth: `${zone.borderWidth}px`, borderStyle: "solid" }),
