@@ -383,21 +383,19 @@ function NewsWidget({
           {feedTitle}
         </span>
       </div>
-      <div className="flex-1 overflow-hidden min-h-0 relative">
+      <div className="flex-1 overflow-hidden relative">
         <div 
-          className="absolute inset-0 flex items-center"
+          className="whitespace-nowrap text-white font-medium absolute left-0"
+          style={{
+            fontSize: sizes.headline,
+            lineHeight: 1,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            animation: `ticker-scroll ${animationDuration}s linear infinite`,
+          }}
         >
-          <div 
-            className="whitespace-nowrap text-white font-medium"
-            style={{
-              fontSize: sizes.headline,
-              lineHeight: 1.1,
-              animation: `ticker-scroll ${animationDuration}s linear infinite`,
-            }}
-          >
-            <span className="pr-8">{headlinesText}</span>
-            <span className="pr-8">{headlinesText}</span>
-          </div>
+          <span className="pr-8">{headlinesText}</span>
+          <span className="pr-8">{headlinesText}</span>
         </div>
       </div>
     </div>
