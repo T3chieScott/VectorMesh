@@ -70,6 +70,9 @@ import {
   Copy,
   Images,
   Monitor,
+  AlertTriangle,
+  X,
+  Save,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
 import { ZoneRenderer } from "@/components/zone-renderer";
@@ -1962,10 +1965,16 @@ function InteractiveLayoutPreview({
   layout,
   zones,
   onZoneUpdate,
+  onSaveAll,
+  onDiscardAll,
+  hasUnsavedChanges = false,
 }: {
   layout: LayoutTemplate;
   zones: LayoutZone[];
   onZoneUpdate: (zoneId: string, updates: Partial<LayoutZone>) => void;
+  onSaveAll?: () => void;
+  onDiscardAll?: () => void;
+  hasUnsavedChanges?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -1976,6 +1985,16 @@ function InteractiveLayoutPreview({
   useEffect(() => {
     setLocalZones(zones);
   }, [zones]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setSelectedZoneId(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const getSnapPoints = useCallback((excludeZoneId: string) => {
     const points = {
@@ -2157,13 +2176,42 @@ function InteractiveLayoutPreview({
   const aspectPadding = (aspectDims.height / aspectDims.width) * 100;
 
   return (
-    <div 
-      ref={containerRef}
-      className="relative w-full bg-slate-900 rounded-lg overflow-hidden select-none"
-      style={{ paddingBottom: `${aspectPadding}%` }}
-      onClick={() => setSelectedZoneId(null)}
-      data-testid="interactive-layout-preview"
-    >
+    <div className="space-y-2">
+      {hasUnsavedChanges && onSaveAll && onDiscardAll && (
+        <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+          <span className="text-sm text-amber-500 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4" />
+            Unsaved changes
+          </span>
+          <div className="flex gap-2">
+            <Button 
+              size="sm" 
+              variant="ghost" 
+              onClick={onDiscardAll}
+              data-testid="button-discard-changes"
+            >
+              <X className="h-4 w-4 mr-1" />
+              Discard
+            </Button>
+            <Button 
+              size="sm" 
+              onClick={onSaveAll}
+              data-testid="button-save-changes"
+            >
+              <Save className="h-4 w-4 mr-1" />
+              Save
+            </Button>
+          </div>
+        </div>
+      )}
+      <div 
+        ref={containerRef}
+        className="relative w-full bg-slate-900 rounded-lg overflow-hidden select-none"
+        style={{ paddingBottom: `${aspectPadding}%` }}
+        onClick={() => setSelectedZoneId(null)}
+        data-testid="interactive-layout-preview"
+        tabIndex={0}
+      >
       {snapLines.map((line, i) => (
         <div
           key={i}
@@ -2234,6 +2282,7 @@ function InteractiveLayoutPreview({
           </div>
         );
       })}
+      </div>
     </div>
   );
 }
@@ -2246,7 +2295,21 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
   const { toast } = useToast();
 
   const event = events.find((e) => e.id === layout.eventId);
-  const zones = (layout.zones as LayoutZone[]) || [];
+  const savedZones = (layout.zones as LayoutZone[]) || [];
+  
+  // Draft state for non-destructive editing
+  const [draftZones, setDraftZones] = useState<LayoutZone[]>(savedZones);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  
+  // Sync draft zones when saved zones change from server
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      setDraftZones(savedZones);
+    }
+  }, [savedZones, hasUnsavedChanges]);
+  
+  // Use draft zones for display, saved zones for operations
+  const zones = hasUnsavedChanges ? draftZones : savedZones;
   
   // Look up the current zone from the zones array (ensures fresh data after refetch)
   const editingZone = editingZoneId ? zones.find(z => z.id === editingZoneId) : undefined;
@@ -2323,22 +2386,36 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
   });
 
   const updateZoneMutation = useMutation({
-    mutationFn: ({ zoneId, updates }: { zoneId: string; updates: Partial<LayoutZone> }) => {
-      const updatedZones = zones.map(z => 
-        z.id === zoneId ? { ...z, ...updates } : z
-      );
+    mutationFn: (updatedZones: LayoutZone[]) => {
       return apiRequest("PATCH", `/api/layouts/${layout.id}`, { zones: updatedZones });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      setHasUnsavedChanges(false);
+      toast({ title: "Layout saved successfully" });
     },
     onError: () => {
-      toast({ title: "Failed to update zone", variant: "destructive" });
+      toast({ title: "Failed to save layout", variant: "destructive" });
     },
   });
 
+  // Non-destructive: update draft state only
   const handleZoneUpdate = (zoneId: string, updates: Partial<LayoutZone>) => {
-    updateZoneMutation.mutate({ zoneId, updates });
+    setDraftZones(prev => prev.map(z => 
+      z.id === zoneId ? { ...z, ...updates } : z
+    ));
+    setHasUnsavedChanges(true);
+  };
+
+  // Save all draft changes to server
+  const handleSaveAll = () => {
+    updateZoneMutation.mutate(draftZones);
+  };
+
+  // Discard all draft changes
+  const handleDiscardAll = () => {
+    setDraftZones(savedZones);
+    setHasUnsavedChanges(false);
   };
 
   return (
@@ -2349,6 +2426,9 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
             layout={layout} 
             zones={zones} 
             onZoneUpdate={handleZoneUpdate}
+            hasUnsavedChanges={hasUnsavedChanges}
+            onSaveAll={handleSaveAll}
+            onDiscardAll={handleDiscardAll}
           />
         </div>
         <CardHeader className="flex flex-row items-start justify-between gap-4 pt-0 pb-3">
@@ -2852,7 +2932,20 @@ function LayoutEditorPanel({
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
 
-  const zones = (layout.zones as LayoutZone[]) || [];
+  const savedZones = (layout.zones as LayoutZone[]) || [];
+  
+  // Draft state for non-destructive editing
+  const [draftZones, setDraftZones] = useState<LayoutZone[]>(savedZones);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  
+  // Sync draft zones when saved zones change from server
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      setDraftZones(savedZones);
+    }
+  }, [savedZones, hasUnsavedChanges]);
+  
+  const zones = hasUnsavedChanges ? draftZones : savedZones;
   const editingZone = editingZoneId ? zones.find(z => z.id === editingZoneId) : undefined;
   const event = events.find((e) => e.id === layout.eventId);
 
@@ -2943,22 +3036,36 @@ function LayoutEditorPanel({
   });
 
   const updateZoneMutation = useMutation({
-    mutationFn: ({ zoneId, updates }: { zoneId: string; updates: Partial<LayoutZone> }) => {
-      const updatedZones = zones.map(z => 
-        z.id === zoneId ? { ...z, ...updates } : z
-      );
+    mutationFn: (updatedZones: LayoutZone[]) => {
       return apiRequest("PATCH", `/api/layouts/${layout.id}`, { zones: updatedZones });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      setHasUnsavedChanges(false);
+      toast({ title: "Layout saved successfully" });
     },
     onError: () => {
-      toast({ title: "Failed to update zone", variant: "destructive" });
+      toast({ title: "Failed to save layout", variant: "destructive" });
     },
   });
 
+  // Non-destructive: update draft state only
   const handleZoneUpdate = (zoneId: string, updates: Partial<LayoutZone>) => {
-    updateZoneMutation.mutate({ zoneId, updates });
+    setDraftZones(prev => prev.map(z => 
+      z.id === zoneId ? { ...z, ...updates } : z
+    ));
+    setHasUnsavedChanges(true);
+  };
+
+  // Save all draft changes to server
+  const handleSaveAll = () => {
+    updateZoneMutation.mutate(draftZones);
+  };
+
+  // Discard all draft changes
+  const handleDiscardAll = () => {
+    setDraftZones(savedZones);
+    setHasUnsavedChanges(false);
   };
 
   const handleEditZone = (zone: LayoutZone) => {
@@ -3181,13 +3288,19 @@ function LayoutEditorPanel({
 
 function LivePreviewPanel({ 
   layout,
+  zones,
   onZoneUpdate,
+  hasUnsavedChanges,
+  onSaveAll,
+  onDiscardAll,
 }: { 
   layout: LayoutTemplate;
+  zones: LayoutZone[];
   onZoneUpdate: (zoneId: string, updates: Partial<LayoutZone>) => void;
+  hasUnsavedChanges: boolean;
+  onSaveAll: () => void;
+  onDiscardAll: () => void;
 }) {
-  const zones = (layout.zones as LayoutZone[]) || [];
-
   return (
     <div className="h-full flex flex-col">
       <div className="p-4 border-b">
@@ -3205,6 +3318,9 @@ function LivePreviewPanel({
             layout={layout}
             zones={zones}
             onZoneUpdate={onZoneUpdate}
+            hasUnsavedChanges={hasUnsavedChanges}
+            onSaveAll={onSaveAll}
+            onDiscardAll={onDiscardAll}
           />
         </div>
       </div>
@@ -3214,6 +3330,7 @@ function LivePreviewPanel({
 
 export default function LayoutsPage() {
   const [selectedLayoutId, setSelectedLayoutId] = useState<string | null>(null);
+  const { toast } = useToast();
   
   const { data: layouts = [], isLoading: layoutsLoading } = useQuery<LayoutTemplate[]>({
     queryKey: ["/api/layouts"],
@@ -3224,26 +3341,57 @@ export default function LayoutsPage() {
   });
 
   const selectedLayout = layouts.find(l => l.id === selectedLayoutId);
+  const savedZones = (selectedLayout?.zones as LayoutZone[]) || [];
+  
+  // Draft state for non-destructive editing
+  const [draftZones, setDraftZones] = useState<LayoutZone[]>(savedZones);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  
+  // Sync draft zones when layout selection changes or server data updates
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      setDraftZones(savedZones);
+    }
+  }, [savedZones, hasUnsavedChanges]);
+  
+  // Reset draft when switching layouts
+  useEffect(() => {
+    setDraftZones(savedZones);
+    setHasUnsavedChanges(false);
+  }, [selectedLayoutId]);
 
   const updateZoneMutation = useMutation({
-    mutationFn: ({ layoutId, zoneId, updates }: { layoutId: string; zoneId: string; updates: Partial<LayoutZone> }) => {
-      const layout = layouts.find(l => l.id === layoutId);
-      if (!layout) throw new Error("Layout not found");
-      const zones = (layout.zones as LayoutZone[]) || [];
-      const updatedZones = zones.map(z => 
-        z.id === zoneId ? { ...z, ...updates } : z
-      );
-      return apiRequest("PATCH", `/api/layouts/${layoutId}`, { zones: updatedZones });
+    mutationFn: (updatedZones: LayoutZone[]) => {
+      if (!selectedLayoutId) throw new Error("No layout selected");
+      return apiRequest("PATCH", `/api/layouts/${selectedLayoutId}`, { zones: updatedZones });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      setHasUnsavedChanges(false);
+      toast({ title: "Layout saved successfully" });
+    },
+    onError: () => {
+      toast({ title: "Failed to save layout", variant: "destructive" });
     },
   });
 
+  // Non-destructive: update draft state only
   const handleZoneUpdate = (zoneId: string, updates: Partial<LayoutZone>) => {
-    if (selectedLayoutId) {
-      updateZoneMutation.mutate({ layoutId: selectedLayoutId, zoneId, updates });
-    }
+    setDraftZones(prev => prev.map(z => 
+      z.id === zoneId ? { ...z, ...updates } : z
+    ));
+    setHasUnsavedChanges(true);
+  };
+
+  // Save all draft changes to server
+  const handleSaveAll = () => {
+    updateZoneMutation.mutate(draftZones);
+  };
+
+  // Discard all draft changes
+  const handleDiscardAll = () => {
+    setDraftZones(savedZones);
+    setHasUnsavedChanges(false);
   };
 
   useEffect(() => {
@@ -3319,7 +3467,14 @@ export default function LayoutsPage() {
             />
           </div>
           <div className="flex-1">
-            <LivePreviewPanel layout={selectedLayout} onZoneUpdate={handleZoneUpdate} />
+            <LivePreviewPanel 
+              layout={selectedLayout} 
+              zones={draftZones}
+              onZoneUpdate={handleZoneUpdate}
+              hasUnsavedChanges={hasUnsavedChanges}
+              onSaveAll={handleSaveAll}
+              onDiscardAll={handleDiscardAll}
+            />
           </div>
         </div>
       ) : (
