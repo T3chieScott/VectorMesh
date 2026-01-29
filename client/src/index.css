@@ -344,4 +344,14 @@
       transform: translateY(-50%) translateX(-50%);
     }
   }
+
+  /* Horizontal-only ticker scroll for flex-centered containers */
+  @keyframes ticker-scroll-horiz {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
 }
