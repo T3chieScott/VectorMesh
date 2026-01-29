@@ -13,7 +13,7 @@ export const screenTypeEnum = pgEnum("screen_type", ["standard", "led_wall"]);
 export const orientationEnum = pgEnum("orientation", ["landscape", "portrait"]);
 export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "gif"]);
 export const programmeStatusEnum = pgEnum("programme_status", ["draft", "published"]);
-export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news"]);
+export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage"]);
 export const scaleModeEnum = pgEnum("scale_mode", ["contain", "cover"]);
 
 // ============ CLIENTS ============
@@ -220,7 +220,7 @@ export type LayoutTemplate = typeof layoutTemplates.$inferSelect;
 export interface LayoutZone {
   id: string;
   name: string;
-  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader";
+  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage";
   x: number;
   y: number;
   width: number;
@@ -266,6 +266,16 @@ export interface LayoutZone {
   shaderPreset?: "gradient" | "plasma" | "waves" | "noise" | "aurora" | "custom";
   shaderCode?: string;
   shaderSpeed?: number;
+  // Montage widget configuration
+  montageMediaIds?: string[];  // Array of media asset IDs
+  montageDuration?: number;    // Duration per image in seconds (default 5)
+  montageTransition?: "fade" | "slide-left" | "slide-right" | "slide-up" | "slide-down" | "zoom-in" | "zoom-out" | "none";
+  montageTransitionDuration?: number; // Transition duration in ms (default 1000)
+  montageFitMode?: "contain" | "cover";  // How images fit in the zone
+  montageKenBurns?: boolean;   // Enable Ken Burns effect
+  montageKenBurnsIntensity?: number;  // Ken Burns zoom intensity (1-20, default 10)
+  montageShuffle?: boolean;    // Randomize photo order
+  montageAutoPlay?: boolean;   // Auto-start slideshow (default true)
 }
 
 // ============ PROGRAMMES ============

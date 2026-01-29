@@ -68,8 +68,11 @@ import {
   Palette,
   Sparkles,
   Copy,
+  Images,
 } from "lucide-react";
-import type { LayoutTemplate, Event, LayoutZone } from "@shared/schema";
+import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 const ASPECT_RATIO_OPTIONS = [
   { value: "16:9", label: "16:9 (Landscape)", description: "Standard widescreen" },
@@ -124,6 +127,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   news: Newspaper,
   text: Type,
   shader: Sparkles,
+  montage: Images,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -136,11 +140,12 @@ const zoneTypeLabels: Record<string, string> = {
   news: "News (RSS feed)",
   text: "Text (static content)",
   shader: "Shader (GPU effects)",
+  montage: "Photo Montage (slideshow)",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(1).max(100),
@@ -183,6 +188,16 @@ const zoneFormSchema = z.object({
   shaderPreset: z.enum(["gradient", "plasma", "waves", "noise", "aurora", "custom"]).optional(),
   shaderCode: z.string().optional(),
   shaderSpeed: z.number().min(0.1).max(5).optional(),
+  // Montage widget configuration
+  montageMediaIds: z.array(z.string()).optional(),
+  montageDuration: z.number().min(1).max(60).optional(),
+  montageTransition: z.enum(["fade", "slide-left", "slide-right", "slide-up", "slide-down", "zoom-in", "zoom-out", "none"]).optional(),
+  montageTransitionDuration: z.number().min(100).max(3000).optional(),
+  montageFitMode: z.enum(["contain", "cover"]).optional(),
+  montageKenBurns: z.boolean().optional(),
+  montageKenBurnsIntensity: z.number().min(1).max(20).optional(),
+  montageShuffle: z.boolean().optional(),
+  montageAutoPlay: z.boolean().optional(),
 }).refine((data) => {
   // Require lat/lng for weather zones
   if (data.type === "weather") {
@@ -214,6 +229,154 @@ const zoneFormSchema = z.object({
 });
 
 type ZoneFormValues = z.infer<typeof zoneFormSchema>;
+
+// Component for picking multiple media items for montage
+function MontageMediaPicker({
+  selectedIds,
+  onSelectionChange,
+}: {
+  selectedIds: string[];
+  onSelectionChange: (ids: string[]) => void;
+}) {
+  const { data: mediaAssets, isLoading } = useQuery<MediaAsset[]>({
+    queryKey: ["/api/media"],
+  });
+
+  // Filter to only show images
+  const imageAssets = mediaAssets?.filter(
+    (asset) => asset.mediaType === "image" || asset.mediaType === "gif"
+  ) || [];
+
+  const toggleSelection = (id: string) => {
+    if (selectedIds.includes(id)) {
+      onSelectionChange(selectedIds.filter((i) => i !== id));
+    } else {
+      onSelectionChange([...selectedIds, id]);
+    }
+  };
+
+  const moveUp = (index: number) => {
+    if (index <= 0) return;
+    const newIds = [...selectedIds];
+    [newIds[index - 1], newIds[index]] = [newIds[index], newIds[index - 1]];
+    onSelectionChange(newIds);
+  };
+
+  const moveDown = (index: number) => {
+    if (index >= selectedIds.length - 1) return;
+    const newIds = [...selectedIds];
+    [newIds[index], newIds[index + 1]] = [newIds[index + 1], newIds[index]];
+    onSelectionChange(newIds);
+  };
+
+  if (isLoading) {
+    return <div className="text-sm text-muted-foreground">Loading media...</div>;
+  }
+
+  if (imageAssets.length === 0) {
+    return (
+      <div className="p-4 border border-dashed rounded-lg text-center text-muted-foreground">
+        <Images className="h-8 w-8 mx-auto mb-2 opacity-50" />
+        <p className="text-sm">No images in media library</p>
+        <p className="text-xs mt-1">Upload images first to use in montage</p>
+      </div>
+    );
+  }
+
+  // Get selected items in order
+  const selectedAssets = selectedIds
+    .map((id) => imageAssets.find((a) => a.id === id))
+    .filter(Boolean) as MediaAsset[];
+
+  return (
+    <div className="space-y-3">
+      {/* Selected photos in order */}
+      {selectedAssets.length > 0 && (
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">Selected Photos ({selectedAssets.length})</Label>
+          <div className="flex flex-wrap gap-2">
+            {selectedAssets.map((asset, index) => (
+              <div
+                key={asset.id}
+                className="relative group w-16 h-16 rounded-md overflow-hidden border-2 border-primary"
+              >
+                <img
+                  src={asset.thumbnailPath || asset.originalPath}
+                  alt={asset.name}
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => moveUp(index)}
+                    className="p-1 bg-white/20 rounded hover:bg-white/40"
+                    disabled={index === 0}
+                  >
+                    <ChevronUp className="h-3 w-3 text-white" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveDown(index)}
+                    className="p-1 bg-white/20 rounded hover:bg-white/40"
+                    disabled={index === selectedAssets.length - 1}
+                  >
+                    <ChevronDown className="h-3 w-3 text-white" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleSelection(asset.id)}
+                    className="p-1 bg-red-500/80 rounded hover:bg-red-600"
+                  >
+                    <Trash2 className="h-3 w-3 text-white" />
+                  </button>
+                </div>
+                <div className="absolute top-1 left-1 bg-primary text-primary-foreground text-xs font-medium w-5 h-5 rounded-full flex items-center justify-center">
+                  {index + 1}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Media library grid */}
+      <Label className="text-sm font-medium">Available Photos</Label>
+      <ScrollArea className="h-40 border rounded-md p-2">
+        <div className="grid grid-cols-5 gap-2">
+          {imageAssets.map((asset) => {
+            const isSelected = selectedIds.includes(asset.id);
+            return (
+              <button
+                key={asset.id}
+                type="button"
+                onClick={() => toggleSelection(asset.id)}
+                className={`relative aspect-square rounded-md overflow-hidden border-2 transition-all ${
+                  isSelected
+                    ? "border-primary ring-2 ring-primary/20"
+                    : "border-transparent hover:border-muted-foreground/50"
+                }`}
+                data-testid={`montage-media-${asset.id}`}
+              >
+                <img
+                  src={asset.thumbnailPath || asset.originalPath}
+                  alt={asset.name}
+                  className="w-full h-full object-cover"
+                />
+                {isSelected && (
+                  <div className="absolute top-1 right-1 bg-primary text-primary-foreground rounded-full w-4 h-4 flex items-center justify-center">
+                    <span className="text-xs">
+                      {selectedIds.indexOf(asset.id) + 1}
+                    </span>
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
 
 function ZoneEditorDialog({
   layout,
@@ -271,6 +434,15 @@ function ZoneEditorDialog({
       shaderPreset: "gradient",
       shaderCode: "",
       shaderSpeed: 1,
+      montageMediaIds: [],
+      montageDuration: 5,
+      montageTransition: "fade",
+      montageTransitionDuration: 1000,
+      montageFitMode: "cover",
+      montageKenBurns: false,
+      montageKenBurnsIntensity: 10,
+      montageShuffle: false,
+      montageAutoPlay: true,
     },
   });
 
@@ -317,6 +489,15 @@ function ZoneEditorDialog({
           shaderPreset: zone.shaderPreset || "gradient",
           shaderCode: zone.shaderCode || "",
           shaderSpeed: zone.shaderSpeed || 1,
+          montageMediaIds: zone.montageMediaIds || [],
+          montageDuration: zone.montageDuration || 5,
+          montageTransition: zone.montageTransition || "fade",
+          montageTransitionDuration: zone.montageTransitionDuration || 1000,
+          montageFitMode: zone.montageFitMode || "cover",
+          montageKenBurns: zone.montageKenBurns || false,
+          montageKenBurnsIntensity: zone.montageKenBurnsIntensity || 10,
+          montageShuffle: zone.montageShuffle || false,
+          montageAutoPlay: zone.montageAutoPlay !== false,
         });
       } else {
         form.reset({
@@ -358,6 +539,15 @@ function ZoneEditorDialog({
           shaderPreset: "gradient",
           shaderCode: "",
           shaderSpeed: 1,
+          montageMediaIds: [],
+          montageDuration: 5,
+          montageTransition: "fade",
+          montageTransitionDuration: 1000,
+          montageFitMode: "cover",
+          montageKenBurns: false,
+          montageKenBurnsIntensity: 10,
+          montageShuffle: false,
+          montageAutoPlay: true,
         });
       }
     }
@@ -1289,6 +1479,242 @@ function ZoneEditorDialog({
                     )}
                   />
                 )}
+              </div>
+            )}
+
+            {/* Montage widget configuration */}
+            {form.watch("type") === "montage" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <h4 className="font-medium flex items-center gap-2">
+                  <Images className="h-4 w-4" />
+                  Photo Montage Configuration
+                </h4>
+                
+                <FormField
+                  control={form.control}
+                  name="montageMediaIds"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Select Photos</FormLabel>
+                      <FormControl>
+                        <MontageMediaPicker
+                          selectedIds={field.value || []}
+                          onSelectionChange={field.onChange}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Choose images from the media library for the slideshow
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="montageDuration"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Duration per Photo (seconds)</FormLabel>
+                        <FormControl>
+                          <div className="space-y-2">
+                            <Slider
+                              value={[field.value || 5]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={1}
+                              max={60}
+                              step={1}
+                              data-testid="slider-montage-duration"
+                            />
+                            <span className="text-sm text-muted-foreground">{field.value || 5}s</span>
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="montageTransitionDuration"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Transition Duration (ms)</FormLabel>
+                        <FormControl>
+                          <div className="space-y-2">
+                            <Slider
+                              value={[field.value || 1000]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={100}
+                              max={3000}
+                              step={100}
+                              data-testid="slider-montage-transition-duration"
+                            />
+                            <span className="text-sm text-muted-foreground">{field.value || 1000}ms</span>
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="montageTransition"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Transition Type</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          value={field.value || "fade"}
+                        >
+                          <FormControl>
+                            <SelectTrigger data-testid="select-montage-transition">
+                              <SelectValue placeholder="Select transition" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="fade">Fade</SelectItem>
+                            <SelectItem value="slide-left">Slide Left</SelectItem>
+                            <SelectItem value="slide-right">Slide Right</SelectItem>
+                            <SelectItem value="slide-up">Slide Up</SelectItem>
+                            <SelectItem value="slide-down">Slide Down</SelectItem>
+                            <SelectItem value="zoom-in">Zoom In</SelectItem>
+                            <SelectItem value="zoom-out">Zoom Out</SelectItem>
+                            <SelectItem value="none">None (instant)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="montageFitMode"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Image Fit</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          value={field.value || "cover"}
+                        >
+                          <FormControl>
+                            <SelectTrigger data-testid="select-montage-fit">
+                              <SelectValue placeholder="Select fit mode" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="cover">Fill (crop to fit)</SelectItem>
+                            <SelectItem value="contain">Fit (show entire image)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          Cover fills the zone (may crop), Contain shows full image
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="p-3 border rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <FormLabel>Ken Burns Effect</FormLabel>
+                    <FormField
+                      control={form.control}
+                      name="montageKenBurns"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormControl>
+                            <input
+                              type="checkbox"
+                              checked={field.value || false}
+                              onChange={field.onChange}
+                              className="h-4 w-4 rounded border-gray-300"
+                              data-testid="checkbox-ken-burns"
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <FormDescription className="text-xs">
+                    Adds subtle pan and zoom motion to each photo (cinematic effect)
+                  </FormDescription>
+
+                  {form.watch("montageKenBurns") && (
+                    <FormField
+                      control={form.control}
+                      name="montageKenBurnsIntensity"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Intensity</FormLabel>
+                          <FormControl>
+                            <div className="space-y-2">
+                              <Slider
+                                value={[field.value || 10]}
+                                onValueChange={([val]) => field.onChange(val)}
+                                min={1}
+                                max={20}
+                                step={1}
+                                data-testid="slider-ken-burns-intensity"
+                              />
+                              <span className="text-sm text-muted-foreground">{field.value || 10}%</span>
+                            </div>
+                          </FormControl>
+                          <FormDescription>
+                            How much zoom/pan motion (lower = subtle, higher = dramatic)
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                </div>
+
+                <div className="flex gap-4">
+                  <FormField
+                    control={form.control}
+                    name="montageShuffle"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2">
+                        <FormControl>
+                          <input
+                            type="checkbox"
+                            checked={field.value || false}
+                            onChange={field.onChange}
+                            className="h-4 w-4 rounded border-gray-300"
+                            data-testid="checkbox-montage-shuffle"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Shuffle photos</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="montageAutoPlay"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2">
+                        <FormControl>
+                          <input
+                            type="checkbox"
+                            checked={field.value !== false}
+                            onChange={field.onChange}
+                            className="h-4 w-4 rounded border-gray-300"
+                            data-testid="checkbox-montage-autoplay"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Auto-play slideshow</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+                </div>
               </div>
             )}
 
