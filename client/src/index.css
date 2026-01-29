@@ -335,13 +335,13 @@
     animation: marquee 15s linear infinite;
   }
 
-  /* Seamless ticker scroll - text starts visible and loops seamlessly */
+  /* Seamless ticker scroll - text starts visible and loops seamlessly, vertically centered */
   @keyframes ticker-scroll {
     from {
-      transform: translateX(0);
+      transform: translateY(-50%) translateX(0);
     }
     to {
-      transform: translateX(-50%);
+      transform: translateY(-50%) translateX(-50%);
     }
   }
 }
