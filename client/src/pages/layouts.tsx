@@ -1461,19 +1461,22 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
   const [editOpen, setEditOpen] = useState(false);
   const [zonesOpen, setZonesOpen] = useState(false);
   const [zoneDialogOpen, setZoneDialogOpen] = useState(false);
-  const [editingZone, setEditingZone] = useState<LayoutZone | undefined>();
+  const [editingZoneId, setEditingZoneId] = useState<string | undefined>();
   const { toast } = useToast();
 
   const event = events.find((e) => e.id === layout.eventId);
   const zones = (layout.zones as LayoutZone[]) || [];
+  
+  // Look up the current zone from the zones array (ensures fresh data after refetch)
+  const editingZone = editingZoneId ? zones.find(z => z.id === editingZoneId) : undefined;
 
   const handleEditZone = (zone: LayoutZone) => {
-    setEditingZone(zone);
+    setEditingZoneId(zone.id);
     setZoneDialogOpen(true);
   };
 
   const handleAddZone = () => {
-    setEditingZone(undefined);
+    setEditingZoneId(undefined);
     setZoneDialogOpen(true);
   };
 
@@ -1721,7 +1724,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
         open={zoneDialogOpen}
         onOpenChange={(open) => {
           setZoneDialogOpen(open);
-          if (!open) setEditingZone(undefined);
+          if (!open) setEditingZoneId(undefined);
         }}
       />
     </>
