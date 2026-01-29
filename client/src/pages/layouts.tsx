@@ -69,8 +69,10 @@ import {
   Sparkles,
   Copy,
   Images,
+  Monitor,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
+import { ZoneRenderer } from "@/components/zone-renderer";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -2752,7 +2754,460 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
   );
 }
 
+function LayoutListItem({ 
+  layout, 
+  isSelected, 
+  onSelect 
+}: { 
+  layout: LayoutTemplate; 
+  isSelected: boolean; 
+  onSelect: () => void;
+}) {
+  const zones = (layout.zones as LayoutZone[]) || [];
+  const aspectDims = getAspectRatioDimensions(
+    layout.aspectRatio || "16:9",
+    layout.customWidth,
+    layout.customHeight
+  );
+  
+  return (
+    <div
+      className={`p-3 rounded-lg cursor-pointer transition-all ${
+        isSelected 
+          ? "bg-primary/10 border border-primary/30" 
+          : "hover-elevate border border-transparent"
+      }`}
+      onClick={onSelect}
+      data-testid={`layout-list-item-${layout.id}`}
+    >
+      <div className="flex items-start gap-3">
+        <div 
+          className="w-16 h-12 bg-slate-800 rounded flex-shrink-0 relative overflow-hidden"
+        >
+          {zones.slice(0, 4).map((zone, idx) => (
+            <div
+              key={zone.id}
+              className="absolute"
+              style={{
+                left: `${zone.x}%`,
+                top: `${zone.y}%`,
+                width: `${zone.width}%`,
+                height: `${zone.height}%`,
+                backgroundColor: `hsl(${(idx * 60) % 360} 70% 50% / 0.5)`,
+              }}
+            />
+          ))}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-medium text-sm truncate">{layout.name}</p>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            <Badge variant="secondary" className="text-xs">{zones.length} zones</Badge>
+            <Badge variant="outline" className="text-xs">
+              {layout.aspectRatio === "custom" && layout.customWidth && layout.customHeight
+                ? `${layout.customWidth}:${layout.customHeight}`
+                : layout.aspectRatio || "16:9"}
+            </Badge>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LayoutEditorPanel({ 
+  layout, 
+  events,
+  onLayoutChange,
+}: { 
+  layout: LayoutTemplate; 
+  events: Event[];
+  onLayoutChange: () => void;
+}) {
+  const [zoneDialogOpen, setZoneDialogOpen] = useState(false);
+  const [editingZoneId, setEditingZoneId] = useState<string | undefined>();
+  const [editOpen, setEditOpen] = useState(false);
+  const { toast } = useToast();
+
+  const zones = (layout.zones as LayoutZone[]) || [];
+  const editingZone = editingZoneId ? zones.find(z => z.id === editingZoneId) : undefined;
+  const event = events.find((e) => e.id === layout.eventId);
+
+  const form = useForm<LayoutFormValues>({
+    resolver: zodResolver(layoutFormSchema),
+    defaultValues: {
+      name: layout.name,
+      eventId: layout.eventId || "",
+      aspectRatio: layout.aspectRatio || "16:9",
+      customWidth: layout.customWidth || undefined,
+      customHeight: layout.customHeight || undefined,
+    },
+  });
+
+  const watchAspectRatio = form.watch("aspectRatio");
+
+  useEffect(() => {
+    form.reset({
+      name: layout.name,
+      eventId: layout.eventId || "",
+      aspectRatio: layout.aspectRatio || "16:9",
+      customWidth: layout.customWidth || undefined,
+      customHeight: layout.customHeight || undefined,
+    });
+  }, [layout, form]);
+
+  const updateMutation = useMutation({
+    mutationFn: (data: LayoutFormValues) =>
+      apiRequest("PATCH", `/api/layouts/${layout.id}`, {
+        ...data,
+        eventId: data.eventId === "global" || !data.eventId ? null : data.eventId,
+        customWidth: data.aspectRatio === "custom" ? data.customWidth : null,
+        customHeight: data.aspectRatio === "custom" ? data.customHeight : null,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      setEditOpen(false);
+      toast({ title: "Layout updated successfully" });
+    },
+    onError: () => {
+      toast({ title: "Failed to update layout", variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/layouts/${layout.id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      onLayoutChange();
+      toast({ title: "Layout deleted successfully" });
+    },
+    onError: () => {
+      toast({ title: "Failed to delete layout", variant: "destructive" });
+    },
+  });
+
+  const duplicateMutation = useMutation({
+    mutationFn: () => 
+      apiRequest("POST", "/api/layouts", {
+        name: `${layout.name} (Copy)`,
+        eventId: layout.eventId,
+        aspectRatio: layout.aspectRatio || "16:9",
+        customWidth: layout.customWidth,
+        customHeight: layout.customHeight,
+        zones: zones.map(z => ({ ...z, id: `zone-${Date.now()}-${Math.random().toString(36).substr(2, 9)}` })),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      toast({ title: "Layout duplicated successfully" });
+    },
+    onError: () => {
+      toast({ title: "Failed to duplicate layout", variant: "destructive" });
+    },
+  });
+
+  const deleteZoneMutation = useMutation({
+    mutationFn: (zoneId: string) => {
+      const updatedZones = zones.filter(z => z.id !== zoneId);
+      return apiRequest("PATCH", `/api/layouts/${layout.id}`, { zones: updatedZones });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      toast({ title: "Zone deleted" });
+    },
+    onError: () => {
+      toast({ title: "Failed to delete zone", variant: "destructive" });
+    },
+  });
+
+  const updateZoneMutation = useMutation({
+    mutationFn: ({ zoneId, updates }: { zoneId: string; updates: Partial<LayoutZone> }) => {
+      const updatedZones = zones.map(z => 
+        z.id === zoneId ? { ...z, ...updates } : z
+      );
+      return apiRequest("PATCH", `/api/layouts/${layout.id}`, { zones: updatedZones });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+    },
+    onError: () => {
+      toast({ title: "Failed to update zone", variant: "destructive" });
+    },
+  });
+
+  const handleZoneUpdate = (zoneId: string, updates: Partial<LayoutZone>) => {
+    updateZoneMutation.mutate({ zoneId, updates });
+  };
+
+  const handleEditZone = (zone: LayoutZone) => {
+    setEditingZoneId(zone.id);
+    setZoneDialogOpen(true);
+  };
+
+  const handleAddZone = () => {
+    setEditingZoneId(undefined);
+    setZoneDialogOpen(true);
+  };
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="p-4 border-b flex items-center justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold">{layout.name}</h2>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            <Badge variant="outline">
+              {layout.aspectRatio === "custom" && layout.customWidth && layout.customHeight
+                ? `${layout.customWidth}:${layout.customHeight}`
+                : layout.aspectRatio || "16:9"}
+            </Badge>
+            {event && (
+              <span className="text-xs text-muted-foreground">{event.name}</span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={handleAddZone} data-testid="button-add-zone-editor">
+            <Plus className="h-4 w-4 mr-1" />
+            Add Zone
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" data-testid="button-layout-actions">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setEditOpen(true)}>
+                <Pencil className="mr-2 h-4 w-4" />
+                Edit Layout
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => duplicateMutation.mutate()}>
+                <Copy className="mr-2 h-4 w-4" />
+                Duplicate
+              </DropdownMenuItem>
+              <DropdownMenuItem 
+                className="text-destructive"
+                onClick={() => deleteMutation.mutate()}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      <ScrollArea className="flex-1">
+        <div className="p-4 space-y-3">
+          {zones.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Grid3X3 className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">No zones defined</p>
+              <Button variant="ghost" size="sm" onClick={handleAddZone}>
+                Add your first zone
+              </Button>
+            </div>
+          ) : (
+            zones.map((zone) => {
+              const Icon = zoneTypeIcons[zone.type] || Grid3X3;
+              return (
+                <div
+                  key={zone.id}
+                  className="flex items-center gap-3 p-3 rounded-lg border hover-elevate cursor-pointer"
+                  onClick={() => handleEditZone(zone)}
+                  data-testid={`zone-item-${zone.id}`}
+                >
+                  <div className="w-8 h-8 rounded bg-muted flex items-center justify-center flex-shrink-0">
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm truncate">{zone.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {zoneTypeLabels[zone.type] || zone.type} • {zone.width}% × {zone.height}%
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="flex-shrink-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteZoneMutation.mutate(zone.id);
+                    }}
+                    data-testid={`button-delete-zone-${zone.id}`}
+                  >
+                    <Trash2 className="h-4 w-4 text-muted-foreground" />
+                  </Button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </ScrollArea>
+
+      <ZoneEditorDialog
+        layout={layout}
+        zone={editingZone}
+        open={zoneDialogOpen}
+        onOpenChange={setZoneDialogOpen}
+      />
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Layout</DialogTitle>
+          </DialogHeader>
+          <Form {...form}>
+            <form
+              onSubmit={form.handleSubmit((data) => updateMutation.mutate(data))}
+              className="space-y-4"
+            >
+              <FormField
+                control={form.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Name</FormLabel>
+                    <FormControl>
+                      <Input {...field} data-testid="input-edit-layout-name-panel" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="aspectRatio"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Aspect Ratio</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {ASPECT_RATIO_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              {watchAspectRatio === "custom" && (
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="customWidth"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Width</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={1}
+                            {...field}
+                            value={field.value || ""}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || undefined)}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="customHeight"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Height</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={1}
+                            {...field}
+                            value={field.value || ""}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || undefined)}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={updateMutation.isPending}>
+                  {updateMutation.isPending ? "Saving..." : "Save Changes"}
+                </Button>
+              </div>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function LivePreviewPanel({ layout }: { layout: LayoutTemplate }) {
+  const zones = (layout.zones as LayoutZone[]) || [];
+  const aspectDims = getAspectRatioDimensions(
+    layout.aspectRatio || "16:9",
+    layout.customWidth,
+    layout.customHeight
+  );
+  const aspectPadding = (aspectDims.height / aspectDims.width) * 100;
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="p-4 border-b">
+        <h3 className="font-medium flex items-center gap-2">
+          <Monitor className="h-4 w-4" />
+          Live Preview
+        </h3>
+        <p className="text-xs text-muted-foreground mt-1">
+          Real-time view of your layout
+        </p>
+      </div>
+      <div className="flex-1 p-4 flex items-center justify-center bg-muted/30">
+        <div className="w-full max-w-2xl">
+          <div 
+            className="relative w-full bg-black rounded-lg overflow-hidden shadow-2xl"
+            style={{ paddingBottom: `${aspectPadding}%` }}
+            data-testid="live-preview-container"
+          >
+            {zones.map((zone) => (
+              <ZoneRenderer
+                key={zone.id}
+                zone={zone}
+                showBorder={false}
+                isPlaying={true}
+              />
+            ))}
+            {zones.length === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center text-white/50">
+                <div className="text-center">
+                  <Layout className="h-8 w-8 mx-auto mb-2" />
+                  <p className="text-sm">Add zones to see preview</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function LayoutsPage() {
+  const [selectedLayoutId, setSelectedLayoutId] = useState<string | null>(null);
+  
   const { data: layouts = [], isLoading: layoutsLoading } = useQuery<LayoutTemplate[]>({
     queryKey: ["/api/layouts"],
   });
@@ -2761,51 +3216,90 @@ export default function LayoutsPage() {
     queryKey: ["/api/events"],
   });
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold" data-testid="text-layouts-title">Layouts</h1>
-          <p className="text-muted-foreground">
-            Design zone-based templates for your screens
-          </p>
-        </div>
-        <CreateLayoutDialog events={events} />
-      </div>
+  const selectedLayout = layouts.find(l => l.id === selectedLayoutId);
 
-      {/* Content */}
-      {layoutsLoading ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {[...Array(6)].map((_, i) => (
-            <Card key={i}>
-              <div className="p-3">
-                <Skeleton className="aspect-video rounded-lg" />
-              </div>
-              <CardHeader className="pt-0 pb-3">
-                <Skeleton className="h-5 w-32" />
-                <Skeleton className="h-4 w-24 mt-1" />
-              </CardHeader>
-            </Card>
+  useEffect(() => {
+    if (layouts.length > 0 && !selectedLayoutId) {
+      setSelectedLayoutId(layouts[0].id);
+    }
+    if (selectedLayoutId && !layouts.find(l => l.id === selectedLayoutId)) {
+      setSelectedLayoutId(layouts.length > 0 ? layouts[0].id : null);
+    }
+  }, [layouts, selectedLayoutId]);
+
+  if (layoutsLoading) {
+    return (
+      <div className="h-full flex">
+        <div className="w-64 border-r p-4 space-y-2">
+          {[...Array(5)].map((_, i) => (
+            <Skeleton key={i} className="h-16 rounded-lg" />
           ))}
         </div>
-      ) : layouts.length === 0 ? (
-        <Card className="py-12">
+        <div className="flex-1 flex items-center justify-center">
+          <Skeleton className="w-96 h-64 rounded-lg" />
+        </div>
+      </div>
+    );
+  }
+
+  if (layouts.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <Card className="max-w-md py-12">
           <CardContent className="flex flex-col items-center justify-center text-center">
             <Layout className="h-12 w-12 text-muted-foreground/50 mb-4" />
             <h3 className="text-lg font-semibold mb-2">No layouts yet</h3>
-            <p className="text-sm text-muted-foreground mb-4 max-w-sm">
+            <p className="text-sm text-muted-foreground mb-4">
               Create layout templates to define how content appears on your
               screens with zones for media, tickers, and widgets.
             </p>
             <CreateLayoutDialog events={events} />
           </CardContent>
         </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full flex" data-testid="layouts-page">
+      <div className="w-64 border-r flex flex-col">
+        <div className="p-4 border-b flex items-center justify-between gap-2">
+          <h1 className="font-semibold" data-testid="text-layouts-title">Layouts</h1>
+          <CreateLayoutDialog events={events} />
+        </div>
+        <ScrollArea className="flex-1">
+          <div className="p-2 space-y-1">
+            {layouts.map((layout) => (
+              <LayoutListItem
+                key={layout.id}
+                layout={layout}
+                isSelected={layout.id === selectedLayoutId}
+                onSelect={() => setSelectedLayoutId(layout.id)}
+              />
+            ))}
+          </div>
+        </ScrollArea>
+      </div>
+
+      {selectedLayout ? (
+        <div className="flex-1 flex">
+          <div className="w-80 border-r">
+            <LayoutEditorPanel 
+              layout={selectedLayout} 
+              events={events}
+              onLayoutChange={() => setSelectedLayoutId(null)}
+            />
+          </div>
+          <div className="flex-1">
+            <LivePreviewPanel layout={selectedLayout} />
+          </div>
+        </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {layouts.map((layout) => (
-            <LayoutCard key={layout.id} layout={layout} events={events} />
-          ))}
+        <div className="flex-1 flex items-center justify-center text-muted-foreground">
+          <div className="text-center">
+            <Layout className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p>Select a layout to edit</p>
+          </div>
         </div>
       )}
     </div>
