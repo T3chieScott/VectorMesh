@@ -235,7 +235,15 @@ export interface LayoutZone {
   gradientEnabled?: boolean;
   gradientDirection?: "to-t" | "to-b" | "to-l" | "to-r" | "to-tl" | "to-tr" | "to-bl" | "to-br";
   gradientEndColor?: string;
+  // Background opacity (0-100)
+  backgroundOpacity?: number;
+  // Text styling
   textColor?: string;
+  textShadowEnabled?: boolean;
+  textShadowBlur?: number;
+  textShadowColor?: string;
+  textOutlineWidth?: number;
+  textOutlineColor?: string;
   borderColor?: string;
   borderWidth?: number;
   borderRadius?: number;

@@ -851,16 +851,82 @@ function ZoneRenderer({
     "to-br": "to bottom right",
   };
 
-  // Build background style (gradient or solid)
+  // Helper to apply opacity to a color - converts to rgba format
+  const applyOpacity = (color: string, opacity: number): string => {
+    if (opacity >= 100) return color;
+    const alpha = opacity / 100;
+    
+    // Handle hex colors - convert to rgba
+    if (color.startsWith("#")) {
+      const hex = color.slice(1);
+      let r: number, g: number, b: number;
+      
+      if (hex.length === 3) {
+        r = parseInt(hex[0] + hex[0], 16);
+        g = parseInt(hex[1] + hex[1], 16);
+        b = parseInt(hex[2] + hex[2], 16);
+      } else if (hex.length === 6) {
+        r = parseInt(hex.slice(0, 2), 16);
+        g = parseInt(hex.slice(2, 4), 16);
+        b = parseInt(hex.slice(4, 6), 16);
+      } else {
+        return color; // Invalid hex, return as-is
+      }
+      
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+    
+    // Handle rgb() colors - convert to rgba
+    const rgbMatch = color.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
+    if (rgbMatch) {
+      return `rgba(${rgbMatch[1]}, ${rgbMatch[2]}, ${rgbMatch[3]}, ${alpha})`;
+    }
+    
+    // Handle existing rgba() colors - replace alpha
+    const rgbaMatch = color.match(/^rgba\((\d+),\s*(\d+),\s*(\d+),\s*[\d.]+\)$/);
+    if (rgbaMatch) {
+      return `rgba(${rgbaMatch[1]}, ${rgbaMatch[2]}, ${rgbaMatch[3]}, ${alpha})`;
+    }
+    
+    return color; // Unknown format, return as-is
+  };
+
+  // Build background style (gradient or solid) with opacity
   const getBackgroundStyle = (): React.CSSProperties => {
+    const opacity = zone.backgroundOpacity ?? 100;
+    
     if (zone.gradientEnabled && zone.backgroundColor && zone.gradientEndColor) {
       const direction = gradientDirectionMap[zone.gradientDirection || "to-b"] || "to bottom";
+      const startColor = applyOpacity(zone.backgroundColor, opacity);
+      const endColor = applyOpacity(zone.gradientEndColor, opacity);
       return {
-        background: `linear-gradient(${direction}, ${zone.backgroundColor}, ${zone.gradientEndColor})`,
+        background: `linear-gradient(${direction}, ${startColor}, ${endColor})`,
       };
     }
     if (zone.backgroundColor) {
-      return { backgroundColor: zone.backgroundColor };
+      return { backgroundColor: applyOpacity(zone.backgroundColor, opacity) };
+    }
+    return {};
+  };
+
+  // Build text shadow style
+  const getTextShadowStyle = (): React.CSSProperties => {
+    if (zone.textShadowEnabled) {
+      const blur = zone.textShadowBlur ?? 2;
+      const color = zone.textShadowColor || "#000000";
+      return { textShadow: `0 2px ${blur}px ${color}` };
+    }
+    return {};
+  };
+
+  // Build text outline style
+  const getTextOutlineStyle = (): React.CSSProperties => {
+    if (zone.textOutlineWidth && zone.textOutlineWidth > 0) {
+      const width = zone.textOutlineWidth;
+      const color = zone.textOutlineColor || "#000000";
+      return { 
+        WebkitTextStroke: `${width}px ${color}`,
+      } as React.CSSProperties;
     }
     return {};
   };
@@ -875,6 +941,8 @@ function ZoneRenderer({
     containerType: "size" as const,
     ...getBackgroundStyle(),
     ...(zone.textColor && { color: zone.textColor }),
+    ...getTextShadowStyle(),
+    ...getTextOutlineStyle(),
     ...(zone.borderColor && zone.borderWidth && { borderColor: zone.borderColor }),
     ...(zone.borderWidth && { borderWidth: `${zone.borderWidth}px`, borderStyle: "solid" }),
     ...(zone.borderRadius && { borderRadius: `${zone.borderRadius}px` }),

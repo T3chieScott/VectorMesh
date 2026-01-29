@@ -154,7 +154,13 @@ const zoneFormSchema = z.object({
   gradientEnabled: z.boolean().optional(),
   gradientDirection: z.enum(["to-t", "to-b", "to-l", "to-r", "to-tl", "to-tr", "to-bl", "to-br"]).optional(),
   gradientEndColor: z.string().optional(),
+  backgroundOpacity: z.number().min(0).max(100).optional(),
   textColor: z.string().optional(),
+  textShadowEnabled: z.boolean().optional(),
+  textShadowBlur: z.number().min(0).max(20).optional(),
+  textShadowColor: z.string().optional(),
+  textOutlineWidth: z.number().min(0).max(10).optional(),
+  textOutlineColor: z.string().optional(),
   borderColor: z.string().optional(),
   borderWidth: z.number().min(0).max(20).optional(),
   borderRadius: z.number().min(0).max(50).optional(),
@@ -240,7 +246,13 @@ function ZoneEditorDialog({
       gradientEnabled: false,
       gradientDirection: "to-b",
       gradientEndColor: "",
+      backgroundOpacity: 100,
       textColor: "",
+      textShadowEnabled: false,
+      textShadowBlur: 2,
+      textShadowColor: "#000000",
+      textOutlineWidth: 0,
+      textOutlineColor: "#000000",
       borderColor: "",
       borderWidth: 0,
       borderRadius: 0,
@@ -280,7 +292,13 @@ function ZoneEditorDialog({
           gradientEnabled: zone.gradientEnabled || false,
           gradientDirection: zone.gradientDirection || "to-b",
           gradientEndColor: zone.gradientEndColor || "",
+          backgroundOpacity: zone.backgroundOpacity ?? 100,
           textColor: zone.textColor || "",
+          textShadowEnabled: zone.textShadowEnabled || false,
+          textShadowBlur: zone.textShadowBlur ?? 2,
+          textShadowColor: zone.textShadowColor || "#000000",
+          textOutlineWidth: zone.textOutlineWidth ?? 0,
+          textOutlineColor: zone.textOutlineColor || "#000000",
           borderColor: zone.borderColor || "",
           borderWidth: zone.borderWidth || 0,
           borderRadius: zone.borderRadius || 0,
@@ -315,7 +333,13 @@ function ZoneEditorDialog({
           gradientEnabled: false,
           gradientDirection: "to-b",
           gradientEndColor: "",
+          backgroundOpacity: 100,
           textColor: "",
+          textShadowEnabled: false,
+          textShadowBlur: 2,
+          textShadowColor: "#000000",
+          textOutlineWidth: 0,
+          textOutlineColor: "#000000",
           borderColor: "",
           borderWidth: 0,
           borderRadius: 0,
@@ -485,6 +509,140 @@ function ZoneEditorDialog({
                 />
               </div>
 
+              {/* Text Effects */}
+              <div className="space-y-3 border-t pt-4">
+                <h4 className="text-sm font-medium text-muted-foreground">Text Effects</h4>
+                
+                {/* Text Shadow */}
+                <FormField
+                  control={form.control}
+                  name="textShadowEnabled"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center gap-3">
+                      <FormControl>
+                        <input
+                          type="checkbox"
+                          checked={field.value || false}
+                          onChange={(e) => field.onChange(e.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300"
+                          data-testid="checkbox-text-shadow"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Enable Text Drop Shadow</FormLabel>
+                    </FormItem>
+                  )}
+                />
+
+                {form.watch("textShadowEnabled") && (
+                  <div className="grid grid-cols-2 gap-4 pl-7">
+                    <FormField
+                      control={form.control}
+                      name="textShadowBlur"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Shadow Blur ({field.value ?? 2}px)</FormLabel>
+                          <FormControl>
+                            <Input 
+                              type="range" 
+                              min={0}
+                              max={20}
+                              step={1}
+                              value={field.value ?? 2}
+                              onChange={(e) => field.onChange(parseInt(e.target.value))}
+                              className="cursor-pointer"
+                              data-testid="input-text-shadow-blur"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="textShadowColor"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Shadow Color</FormLabel>
+                          <FormControl>
+                            <div className="flex gap-2">
+                              <Input 
+                                type="color" 
+                                className="w-10 h-9 p-1 cursor-pointer"
+                                value={field.value || "#000000"} 
+                                onChange={(e) => field.onChange(e.target.value)}
+                                data-testid="input-text-shadow-color"
+                              />
+                              <Input 
+                                placeholder="#000000" 
+                                {...field}
+                                value={field.value || ""}
+                                className="flex-1"
+                                data-testid="input-text-shadow-color-text"
+                              />
+                            </div>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
+
+                {/* Text Outline */}
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="textOutlineWidth"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Text Outline Width ({field.value ?? 0}px)</FormLabel>
+                        <FormControl>
+                          <Input 
+                            type="range" 
+                            min={0}
+                            max={10}
+                            step={1}
+                            value={field.value ?? 0}
+                            onChange={(e) => field.onChange(parseInt(e.target.value))}
+                            className="cursor-pointer"
+                            data-testid="input-text-outline-width"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="textOutlineColor"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Outline Color</FormLabel>
+                        <FormControl>
+                          <div className="flex gap-2">
+                            <Input 
+                              type="color" 
+                              className="w-10 h-9 p-1 cursor-pointer"
+                              value={field.value || "#000000"} 
+                              onChange={(e) => field.onChange(e.target.value)}
+                              data-testid="input-text-outline-color"
+                            />
+                            <Input 
+                              placeholder="#000000" 
+                              {...field}
+                              value={field.value || ""}
+                              className="flex-1"
+                              data-testid="input-text-outline-color-text"
+                            />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </div>
+
               {/* Gradient Options */}
               <div className="space-y-3 border-t pt-4">
                 <FormField
@@ -570,6 +728,30 @@ function ZoneEditorDialog({
                   </div>
                 )}
               </div>
+
+              <FormField
+                control={form.control}
+                name="backgroundOpacity"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Background Opacity ({field.value ?? 100}%)</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="range" 
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={field.value ?? 100}
+                        onChange={(e) => field.onChange(parseInt(e.target.value))}
+                        className="cursor-pointer"
+                        data-testid="input-bg-opacity"
+                      />
+                    </FormControl>
+                    <FormDescription>Set the transparency of the background (0 = transparent, 100 = solid)</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
               <FormField
                 control={form.control}
