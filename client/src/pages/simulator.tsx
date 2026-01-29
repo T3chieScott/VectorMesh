@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -42,6 +42,7 @@ import {
   Snowflake,
   Droplets,
   Wind,
+  Images,
 } from "lucide-react";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
 
@@ -74,6 +75,7 @@ const zoneTypeIcons: Record<string, typeof Image> = {
   html: Code,
   weather: CloudSun,
   news: Newspaper,
+  montage: Images,
 };
 
 function TickerWidget({ content }: { content?: string }) {
@@ -763,6 +765,252 @@ function MediaWidget({
   );
 }
 
+// Montage Widget - Photo slideshow with transitions and Ken Burns effect
+function MontageWidget({
+  mediaIds,
+  duration = 5,
+  transition = "fade",
+  transitionDuration = 1000,
+  fitMode = "cover",
+  kenBurns = false,
+  kenBurnsIntensity = 10,
+  shuffle = false,
+  autoPlay = true,
+}: {
+  mediaIds: string[];
+  duration?: number;
+  transition?: "fade" | "slide-left" | "slide-right" | "slide-up" | "slide-down" | "zoom-in" | "zoom-out" | "none";
+  transitionDuration?: number;
+  fitMode?: "contain" | "cover";
+  kenBurns?: boolean;
+  kenBurnsIntensity?: number;
+  shuffle?: boolean;
+  autoPlay?: boolean;
+}) {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [displayOrder, setDisplayOrder] = useState<string[]>(mediaIds);
+  const [kenBurnsState, setKenBurnsState] = useState({ scale: 1, x: 0, y: 0 });
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(true);
+
+  // Track mounted state
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // Shuffle order and reset index when mediaIds or shuffle changes
+  useEffect(() => {
+    if (shuffle && mediaIds.length > 0) {
+      const shuffled = [...mediaIds].sort(() => Math.random() - 0.5);
+      setDisplayOrder(shuffled);
+    } else {
+      setDisplayOrder(mediaIds);
+    }
+    // Reset index when order changes
+    setCurrentIndex(0);
+  }, [mediaIds, shuffle]);
+
+  // Generate random Ken Burns parameters for each slide
+  const generateKenBurnsParams = useCallback(() => {
+    if (!kenBurns) return { scale: 1, x: 0, y: 0 };
+    
+    const intensity = kenBurnsIntensity / 100;
+    const scale = 1 + (0.05 + Math.random() * 0.1) * intensity;
+    const maxOffset = (scale - 1) * 50; // Max movement as percentage
+    const x = (Math.random() * 2 - 1) * maxOffset;
+    const y = (Math.random() * 2 - 1) * maxOffset;
+    
+    return { scale, x, y };
+  }, [kenBurns, kenBurnsIntensity]);
+
+  // Auto-advance slideshow with proper timer management
+  useEffect(() => {
+    if (!autoPlay || displayOrder.length <= 1) return;
+
+    const scheduleNext = () => {
+      // Wait for the display duration
+      timerRef.current = setTimeout(() => {
+        if (!isMountedRef.current) return;
+        
+        // Start transition
+        setIsTransitioning(true);
+        
+        // After transition completes, advance slide
+        transitionTimerRef.current = setTimeout(() => {
+          if (!isMountedRef.current) return;
+          
+          setCurrentIndex((prev) => (prev + 1) % displayOrder.length);
+          setKenBurnsState(generateKenBurnsParams());
+          setIsTransitioning(false);
+          
+          // Schedule next cycle
+          scheduleNext();
+        }, transitionDuration);
+      }, duration * 1000);
+    };
+
+    // Start the cycle
+    scheduleNext();
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
+    };
+  }, [autoPlay, displayOrder.length, duration, transitionDuration, generateKenBurnsParams]);
+
+  // Initialize Ken Burns on mount
+  useEffect(() => {
+    setKenBurnsState(generateKenBurnsParams());
+  }, [generateKenBurnsParams]);
+
+  if (displayOrder.length === 0) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-muted/30">
+        <div className="text-center">
+          <Images className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">No photos selected</p>
+        </div>
+      </div>
+    );
+  }
+
+  const currentMediaId = displayOrder[currentIndex];
+  const nextIndex = (currentIndex + 1) % displayOrder.length;
+  const nextMediaId = displayOrder[nextIndex];
+
+  // Transition styles
+  const getTransitionStyle = (isActive: boolean, isNext: boolean): React.CSSProperties => {
+    const base: React.CSSProperties = {
+      position: "absolute",
+      inset: 0,
+      transition: `all ${transitionDuration}ms ease-in-out`,
+    };
+
+    if (transition === "none") {
+      return { ...base, opacity: isActive ? 1 : 0 };
+    }
+
+    if (transition === "fade") {
+      return {
+        ...base,
+        opacity: isTransitioning && isNext ? 1 : isActive && !isTransitioning ? 1 : 0,
+      };
+    }
+
+    if (transition === "slide-left") {
+      let x = 0;
+      if (isActive && isTransitioning) x = -100;
+      else if (isNext && !isTransitioning) x = 100;
+      else if (isNext && isTransitioning) x = 0;
+      else if (!isActive) x = 100;
+      return { ...base, transform: `translateX(${x}%)`, opacity: isActive || (isNext && isTransitioning) ? 1 : 0 };
+    }
+
+    if (transition === "slide-right") {
+      let x = 0;
+      if (isActive && isTransitioning) x = 100;
+      else if (isNext && !isTransitioning) x = -100;
+      else if (isNext && isTransitioning) x = 0;
+      else if (!isActive) x = -100;
+      return { ...base, transform: `translateX(${x}%)`, opacity: isActive || (isNext && isTransitioning) ? 1 : 0 };
+    }
+
+    if (transition === "slide-up") {
+      let y = 0;
+      if (isActive && isTransitioning) y = -100;
+      else if (isNext && !isTransitioning) y = 100;
+      else if (isNext && isTransitioning) y = 0;
+      else if (!isActive) y = 100;
+      return { ...base, transform: `translateY(${y}%)`, opacity: isActive || (isNext && isTransitioning) ? 1 : 0 };
+    }
+
+    if (transition === "slide-down") {
+      let y = 0;
+      if (isActive && isTransitioning) y = 100;
+      else if (isNext && !isTransitioning) y = -100;
+      else if (isNext && isTransitioning) y = 0;
+      else if (!isActive) y = -100;
+      return { ...base, transform: `translateY(${y}%)`, opacity: isActive || (isNext && isTransitioning) ? 1 : 0 };
+    }
+
+    if (transition === "zoom-in") {
+      const scale = isActive && !isTransitioning ? 1 : isTransitioning && isNext ? 1 : 0.5;
+      return { ...base, transform: `scale(${scale})`, opacity: isActive || (isNext && isTransitioning) ? 1 : 0 };
+    }
+
+    if (transition === "zoom-out") {
+      const scale = isActive && !isTransitioning ? 1 : isTransitioning && isNext ? 1 : 1.5;
+      return { ...base, transform: `scale(${scale})`, opacity: isActive || (isNext && isTransitioning) ? 1 : 0 };
+    }
+
+    return base;
+  };
+
+  // Ken Burns style
+  const getKenBurnsStyle = (): React.CSSProperties => {
+    if (!kenBurns) return {};
+    
+    return {
+      transform: `scale(${kenBurnsState.scale}) translate(${kenBurnsState.x}%, ${kenBurnsState.y}%)`,
+      transition: `transform ${duration}s ease-out`,
+    };
+  };
+
+  return (
+    <div className="h-full w-full relative overflow-hidden">
+      {/* Current image */}
+      <div
+        style={getTransitionStyle(true, false)}
+        className="w-full h-full"
+      >
+        <img
+          src={`/api/media/${currentMediaId}/file`}
+          alt="Montage"
+          className="w-full h-full"
+          style={{
+            objectFit: fitMode,
+            ...getKenBurnsStyle(),
+          }}
+        />
+      </div>
+
+      {/* Next image (for transition) */}
+      {displayOrder.length > 1 && (
+        <div
+          style={getTransitionStyle(false, true)}
+          className="w-full h-full"
+        >
+          <img
+            src={`/api/media/${nextMediaId}/file`}
+            alt="Montage next"
+            className="w-full h-full"
+            style={{ objectFit: fitMode }}
+          />
+        </div>
+      )}
+
+      {/* Progress indicator */}
+      {displayOrder.length > 1 && (
+        <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 flex gap-1">
+          {displayOrder.map((_, idx) => (
+            <div
+              key={idx}
+              className={`w-2 h-2 rounded-full transition-colors ${
+                idx === currentIndex ? "bg-white" : "bg-white/40"
+              }`}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ZoneRenderer({
   zone,
   media,
@@ -828,6 +1076,20 @@ function ZoneRenderer({
             preset={zone.shaderPreset}
             customCode={zone.shaderCode}
             speed={zone.shaderSpeed}
+          />
+        );
+      case "montage":
+        return (
+          <MontageWidget
+            mediaIds={zone.montageMediaIds || []}
+            duration={zone.montageDuration}
+            transition={zone.montageTransition}
+            transitionDuration={zone.montageTransitionDuration}
+            fitMode={zone.montageFitMode}
+            kenBurns={zone.montageKenBurns}
+            kenBurnsIntensity={zone.montageKenBurnsIntensity}
+            shuffle={zone.montageShuffle}
+            autoPlay={zone.montageAutoPlay}
           />
         );
       default:
