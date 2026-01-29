@@ -73,6 +73,7 @@ import {
   AlertTriangle,
   X,
   Save,
+  GripVertical,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
 import { ZoneRenderer } from "@/components/zone-renderer";
@@ -3036,6 +3037,75 @@ function LayoutEditorPanel({
   const editingZone = editingZoneId ? zones.find(z => z.id === editingZoneId) : undefined;
   const event = events.find((e) => e.id === layout.eventId);
 
+  // Drag and drop state for zone reordering
+  const [draggedZoneId, setDraggedZoneId] = useState<string | null>(null);
+  const [dragOverZoneId, setDragOverZoneId] = useState<string | null>(null);
+  const justDraggedRef = useRef(false);
+
+  const handleDragStart = (e: React.DragEvent, zoneId: string) => {
+    e.stopPropagation();
+    setDraggedZoneId(zoneId);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: React.DragEvent, zoneId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (draggedZoneId && draggedZoneId !== zoneId) {
+      setDragOverZoneId(zoneId);
+    }
+  };
+
+  const handleDragLeave = () => {
+    setDragOverZoneId(null);
+  };
+
+  const handleDragEnd = () => {
+    // Set flag to prevent click from triggering edit after drag
+    justDraggedRef.current = true;
+    setTimeout(() => { justDraggedRef.current = false; }, 100);
+    setDraggedZoneId(null);
+    setDragOverZoneId(null);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetZoneId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!draggedZoneId || draggedZoneId === targetZoneId) {
+      handleDragEnd();
+      return;
+    }
+
+    const currentZones = [...zones];
+    const draggedIndex = currentZones.findIndex(z => z.id === draggedZoneId);
+    const targetIndex = currentZones.findIndex(z => z.id === targetZoneId);
+
+    if (draggedIndex === -1 || targetIndex === -1) {
+      handleDragEnd();
+      return;
+    }
+
+    // Remove dragged zone and insert at target position
+    const [draggedZone] = currentZones.splice(draggedIndex, 1);
+    currentZones.splice(targetIndex, 0, draggedZone);
+
+    // Update z-index based on new order (higher in list = higher z-index)
+    const reorderedZones = currentZones.map((zone, index) => ({
+      ...zone,
+      zIndex: currentZones.length - index, // First item gets highest z-index
+    }));
+
+    setDraftZones(reorderedZones);
+    setHasUnsavedChanges(true);
+    handleDragEnd();
+  };
+
+  const handleZoneItemClick = (zone: LayoutZone) => {
+    // Prevent edit if we just finished a drag operation or are currently dragging
+    if (justDraggedRef.current || draggedZoneId) return;
+    handleEditZone(zone);
+  };
+
   const form = useForm<LayoutFormValues>({
     resolver: zodResolver(layoutFormSchema),
     defaultValues: {
@@ -3245,20 +3315,42 @@ function LayoutEditorPanel({
               </Button>
             </div>
           ) : (
-            zones.map((zone) => {
+            zones.map((zone, index) => {
               const Icon = zoneTypeIcons[zone.type] || Grid3X3;
+              const isDragging = draggedZoneId === zone.id;
+              const isDragOver = dragOverZoneId === zone.id;
               return (
                 <div
                   key={zone.id}
-                  className="flex items-center gap-3 p-3 rounded-lg border hover-elevate cursor-pointer"
-                  onClick={() => handleEditZone(zone)}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, zone.id)}
+                  onDragOver={(e) => handleDragOver(e, zone.id)}
+                  onDragLeave={handleDragLeave}
+                  onDragEnd={handleDragEnd}
+                  onDrop={(e) => handleDrop(e, zone.id)}
+                  className={`flex items-center gap-2 p-3 rounded-lg border hover-elevate cursor-pointer transition-all ${
+                    isDragging ? "opacity-50 scale-95" : ""
+                  } ${isDragOver ? "border-primary border-2 bg-primary/5" : ""}`}
+                  onClick={() => handleZoneItemClick(zone)}
                   data-testid={`zone-item-${zone.id}`}
                 >
+                  <div 
+                    className="cursor-grab active:cursor-grabbing flex-shrink-0 text-muted-foreground hover:text-foreground"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    data-testid={`drag-handle-${zone.id}`}
+                  >
+                    <GripVertical className="h-4 w-4" />
+                  </div>
                   <div className="w-8 h-8 rounded bg-muted flex items-center justify-center flex-shrink-0">
                     <Icon className="h-4 w-4" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm truncate">{zone.name}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-sm truncate">{zone.name}</p>
+                      <Badge variant="outline" className="text-xs px-1.5 py-0">
+                        z:{zone.zIndex ?? (zones.length - index)}
+                      </Badge>
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       {zoneTypeLabels[zone.type] || zone.type} • {zone.width}% × {zone.height}%
                     </p>
