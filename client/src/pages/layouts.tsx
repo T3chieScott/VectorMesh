@@ -67,6 +67,7 @@ import {
   Move,
   Palette,
   Sparkles,
+  Copy,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone } from "@shared/schema";
 
@@ -1511,6 +1512,22 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
     },
   });
 
+  const duplicateMutation = useMutation({
+    mutationFn: () => 
+      apiRequest("POST", "/api/layouts", {
+        name: `${layout.name} (Copy)`,
+        eventId: layout.eventId,
+        zones: zones.map(z => ({ ...z, id: `zone-${Date.now()}-${Math.random().toString(36).substr(2, 9)}` })),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      toast({ title: "Layout duplicated successfully" });
+    },
+    onError: () => {
+      toast({ title: "Failed to duplicate layout", variant: "destructive" });
+    },
+  });
+
   const updateZoneMutation = useMutation({
     mutationFn: ({ zoneId, updates }: { zoneId: string; updates: Partial<LayoutZone> }) => {
       const updatedZones = zones.map(z => 
@@ -1626,11 +1643,25 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                 </DialogContent>
               </Dialog>
               <DropdownMenuItem
+                onSelect={() => duplicateMutation.mutate()}
+                disabled={duplicateMutation.isPending}
+                data-testid={`button-duplicate-layout-${layout.id}`}
+              >
+                <Copy className="mr-2 h-4 w-4" />
+                {duplicateMutation.isPending ? "Duplicating..." : "Duplicate"}
+              </DropdownMenuItem>
+              <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
-                onSelect={() => deleteMutation.mutate()}
+                onSelect={() => {
+                  if (confirm(`Are you sure you want to delete "${layout.name}"? This cannot be undone.`)) {
+                    deleteMutation.mutate();
+                  }
+                }}
+                disabled={deleteMutation.isPending}
+                data-testid={`button-delete-layout-${layout.id}`}
               >
                 <Trash2 className="mr-2 h-4 w-4" />
-                Delete
+                {deleteMutation.isPending ? "Deleting..." : "Delete"}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
