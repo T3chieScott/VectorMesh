@@ -223,8 +223,15 @@ export interface LayoutZone {
   width: number;
   height: number;
   scaleMode?: "contain" | "cover";
-  backgroundColor?: string;
   zIndex?: number;
+  // Zone styling options
+  backgroundColor?: string;
+  backgroundImage?: string;
+  backgroundVideo?: string;
+  textColor?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  borderRadius?: number;
   // Weather widget configuration
   weatherLocation?: string;
   weatherLat?: number;

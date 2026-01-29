@@ -21,6 +21,7 @@ import {
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -64,6 +65,7 @@ import {
   MapPin,
   Rss,
   Move,
+  Palette,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone } from "@shared/schema";
 
@@ -109,6 +111,14 @@ const zoneFormSchema = z.object({
   width: z.number().min(1).max(100),
   height: z.number().min(1).max(100),
   zIndex: z.number().min(0).max(100),
+  // Zone styling options
+  backgroundColor: z.string().optional(),
+  backgroundImage: z.string().optional(),
+  backgroundVideo: z.string().optional(),
+  textColor: z.string().optional(),
+  borderColor: z.string().optional(),
+  borderWidth: z.number().min(0).max(20).optional(),
+  borderRadius: z.number().min(0).max(50).optional(),
   // Weather widget configuration
   weatherLocation: z.string().optional(),
   weatherLat: z.number().optional(),
@@ -166,6 +176,13 @@ function ZoneEditorDialog({
       width: 50,
       height: 50,
       zIndex: 1,
+      backgroundColor: "",
+      backgroundImage: "",
+      backgroundVideo: "",
+      textColor: "",
+      borderColor: "",
+      borderWidth: 0,
+      borderRadius: 0,
       weatherLocation: "",
       weatherLat: undefined,
       weatherLng: undefined,
@@ -189,6 +206,13 @@ function ZoneEditorDialog({
           width: zone.width,
           height: zone.height,
           zIndex: zone.zIndex,
+          backgroundColor: zone.backgroundColor || "",
+          backgroundImage: zone.backgroundImage || "",
+          backgroundVideo: zone.backgroundVideo || "",
+          textColor: zone.textColor || "",
+          borderColor: zone.borderColor || "",
+          borderWidth: zone.borderWidth || 0,
+          borderRadius: zone.borderRadius || 0,
           weatherLocation: zone.weatherLocation || "",
           weatherLat: zone.weatherLat,
           weatherLng: zone.weatherLng,
@@ -207,6 +231,13 @@ function ZoneEditorDialog({
           width: 50,
           height: 50,
           zIndex: 1,
+          backgroundColor: "",
+          backgroundImage: "",
+          backgroundVideo: "",
+          textColor: "",
+          borderColor: "",
+          borderWidth: 0,
+          borderRadius: 0,
           weatherLocation: "",
           weatherLat: undefined,
           weatherLng: undefined,
@@ -301,6 +332,184 @@ function ZoneEditorDialog({
                 </FormItem>
               )}
             />
+
+            {/* Zone Styling Section */}
+            <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Palette className="h-4 w-4" />
+                Zone Styling
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="backgroundColor"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Background Color</FormLabel>
+                      <FormControl>
+                        <div className="flex gap-2">
+                          <Input 
+                            type="color" 
+                            className="w-12 h-9 p-1 cursor-pointer"
+                            value={field.value || "#000000"} 
+                            onChange={(e) => field.onChange(e.target.value)}
+                            data-testid="input-bg-color"
+                          />
+                          <Input 
+                            placeholder="#000000 or transparent" 
+                            {...field}
+                            value={field.value || ""}
+                            data-testid="input-bg-color-text"
+                          />
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="textColor"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Text Color</FormLabel>
+                      <FormControl>
+                        <div className="flex gap-2">
+                          <Input 
+                            type="color" 
+                            className="w-12 h-9 p-1 cursor-pointer"
+                            value={field.value || "#ffffff"} 
+                            onChange={(e) => field.onChange(e.target.value)}
+                            data-testid="input-text-color"
+                          />
+                          <Input 
+                            placeholder="#ffffff" 
+                            {...field}
+                            value={field.value || ""}
+                            data-testid="input-text-color-text"
+                          />
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="backgroundImage"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Background Image URL</FormLabel>
+                    <FormControl>
+                      <Input 
+                        placeholder="https://... or leave empty" 
+                        {...field}
+                        value={field.value || ""}
+                        data-testid="input-bg-image"
+                      />
+                    </FormControl>
+                    <FormDescription>Enter an image URL to use as background</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="backgroundVideo"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Background Video URL</FormLabel>
+                    <FormControl>
+                      <Input 
+                        placeholder="https://... or leave empty" 
+                        {...field}
+                        value={field.value || ""}
+                        data-testid="input-bg-video"
+                      />
+                    </FormControl>
+                    <FormDescription>Enter a video URL for animated backgrounds</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="grid grid-cols-3 gap-4">
+                <FormField
+                  control={form.control}
+                  name="borderColor"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Border Color</FormLabel>
+                      <FormControl>
+                        <div className="flex gap-2">
+                          <Input 
+                            type="color" 
+                            className="w-10 h-9 p-1 cursor-pointer"
+                            value={field.value || "#ffffff"} 
+                            onChange={(e) => field.onChange(e.target.value)}
+                            data-testid="input-border-color"
+                          />
+                          <Input 
+                            placeholder="#fff" 
+                            {...field}
+                            value={field.value || ""}
+                            className="flex-1"
+                            data-testid="input-border-color-text"
+                          />
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="borderWidth"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Border Width (px)</FormLabel>
+                      <FormControl>
+                        <Input 
+                          type="number" 
+                          min={0}
+                          max={20}
+                          placeholder="0"
+                          value={field.value ?? 0}
+                          onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                          data-testid="input-border-width"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="borderRadius"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Border Radius (px)</FormLabel>
+                      <FormControl>
+                        <Input 
+                          type="number" 
+                          min={0}
+                          max={50}
+                          placeholder="0"
+                          value={field.value ?? 0}
+                          onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                          data-testid="input-border-radius"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </div>
 
             {/* Weather Widget Configuration */}
             {form.watch("type") === "weather" && (

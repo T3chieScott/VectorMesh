@@ -518,19 +518,49 @@ function ZoneRenderer({
     }
   };
 
+  // Build zone styling from schema properties
+  const zoneStyle: React.CSSProperties = {
+    left: `${zone.x}%`,
+    top: `${zone.y}%`,
+    width: `${zone.width}%`,
+    height: `${zone.height}%`,
+    zIndex: zone.zIndex || 1,
+    containerType: "size" as const,
+    ...(zone.backgroundColor && { backgroundColor: zone.backgroundColor }),
+    ...(zone.textColor && { color: zone.textColor }),
+    ...(zone.borderColor && zone.borderWidth && { borderColor: zone.borderColor }),
+    ...(zone.borderWidth && { borderWidth: `${zone.borderWidth}px`, borderStyle: "solid" }),
+    ...(zone.borderRadius && { borderRadius: `${zone.borderRadius}px` }),
+  };
+
   return (
     <div
       className={`absolute overflow-hidden ${showBorder ? "ring-2 ring-primary/50 ring-offset-1" : ""}`}
-      style={{
-        left: `${zone.x}%`,
-        top: `${zone.y}%`,
-        width: `${zone.width}%`,
-        height: `${zone.height}%`,
-        zIndex: zone.zIndex || 1,
-        containerType: "size",
-      }}
+      style={zoneStyle}
       data-testid={`zone-${zone.id}`}
     >
+      {/* Background Video Layer */}
+      {zone.backgroundVideo && (
+        <video
+          src={zone.backgroundVideo}
+          autoPlay
+          loop
+          muted
+          playsInline
+          className="absolute inset-0 w-full h-full object-cover -z-10"
+        />
+      )}
+      {/* Background Image Layer */}
+      {zone.backgroundImage && !zone.backgroundVideo && (
+        <div
+          className="absolute inset-0 w-full h-full -z-10"
+          style={{
+            backgroundImage: `url(${zone.backgroundImage})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+          }}
+        />
+      )}
       {renderContent()}
       {showBorder && (
         <div className="absolute top-1 left-1 bg-black/70 text-white text-xs px-1.5 py-0.5 rounded flex items-center gap-1">
