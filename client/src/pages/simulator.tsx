@@ -111,7 +111,7 @@ function ClockWidget({ timezone }: { timezone?: string }) {
   };
 
   return (
-    <div className="h-full w-full bg-black/80 flex flex-col items-center justify-center text-white overflow-hidden p-2">
+    <div className="h-full w-full flex flex-col items-center justify-center overflow-hidden p-2">
       <div 
         className="font-bold tabular-nums leading-none whitespace-nowrap"
         style={{ fontSize: "clamp(12px, min(40cqh, 18cqw), 72px)" }}
@@ -119,7 +119,7 @@ function ClockWidget({ timezone }: { timezone?: string }) {
         {time.toLocaleTimeString([], timeOptions)}
       </div>
       <div 
-        className="text-white/70 mt-1 truncate max-w-full whitespace-nowrap"
+        className="opacity-70 mt-1 truncate max-w-full whitespace-nowrap"
         style={{ fontSize: "clamp(8px, min(15cqh, 7cqw), 24px)" }}
       >
         {time.toLocaleDateString([], dateOptions)}
