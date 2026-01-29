@@ -195,6 +195,16 @@ const zoneFormSchema = z.object({
 }, {
   message: "News widget requires an RSS feed URL",
   path: ["newsRssUrl"],
+}).refine((data) => {
+  // Require both start (backgroundColor) and end color when gradient is enabled
+  if (data.gradientEnabled) {
+    return data.backgroundColor && data.backgroundColor.trim().length > 0 &&
+           data.gradientEndColor && data.gradientEndColor.trim().length > 0;
+  }
+  return true;
+}, {
+  message: "Gradient requires a background color (start) and end color",
+  path: ["gradientEndColor"],
 });
 
 type ZoneFormValues = z.infer<typeof zoneFormSchema>;

@@ -507,7 +507,7 @@ function WeatherWidget({
 
   if (!lat || !lng) {
     return (
-      <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center text-white overflow-hidden">
+      <div className="h-full w-full flex items-center justify-center overflow-hidden">
         <div className="text-center">
           <CloudSun 
             className="mx-auto mb-1 opacity-70" 
@@ -522,7 +522,7 @@ function WeatherWidget({
 
   if (error) {
     return (
-      <div className="h-full w-full bg-gradient-to-br from-gray-600 to-gray-800 flex items-center justify-center text-white overflow-hidden">
+      <div className="h-full w-full flex items-center justify-center overflow-hidden">
         <div className="text-center">
           <AlertTriangle 
             className="mx-auto mb-1 opacity-70" 
@@ -536,7 +536,7 @@ function WeatherWidget({
 
   if (!weather) {
     return (
-      <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center text-white overflow-hidden">
+      <div className="h-full w-full flex items-center justify-center overflow-hidden">
         <RefreshCw 
           className="animate-spin opacity-50" 
           style={{ width: "clamp(16px, 15cqh, 32px)", height: "clamp(16px, 15cqh, 32px)" }}
@@ -548,7 +548,7 @@ function WeatherWidget({
   const WeatherIcon = weatherIcons[weather.icon] || Cloud;
 
   return (
-    <div className="h-full w-full bg-gradient-to-br from-blue-600 to-blue-800 flex flex-col items-center justify-center text-white p-3 overflow-hidden">
+    <div className="h-full w-full flex flex-col items-center justify-center p-3 overflow-hidden">
       <p 
         className="font-medium opacity-80 leading-tight truncate max-w-full"
         style={{ fontSize: "clamp(10px, min(8cqh, 6cqw), 24px)" }}
