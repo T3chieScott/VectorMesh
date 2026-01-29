@@ -150,6 +150,10 @@ const zoneFormSchema = z.object({
   backgroundColor: z.string().optional(),
   backgroundImage: z.string().optional(),
   backgroundVideo: z.string().optional(),
+  // Gradient background options
+  gradientEnabled: z.boolean().optional(),
+  gradientDirection: z.enum(["to-t", "to-b", "to-l", "to-r", "to-tl", "to-tr", "to-bl", "to-br"]).optional(),
+  gradientEndColor: z.string().optional(),
   textColor: z.string().optional(),
   borderColor: z.string().optional(),
   borderWidth: z.number().min(0).max(20).optional(),
@@ -223,6 +227,9 @@ function ZoneEditorDialog({
       backgroundColor: "",
       backgroundImage: "",
       backgroundVideo: "",
+      gradientEnabled: false,
+      gradientDirection: "to-b",
+      gradientEndColor: "",
       textColor: "",
       borderColor: "",
       borderWidth: 0,
@@ -260,6 +267,9 @@ function ZoneEditorDialog({
           backgroundColor: zone.backgroundColor || "",
           backgroundImage: zone.backgroundImage || "",
           backgroundVideo: zone.backgroundVideo || "",
+          gradientEnabled: zone.gradientEnabled || false,
+          gradientDirection: zone.gradientDirection || "to-b",
+          gradientEndColor: zone.gradientEndColor || "",
           textColor: zone.textColor || "",
           borderColor: zone.borderColor || "",
           borderWidth: zone.borderWidth || 0,
@@ -292,6 +302,9 @@ function ZoneEditorDialog({
           backgroundColor: "",
           backgroundImage: "",
           backgroundVideo: "",
+          gradientEnabled: false,
+          gradientDirection: "to-b",
+          gradientEndColor: "",
           textColor: "",
           borderColor: "",
           borderWidth: 0,
@@ -460,6 +473,92 @@ function ZoneEditorDialog({
                     </FormItem>
                   )}
                 />
+              </div>
+
+              {/* Gradient Options */}
+              <div className="space-y-3 border-t pt-4">
+                <FormField
+                  control={form.control}
+                  name="gradientEnabled"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center gap-3">
+                      <FormControl>
+                        <input
+                          type="checkbox"
+                          checked={field.value || false}
+                          onChange={(e) => field.onChange(e.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300"
+                          data-testid="checkbox-gradient-enabled"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Enable Gradient Background</FormLabel>
+                    </FormItem>
+                  )}
+                />
+
+                {form.watch("gradientEnabled") && (
+                  <div className="grid grid-cols-2 gap-4 pl-7">
+                    <FormField
+                      control={form.control}
+                      name="gradientDirection"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Direction</FormLabel>
+                          <Select
+                            value={field.value || "to-b"}
+                            onValueChange={field.onChange}
+                          >
+                            <FormControl>
+                              <SelectTrigger data-testid="select-gradient-direction">
+                                <SelectValue placeholder="Direction" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="to-t">To Top</SelectItem>
+                              <SelectItem value="to-b">To Bottom</SelectItem>
+                              <SelectItem value="to-l">To Left</SelectItem>
+                              <SelectItem value="to-r">To Right</SelectItem>
+                              <SelectItem value="to-tl">To Top Left</SelectItem>
+                              <SelectItem value="to-tr">To Top Right</SelectItem>
+                              <SelectItem value="to-bl">To Bottom Left</SelectItem>
+                              <SelectItem value="to-br">To Bottom Right</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="gradientEndColor"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>End Color</FormLabel>
+                          <FormControl>
+                            <div className="flex gap-2">
+                              <Input 
+                                type="color" 
+                                className="w-12 h-9 p-1 cursor-pointer"
+                                value={field.value || "#000000"} 
+                                onChange={(e) => field.onChange(e.target.value)}
+                                data-testid="input-gradient-end-color"
+                              />
+                              <Input 
+                                placeholder="#000000" 
+                                {...field}
+                                value={field.value || ""}
+                                className="flex-1"
+                                data-testid="input-gradient-end-color-text"
+                              />
+                            </div>
+                          </FormControl>
+                          <FormDescription>Start color is the Background Color above</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
               </div>
 
               <FormField
