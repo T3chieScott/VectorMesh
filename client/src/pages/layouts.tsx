@@ -3155,50 +3155,33 @@ function LayoutEditorPanel({
   );
 }
 
-function LivePreviewPanel({ layout }: { layout: LayoutTemplate }) {
+function LivePreviewPanel({ 
+  layout,
+  onZoneUpdate,
+}: { 
+  layout: LayoutTemplate;
+  onZoneUpdate: (zoneId: string, updates: Partial<LayoutZone>) => void;
+}) {
   const zones = (layout.zones as LayoutZone[]) || [];
-  const aspectDims = getAspectRatioDimensions(
-    layout.aspectRatio || "16:9",
-    layout.customWidth,
-    layout.customHeight
-  );
-  const aspectPadding = (aspectDims.height / aspectDims.width) * 100;
 
   return (
     <div className="h-full flex flex-col">
       <div className="p-4 border-b">
         <h3 className="font-medium flex items-center gap-2">
           <Monitor className="h-4 w-4" />
-          Live Preview
+          Interactive Preview
         </h3>
         <p className="text-xs text-muted-foreground mt-1">
-          Real-time view of your layout
+          Click zones to select, drag to move, use handles to resize
         </p>
       </div>
       <div className="flex-1 p-4 flex items-center justify-center bg-muted/30">
         <div className="w-full max-w-2xl">
-          <div 
-            className="relative w-full bg-black rounded-lg overflow-hidden shadow-2xl"
-            style={{ paddingBottom: `${aspectPadding}%` }}
-            data-testid="live-preview-container"
-          >
-            {zones.map((zone) => (
-              <ZoneRenderer
-                key={zone.id}
-                zone={zone}
-                showBorder={false}
-                isPlaying={true}
-              />
-            ))}
-            {zones.length === 0 && (
-              <div className="absolute inset-0 flex items-center justify-center text-white/50">
-                <div className="text-center">
-                  <Layout className="h-8 w-8 mx-auto mb-2" />
-                  <p className="text-sm">Add zones to see preview</p>
-                </div>
-              </div>
-            )}
-          </div>
+          <InteractiveLayoutPreview
+            layout={layout}
+            zones={zones}
+            onZoneUpdate={onZoneUpdate}
+          />
         </div>
       </div>
     </div>
@@ -3217,6 +3200,27 @@ export default function LayoutsPage() {
   });
 
   const selectedLayout = layouts.find(l => l.id === selectedLayoutId);
+
+  const updateZoneMutation = useMutation({
+    mutationFn: ({ layoutId, zoneId, updates }: { layoutId: string; zoneId: string; updates: Partial<LayoutZone> }) => {
+      const layout = layouts.find(l => l.id === layoutId);
+      if (!layout) throw new Error("Layout not found");
+      const zones = (layout.zones as LayoutZone[]) || [];
+      const updatedZones = zones.map(z => 
+        z.id === zoneId ? { ...z, ...updates } : z
+      );
+      return apiRequest("PATCH", `/api/layouts/${layoutId}`, { zones: updatedZones });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+    },
+  });
+
+  const handleZoneUpdate = (zoneId: string, updates: Partial<LayoutZone>) => {
+    if (selectedLayoutId) {
+      updateZoneMutation.mutate({ layoutId: selectedLayoutId, zoneId, updates });
+    }
+  };
 
   useEffect(() => {
     if (layouts.length > 0 && !selectedLayoutId) {
@@ -3291,7 +3295,7 @@ export default function LayoutsPage() {
             />
           </div>
           <div className="flex-1">
-            <LivePreviewPanel layout={selectedLayout} />
+            <LivePreviewPanel layout={selectedLayout} onZoneUpdate={handleZoneUpdate} />
           </div>
         </div>
       ) : (
