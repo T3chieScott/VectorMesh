@@ -81,20 +81,134 @@ const zoneTypeIcons: Record<string, typeof Image> = {
   qrcode: QrCode,
 };
 
-function TickerWidget({ content, speed }: { content?: string; speed?: number }) {
+function TickerWidget({ content, speed, animation }: { content?: string; speed?: number; animation?: string }) {
   const animationDuration = speed || 20;
+  const animationType = animation || "scroll-left";
+  const displayContent = content || "Welcome to SignageHub • Breaking news and updates scroll here • Stay informed with live content";
+  
+  const items = displayContent.split(/[•|]/).map(s => s.trim()).filter(Boolean);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isVisible, setIsVisible] = useState(true);
+  const [displayedChars, setDisplayedChars] = useState(0);
+  
+  useEffect(() => {
+    if (animationType === "fade" || animationType === "slide-in") {
+      const itemDuration = (animationDuration * 1000) / Math.max(items.length, 1);
+      const hideDuration = itemDuration * 0.2;
+      
+      const showTimer = setInterval(() => {
+        setIsVisible(false);
+        setTimeout(() => {
+          setCurrentIndex(prev => (prev + 1) % items.length);
+          setIsVisible(true);
+        }, hideDuration);
+      }, itemDuration);
+      
+      return () => clearInterval(showTimer);
+    }
+  }, [animationType, animationDuration, items.length]);
+  
+  useEffect(() => {
+    if (animationType === "typewriter") {
+      const currentText = items[currentIndex] || displayContent;
+      const charInterval = (animationDuration * 1000) / (currentText.length * items.length + items.length * 10);
+      
+      const timer = setInterval(() => {
+        setDisplayedChars(prev => {
+          if (prev >= currentText.length) {
+            setTimeout(() => {
+              setDisplayedChars(0);
+              setCurrentIndex(prevIdx => (prevIdx + 1) % items.length);
+            }, charInterval * 10);
+            return prev;
+          }
+          return prev + 1;
+        });
+      }, charInterval);
+      
+      return () => clearInterval(timer);
+    }
+  }, [animationType, animationDuration, currentIndex, items, displayContent]);
+  
+  useEffect(() => {
+    if (animationType === "typewriter") {
+      setDisplayedChars(0);
+    }
+  }, [currentIndex, animationType]);
+  
+  const baseStyle = "h-full w-full bg-gradient-to-r from-primary/90 to-primary text-primary-foreground";
+  const fontSize = "clamp(10px, min(50cqh, 3cqw), 24px)";
+  
+  if (animationType === "scroll-left") {
+    return (
+      <div className={`${baseStyle} flex items-center overflow-hidden`}>
+        <div 
+          className="whitespace-nowrap font-medium px-4"
+          style={{ fontSize, animation: `marquee ${animationDuration}s linear infinite` }}
+        >
+          {displayContent}
+        </div>
+      </div>
+    );
+  }
+  
+  if (animationType === "scroll-up") {
+    return (
+      <div className={`${baseStyle} overflow-hidden relative`}>
+        <div 
+          className="absolute w-full"
+          style={{ animation: `scrollUp ${animationDuration}s linear infinite` }}
+        >
+          {items.map((item, i) => (
+            <div key={i} className="flex items-center justify-center py-2 font-medium" style={{ height: "100cqh", fontSize }}>
+              {item}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  
+  if (animationType === "typewriter") {
+    const currentText = items[currentIndex] || displayContent;
+    return (
+      <div className={`${baseStyle} flex items-center justify-center overflow-hidden`}>
+        <span className="font-medium font-mono" style={{ fontSize }}>
+          {currentText.slice(0, displayedChars)}<span className="animate-pulse">|</span>
+        </span>
+      </div>
+    );
+  }
+  
+  if (animationType === "fade") {
+    return (
+      <div className={`${baseStyle} flex items-center justify-center overflow-hidden`}>
+        <span 
+          className="font-medium text-center transition-opacity duration-500 px-4"
+          style={{ fontSize, opacity: isVisible ? 1 : 0 }}
+        >
+          {items[currentIndex] || displayContent}
+        </span>
+      </div>
+    );
+  }
+  
+  if (animationType === "slide-in") {
+    return (
+      <div className={`${baseStyle} flex items-center justify-center overflow-hidden`}>
+        <span 
+          className="font-medium text-center transition-all duration-500 px-4"
+          style={{ fontSize, opacity: isVisible ? 1 : 0, transform: isVisible ? "translateY(0)" : "translateY(100%)" }}
+        >
+          {items[currentIndex] || displayContent}
+        </span>
+      </div>
+    );
+  }
   
   return (
-    <div className="h-full w-full bg-gradient-to-r from-primary/90 to-primary flex items-center overflow-hidden">
-      <div 
-        className="whitespace-nowrap text-primary-foreground font-medium px-4"
-        style={{ 
-          fontSize: "clamp(10px, min(50cqh, 3cqw), 24px)",
-          animation: `marquee ${animationDuration}s linear infinite`
-        }}
-      >
-        {content || "Welcome to SignageHub • Breaking news and updates scroll here • Stay informed with live content"}
-      </div>
+    <div className={`${baseStyle} flex items-center overflow-hidden`}>
+      <span className="font-medium px-4" style={{ fontSize }}>{displayContent}</span>
     </div>
   );
 }
@@ -1187,7 +1301,7 @@ function ZoneRenderer({
       case "media":
         return <MediaWidget media={media} mediaIndex={mediaIndex} isPlaying={isPlaying} />;
       case "ticker":
-        return <TickerWidget content={zone.textContent} speed={zone.tickerScrollSpeed} />;
+        return <TickerWidget content={zone.textContent} speed={zone.tickerScrollSpeed} animation={zone.tickerAnimation} />;
       case "clock":
         return <ClockWidget timezone={timezone} />;
       case "logo":

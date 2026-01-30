@@ -197,6 +197,7 @@ const zoneFormSchema = z.object({
   textFontSize: z.enum(["small", "medium", "large", "xlarge"]).optional(),
   // Ticker widget configuration
   tickerScrollSpeed: z.number().min(5).max(60).optional(),
+  tickerAnimation: z.enum(["scroll-left", "scroll-up", "typewriter", "fade", "slide-in"]).optional(),
   textAlign: z.enum(["left", "center", "right"]).optional(),
   textVerticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
   // Shader widget configuration
@@ -1521,10 +1522,40 @@ function ZoneEditorDialog({
                 />
                 <FormField
                   control={form.control}
+                  name="tickerAnimation"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Animation Style</FormLabel>
+                      <Select
+                        value={field.value || "scroll-left"}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-ticker-animation">
+                            <SelectValue placeholder="Select animation" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="scroll-left">Scroll Left (Marquee)</SelectItem>
+                          <SelectItem value="scroll-up">Scroll Up (Vertical)</SelectItem>
+                          <SelectItem value="typewriter">Typewriter</SelectItem>
+                          <SelectItem value="fade">Fade In/Out</SelectItem>
+                          <SelectItem value="slide-in">Slide In</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        How the text animates. Use • or | to separate items for single-reveal styles.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
                   name="tickerScrollSpeed"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Scroll Speed</FormLabel>
+                      <FormLabel>Animation Speed</FormLabel>
                       <FormControl>
                         <div className="flex items-center gap-4">
                           <Input
@@ -1544,7 +1575,7 @@ function ZoneEditorDialog({
                         </div>
                       </FormControl>
                       <FormDescription>
-                        Duration for one complete scroll cycle (lower = faster)
+                        Duration for one complete animation cycle (lower = faster)
                       </FormDescription>
                       <FormMessage />
                     </FormItem>

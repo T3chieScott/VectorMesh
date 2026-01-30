@@ -336,6 +336,16 @@
     animation-duration: 30s; /* default, overridden by JS */
   }
 
+  /* Vertical scroll animation for ticker */
+  @keyframes scrollUp {
+    from {
+      transform: translateY(0);
+    }
+    to {
+      transform: translateY(-100%);
+    }
+  }
+
   /* Seamless ticker scroll - text starts visible and loops seamlessly, vertically centered */
   @keyframes ticker-scroll {
     from {

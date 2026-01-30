@@ -61,22 +61,157 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   qrcode: QrCode,
 };
 
-function TickerWidget({ content, speed }: { content?: string; speed?: number }) {
-  // Speed is duration in seconds for one complete scroll cycle (lower = faster)
+function TickerWidget({ content, speed, animation }: { content?: string; speed?: number; animation?: string }) {
   const animationDuration = speed || 20;
+  const animationType = animation || "scroll-left";
+  const displayContent = content || "Breaking News: Welcome to Digital Signage • Latest updates coming soon • Stay tuned for announcements •";
   
-  return (
-    <div className="h-full w-full flex items-center overflow-hidden">
-      <div 
-        className="whitespace-nowrap"
-        style={{ 
-          animation: `marquee ${animationDuration}s linear infinite`
-        }}
-      >
-        <span className="text-lg font-medium" style={{ fontSize: "max(14px, 3cqh)" }}>
-          {content || "Breaking News: Welcome to Digital Signage • Latest updates coming soon • Stay tuned for announcements •"}
+  // Split content for animations that show items one at a time
+  const items = displayContent.split(/[•|]/).map(s => s.trim()).filter(Boolean);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isVisible, setIsVisible] = useState(true);
+  const [displayedChars, setDisplayedChars] = useState(0);
+  
+  // For fade and slide-in animations - cycle through items
+  useEffect(() => {
+    if (animationType === "fade" || animationType === "slide-in") {
+      const itemDuration = (animationDuration * 1000) / Math.max(items.length, 1);
+      const showDuration = itemDuration * 0.8;
+      const hideDuration = itemDuration * 0.2;
+      
+      const showTimer = setInterval(() => {
+        setIsVisible(false);
+        setTimeout(() => {
+          setCurrentIndex(prev => (prev + 1) % items.length);
+          setIsVisible(true);
+        }, hideDuration);
+      }, itemDuration);
+      
+      return () => clearInterval(showTimer);
+    }
+  }, [animationType, animationDuration, items.length]);
+  
+  // For typewriter animation
+  useEffect(() => {
+    if (animationType === "typewriter") {
+      const currentText = items[currentIndex] || displayContent;
+      const charInterval = (animationDuration * 1000) / (currentText.length * items.length + items.length * 10);
+      
+      const timer = setInterval(() => {
+        setDisplayedChars(prev => {
+          if (prev >= currentText.length) {
+            // Pause at end, then move to next item
+            setTimeout(() => {
+              setDisplayedChars(0);
+              setCurrentIndex(prevIdx => (prevIdx + 1) % items.length);
+            }, charInterval * 10);
+            return prev;
+          }
+          return prev + 1;
+        });
+      }, charInterval);
+      
+      return () => clearInterval(timer);
+    }
+  }, [animationType, animationDuration, currentIndex, items, displayContent]);
+  
+  // Reset displayed chars when index changes for typewriter
+  useEffect(() => {
+    if (animationType === "typewriter") {
+      setDisplayedChars(0);
+    }
+  }, [currentIndex, animationType]);
+  
+  if (animationType === "scroll-left") {
+    return (
+      <div className="h-full w-full flex items-center overflow-hidden">
+        <div 
+          className="whitespace-nowrap"
+          style={{ animation: `marquee ${animationDuration}s linear infinite` }}
+        >
+          <span className="text-lg font-medium" style={{ fontSize: "max(14px, 3cqh)" }}>
+            {displayContent}
+          </span>
+        </div>
+      </div>
+    );
+  }
+  
+  if (animationType === "scroll-up") {
+    return (
+      <div className="h-full w-full overflow-hidden relative">
+        <div 
+          className="absolute w-full"
+          style={{ animation: `scrollUp ${animationDuration}s linear infinite` }}
+        >
+          {items.map((item, i) => (
+            <div 
+              key={i} 
+              className="flex items-center justify-center py-2"
+              style={{ height: "100cqh", fontSize: "max(14px, 3cqh)" }}
+            >
+              {item}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  
+  if (animationType === "typewriter") {
+    const currentText = items[currentIndex] || displayContent;
+    return (
+      <div className="h-full w-full flex items-center justify-center overflow-hidden">
+        <span 
+          className="text-lg font-medium font-mono"
+          style={{ fontSize: "max(14px, 3cqh)" }}
+        >
+          {currentText.slice(0, displayedChars)}
+          <span className="animate-pulse">|</span>
         </span>
       </div>
+    );
+  }
+  
+  if (animationType === "fade") {
+    return (
+      <div className="h-full w-full flex items-center justify-center overflow-hidden">
+        <span 
+          className="text-lg font-medium text-center transition-opacity duration-500"
+          style={{ 
+            fontSize: "max(14px, 3cqh)",
+            opacity: isVisible ? 1 : 0 
+          }}
+        >
+          {items[currentIndex] || displayContent}
+        </span>
+      </div>
+    );
+  }
+  
+  if (animationType === "slide-in") {
+    return (
+      <div className="h-full w-full flex items-center justify-center overflow-hidden">
+        <span 
+          className="text-lg font-medium text-center transition-all duration-500"
+          style={{ 
+            fontSize: "max(14px, 3cqh)",
+            opacity: isVisible ? 1 : 0,
+            transform: isVisible ? "translateY(0)" : "translateY(100%)"
+          }}
+        >
+          {items[currentIndex] || displayContent}
+        </span>
+      </div>
+    );
+  }
+  
+  // Default fallback
+  return (
+    <div className="h-full w-full flex items-center overflow-hidden">
+      <span className="text-lg font-medium" style={{ fontSize: "max(14px, 3cqh)" }}>
+        {displayContent}
+      </span>
     </div>
   );
 }
@@ -1030,7 +1165,7 @@ export function ZoneRenderer({
       case "media":
         return <MediaWidget media={media} mediaIndex={mediaIndex} isPlaying={isPlaying} />;
       case "ticker":
-        return <TickerWidget content={zone.textContent} speed={zone.tickerScrollSpeed} />;
+        return <TickerWidget content={zone.textContent} speed={zone.tickerScrollSpeed} animation={zone.tickerAnimation} />;
       case "clock":
         return <ClockWidget timezone={zone.clockTimezone || timezone} label={zone.clockLabel} />;
       case "logo":

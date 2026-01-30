@@ -265,6 +265,7 @@ export interface LayoutZone {
   textFontSize?: "small" | "medium" | "large" | "xlarge";
   // Ticker widget configuration
   tickerScrollSpeed?: number;  // Duration in seconds for one complete scroll cycle
+  tickerAnimation?: "scroll-left" | "scroll-up" | "typewriter" | "fade" | "slide-in";
   textAlign?: "left" | "center" | "right";
   textVerticalAlign?: "top" | "middle" | "bottom";
   // Shader widget configuration
