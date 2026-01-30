@@ -43,7 +43,9 @@ import {
   Droplets,
   Wind,
   Images,
+  QrCode,
 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
 
 interface SimulatorState {
@@ -76,6 +78,7 @@ const zoneTypeIcons: Record<string, typeof Image> = {
   weather: CloudSun,
   news: Newspaper,
   montage: Images,
+  qrcode: QrCode,
 };
 
 function TickerWidget({ content }: { content?: string }) {
@@ -1028,6 +1031,103 @@ function MontageWidget({
   );
 }
 
+function QRCodeWidget({
+  contentType = "url",
+  content = "",
+  foregroundColor = "#000000",
+  backgroundColor = "#ffffff",
+  errorCorrection = "M",
+  wifiSsid,
+  wifiPassword,
+  wifiEncryption = "WPA",
+  locationLat,
+  locationLng,
+  vcardName,
+  vcardPhone,
+  vcardEmail,
+  vcardOrg,
+}: {
+  contentType?: "url" | "email" | "phone" | "location" | "text" | "wifi" | "vcard";
+  content?: string;
+  foregroundColor?: string;
+  backgroundColor?: string;
+  errorCorrection?: "L" | "M" | "Q" | "H";
+  wifiSsid?: string;
+  wifiPassword?: string;
+  wifiEncryption?: "WPA" | "WEP" | "nopass";
+  locationLat?: number;
+  locationLng?: number;
+  vcardName?: string;
+  vcardPhone?: string;
+  vcardEmail?: string;
+  vcardOrg?: string;
+}) {
+  const generateQRContent = (): string => {
+    switch (contentType) {
+      case "url":
+        return content || "https://example.com";
+      case "email":
+        return content ? `mailto:${content}` : "mailto:example@example.com";
+      case "phone":
+        return content ? `tel:${content}` : "tel:+1234567890";
+      case "location":
+        if (locationLat !== undefined && locationLng !== undefined) {
+          return `geo:${locationLat},${locationLng}`;
+        }
+        return content || "geo:0,0";
+      case "wifi":
+        const ssid = wifiSsid || content || "NetworkName";
+        const password = wifiPassword || "";
+        const encryption = wifiEncryption || "WPA";
+        return `WIFI:T:${encryption};S:${ssid};P:${password};;`;
+      case "vcard":
+        const name = vcardName || content || "Contact Name";
+        const phone = vcardPhone || "";
+        const email = vcardEmail || "";
+        const org = vcardOrg || "";
+        return `BEGIN:VCARD\nVERSION:3.0\nN:${name}\nFN:${name}${phone ? `\nTEL:${phone}` : ""}${email ? `\nEMAIL:${email}` : ""}${org ? `\nORG:${org}` : ""}\nEND:VCARD`;
+      case "text":
+      default:
+        return content || "Sample text";
+    }
+  };
+
+  const qrContent = generateQRContent();
+  const hasContent = content || wifiSsid || (locationLat !== undefined && locationLng !== undefined) || vcardName;
+
+  if (!hasContent) {
+    return (
+      <div className="h-full w-full flex flex-col items-center justify-center text-center p-2">
+        <QrCode 
+          className="mb-1 opacity-70" 
+          style={{ width: "clamp(24px, 25cqh, 64px)", height: "clamp(24px, 25cqh, 64px)" }}
+        />
+        <p style={{ fontSize: "clamp(10px, 3cqh, 16px)" }} className="opacity-70">QR Code</p>
+        <p style={{ fontSize: "clamp(8px, 2cqh, 12px)" }} className="opacity-50">Configure content</p>
+      </div>
+    );
+  }
+
+  return (
+    <div 
+      className="h-full w-full flex items-center justify-center p-2"
+      style={{ backgroundColor }}
+    >
+      <div className="h-full w-full max-h-full max-w-full aspect-square flex items-center justify-center">
+        <QRCodeSVG
+          value={qrContent}
+          size={1000}
+          bgColor={backgroundColor}
+          fgColor={foregroundColor}
+          level={errorCorrection}
+          className="w-full h-full max-w-full max-h-full"
+          style={{ width: "100%", height: "100%", maxWidth: "100%", maxHeight: "100%" }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function ZoneRenderer({
   zone,
   media,
@@ -1107,6 +1207,25 @@ function ZoneRenderer({
             kenBurnsIntensity={zone.montageKenBurnsIntensity}
             shuffle={zone.montageShuffle}
             autoPlay={zone.montageAutoPlay}
+          />
+        );
+      case "qrcode":
+        return (
+          <QRCodeWidget
+            contentType={zone.qrContentType}
+            content={zone.qrContent}
+            foregroundColor={zone.qrForegroundColor}
+            backgroundColor={zone.qrBackgroundColor}
+            errorCorrection={zone.qrErrorCorrection}
+            wifiSsid={zone.qrWifiSsid}
+            wifiPassword={zone.qrWifiPassword}
+            wifiEncryption={zone.qrWifiEncryption}
+            locationLat={zone.qrLocationLat}
+            locationLng={zone.qrLocationLng}
+            vcardName={zone.qrVcardName}
+            vcardPhone={zone.qrVcardPhone}
+            vcardEmail={zone.qrVcardEmail}
+            vcardOrg={zone.qrVcardOrg}
           />
         );
       default:

@@ -7,6 +7,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
@@ -74,6 +75,7 @@ import {
   X,
   Save,
   GripVertical,
+  QrCode,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
 import { ZoneRenderer } from "@/components/zone-renderer";
@@ -134,6 +136,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   text: Type,
   shader: Sparkles,
   montage: Images,
+  qrcode: QrCode,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -147,11 +150,12 @@ const zoneTypeLabels: Record<string, string> = {
   text: "Text (static content)",
   shader: "Shader (GPU effects)",
   montage: "Photo Montage (slideshow)",
+  qrcode: "QR Code",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(1).max(100),
@@ -207,6 +211,21 @@ const zoneFormSchema = z.object({
   montageKenBurnsIntensity: z.number().min(1).max(20).optional(),
   montageShuffle: z.boolean().optional(),
   montageAutoPlay: z.boolean().optional(),
+  // QR Code widget configuration
+  qrContentType: z.enum(["url", "email", "phone", "location", "text", "wifi", "vcard"]).optional(),
+  qrContent: z.string().optional(),
+  qrForegroundColor: z.string().optional(),
+  qrBackgroundColor: z.string().optional(),
+  qrErrorCorrection: z.enum(["L", "M", "Q", "H"]).optional(),
+  qrWifiSsid: z.string().optional(),
+  qrWifiPassword: z.string().optional(),
+  qrWifiEncryption: z.enum(["WPA", "WEP", "nopass"]).optional(),
+  qrLocationLat: z.number().optional(),
+  qrLocationLng: z.number().optional(),
+  qrVcardName: z.string().optional(),
+  qrVcardPhone: z.string().optional(),
+  qrVcardEmail: z.string().optional(),
+  qrVcardOrg: z.string().optional(),
 }).refine((data) => {
   // Require lat/lng for weather zones
   if (data.type === "weather") {
@@ -456,6 +475,20 @@ function ZoneEditorDialog({
       montageKenBurnsIntensity: 10,
       montageShuffle: false,
       montageAutoPlay: true,
+      qrContentType: "url",
+      qrContent: "",
+      qrForegroundColor: "#000000",
+      qrBackgroundColor: "#ffffff",
+      qrErrorCorrection: "M",
+      qrWifiSsid: "",
+      qrWifiPassword: "",
+      qrWifiEncryption: "WPA",
+      qrLocationLat: undefined,
+      qrLocationLng: undefined,
+      qrVcardName: "",
+      qrVcardPhone: "",
+      qrVcardEmail: "",
+      qrVcardOrg: "",
     },
   });
 
@@ -513,6 +546,20 @@ function ZoneEditorDialog({
           montageKenBurnsIntensity: zone.montageKenBurnsIntensity || 10,
           montageShuffle: zone.montageShuffle || false,
           montageAutoPlay: zone.montageAutoPlay !== false,
+          qrContentType: zone.qrContentType || "url",
+          qrContent: zone.qrContent || "",
+          qrForegroundColor: zone.qrForegroundColor || "#000000",
+          qrBackgroundColor: zone.qrBackgroundColor || "#ffffff",
+          qrErrorCorrection: zone.qrErrorCorrection || "M",
+          qrWifiSsid: zone.qrWifiSsid || "",
+          qrWifiPassword: zone.qrWifiPassword || "",
+          qrWifiEncryption: zone.qrWifiEncryption || "WPA",
+          qrLocationLat: zone.qrLocationLat,
+          qrLocationLng: zone.qrLocationLng,
+          qrVcardName: zone.qrVcardName || "",
+          qrVcardPhone: zone.qrVcardPhone || "",
+          qrVcardEmail: zone.qrVcardEmail || "",
+          qrVcardOrg: zone.qrVcardOrg || "",
         });
       } else {
         form.reset({
@@ -565,6 +612,20 @@ function ZoneEditorDialog({
           montageKenBurnsIntensity: 10,
           montageShuffle: false,
           montageAutoPlay: true,
+          qrContentType: "url",
+          qrContent: "",
+          qrForegroundColor: "#000000",
+          qrBackgroundColor: "#ffffff",
+          qrErrorCorrection: "M",
+          qrWifiSsid: "",
+          qrWifiPassword: "",
+          qrWifiEncryption: "WPA",
+          qrLocationLat: undefined,
+          qrLocationLng: undefined,
+          qrVcardName: "",
+          qrVcardPhone: "",
+          qrVcardEmail: "",
+          qrVcardOrg: "",
         });
       }
     }
@@ -1822,6 +1883,419 @@ function ZoneEditorDialog({
                     )}
                   />
                 </div>
+              </div>
+            )}
+
+            {/* QR Code Zone Configuration */}
+            {form.watch("type") === "qrcode" && (
+              <div className="space-y-4 border rounded-md p-4" data-testid="qrcode-config-section">
+                <h4 className="font-medium flex items-center gap-2">
+                  <QrCode className="h-4 w-4" />
+                  QR Code Configuration
+                </h4>
+
+                <FormField
+                  control={form.control}
+                  name="qrContentType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Content Type</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || "url"}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-qr-content-type">
+                            <SelectValue placeholder="Select content type" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="url">URL / Website Link</SelectItem>
+                          <SelectItem value="email">Email Address</SelectItem>
+                          <SelectItem value="phone">Phone Number</SelectItem>
+                          <SelectItem value="text">Plain Text</SelectItem>
+                          <SelectItem value="wifi">WiFi Network</SelectItem>
+                          <SelectItem value="location">Location (GPS)</SelectItem>
+                          <SelectItem value="vcard">Contact Card (vCard)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* URL Content */}
+                {form.watch("qrContentType") === "url" && (
+                  <FormField
+                    control={form.control}
+                    name="qrContent"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>URL</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="https://example.com"
+                            {...field}
+                            value={field.value || ""}
+                            data-testid="input-qr-url"
+                          />
+                        </FormControl>
+                        <FormDescription>Enter the website URL to encode</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
+                {/* Email Content */}
+                {form.watch("qrContentType") === "email" && (
+                  <FormField
+                    control={form.control}
+                    name="qrContent"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Email Address</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="contact@example.com"
+                            type="email"
+                            {...field}
+                            value={field.value || ""}
+                            data-testid="input-qr-email"
+                          />
+                        </FormControl>
+                        <FormDescription>Scanning will open email app with this address</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
+                {/* Phone Content */}
+                {form.watch("qrContentType") === "phone" && (
+                  <FormField
+                    control={form.control}
+                    name="qrContent"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Phone Number</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="+1234567890"
+                            type="tel"
+                            {...field}
+                            value={field.value || ""}
+                            data-testid="input-qr-phone"
+                          />
+                        </FormControl>
+                        <FormDescription>Include country code for best compatibility</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
+                {/* Plain Text Content */}
+                {form.watch("qrContentType") === "text" && (
+                  <FormField
+                    control={form.control}
+                    name="qrContent"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Text Content</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            placeholder="Enter text to encode..."
+                            {...field}
+                            value={field.value || ""}
+                            rows={3}
+                            data-testid="input-qr-text"
+                          />
+                        </FormControl>
+                        <FormDescription>Plain text that will be displayed when scanned</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
+                {/* WiFi Configuration */}
+                {form.watch("qrContentType") === "wifi" && (
+                  <div className="space-y-4">
+                    <FormField
+                      control={form.control}
+                      name="qrWifiSsid"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Network Name (SSID)</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="MyWiFiNetwork"
+                              {...field}
+                              value={field.value || ""}
+                              data-testid="input-qr-wifi-ssid"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="qrWifiPassword"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Password</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="password"
+                              placeholder="WiFi password"
+                              {...field}
+                              value={field.value || ""}
+                              data-testid="input-qr-wifi-password"
+                            />
+                          </FormControl>
+                          <FormDescription>Leave empty for open networks</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="qrWifiEncryption"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Encryption Type</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value || "WPA"}>
+                            <FormControl>
+                              <SelectTrigger data-testid="select-qr-wifi-encryption">
+                                <SelectValue placeholder="Select encryption" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="WPA">WPA/WPA2/WPA3</SelectItem>
+                              <SelectItem value="WEP">WEP</SelectItem>
+                              <SelectItem value="nopass">Open (No Password)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
+
+                {/* Location Configuration */}
+                {form.watch("qrContentType") === "location" && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="qrLocationLat"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Latitude</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              step="any"
+                              placeholder="51.5074"
+                              {...field}
+                              value={field.value ?? ""}
+                              onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
+                              data-testid="input-qr-location-lat"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="qrLocationLng"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Longitude</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              step="any"
+                              placeholder="-0.1278"
+                              {...field}
+                              value={field.value ?? ""}
+                              onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
+                              data-testid="input-qr-location-lng"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
+
+                {/* vCard Configuration */}
+                {form.watch("qrContentType") === "vcard" && (
+                  <div className="space-y-4">
+                    <FormField
+                      control={form.control}
+                      name="qrVcardName"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Full Name</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="John Doe"
+                              {...field}
+                              value={field.value || ""}
+                              data-testid="input-qr-vcard-name"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="qrVcardPhone"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Phone</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="tel"
+                              placeholder="+1234567890"
+                              {...field}
+                              value={field.value || ""}
+                              data-testid="input-qr-vcard-phone"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="qrVcardEmail"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Email</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="email"
+                              placeholder="john@example.com"
+                              {...field}
+                              value={field.value || ""}
+                              data-testid="input-qr-vcard-email"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="qrVcardOrg"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Organization</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="Company Name"
+                              {...field}
+                              value={field.value || ""}
+                              data-testid="input-qr-vcard-org"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
+
+                {/* QR Code Appearance */}
+                <div className="border-t pt-4 mt-4">
+                  <h5 className="text-sm font-medium mb-3">Appearance</h5>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="qrForegroundColor"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Foreground Color</FormLabel>
+                          <div className="flex gap-2">
+                            <FormControl>
+                              <Input
+                                type="color"
+                                {...field}
+                                value={field.value || "#000000"}
+                                className="w-12 h-9 p-1 cursor-pointer"
+                                data-testid="input-qr-fg-color"
+                              />
+                            </FormControl>
+                            <Input
+                              value={field.value || "#000000"}
+                              onChange={field.onChange}
+                              placeholder="#000000"
+                              className="flex-1"
+                            />
+                          </div>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="qrBackgroundColor"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Background Color</FormLabel>
+                          <div className="flex gap-2">
+                            <FormControl>
+                              <Input
+                                type="color"
+                                {...field}
+                                value={field.value || "#ffffff"}
+                                className="w-12 h-9 p-1 cursor-pointer"
+                                data-testid="input-qr-bg-color"
+                              />
+                            </FormControl>
+                            <Input
+                              value={field.value || "#ffffff"}
+                              onChange={field.onChange}
+                              placeholder="#ffffff"
+                              className="flex-1"
+                            />
+                          </div>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
+
+                {/* Error Correction Level */}
+                <FormField
+                  control={form.control}
+                  name="qrErrorCorrection"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Error Correction Level</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || "M"}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-qr-error-correction">
+                            <SelectValue placeholder="Select level" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="L">Low (7% recovery)</SelectItem>
+                          <SelectItem value="M">Medium (15% recovery)</SelectItem>
+                          <SelectItem value="Q">Quartile (25% recovery)</SelectItem>
+                          <SelectItem value="H">High (30% recovery)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>Higher levels make QR codes more resilient but denser</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
             )}
 

@@ -13,7 +13,7 @@ export const screenTypeEnum = pgEnum("screen_type", ["standard", "led_wall"]);
 export const orientationEnum = pgEnum("orientation", ["landscape", "portrait"]);
 export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "gif"]);
 export const programmeStatusEnum = pgEnum("programme_status", ["draft", "published"]);
-export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage"]);
+export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode"]);
 export const scaleModeEnum = pgEnum("scale_mode", ["contain", "cover"]);
 
 // ============ CLIENTS ============
@@ -220,7 +220,7 @@ export type LayoutTemplate = typeof layoutTemplates.$inferSelect;
 export interface LayoutZone {
   id: string;
   name: string;
-  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage";
+  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode";
   x: number;
   y: number;
   width: number;
@@ -279,6 +279,24 @@ export interface LayoutZone {
   montageKenBurnsIntensity?: number;  // Ken Burns zoom intensity (1-20, default 10)
   montageShuffle?: boolean;    // Randomize photo order
   montageAutoPlay?: boolean;   // Auto-start slideshow (default true)
+  // QR Code widget configuration
+  qrContentType?: "url" | "email" | "phone" | "location" | "text" | "wifi" | "vcard";
+  qrContent?: string;          // The content/value to encode
+  qrForegroundColor?: string;  // QR code foreground color (default #000000)
+  qrBackgroundColor?: string;  // QR code background color (default #ffffff)
+  qrErrorCorrection?: "L" | "M" | "Q" | "H";  // Error correction level (default M)
+  // WiFi-specific (used when qrContentType is "wifi")
+  qrWifiSsid?: string;
+  qrWifiPassword?: string;
+  qrWifiEncryption?: "WPA" | "WEP" | "nopass";
+  // Location-specific (used when qrContentType is "location")
+  qrLocationLat?: number;
+  qrLocationLng?: number;
+  // vCard-specific (used when qrContentType is "vcard")
+  qrVcardName?: string;
+  qrVcardPhone?: string;
+  qrVcardEmail?: string;
+  qrVcardOrg?: string;
 }
 
 // ============ PROGRAMMES ============
