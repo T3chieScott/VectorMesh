@@ -332,7 +332,8 @@
   }
 
   .animate-marquee {
-    animation: marquee 15s linear infinite;
+    animation: marquee linear infinite;
+    animation-duration: 30s; /* default, overridden by JS */
   }
 
   /* Seamless ticker scroll - text starts visible and loops seamlessly, vertically centered */

@@ -827,7 +827,7 @@ function MontageWidget({
   }
 
   return (
-    <div className="h-full w-full relative overflow-hidden bg-black/20">
+    <div className="h-full w-full relative overflow-hidden">
       <div style={getTransitionStyle(true, false)}>
         <div className="h-full w-full" style={getKenBurnsStyle()}>
           <img
