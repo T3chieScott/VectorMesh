@@ -208,6 +208,7 @@ const zoneFormSchema = z.object({
   shaderPreset: z.enum(["gradient", "plasma", "waves", "noise", "aurora", "custom"]).optional(),
   shaderCode: z.string().optional(),
   shaderSpeed: z.number().min(0.1).max(5).optional(),
+  shaderVariable: z.number().min(0).max(1).optional(),
   // Montage widget configuration
   montageMediaIds: z.array(z.string()).optional(),
   montageDuration: z.number().min(1).max(60).optional(),
@@ -558,6 +559,7 @@ function ZoneEditorDialog({
       shaderPreset: "gradient",
       shaderCode: "",
       shaderSpeed: 1,
+      shaderVariable: 0.5,
       montageMediaIds: [],
       montageDuration: 5,
       montageTransition: "fade",
@@ -636,6 +638,7 @@ function ZoneEditorDialog({
           shaderPreset: zone.shaderPreset || "gradient",
           shaderCode: zone.shaderCode || "",
           shaderSpeed: zone.shaderSpeed || 1,
+          shaderVariable: zone.shaderVariable ?? 0.5,
           montageMediaIds: zone.montageMediaIds || [],
           montageDuration: zone.montageDuration || 5,
           montageTransition: zone.montageTransition || "fade",
@@ -1909,6 +1912,32 @@ function ZoneEditorDialog({
                     )}
                   />
                 </div>
+                <FormField
+                  control={form.control}
+                  name="shaderVariable"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Variable (u_variable)</FormLabel>
+                      <FormControl>
+                        <div className="space-y-2">
+                          <Slider
+                            value={[field.value ?? 0.5]}
+                            onValueChange={([val]) => field.onChange(val)}
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            data-testid="slider-shader-variable"
+                          />
+                          <span className="text-sm text-muted-foreground">{(field.value ?? 0.5).toFixed(2)}</span>
+                        </div>
+                      </FormControl>
+                      <FormDescription>
+                        Controllable value (0-1) available as u_variable in shader code
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 {form.watch("shaderPreset") === "custom" && (
                   <FormField
                     control={form.control}
@@ -1918,7 +1947,7 @@ function ZoneEditorDialog({
                         <FormLabel>GLSL Fragment Shader Code</FormLabel>
                         <FormControl>
                           <textarea 
-                            placeholder={`// Available uniforms:\n// uniform float u_time;\n// uniform vec2 u_resolution;\n\nvoid main() {\n  vec2 uv = gl_FragCoord.xy / u_resolution;\n  gl_FragColor = vec4(uv.x, uv.y, 0.5, 1.0);\n}`}
+                            placeholder={`// Available uniforms:\n// uniform float u_time;\n// uniform vec2 u_resolution;\n// uniform float u_variable;\n\nvoid main() {\n  vec2 uv = gl_FragCoord.xy / u_resolution;\n  gl_FragColor = vec4(uv.x * u_variable, uv.y, 0.5, 1.0);\n}`}
                             className="w-full min-h-[200px] p-3 rounded-md border border-input bg-background font-mono text-sm resize-y"
                             {...field}
                             value={field.value || ""}
@@ -1926,7 +1955,7 @@ function ZoneEditorDialog({
                           />
                         </FormControl>
                         <FormDescription>
-                          Write GLSL fragment shader code. Use u_time for animation and u_resolution for coordinates.
+                          Write GLSL fragment shader code. Use u_time for animation, u_resolution for coordinates, and u_variable for the controllable parameter.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -4519,8 +4548,8 @@ function LivePreviewPanel({
           Click zones to select, drag to move, use handles to resize
         </p>
       </div>
-      <div className="flex-1 p-4 flex items-center justify-center bg-muted/30">
-        <div className="w-full max-w-2xl">
+      <div className="flex-1 p-4 flex items-center justify-center bg-muted/30 min-h-0">
+        <div className="w-full h-full">
           <InteractiveLayoutPreview
             layout={layout}
             zones={zones}

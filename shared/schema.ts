@@ -274,6 +274,7 @@ export interface LayoutZone {
   shaderPreset?: "gradient" | "plasma" | "waves" | "noise" | "aurora" | "custom";
   shaderCode?: string;
   shaderSpeed?: number;
+  shaderVariable?: number;  // Custom variable (u_variable) exposed to shader code (0-1 range)
   // Montage widget configuration
   montageMediaIds?: string[];  // Array of media asset IDs
   montageDuration?: number;    // Duration per image in seconds (default 5)

@@ -284,10 +284,12 @@ function ShaderWidget({
   preset = "gradient",
   customCode,
   speed = 1,
+  variable = 0.5,
 }: { 
   preset?: string;
   customCode?: string;
   speed?: number;
+  variable?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>();
@@ -366,6 +368,7 @@ function ShaderWidget({
       precision mediump float;
       uniform float u_time;
       uniform vec2 u_resolution;
+      uniform float u_variable;
       ${customCode && preset === "custom" ? customCode : presetShaders[preset] || presetShaders.gradient}
     `;
 
@@ -406,6 +409,7 @@ function ShaderWidget({
     const positionLocation = gl.getAttribLocation(program, "a_position");
     const timeLocation = gl.getUniformLocation(program, "u_time");
     const resolutionLocation = gl.getUniformLocation(program, "u_resolution");
+    const variableLocation = gl.getUniformLocation(program, "u_variable");
 
     const render = () => {
       resizeCanvas();
@@ -416,6 +420,7 @@ function ShaderWidget({
       const elapsed = (Date.now() - startTimeRef.current) / 1000 * speed;
       gl.uniform1f(timeLocation, elapsed);
       gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
+      gl.uniform1f(variableLocation, variable);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       animationRef.current = requestAnimationFrame(render);
     };
@@ -425,7 +430,7 @@ function ShaderWidget({
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [preset, customCode, speed]);
+  }, [preset, customCode, speed, variable]);
 
   return <canvas ref={canvasRef} className="w-full h-full" />;
 }
@@ -1208,6 +1213,7 @@ export function ZoneRenderer({
             preset={zone.shaderPreset}
             customCode={zone.shaderCode}
             speed={zone.shaderSpeed}
+            variable={zone.shaderVariable}
           />
         );
       case "montage":
