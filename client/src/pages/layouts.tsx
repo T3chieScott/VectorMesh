@@ -185,7 +185,7 @@ const zoneFormSchema = z.object({
   weatherUnit: z.enum(["celsius", "fahrenheit"]).optional(),
   // News widget configuration
   newsRssUrl: z.string().optional(),
-  newsScrollSpeed: z.number().min(10).max(200).optional(),
+  newsScrollSpeed: z.number().min(1).max(200).optional(),
   newsItemCount: z.number().min(1).max(50).optional(),
   newsTextSize: z.enum(["small", "medium", "large"]).optional(),
   // Text widget configuration
@@ -1319,9 +1319,9 @@ function ZoneEditorDialog({
                             <Slider
                               value={[field.value || 50]}
                               onValueChange={([val]) => field.onChange(val)}
-                              min={10}
+                              min={1}
                               max={200}
-                              step={10}
+                              step={1}
                               data-testid="slider-news-scroll-speed"
                             />
                             <span className="text-sm text-muted-foreground">{field.value || 50} (slower → faster)</span>
@@ -2072,7 +2072,7 @@ function InteractiveLayoutPreview({
 
   useEffect(() => {
     setLocalZones(zones);
-  }, [zones]);
+  }, [JSON.stringify(zones)]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
