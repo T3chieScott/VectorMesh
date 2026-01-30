@@ -7,7 +7,8 @@ This is an onsite digital signage platform for a conference and exhibition centr
 Key capabilities:
 - Manage up to 50+ screens with mixed sizes and aspect ratios
 - Support for images, videos, GIFs, and HTML widgets
-- Zone-based layouts with tickers, clocks, logos, and media regions
+- Zone-based layouts with tickers, clocks, logos, QR codes, and media regions
+- **QR code zones**: Support for URL, WiFi, vCard content types with transparent backgrounds and customizable labels (position, size, color)
 - **Layout aspect ratio support**: Presets (16:9, 9:16, 4:3, 1:1) plus custom ratios for portrait displays, LED walls, and specialty screens
 - Client/event separation with brand packs
 - Timeline scheduling with programme blocks
