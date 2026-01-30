@@ -125,11 +125,8 @@ function TickerWidget({ content, speed, animation }: { content?: string; speed?:
   if (animationType === "scroll-left") {
     return (
       <div className="h-full w-full flex items-center overflow-hidden">
-        <div 
-          className="whitespace-nowrap"
-          style={{ animation: `marquee ${animationDuration}s linear infinite` }}
-        >
-          <span className="text-lg font-medium" style={{ fontSize: "max(14px, 3cqh)" }}>
+        <div className="flex whitespace-nowrap pl-[100%]" style={{ animation: `marquee ${animationDuration}s linear infinite` }}>
+          <span className="text-lg font-medium shrink-0" style={{ fontSize: "max(14px, 3cqh)" }}>
             {displayContent}
           </span>
         </div>
