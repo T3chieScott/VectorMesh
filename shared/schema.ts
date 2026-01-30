@@ -13,7 +13,7 @@ export const screenTypeEnum = pgEnum("screen_type", ["standard", "led_wall"]);
 export const orientationEnum = pgEnum("orientation", ["landscape", "portrait"]);
 export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "gif"]);
 export const programmeStatusEnum = pgEnum("programme_status", ["draft", "published"]);
-export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode"]);
+export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown"]);
 export const scaleModeEnum = pgEnum("scale_mode", ["contain", "cover"]);
 
 // ============ CLIENTS ============
@@ -220,7 +220,7 @@ export type LayoutTemplate = typeof layoutTemplates.$inferSelect;
 export interface LayoutZone {
   id: string;
   name: string;
-  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode";
+  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown";
   x: number;
   y: number;
   width: number;
@@ -312,6 +312,23 @@ export interface LayoutZone {
   qrVcardPhone?: string;
   qrVcardEmail?: string;
   qrVcardOrg?: string;
+  // Countdown timer widget configuration
+  countdownTargetDate?: string;         // ISO date string for target date/time
+  countdownTitle?: string;              // Optional title/event name above timer
+  countdownCompletionMessage?: string;  // Message to show when countdown reaches zero
+  countdownShowDays?: boolean;          // Show days unit (default true)
+  countdownShowHours?: boolean;         // Show hours unit (default true)
+  countdownShowMinutes?: boolean;       // Show minutes unit (default true)
+  countdownShowSeconds?: boolean;       // Show seconds unit (default true)
+  countdownDayLabel?: string;           // Custom label for days (default "Days")
+  countdownHourLabel?: string;          // Custom label for hours (default "Hours")
+  countdownMinuteLabel?: string;        // Custom label for minutes (default "Minutes")
+  countdownSecondLabel?: string;        // Custom label for seconds (default "Seconds")
+  countdownSeparator?: "colon" | "dash" | "space" | "none";  // Separator between units
+  countdownShowLeadingZeros?: boolean;  // Show leading zeros (default true)
+  countdownNumberColor?: string;        // Color for the numbers (hex)
+  countdownLabelColor?: string;         // Color for the labels (hex)
+  countdownSize?: "small" | "medium" | "large" | "xlarge";  // Overall size preset
 }
 
 // ============ PROGRAMMES ============

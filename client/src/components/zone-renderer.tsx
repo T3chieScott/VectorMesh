@@ -20,6 +20,7 @@ import {
   Wind,
   Images,
   QrCode,
+  Timer,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
@@ -59,6 +60,7 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   news: Newspaper,
   montage: Images,
   qrcode: QrCode,
+  countdown: Timer,
 };
 
 function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
@@ -265,6 +267,194 @@ function ClockWidget({ timezone, label }: { timezone?: string; label?: string })
       )}
       <div className="font-mono font-bold" style={{ fontSize: "max(16px, 8cqh)" }}>{formatTime(time)}</div>
       <div className="opacity-80" style={{ fontSize: "max(10px, 3cqh)" }}>{formatDate(time)}</div>
+    </div>
+  );
+}
+
+interface CountdownWidgetProps {
+  targetDate?: string;
+  title?: string;
+  completionMessage?: string;
+  showDays?: boolean;
+  showHours?: boolean;
+  showMinutes?: boolean;
+  showSeconds?: boolean;
+  dayLabel?: string;
+  hourLabel?: string;
+  minuteLabel?: string;
+  secondLabel?: string;
+  separator?: "colon" | "dash" | "space" | "none";
+  showLeadingZeros?: boolean;
+  numberColor?: string;
+  labelColor?: string;
+  size?: "small" | "medium" | "large" | "xlarge";
+}
+
+function CountdownWidget({
+  targetDate,
+  title,
+  completionMessage = "Event Started!",
+  showDays = true,
+  showHours = true,
+  showMinutes = true,
+  showSeconds = true,
+  dayLabel = "Days",
+  hourLabel = "Hours",
+  minuteLabel = "Minutes",
+  secondLabel = "Seconds",
+  separator = "colon",
+  showLeadingZeros = true,
+  numberColor,
+  labelColor,
+  size = "medium",
+}: CountdownWidgetProps) {
+  const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+  const [isComplete, setIsComplete] = useState(false);
+
+  const sizeStyles = {
+    small: { number: "max(16px, 5cqh)", label: "max(8px, 2cqh)", gap: "0.5rem" },
+    medium: { number: "max(24px, 8cqh)", label: "max(10px, 2.5cqh)", gap: "0.75rem" },
+    large: { number: "max(32px, 12cqh)", label: "max(12px, 3cqh)", gap: "1rem" },
+    xlarge: { number: "max(48px, 16cqh)", label: "max(14px, 3.5cqh)", gap: "1.25rem" },
+  };
+
+  const separatorMap = {
+    colon: ":",
+    dash: " - ",
+    space: " ",
+    none: "",
+  };
+
+  useEffect(() => {
+    if (!targetDate) return;
+
+    const calculateTimeLeft = () => {
+      const target = new Date(targetDate).getTime();
+      // Guard against invalid date strings
+      if (isNaN(target)) {
+        setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+        return;
+      }
+      const now = Date.now();
+      const diff = target - now;
+
+      if (diff <= 0) {
+        setIsComplete(true);
+        setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+        return;
+      }
+
+      setIsComplete(false);
+      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+      setTimeLeft({ days, hours, minutes, seconds });
+    };
+
+    calculateTimeLeft();
+    const interval = setInterval(calculateTimeLeft, 1000);
+    return () => clearInterval(interval);
+  }, [targetDate]);
+
+  const formatNumber = (num: number, maxDigits: number = 2) => {
+    if (showLeadingZeros) {
+      return num.toString().padStart(maxDigits, "0");
+    }
+    return num.toString();
+  };
+
+  if (!targetDate) {
+    return (
+      <div className="h-full w-full flex items-center justify-center text-center p-2">
+        <div>
+          <Timer className="h-6 w-6 mx-auto mb-1 text-muted-foreground" />
+          <p className="text-xs text-muted-foreground">Set a target date</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isComplete) {
+    return (
+      <div className="h-full w-full flex items-center justify-center text-center p-2">
+        <div 
+          className="font-bold"
+          style={{ 
+            fontSize: sizeStyles[size].number,
+            color: numberColor || "inherit"
+          }}
+        >
+          {completionMessage}
+        </div>
+      </div>
+    );
+  }
+
+  const units: { value: number; label: string; show: boolean; maxDigits: number }[] = [
+    { value: timeLeft.days, label: dayLabel, show: showDays, maxDigits: 3 },
+    { value: timeLeft.hours, label: hourLabel, show: showHours, maxDigits: 2 },
+    { value: timeLeft.minutes, label: minuteLabel, show: showMinutes, maxDigits: 2 },
+    { value: timeLeft.seconds, label: secondLabel, show: showSeconds, maxDigits: 2 },
+  ];
+
+  const visibleUnits = units.filter(u => u.show);
+  const sep = separatorMap[separator];
+
+  return (
+    <div className="h-full w-full flex flex-col items-center justify-center text-center p-2">
+      {title && (
+        <div 
+          className="font-semibold opacity-90 mb-2"
+          style={{ 
+            fontSize: sizeStyles[size].label,
+            color: labelColor || "inherit"
+          }}
+        >
+          {title}
+        </div>
+      )}
+      <div 
+        className="flex items-center justify-center flex-wrap"
+        style={{ gap: sizeStyles[size].gap }}
+      >
+        {visibleUnits.map((unit, idx) => (
+          <div key={unit.label} className="flex items-center">
+            <div className="flex flex-col items-center">
+              <div 
+                className="font-mono font-bold"
+                style={{ 
+                  fontSize: sizeStyles[size].number,
+                  color: numberColor || "inherit"
+                }}
+              >
+                {formatNumber(unit.value, unit.maxDigits)}
+              </div>
+              <div 
+                className="opacity-80"
+                style={{ 
+                  fontSize: sizeStyles[size].label,
+                  color: labelColor || "inherit"
+                }}
+              >
+                {unit.label}
+              </div>
+            </div>
+            {idx < visibleUnits.length - 1 && sep && (
+              <span 
+                className="font-mono font-bold mx-1"
+                style={{ 
+                  fontSize: sizeStyles[size].number,
+                  color: numberColor || "inherit",
+                  opacity: 0.5
+                }}
+              >
+                {sep}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1277,6 +1467,27 @@ export function ZoneRenderer({
             labelPosition={zone.qrLabelPosition}
             labelFontSize={zone.qrLabelFontSize}
             labelColor={zone.qrLabelColor}
+          />
+        );
+      case "countdown":
+        return (
+          <CountdownWidget
+            targetDate={zone.countdownTargetDate}
+            title={zone.countdownTitle}
+            completionMessage={zone.countdownCompletionMessage}
+            showDays={zone.countdownShowDays}
+            showHours={zone.countdownShowHours}
+            showMinutes={zone.countdownShowMinutes}
+            showSeconds={zone.countdownShowSeconds}
+            dayLabel={zone.countdownDayLabel}
+            hourLabel={zone.countdownHourLabel}
+            minuteLabel={zone.countdownMinuteLabel}
+            secondLabel={zone.countdownSecondLabel}
+            separator={zone.countdownSeparator}
+            showLeadingZeros={zone.countdownShowLeadingZeros}
+            numberColor={zone.countdownNumberColor}
+            labelColor={zone.countdownLabelColor}
+            size={zone.countdownSize}
           />
         );
       default:

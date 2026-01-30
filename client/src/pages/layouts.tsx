@@ -77,6 +77,7 @@ import {
   GripVertical,
   QrCode,
   Upload,
+  Timer,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -139,6 +140,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   shader: Sparkles,
   montage: Images,
   qrcode: QrCode,
+  countdown: Timer,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -153,11 +155,12 @@ const zoneTypeLabels: Record<string, string> = {
   shader: "Shader (GPU effects)",
   montage: "Photo Montage (slideshow)",
   qrcode: "QR Code",
+  countdown: "Countdown Timer",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(1).max(100),
@@ -243,6 +246,23 @@ const zoneFormSchema = z.object({
   qrLabelPosition: z.enum(["above", "below"]).optional(),
   qrLabelFontSize: z.enum(["small", "medium", "large"]).optional(),
   qrLabelColor: z.string().optional(),
+  // Countdown timer fields
+  countdownTargetDate: z.string().optional(),
+  countdownTitle: z.string().optional(),
+  countdownCompletionMessage: z.string().optional(),
+  countdownShowDays: z.boolean().optional(),
+  countdownShowHours: z.boolean().optional(),
+  countdownShowMinutes: z.boolean().optional(),
+  countdownShowSeconds: z.boolean().optional(),
+  countdownDayLabel: z.string().optional(),
+  countdownHourLabel: z.string().optional(),
+  countdownMinuteLabel: z.string().optional(),
+  countdownSecondLabel: z.string().optional(),
+  countdownSeparator: z.enum(["colon", "dash", "space", "none"]).optional(),
+  countdownShowLeadingZeros: z.boolean().optional(),
+  countdownNumberColor: z.string().optional(),
+  countdownLabelColor: z.string().optional(),
+  countdownSize: z.enum(["small", "medium", "large", "xlarge"]).optional(),
 }).refine((data) => {
   // Require lat/lng for weather zones
   if (data.type === "weather") {
@@ -595,6 +615,23 @@ function ZoneEditorDialog({
       qrLabelPosition: "below",
       qrLabelFontSize: "medium",
       qrLabelColor: "#000000",
+      // Countdown timer defaults
+      countdownTargetDate: "",
+      countdownTitle: "",
+      countdownCompletionMessage: "Event Started!",
+      countdownShowDays: true,
+      countdownShowHours: true,
+      countdownShowMinutes: true,
+      countdownShowSeconds: true,
+      countdownDayLabel: "Days",
+      countdownHourLabel: "Hours",
+      countdownMinuteLabel: "Minutes",
+      countdownSecondLabel: "Seconds",
+      countdownSeparator: "colon",
+      countdownShowLeadingZeros: true,
+      countdownNumberColor: "",
+      countdownLabelColor: "",
+      countdownSize: "medium",
     },
   });
 
@@ -677,6 +714,23 @@ function ZoneEditorDialog({
           qrLabelPosition: zone.qrLabelPosition || "below",
           qrLabelFontSize: zone.qrLabelFontSize || "medium",
           qrLabelColor: zone.qrLabelColor || "#000000",
+          // Countdown timer fields
+          countdownTargetDate: zone.countdownTargetDate || "",
+          countdownTitle: zone.countdownTitle || "",
+          countdownCompletionMessage: zone.countdownCompletionMessage || "Event Started!",
+          countdownShowDays: zone.countdownShowDays ?? true,
+          countdownShowHours: zone.countdownShowHours ?? true,
+          countdownShowMinutes: zone.countdownShowMinutes ?? true,
+          countdownShowSeconds: zone.countdownShowSeconds ?? true,
+          countdownDayLabel: zone.countdownDayLabel || "Days",
+          countdownHourLabel: zone.countdownHourLabel || "Hours",
+          countdownMinuteLabel: zone.countdownMinuteLabel || "Minutes",
+          countdownSecondLabel: zone.countdownSecondLabel || "Seconds",
+          countdownSeparator: zone.countdownSeparator || "colon",
+          countdownShowLeadingZeros: zone.countdownShowLeadingZeros ?? true,
+          countdownNumberColor: zone.countdownNumberColor || "",
+          countdownLabelColor: zone.countdownLabelColor || "",
+          countdownSize: zone.countdownSize || "medium",
         });
       } else {
         form.reset({
@@ -754,6 +808,23 @@ function ZoneEditorDialog({
           qrLabelPosition: "below",
           qrLabelFontSize: "medium",
           qrLabelColor: "#000000",
+          // Countdown timer defaults
+          countdownTargetDate: "",
+          countdownTitle: "",
+          countdownCompletionMessage: "Event Started!",
+          countdownShowDays: true,
+          countdownShowHours: true,
+          countdownShowMinutes: true,
+          countdownShowSeconds: true,
+          countdownDayLabel: "Days",
+          countdownHourLabel: "Hours",
+          countdownMinuteLabel: "Minutes",
+          countdownSecondLabel: "Seconds",
+          countdownSeparator: "colon",
+          countdownShowLeadingZeros: true,
+          countdownNumberColor: "",
+          countdownLabelColor: "",
+          countdownSize: "medium",
         });
       }
     }
@@ -2900,6 +2971,350 @@ function ZoneEditorDialog({
                       />
                     </div>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* Countdown Timer Zone Configuration */}
+            {form.watch("type") === "countdown" && (
+              <div className="space-y-4 border rounded-md p-4" data-testid="countdown-config-section">
+                <h4 className="font-medium flex items-center gap-2">
+                  <Timer className="h-4 w-4" />
+                  Countdown Timer Settings
+                </h4>
+
+                {/* Target Date and Time */}
+                <FormField
+                  control={form.control}
+                  name="countdownTargetDate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Target Date & Time</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="datetime-local"
+                          {...field}
+                          value={field.value || ""}
+                          data-testid="input-countdown-target-date"
+                        />
+                      </FormControl>
+                      <FormDescription>The date and time to count down to</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Title */}
+                <FormField
+                  control={form.control}
+                  name="countdownTitle"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Title (optional)</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="e.g., Conference starts in..."
+                          {...field}
+                          value={field.value || ""}
+                          data-testid="input-countdown-title"
+                        />
+                      </FormControl>
+                      <FormDescription>Optional text displayed above the countdown</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Completion Message */}
+                <FormField
+                  control={form.control}
+                  name="countdownCompletionMessage"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Completion Message</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="Event Started!"
+                          {...field}
+                          value={field.value || "Event Started!"}
+                          data-testid="input-countdown-completion-message"
+                        />
+                      </FormControl>
+                      <FormDescription>Message shown when countdown reaches zero</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Size */}
+                <FormField
+                  control={form.control}
+                  name="countdownSize"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Size</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || "medium"}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-countdown-size">
+                            <SelectValue placeholder="Select size" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="small">Small</SelectItem>
+                          <SelectItem value="medium">Medium</SelectItem>
+                          <SelectItem value="large">Large</SelectItem>
+                          <SelectItem value="xlarge">Extra Large</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Units to Show */}
+                <div className="space-y-2">
+                  <FormLabel>Units to Display</FormLabel>
+                  <div className="flex flex-wrap gap-4">
+                    <FormField
+                      control={form.control}
+                      name="countdownShowDays"
+                      render={({ field }) => (
+                        <FormItem className="flex items-center gap-2">
+                          <FormControl>
+                            <Checkbox
+                              checked={field.value ?? true}
+                              onCheckedChange={field.onChange}
+                              data-testid="checkbox-countdown-show-days"
+                            />
+                          </FormControl>
+                          <FormLabel className="!mt-0">Days</FormLabel>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="countdownShowHours"
+                      render={({ field }) => (
+                        <FormItem className="flex items-center gap-2">
+                          <FormControl>
+                            <Checkbox
+                              checked={field.value ?? true}
+                              onCheckedChange={field.onChange}
+                              data-testid="checkbox-countdown-show-hours"
+                            />
+                          </FormControl>
+                          <FormLabel className="!mt-0">Hours</FormLabel>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="countdownShowMinutes"
+                      render={({ field }) => (
+                        <FormItem className="flex items-center gap-2">
+                          <FormControl>
+                            <Checkbox
+                              checked={field.value ?? true}
+                              onCheckedChange={field.onChange}
+                              data-testid="checkbox-countdown-show-minutes"
+                            />
+                          </FormControl>
+                          <FormLabel className="!mt-0">Minutes</FormLabel>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="countdownShowSeconds"
+                      render={({ field }) => (
+                        <FormItem className="flex items-center gap-2">
+                          <FormControl>
+                            <Checkbox
+                              checked={field.value ?? true}
+                              onCheckedChange={field.onChange}
+                              data-testid="checkbox-countdown-show-seconds"
+                            />
+                          </FormControl>
+                          <FormLabel className="!mt-0">Seconds</FormLabel>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
+
+                {/* Custom Labels */}
+                <div className="space-y-2">
+                  <FormLabel>Custom Labels</FormLabel>
+                  <div className="grid grid-cols-2 gap-2">
+                    <FormField
+                      control={form.control}
+                      name="countdownDayLabel"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormControl>
+                            <Input
+                              placeholder="Days"
+                              {...field}
+                              value={field.value || "Days"}
+                              data-testid="input-countdown-day-label"
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="countdownHourLabel"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormControl>
+                            <Input
+                              placeholder="Hours"
+                              {...field}
+                              value={field.value || "Hours"}
+                              data-testid="input-countdown-hour-label"
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="countdownMinuteLabel"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormControl>
+                            <Input
+                              placeholder="Minutes"
+                              {...field}
+                              value={field.value || "Minutes"}
+                              data-testid="input-countdown-minute-label"
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="countdownSecondLabel"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormControl>
+                            <Input
+                              placeholder="Seconds"
+                              {...field}
+                              value={field.value || "Seconds"}
+                              data-testid="input-countdown-second-label"
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
+
+                {/* Separator Style */}
+                <FormField
+                  control={form.control}
+                  name="countdownSeparator"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Separator Style</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || "colon"}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-countdown-separator">
+                            <SelectValue placeholder="Select separator" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="colon">Colon (:)</SelectItem>
+                          <SelectItem value="dash">Dash (-)</SelectItem>
+                          <SelectItem value="space">Space</SelectItem>
+                          <SelectItem value="none">None</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Leading Zeros */}
+                <FormField
+                  control={form.control}
+                  name="countdownShowLeadingZeros"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? true}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-countdown-leading-zeros"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show leading zeros (e.g., 01:05:03)</FormLabel>
+                    </FormItem>
+                  )}
+                />
+
+                {/* Colors */}
+                <div className="space-y-3">
+                  <FormLabel>Colors</FormLabel>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="countdownNumberColor"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-sm">Number Color</FormLabel>
+                          <div className="flex gap-2">
+                            <FormControl>
+                              <Input
+                                type="color"
+                                {...field}
+                                value={field.value || "#ffffff"}
+                                className="w-12 h-9 p-1 cursor-pointer"
+                                data-testid="input-countdown-number-color"
+                              />
+                            </FormControl>
+                            <Input
+                              value={field.value || ""}
+                              onChange={field.onChange}
+                              placeholder="inherit"
+                              className="flex-1"
+                            />
+                          </div>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="countdownLabelColor"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-sm">Label Color</FormLabel>
+                          <div className="flex gap-2">
+                            <FormControl>
+                              <Input
+                                type="color"
+                                {...field}
+                                value={field.value || "#cccccc"}
+                                className="w-12 h-9 p-1 cursor-pointer"
+                                data-testid="input-countdown-label-color"
+                              />
+                            </FormControl>
+                            <Input
+                              value={field.value || ""}
+                              onChange={field.onChange}
+                              placeholder="inherit"
+                              className="flex-1"
+                            />
+                          </div>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
                 </div>
               </div>
             )}
