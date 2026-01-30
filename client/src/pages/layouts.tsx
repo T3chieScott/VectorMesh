@@ -226,6 +226,11 @@ const zoneFormSchema = z.object({
   qrVcardPhone: z.string().optional(),
   qrVcardEmail: z.string().optional(),
   qrVcardOrg: z.string().optional(),
+  qrTransparentBackground: z.boolean().optional(),
+  qrLabel: z.string().optional(),
+  qrLabelPosition: z.enum(["above", "below"]).optional(),
+  qrLabelFontSize: z.enum(["small", "medium", "large"]).optional(),
+  qrLabelColor: z.string().optional(),
 }).refine((data) => {
   // Require lat/lng for weather zones
   if (data.type === "weather") {
@@ -489,6 +494,11 @@ function ZoneEditorDialog({
       qrVcardPhone: "",
       qrVcardEmail: "",
       qrVcardOrg: "",
+      qrTransparentBackground: false,
+      qrLabel: "",
+      qrLabelPosition: "below",
+      qrLabelFontSize: "medium",
+      qrLabelColor: "#000000",
     },
   });
 
@@ -560,6 +570,11 @@ function ZoneEditorDialog({
           qrVcardPhone: zone.qrVcardPhone || "",
           qrVcardEmail: zone.qrVcardEmail || "",
           qrVcardOrg: zone.qrVcardOrg || "",
+          qrTransparentBackground: zone.qrTransparentBackground || false,
+          qrLabel: zone.qrLabel || "",
+          qrLabelPosition: zone.qrLabelPosition || "below",
+          qrLabelFontSize: zone.qrLabelFontSize || "medium",
+          qrLabelColor: zone.qrLabelColor || "#000000",
         });
       } else {
         form.reset({
@@ -626,6 +641,11 @@ function ZoneEditorDialog({
           qrVcardPhone: "",
           qrVcardEmail: "",
           qrVcardOrg: "",
+          qrTransparentBackground: false,
+          qrLabel: "",
+          qrLabelPosition: "below",
+          qrLabelFontSize: "medium",
+          qrLabelColor: "#000000",
         });
       }
     }
@@ -635,9 +655,14 @@ function ZoneEditorDialog({
     mutationFn: async (data: ZoneFormValues) => {
       // If onZoneChange callback is provided, use draft state instead of saving directly
       if (onZoneChange) {
+        // Calculate highest z-index for new zones
+        const existingZones = (layout.zones as LayoutZone[]) || [];
+        const maxZIndex = existingZones.length > 0 
+          ? Math.max(...existingZones.map(z => z.zIndex || 0)) 
+          : 0;
         const updatedZone: LayoutZone = isEditing
           ? { ...data, id: zone.id }
-          : { ...data, id: `zone-${Date.now()}` };
+          : { ...data, id: `zone-${Date.now()}`, zIndex: maxZIndex + 1 };
         onZoneChange(updatedZone, !isEditing);
         return; // Don't save to server - handled by parent component
       }
@@ -651,11 +676,17 @@ function ZoneEditorDialog({
           z.id === zone.id ? { ...data, id: zone.id } : z
         );
       } else {
+        // Calculate highest z-index and place new zone on top
+        const maxZIndex = existingZones.length > 0 
+          ? Math.max(...existingZones.map(z => z.zIndex || 0)) 
+          : 0;
         const newZone: LayoutZone = {
           ...data,
           id: `zone-${Date.now()}`,
+          zIndex: maxZIndex + 1,
         };
-        updatedZones = [...existingZones, newZone];
+        // Prepend new zone to place it at top of list
+        updatedZones = [newZone, ...existingZones];
       }
 
       return apiRequest("PATCH", `/api/layouts/${layout.id}`, {
@@ -2296,6 +2327,133 @@ function ZoneEditorDialog({
                     </FormItem>
                   )}
                 />
+
+                {/* Transparent Background */}
+                <FormField
+                  control={form.control}
+                  name="qrTransparentBackground"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center gap-2">
+                      <FormControl>
+                        <input
+                          type="checkbox"
+                          checked={field.value || false}
+                          onChange={field.onChange}
+                          className="h-4 w-4 rounded border-gray-300"
+                          data-testid="checkbox-qr-transparent"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Transparent background</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                <FormDescription className="text-xs -mt-2">
+                  Uses transparent background instead of the background color
+                </FormDescription>
+
+                {/* QR Label Configuration */}
+                <div className="border-t pt-4 mt-4">
+                  <h5 className="text-sm font-medium mb-3">Label (Optional)</h5>
+                  
+                  <FormField
+                    control={form.control}
+                    name="qrLabel"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Label Text</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="Enter label text..."
+                            {...field}
+                            value={field.value || ""}
+                            data-testid="input-qr-label"
+                          />
+                        </FormControl>
+                        <FormDescription>Text displayed with the QR code</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {form.watch("qrLabel") && (
+                    <div className="space-y-4 mt-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="qrLabelPosition"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Position</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value || "below"}>
+                                <FormControl>
+                                  <SelectTrigger data-testid="select-qr-label-position">
+                                    <SelectValue placeholder="Select position" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="above">Above QR code</SelectItem>
+                                  <SelectItem value="below">Below QR code</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="qrLabelFontSize"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Font Size</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value || "medium"}>
+                                <FormControl>
+                                  <SelectTrigger data-testid="select-qr-label-size">
+                                    <SelectValue placeholder="Select size" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="small">Small</SelectItem>
+                                  <SelectItem value="medium">Medium</SelectItem>
+                                  <SelectItem value="large">Large</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <FormField
+                        control={form.control}
+                        name="qrLabelColor"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Label Color</FormLabel>
+                            <div className="flex gap-2">
+                              <FormControl>
+                                <Input
+                                  type="color"
+                                  {...field}
+                                  value={field.value || "#000000"}
+                                  className="w-12 h-9 p-1 cursor-pointer"
+                                  data-testid="input-qr-label-color"
+                                />
+                              </FormControl>
+                              <Input
+                                value={field.value || "#000000"}
+                                onChange={field.onChange}
+                                placeholder="#000000"
+                                className="flex-1"
+                              />
+                            </div>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -3712,7 +3870,8 @@ function LayoutEditorPanel({
   // Handle zone changes from the dialog (updates draft state)
   const handleZoneDialogChange = (updatedZone: LayoutZone, isNew: boolean) => {
     if (isNew) {
-      onZonesChange([...zones, updatedZone]);
+      // Prepend new zones to put them at top of list
+      onZonesChange([updatedZone, ...zones]);
     } else {
       onZonesChange(zones.map(z => z.id === updatedZone.id ? updatedZone : z));
     }

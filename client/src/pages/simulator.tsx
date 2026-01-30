@@ -1036,6 +1036,7 @@ function QRCodeWidget({
   content = "",
   foregroundColor = "#000000",
   backgroundColor = "#ffffff",
+  transparentBackground = false,
   errorCorrection = "M",
   wifiSsid,
   wifiPassword,
@@ -1046,11 +1047,16 @@ function QRCodeWidget({
   vcardPhone,
   vcardEmail,
   vcardOrg,
+  label,
+  labelPosition = "below",
+  labelFontSize = "medium",
+  labelColor = "#000000",
 }: {
   contentType?: "url" | "email" | "phone" | "location" | "text" | "wifi" | "vcard";
   content?: string;
   foregroundColor?: string;
   backgroundColor?: string;
+  transparentBackground?: boolean;
   errorCorrection?: "L" | "M" | "Q" | "H";
   wifiSsid?: string;
   wifiPassword?: string;
@@ -1061,6 +1067,10 @@ function QRCodeWidget({
   vcardPhone?: string;
   vcardEmail?: string;
   vcardOrg?: string;
+  label?: string;
+  labelPosition?: "above" | "below";
+  labelFontSize?: "small" | "medium" | "large";
+  labelColor?: string;
 }) {
   const generateQRContent = (): string => {
     switch (contentType) {
@@ -1108,22 +1118,42 @@ function QRCodeWidget({
     );
   }
 
+  const effectiveBgColor = transparentBackground ? "transparent" : backgroundColor;
+  const fontSizeMap = { small: "clamp(10px, 2cqh, 14px)", medium: "clamp(12px, 3cqh, 18px)", large: "clamp(14px, 4cqh, 24px)" };
+  const fontSize = fontSizeMap[labelFontSize] || fontSizeMap.medium;
+
+  const labelElement = label ? (
+    <p 
+      className="text-center font-medium" 
+      style={{ 
+        fontSize, 
+        color: labelColor,
+        marginTop: labelPosition === "below" ? "clamp(4px, 1cqh, 12px)" : 0,
+        marginBottom: labelPosition === "above" ? "clamp(4px, 1cqh, 12px)" : 0,
+      }}
+    >
+      {label}
+    </p>
+  ) : null;
+
   return (
     <div 
-      className="h-full w-full flex items-center justify-center p-2"
-      style={{ backgroundColor }}
+      className={`h-full w-full flex ${label ? "flex-col" : ""} items-center justify-center p-2`}
+      style={{ backgroundColor: transparentBackground ? undefined : backgroundColor }}
     >
-      <div className="h-full w-full max-h-full max-w-full aspect-square flex items-center justify-center">
+      {labelPosition === "above" && labelElement}
+      <div className={`${label ? "flex-1 min-h-0" : "h-full"} w-full max-w-full aspect-square flex items-center justify-center`}>
         <QRCodeSVG
           value={qrContent}
           size={1000}
-          bgColor={backgroundColor}
+          bgColor={effectiveBgColor}
           fgColor={foregroundColor}
           level={errorCorrection}
           className="w-full h-full max-w-full max-h-full"
           style={{ width: "100%", height: "100%", maxWidth: "100%", maxHeight: "100%" }}
         />
       </div>
+      {labelPosition === "below" && labelElement}
     </div>
   );
 }
@@ -1216,6 +1246,7 @@ function ZoneRenderer({
             content={zone.qrContent}
             foregroundColor={zone.qrForegroundColor}
             backgroundColor={zone.qrBackgroundColor}
+            transparentBackground={zone.qrTransparentBackground}
             errorCorrection={zone.qrErrorCorrection}
             wifiSsid={zone.qrWifiSsid}
             wifiPassword={zone.qrWifiPassword}
@@ -1226,6 +1257,10 @@ function ZoneRenderer({
             vcardPhone={zone.qrVcardPhone}
             vcardEmail={zone.qrVcardEmail}
             vcardOrg={zone.qrVcardOrg}
+            label={zone.qrLabel}
+            labelPosition={zone.qrLabelPosition}
+            labelFontSize={zone.qrLabelFontSize}
+            labelColor={zone.qrLabelColor}
           />
         );
       default:

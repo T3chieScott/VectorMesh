@@ -284,7 +284,12 @@ export interface LayoutZone {
   qrContent?: string;          // The content/value to encode
   qrForegroundColor?: string;  // QR code foreground color (default #000000)
   qrBackgroundColor?: string;  // QR code background color (default #ffffff)
+  qrTransparentBackground?: boolean;  // Use transparent background instead of qrBackgroundColor
   qrErrorCorrection?: "L" | "M" | "Q" | "H";  // Error correction level (default M)
+  qrLabel?: string;           // Optional label text to display with QR code
+  qrLabelPosition?: "above" | "below";  // Label position relative to QR code
+  qrLabelFontSize?: "small" | "medium" | "large";  // Label font size
+  qrLabelColor?: string;      // Label text color
   // WiFi-specific (used when qrContentType is "wifi")
   qrWifiSsid?: string;
   qrWifiPassword?: string;
