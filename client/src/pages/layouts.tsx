@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -2080,13 +2080,20 @@ function InteractiveLayoutPreview({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
-  const [localZones, setLocalZones] = useState<LayoutZone[]>(zones);
+  const [dragZoneOverrides, setDragZoneOverrides] = useState<Record<string, Partial<LayoutZone>>>({});
   const [snapLines, setSnapLines] = useState<SnapLine[]>([]);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
 
-  useEffect(() => {
-    setLocalZones(zones);
-  }, [JSON.stringify(zones)]);
+  // Compute zones to render: merge props with any active drag overrides
+  const zonesToRender = useMemo(() => {
+    if (Object.keys(dragZoneOverrides).length === 0) {
+      return zones;
+    }
+    return zones.map(zone => ({
+      ...zone,
+      ...dragZoneOverrides[zone.id],
+    }));
+  }, [zones, dragZoneOverrides]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -2104,14 +2111,14 @@ function InteractiveLayoutPreview({
       y: [0, 50, 100] as number[],
     };
     
-    localZones.forEach((zone) => {
+    zonesToRender.forEach((zone) => {
       if (zone.id === excludeZoneId) return;
       points.x.push(zone.x, zone.x + zone.width);
       points.y.push(zone.y, zone.y + zone.height);
     });
     
     return points;
-  }, [localZones]);
+  }, [zonesToRender]);
 
   const snapValue = useCallback((value: number, snapPoints: number[]): { value: number; snapped: boolean } => {
     for (const point of snapPoints) {
@@ -2131,7 +2138,7 @@ function InteractiveLayoutPreview({
     e.preventDefault();
     e.stopPropagation();
     
-    const zone = localZones.find(z => z.id === zoneId);
+    const zone = zonesToRender.find(z => z.id === zoneId);
     if (!zone || !containerRef.current) return;
 
     setSelectedZoneId(zoneId);
@@ -2143,7 +2150,7 @@ function InteractiveLayoutPreview({
       startY: e.clientY,
       startZone: { x: zone.x, y: zone.y, width: zone.width, height: zone.height },
     });
-  }, [localZones]);
+  }, [zonesToRender]);
 
   const handleMouseMove = useCallback((e: MouseEvent) => {
     if (!dragState || !containerRef.current) return;
@@ -2224,28 +2231,28 @@ function InteractiveLayoutPreview({
     }
 
     setSnapLines(newSnapLines);
-    setLocalZones(prev => prev.map(z => 
-      z.id === dragState.zoneId 
-        ? { ...z, x: Math.round(newX), y: Math.round(newY), width: Math.round(newWidth), height: Math.round(newHeight) }
-        : z
-    ));
+    setDragZoneOverrides(prev => ({
+      ...prev,
+      [dragState.zoneId]: {
+        x: Math.round(newX),
+        y: Math.round(newY),
+        width: Math.round(newWidth),
+        height: Math.round(newHeight),
+      },
+    }));
   }, [dragState, getSnapPoints, snapValue]);
 
   const handleMouseUp = useCallback(() => {
     if (dragState) {
-      const zone = localZones.find(z => z.id === dragState.zoneId);
-      if (zone) {
-        onZoneUpdate(dragState.zoneId, {
-          x: zone.x,
-          y: zone.y,
-          width: zone.width,
-          height: zone.height,
-        });
+      const override = dragZoneOverrides[dragState.zoneId];
+      if (override) {
+        onZoneUpdate(dragState.zoneId, override);
       }
     }
     setDragState(null);
     setSnapLines([]);
-  }, [dragState, localZones, onZoneUpdate]);
+    setDragZoneOverrides({});
+  }, [dragState, dragZoneOverrides, onZoneUpdate]);
 
   useEffect(() => {
     if (dragState) {
@@ -2325,7 +2332,7 @@ function InteractiveLayoutPreview({
         />
       ))}
       
-      {localZones.map((zone) => {
+      {zonesToRender.map((zone) => {
         const Icon = zoneTypeIcons[zone.type] || Grid3X3;
         const isSelected = selectedZoneId === zone.id;
         const isDragging = dragState?.zoneId === zone.id;
@@ -3024,30 +3031,21 @@ function LayoutEditorPanel({
   layout, 
   events,
   onLayoutChange,
+  zones,
+  onZonesChange,
+  hasUnsavedChanges,
 }: { 
   layout: LayoutTemplate; 
   events: Event[];
   onLayoutChange: () => void;
+  zones: LayoutZone[];
+  onZonesChange: (zones: LayoutZone[]) => void;
+  hasUnsavedChanges: boolean;
 }) {
   const [zoneDialogOpen, setZoneDialogOpen] = useState(false);
   const [editingZoneId, setEditingZoneId] = useState<string | undefined>();
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
-
-  const savedZones = (layout.zones as LayoutZone[]) || [];
-  
-  // Draft state for non-destructive editing
-  const [draftZones, setDraftZones] = useState<LayoutZone[]>(savedZones);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  
-  // Sync draft zones when saved zones change from server
-  useEffect(() => {
-    if (!hasUnsavedChanges) {
-      setDraftZones(savedZones);
-    }
-  }, [savedZones, hasUnsavedChanges]);
-  
-  const zones = hasUnsavedChanges ? draftZones : savedZones;
   const editingZone = editingZoneId ? zones.find(z => z.id === editingZoneId) : undefined;
   const event = events.find((e) => e.id === layout.eventId);
 
@@ -3110,8 +3108,7 @@ function LayoutEditorPanel({
       zIndex: sortedZones.length - index, // First item gets highest z-index
     }));
 
-    setDraftZones(reorderedZones);
-    setHasUnsavedChanges(true);
+    onZonesChange(reorderedZones);
     handleDragEnd();
   };
 
@@ -3228,39 +3225,6 @@ function LayoutEditorPanel({
     },
   });
 
-  const updateZoneMutation = useMutation({
-    mutationFn: (updatedZones: LayoutZone[]) => {
-      return apiRequest("PATCH", `/api/layouts/${layout.id}`, { zones: updatedZones });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
-      setHasUnsavedChanges(false);
-      toast({ title: "Layout saved successfully" });
-    },
-    onError: () => {
-      toast({ title: "Failed to save layout", variant: "destructive" });
-    },
-  });
-
-  // Non-destructive: update draft state only
-  const handleZoneUpdate = (zoneId: string, updates: Partial<LayoutZone>) => {
-    setDraftZones(prev => prev.map(z => 
-      z.id === zoneId ? { ...z, ...updates } : z
-    ));
-    setHasUnsavedChanges(true);
-  };
-
-  // Save all draft changes to server
-  const handleSaveAll = () => {
-    updateZoneMutation.mutate(draftZones);
-  };
-
-  // Discard all draft changes
-  const handleDiscardAll = () => {
-    setDraftZones(savedZones);
-    setHasUnsavedChanges(false);
-  };
-
   const handleEditZone = (zone: LayoutZone) => {
     setEditingZoneId(zone.id);
     setZoneDialogOpen(true);
@@ -3274,11 +3238,10 @@ function LayoutEditorPanel({
   // Handle zone changes from the dialog (updates draft state)
   const handleZoneDialogChange = (updatedZone: LayoutZone, isNew: boolean) => {
     if (isNew) {
-      setDraftZones(prev => [...prev, updatedZone]);
+      onZonesChange([...zones, updatedZone]);
     } else {
-      setDraftZones(prev => prev.map(z => z.id === updatedZone.id ? updatedZone : z));
+      onZonesChange(zones.map(z => z.id === updatedZone.id ? updatedZone : z));
     }
-    setHasUnsavedChanges(true);
   };
 
   return (
@@ -3702,6 +3665,12 @@ export default function LayoutsPage() {
               layout={selectedLayout} 
               events={events}
               onLayoutChange={() => setSelectedLayoutId(null)}
+              zones={draftZones}
+              onZonesChange={(newZones) => {
+                setDraftZones(newZones);
+                setHasUnsavedChanges(true);
+              }}
+              hasUnsavedChanges={hasUnsavedChanges}
             />
           </div>
           <div className="flex-1">
