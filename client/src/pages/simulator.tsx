@@ -620,6 +620,8 @@ function NewsWidget({
   const [news, setNews] = useState<NewsItem[]>([]);
   const [feedTitle, setFeedTitle] = useState<string>("News");
   const [error, setError] = useState<string | null>(null);
+  const [animationDuration, setAnimationDuration] = useState<number>(30);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!rssUrl) return;
@@ -671,6 +673,21 @@ function NewsWidget({
     );
   }
 
+  // Calculate animation duration based on actual scroll width
+  useEffect(() => {
+    if (!scrollRef.current || news.length === 0) return;
+    
+    // Use actual rendered scroll width for accurate timing
+    // Speed affects pixels-per-second: Speed 1 = 10px/s, Speed 100 = 300px/s
+    const clampedSpeed = Math.max(1, Math.min(100, scrollSpeed));
+    const pixelsPerSecond = 10 + (clampedSpeed - 1) * 2.9; // Linear scale from 10 to 300 px/s
+    const scrollWidth = scrollRef.current.scrollWidth || 500; // Fallback if not rendered yet
+    const rawDuration = scrollWidth / pixelsPerSecond;
+    // Clamp between 5s minimum and 180s maximum for readability
+    const duration = Math.max(5, Math.min(180, rawDuration));
+    setAnimationDuration(duration);
+  }, [scrollSpeed, news]);
+
   if (news.length === 0) {
     return (
       <div className="h-full w-full flex items-center justify-center overflow-hidden">
@@ -683,7 +700,6 @@ function NewsWidget({
   }
 
   const headlinesText = news.map(item => item.title).join("  •  ");
-  const animationDuration = Math.max(headlinesText.length / scrollSpeed, 15);
 
   return (
     <div className="h-full w-full relative overflow-hidden">
@@ -703,6 +719,7 @@ function NewsWidget({
       )}
       <div className="absolute inset-0 flex items-center overflow-hidden">
         <div 
+          ref={scrollRef}
           className="whitespace-nowrap text-white font-medium"
           style={{
             fontSize: sizes.headline,

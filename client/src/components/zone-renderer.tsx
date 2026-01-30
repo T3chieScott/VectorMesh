@@ -528,7 +528,14 @@ function NewsWidget({
   useEffect(() => {
     if (!scrollRef.current || news.length === 0) return;
     
-    const duration = (100 - scrollSpeed) * 0.5 + 10;
+    // Use actual rendered scroll width for accurate timing
+    // Speed affects pixels-per-second: Speed 1 = 10px/s, Speed 100 = 300px/s
+    const clampedSpeed = Math.max(1, Math.min(100, scrollSpeed));
+    const pixelsPerSecond = 10 + (clampedSpeed - 1) * 2.9; // Linear scale from 10 to 300 px/s
+    const scrollWidth = scrollRef.current.scrollWidth || 500; // Fallback if not rendered yet
+    const rawDuration = scrollWidth / pixelsPerSecond;
+    // Clamp between 5s minimum and 180s maximum for readability
+    const duration = Math.max(5, Math.min(180, rawDuration));
     scrollRef.current.style.animationDuration = `${duration}s`;
   }, [scrollSpeed, news]);
 
