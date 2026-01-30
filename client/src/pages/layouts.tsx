@@ -220,6 +220,7 @@ const zoneFormSchema = z.object({
   qrWifiSsid: z.string().optional(),
   qrWifiPassword: z.string().optional(),
   qrWifiEncryption: z.enum(["WPA", "WEP", "nopass"]).optional(),
+  qrLocationName: z.string().optional(),
   qrLocationLat: z.number().optional(),
   qrLocationLng: z.number().optional(),
   qrVcardName: z.string().optional(),
@@ -488,6 +489,7 @@ function ZoneEditorDialog({
       qrWifiSsid: "",
       qrWifiPassword: "",
       qrWifiEncryption: "WPA",
+      qrLocationName: "",
       qrLocationLat: undefined,
       qrLocationLng: undefined,
       qrVcardName: "",
@@ -564,6 +566,7 @@ function ZoneEditorDialog({
           qrWifiSsid: zone.qrWifiSsid || "",
           qrWifiPassword: zone.qrWifiPassword || "",
           qrWifiEncryption: zone.qrWifiEncryption || "WPA",
+          qrLocationName: zone.qrLocationName || "",
           qrLocationLat: zone.qrLocationLat,
           qrLocationLng: zone.qrLocationLng,
           qrVcardName: zone.qrVcardName || "",
@@ -635,6 +638,7 @@ function ZoneEditorDialog({
           qrWifiSsid: "",
           qrWifiPassword: "",
           qrWifiEncryption: "WPA",
+          qrLocationName: "",
           qrLocationLat: undefined,
           qrLocationLng: undefined,
           qrVcardName: "",
@@ -2115,49 +2119,114 @@ function ZoneEditorDialog({
 
                 {/* Location Configuration */}
                 {form.watch("qrContentType") === "location" && (
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-4">
                     <FormField
                       control={form.control}
-                      name="qrLocationLat"
+                      name="qrLocationName"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Latitude</FormLabel>
+                          <FormLabel>Location</FormLabel>
                           <FormControl>
-                            <Input
-                              type="number"
-                              step="any"
-                              placeholder="51.5074"
-                              {...field}
-                              value={field.value ?? ""}
-                              onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
-                              data-testid="input-qr-location-lat"
-                            />
+                            <div className="flex gap-2">
+                              <Input 
+                                placeholder="e.g., Farnborough Exhibition Centre" 
+                                {...field} 
+                                data-testid="input-qr-location-name" 
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                disabled={isGeocoding || !field.value?.trim()}
+                                onClick={async () => {
+                                  const location = field.value;
+                                  if (!location?.trim()) {
+                                    toast({ title: "Enter a location first", variant: "destructive" });
+                                    return;
+                                  }
+                                  setIsGeocoding(true);
+                                  try {
+                                    const res = await fetch(`/api/widgets/geocode?q=${encodeURIComponent(location)}`);
+                                    if (!res.ok) throw new Error("Geocoding failed");
+                                    const data = await res.json();
+                                    if (!data.results || data.results.length === 0) {
+                                      throw new Error("No results found");
+                                    }
+                                    const result = data.results[0];
+                                    const displayName = result.admin1 
+                                      ? `${result.name}, ${result.admin1}, ${result.country}` 
+                                      : `${result.name}, ${result.country}`;
+                                    form.setValue("qrLocationName", displayName);
+                                    form.setValue("qrLocationLat", result.lat);
+                                    form.setValue("qrLocationLng", result.lng);
+                                    toast({ title: `Found: ${displayName}` });
+                                  } catch {
+                                    toast({ title: "Could not find location", variant: "destructive" });
+                                  } finally {
+                                    setIsGeocoding(false);
+                                  }
+                                }}
+                                data-testid="button-qr-location-geocode"
+                              >
+                                {isGeocoding ? (
+                                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                                ) : (
+                                  <MapPin className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </div>
                           </FormControl>
+                          <FormDescription>
+                            Type a location and click the pin to find coordinates
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
-                    <FormField
-                      control={form.control}
-                      name="qrLocationLng"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Longitude</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="number"
-                              step="any"
-                              placeholder="-0.1278"
-                              {...field}
-                              value={field.value ?? ""}
-                              onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
-                              data-testid="input-qr-location-lng"
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="qrLocationLat"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Latitude</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="any"
+                                placeholder="51.5074"
+                                {...field}
+                                value={field.value ?? ""}
+                                onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
+                                data-testid="input-qr-location-lat"
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="qrLocationLng"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Longitude</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="any"
+                                placeholder="-0.1278"
+                                {...field}
+                                value={field.value ?? ""}
+                                onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
+                                data-testid="input-qr-location-lng"
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
                   </div>
                 )}
 

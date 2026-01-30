@@ -295,6 +295,7 @@ export interface LayoutZone {
   qrWifiPassword?: string;
   qrWifiEncryption?: "WPA" | "WEP" | "nopass";
   // Location-specific (used when qrContentType is "location")
+  qrLocationName?: string;
   qrLocationLat?: number;
   qrLocationLng?: number;
   // vCard-specific (used when qrContentType is "vcard")
