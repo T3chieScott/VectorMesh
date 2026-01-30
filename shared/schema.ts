@@ -268,6 +268,7 @@ export interface LayoutZone {
   // Ticker widget configuration
   tickerScrollSpeed?: number;  // Duration in seconds for one complete scroll cycle
   tickerAnimation?: "scroll-left" | "scroll-up" | "typewriter" | "fade" | "slide-in";
+  tickerFontSize?: number;  // Font size in pixels (default 24)
   textAlign?: "left" | "center" | "right";
   textVerticalAlign?: "top" | "middle" | "bottom";
   // Shader widget configuration
@@ -275,6 +276,8 @@ export interface LayoutZone {
   shaderCode?: string;
   shaderSpeed?: number;
   shaderVariable?: number;  // Custom variable (u_variable) exposed to shader code (0-1 range)
+  shaderColor1?: string;    // Primary color for shader (hex, e.g., "#ff0000")
+  shaderColor2?: string;    // Secondary color for shader (hex, e.g., "#0000ff")
   // Montage widget configuration
   montageMediaIds?: string[];  // Array of media asset IDs
   montageDuration?: number;    // Duration per image in seconds (default 5)

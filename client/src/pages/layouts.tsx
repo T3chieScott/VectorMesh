@@ -202,6 +202,7 @@ const zoneFormSchema = z.object({
   // Ticker widget configuration
   tickerScrollSpeed: z.number().min(5).max(60).optional(),
   tickerAnimation: z.enum(["scroll-left", "scroll-up", "typewriter", "fade", "slide-in"]).optional(),
+  tickerFontSize: z.number().min(12).max(72).optional(),
   textAlign: z.enum(["left", "center", "right"]).optional(),
   textVerticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
   // Shader widget configuration
@@ -209,6 +210,8 @@ const zoneFormSchema = z.object({
   shaderCode: z.string().optional(),
   shaderSpeed: z.number().min(0.1).max(5).optional(),
   shaderVariable: z.number().min(0).max(1).optional(),
+  shaderColor1: z.string().optional(),
+  shaderColor2: z.string().optional(),
   // Montage widget configuration
   montageMediaIds: z.array(z.string()).optional(),
   montageDuration: z.number().min(1).max(60).optional(),
@@ -556,10 +559,13 @@ function ZoneEditorDialog({
       textFontSize: "medium",
       textAlign: "center",
       textVerticalAlign: "middle",
+      tickerFontSize: 24,
       shaderPreset: "gradient",
       shaderCode: "",
       shaderSpeed: 1,
       shaderVariable: 0.5,
+      shaderColor1: "#ff6b6b",
+      shaderColor2: "#4ecdc4",
       montageMediaIds: [],
       montageDuration: 5,
       montageTransition: "fade",
@@ -635,10 +641,13 @@ function ZoneEditorDialog({
           textFontSize: zone.textFontSize || "medium",
           textAlign: zone.textAlign || "center",
           textVerticalAlign: zone.textVerticalAlign || "middle",
+          tickerFontSize: zone.tickerFontSize ?? 24,
           shaderPreset: zone.shaderPreset || "gradient",
           shaderCode: zone.shaderCode || "",
           shaderSpeed: zone.shaderSpeed || 1,
           shaderVariable: zone.shaderVariable ?? 0.5,
+          shaderColor1: zone.shaderColor1 || "#ff6b6b",
+          shaderColor2: zone.shaderColor2 || "#4ecdc4",
           montageMediaIds: zone.montageMediaIds || [],
           montageDuration: zone.montageDuration || 5,
           montageTransition: zone.montageTransition || "fade",
@@ -709,9 +718,13 @@ function ZoneEditorDialog({
           textFontSize: "medium",
           textAlign: "center",
           textVerticalAlign: "middle",
+          tickerFontSize: 24,
           shaderPreset: "gradient",
           shaderCode: "",
           shaderSpeed: 1,
+          shaderVariable: 0.5,
+          shaderColor1: "#ff6b6b",
+          shaderColor2: "#4ecdc4",
           montageMediaIds: [],
           montageDuration: 5,
           montageTransition: "fade",
@@ -1741,6 +1754,35 @@ function ZoneEditorDialog({
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={form.control}
+                  name="tickerFontSize"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Text Size</FormLabel>
+                      <FormControl>
+                        <div className="flex items-center gap-4">
+                          <Slider
+                            value={[field.value ?? 24]}
+                            onValueChange={([val]) => field.onChange(val)}
+                            min={12}
+                            max={72}
+                            step={2}
+                            className="flex-1"
+                            data-testid="slider-ticker-font-size"
+                          />
+                          <span className="text-sm text-muted-foreground w-16">
+                            {field.value ?? 24}px
+                          </span>
+                        </div>
+                      </FormControl>
+                      <FormDescription>
+                        Font size for the scrolling ticker text
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
             )}
 
@@ -1938,6 +1980,62 @@ function ZoneEditorDialog({
                     </FormItem>
                   )}
                 />
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="shaderColor1"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Primary Color (u_color1)</FormLabel>
+                        <FormControl>
+                          <div className="flex items-center gap-2">
+                            <input 
+                              type="color" 
+                              value={field.value || "#ff6b6b"} 
+                              onChange={(e) => field.onChange(e.target.value)}
+                              className="h-9 w-12 rounded border border-input cursor-pointer"
+                              data-testid="input-shader-color1"
+                            />
+                            <Input 
+                              value={field.value || "#ff6b6b"} 
+                              onChange={(e) => field.onChange(e.target.value)}
+                              placeholder="#ff6b6b"
+                              className="flex-1 font-mono"
+                            />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="shaderColor2"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Secondary Color (u_color2)</FormLabel>
+                        <FormControl>
+                          <div className="flex items-center gap-2">
+                            <input 
+                              type="color" 
+                              value={field.value || "#4ecdc4"} 
+                              onChange={(e) => field.onChange(e.target.value)}
+                              className="h-9 w-12 rounded border border-input cursor-pointer"
+                              data-testid="input-shader-color2"
+                            />
+                            <Input 
+                              value={field.value || "#4ecdc4"} 
+                              onChange={(e) => field.onChange(e.target.value)}
+                              placeholder="#4ecdc4"
+                              className="flex-1 font-mono"
+                            />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
                 {form.watch("shaderPreset") === "custom" && (
                   <FormField
                     control={form.control}
@@ -1947,7 +2045,7 @@ function ZoneEditorDialog({
                         <FormLabel>GLSL Fragment Shader Code</FormLabel>
                         <FormControl>
                           <textarea 
-                            placeholder={`// Available uniforms:\n// uniform float u_time;\n// uniform vec2 u_resolution;\n// uniform float u_variable;\n\nvoid main() {\n  vec2 uv = gl_FragCoord.xy / u_resolution;\n  gl_FragColor = vec4(uv.x * u_variable, uv.y, 0.5, 1.0);\n}`}
+                            placeholder={`// Available uniforms:\n// uniform float u_time;\n// uniform vec2 u_resolution;\n// uniform float u_variable;\n// uniform vec3 u_color1;\n// uniform vec3 u_color2;\n\nvoid main() {\n  vec2 uv = gl_FragCoord.xy / u_resolution;\n  vec3 color = mix(u_color1, u_color2, uv.x + sin(u_time) * 0.2);\n  gl_FragColor = vec4(color * u_variable, 1.0);\n}`}
                             className="w-full min-h-[200px] p-3 rounded-md border border-input bg-background font-mono text-sm resize-y"
                             {...field}
                             value={field.value || ""}

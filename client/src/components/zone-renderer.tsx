@@ -61,10 +61,11 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   qrcode: QrCode,
 };
 
-function TickerWidget({ content, speed, animation }: { content?: string; speed?: number; animation?: string }) {
+function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
   const animationDuration = speed || 20;
   const animationType = animation || "scroll-left";
   const displayContent = content || "Breaking News: Welcome to Digital Signage • Latest updates coming soon • Stay tuned for announcements •";
+  const textSize = fontSize || 24;
   
   // Split content for animations that show items one at a time
   const items = displayContent.split(/[•|]/).map(s => s.trim()).filter(Boolean);
@@ -126,7 +127,7 @@ function TickerWidget({ content, speed, animation }: { content?: string; speed?:
     return (
       <div className="h-full w-full flex items-center overflow-hidden">
         <div className="flex whitespace-nowrap pl-[100%]" style={{ animation: `marquee ${animationDuration}s linear infinite` }}>
-          <span className="text-lg font-medium shrink-0" style={{ fontSize: "max(14px, 3cqh)" }}>
+          <span className="font-medium shrink-0" style={{ fontSize: `${textSize}px` }}>
             {displayContent}
           </span>
         </div>
@@ -145,7 +146,7 @@ function TickerWidget({ content, speed, animation }: { content?: string; speed?:
             <div 
               key={i} 
               className="flex items-center justify-center py-2"
-              style={{ height: "100cqh", fontSize: "max(14px, 3cqh)" }}
+              style={{ height: "100cqh", fontSize: `${textSize}px` }}
             >
               {item}
             </div>
@@ -160,8 +161,8 @@ function TickerWidget({ content, speed, animation }: { content?: string; speed?:
     return (
       <div className="h-full w-full flex items-center justify-center overflow-hidden">
         <span 
-          className="text-lg font-medium font-mono"
-          style={{ fontSize: "max(14px, 3cqh)" }}
+          className="font-medium font-mono"
+          style={{ fontSize: `${textSize}px` }}
         >
           {currentText.slice(0, displayedChars)}
           <span className="animate-pulse">|</span>
@@ -174,9 +175,9 @@ function TickerWidget({ content, speed, animation }: { content?: string; speed?:
     return (
       <div className="h-full w-full flex items-center justify-center overflow-hidden">
         <span 
-          className="text-lg font-medium text-center transition-opacity duration-500"
+          className="font-medium text-center transition-opacity duration-500"
           style={{ 
-            fontSize: "max(14px, 3cqh)",
+            fontSize: `${textSize}px`,
             opacity: isVisible ? 1 : 0 
           }}
         >
@@ -190,9 +191,9 @@ function TickerWidget({ content, speed, animation }: { content?: string; speed?:
     return (
       <div className="h-full w-full flex items-center justify-center overflow-hidden">
         <span 
-          className="text-lg font-medium text-center transition-all duration-500"
+          className="font-medium text-center transition-all duration-500"
           style={{ 
-            fontSize: "max(14px, 3cqh)",
+            fontSize: `${textSize}px`,
             opacity: isVisible ? 1 : 0,
             transform: isVisible ? "translateY(0)" : "translateY(100%)"
           }}
@@ -206,7 +207,7 @@ function TickerWidget({ content, speed, animation }: { content?: string; speed?:
   // Default fallback
   return (
     <div className="h-full w-full flex items-center overflow-hidden">
-      <span className="text-lg font-medium" style={{ fontSize: "max(14px, 3cqh)" }}>
+      <span className="font-medium" style={{ fontSize: `${textSize}px` }}>
         {displayContent}
       </span>
     </div>
@@ -280,16 +281,29 @@ function LogoWidget() {
   );
 }
 
+function hexToRgb(hex: string): [number, number, number] {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? [
+    parseInt(result[1], 16) / 255,
+    parseInt(result[2], 16) / 255,
+    parseInt(result[3], 16) / 255
+  ] : [1, 0, 0];
+}
+
 function ShaderWidget({ 
   preset = "gradient",
   customCode,
   speed = 1,
   variable = 0.5,
+  color1 = "#ff6b6b",
+  color2 = "#4ecdc4",
 }: { 
   preset?: string;
   customCode?: string;
   speed?: number;
   variable?: number;
+  color1?: string;
+  color2?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>();
@@ -315,9 +329,7 @@ function ShaderWidget({
         void main() {
           vec2 uv = gl_FragCoord.xy / u_resolution.xy;
           float t = u_time * 0.3;
-          vec3 col1 = vec3(0.2, 0.3, 0.8);
-          vec3 col2 = vec3(0.8, 0.2, 0.5);
-          vec3 color = mix(col1, col2, uv.x + sin(t + uv.y * 3.0) * 0.3);
+          vec3 color = mix(u_color1, u_color2, uv.x + sin(t + uv.y * 3.0) * 0.3);
           gl_FragColor = vec4(color, 1.0);
         }
       `,
@@ -327,7 +339,8 @@ function ShaderWidget({
           float t = u_time * 0.5;
           float v = sin(uv.x * 10.0 + t) + sin(uv.y * 10.0 + t);
           v += sin((uv.x + uv.y) * 10.0 + t) + sin(sqrt(uv.x * uv.x + uv.y * uv.y) * 10.0);
-          vec3 color = vec3(sin(v), sin(v + 2.0), sin(v + 4.0)) * 0.5 + 0.5;
+          vec3 base = mix(u_color1, u_color2, 0.5);
+          vec3 color = base * (vec3(sin(v), sin(v + 2.0), sin(v + 4.0)) * 0.5 + 0.5);
           gl_FragColor = vec4(color, 1.0);
         }
       `,
@@ -337,28 +350,29 @@ function ShaderWidget({
           float t = u_time * 0.4;
           float wave = sin(uv.x * 8.0 + t) * 0.1 + sin(uv.x * 4.0 - t * 0.5) * 0.05;
           float y = uv.y - 0.5 + wave;
-          vec3 sky = vec3(0.4, 0.6, 0.9);
-          vec3 water = vec3(0.1, 0.3, 0.6);
-          vec3 color = mix(water, sky, smoothstep(-0.1, 0.1, y));
+          vec3 color = mix(u_color2, u_color1, smoothstep(-0.1, 0.1, y));
           gl_FragColor = vec4(color, 1.0);
         }
       `,
-      fire: `
+      noise: `
         void main() {
           vec2 uv = gl_FragCoord.xy / u_resolution.xy;
-          float t = u_time;
-          float noise = fract(sin(dot(uv + t * 0.1, vec2(12.9898, 78.233))) * 43758.5453);
-          float flame = (1.0 - uv.y) * (0.5 + noise * 0.5);
-          flame *= sin(uv.x * 10.0 + t * 3.0) * 0.1 + 0.9;
-          vec3 color = vec3(flame, flame * 0.4, flame * 0.1);
+          float t = u_time * 0.3;
+          float n = fract(sin(dot(uv + t * 0.1, vec2(12.9898, 78.233))) * 43758.5453);
+          n += fract(sin(dot(uv * 2.0 - t * 0.05, vec2(93.9898, 67.345))) * 43758.5453) * 0.5;
+          vec3 color = mix(u_color1, u_color2, n * 0.5);
           gl_FragColor = vec4(color, 1.0);
         }
       `,
-      rainbow: `
+      aurora: `
         void main() {
           vec2 uv = gl_FragCoord.xy / u_resolution.xy;
           float t = u_time * 0.2;
-          vec3 color = 0.5 + 0.5 * cos(6.28318 * (uv.x + t + vec3(0.0, 0.33, 0.67)));
+          float wave1 = sin(uv.x * 4.0 + t) * 0.3;
+          float wave2 = sin(uv.x * 6.0 - t * 0.7) * 0.2;
+          float intensity = smoothstep(0.3, 0.7, uv.y + wave1 + wave2);
+          vec3 color = mix(u_color2, u_color1, intensity);
+          color *= 0.8 + 0.2 * sin(uv.x * 10.0 + t * 2.0);
           gl_FragColor = vec4(color, 1.0);
         }
       `,
@@ -369,6 +383,8 @@ function ShaderWidget({
       uniform float u_time;
       uniform vec2 u_resolution;
       uniform float u_variable;
+      uniform vec3 u_color1;
+      uniform vec3 u_color2;
       ${customCode && preset === "custom" ? customCode : presetShaders[preset] || presetShaders.gradient}
     `;
 
@@ -410,6 +426,11 @@ function ShaderWidget({
     const timeLocation = gl.getUniformLocation(program, "u_time");
     const resolutionLocation = gl.getUniformLocation(program, "u_resolution");
     const variableLocation = gl.getUniformLocation(program, "u_variable");
+    const color1Location = gl.getUniformLocation(program, "u_color1");
+    const color2Location = gl.getUniformLocation(program, "u_color2");
+
+    const [r1, g1, b1] = hexToRgb(color1);
+    const [r2, g2, b2] = hexToRgb(color2);
 
     const render = () => {
       resizeCanvas();
@@ -421,6 +442,8 @@ function ShaderWidget({
       gl.uniform1f(timeLocation, elapsed);
       gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
       gl.uniform1f(variableLocation, variable);
+      gl.uniform3f(color1Location, r1, g1, b1);
+      gl.uniform3f(color2Location, r2, g2, b2);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       animationRef.current = requestAnimationFrame(render);
     };
@@ -430,7 +453,7 @@ function ShaderWidget({
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [preset, customCode, speed, variable]);
+  }, [preset, customCode, speed, variable, color1, color2]);
 
   return <canvas ref={canvasRef} className="w-full h-full" />;
 }
@@ -1172,7 +1195,7 @@ export function ZoneRenderer({
         return <MediaWidget media={zoneMedia} mediaIndex={mediaIndex} isPlaying={isPlaying} />;
       }
       case "ticker":
-        return <TickerWidget content={zone.textContent} speed={zone.tickerScrollSpeed} animation={zone.tickerAnimation} />;
+        return <TickerWidget content={zone.textContent} speed={zone.tickerScrollSpeed} animation={zone.tickerAnimation} fontSize={zone.tickerFontSize} />;
       case "clock":
         return <ClockWidget timezone={zone.clockTimezone || timezone} label={zone.clockLabel} />;
       case "logo":
@@ -1214,6 +1237,8 @@ export function ZoneRenderer({
             customCode={zone.shaderCode}
             speed={zone.shaderSpeed}
             variable={zone.shaderVariable}
+            color1={zone.shaderColor1}
+            color2={zone.shaderColor2}
           />
         );
       case "montage":
