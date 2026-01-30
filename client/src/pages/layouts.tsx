@@ -392,11 +392,13 @@ function ZoneEditorDialog({
   zone,
   open,
   onOpenChange,
+  onZoneChange,
 }: {
   layout: LayoutTemplate;
   zone?: LayoutZone;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onZoneChange?: (updatedZone: LayoutZone, isNew: boolean) => void;
 }) {
   const { toast } = useToast();
   const isEditing = !!zone;
@@ -569,7 +571,17 @@ function ZoneEditorDialog({
   }, [open, zone, form]);
 
   const saveMutation = useMutation({
-    mutationFn: (data: ZoneFormValues) => {
+    mutationFn: async (data: ZoneFormValues) => {
+      // If onZoneChange callback is provided, use draft state instead of saving directly
+      if (onZoneChange) {
+        const updatedZone: LayoutZone = isEditing
+          ? { ...data, id: zone.id }
+          : { ...data, id: `zone-${Date.now()}` };
+        onZoneChange(updatedZone, !isEditing);
+        return; // Don't save to server - handled by parent component
+      }
+
+      // Fallback: save directly to server (used by LayoutCard)
       const existingZones = (layout.zones as LayoutZone[]) || [];
       let updatedZones: LayoutZone[];
 
@@ -590,7 +602,9 @@ function ZoneEditorDialog({
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      if (!onZoneChange) {
+        queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      }
       onOpenChange(false);
       form.reset();
       toast({ title: isEditing ? "Zone updated" : "Zone added" });
@@ -3076,23 +3090,24 @@ function LayoutEditorPanel({
       return;
     }
 
-    const currentZones = [...zones];
-    const draggedIndex = currentZones.findIndex(z => z.id === draggedZoneId);
-    const targetIndex = currentZones.findIndex(z => z.id === targetZoneId);
+    // Work with sorted array (same order as displayed in UI)
+    const sortedZones = [...zones].sort((a, b) => (b.zIndex || 0) - (a.zIndex || 0));
+    const draggedIndex = sortedZones.findIndex(z => z.id === draggedZoneId);
+    const targetIndex = sortedZones.findIndex(z => z.id === targetZoneId);
 
     if (draggedIndex === -1 || targetIndex === -1) {
       handleDragEnd();
       return;
     }
 
-    // Remove dragged zone and insert at target position
-    const [draggedZone] = currentZones.splice(draggedIndex, 1);
-    currentZones.splice(targetIndex, 0, draggedZone);
+    // Remove dragged zone and insert at target position in sorted array
+    const [draggedZone] = sortedZones.splice(draggedIndex, 1);
+    sortedZones.splice(targetIndex, 0, draggedZone);
 
-    // Update z-index based on new order (higher in list = higher z-index)
-    const reorderedZones = currentZones.map((zone, index) => ({
+    // Update z-index based on new sorted order (first item = highest z-index = front)
+    const reorderedZones = sortedZones.map((zone, index) => ({
       ...zone,
-      zIndex: currentZones.length - index, // First item gets highest z-index
+      zIndex: sortedZones.length - index, // First item gets highest z-index
     }));
 
     setDraftZones(reorderedZones);
@@ -3256,6 +3271,16 @@ function LayoutEditorPanel({
     setZoneDialogOpen(true);
   };
 
+  // Handle zone changes from the dialog (updates draft state)
+  const handleZoneDialogChange = (updatedZone: LayoutZone, isNew: boolean) => {
+    if (isNew) {
+      setDraftZones(prev => [...prev, updatedZone]);
+    } else {
+      setDraftZones(prev => prev.map(z => z.id === updatedZone.id ? updatedZone : z));
+    }
+    setHasUnsavedChanges(true);
+  };
+
   return (
     <div className="h-full flex flex-col">
       <div className="p-4 border-b flex items-center justify-between gap-4">
@@ -3315,7 +3340,7 @@ function LayoutEditorPanel({
               </Button>
             </div>
           ) : (
-            zones.map((zone, index) => {
+            [...zones].sort((a, b) => (b.zIndex || 0) - (a.zIndex || 0)).map((zone) => {
               const Icon = zoneTypeIcons[zone.type] || Grid3X3;
               const isDragging = draggedZoneId === zone.id;
               const isDragOver = dragOverZoneId === zone.id;
@@ -3348,7 +3373,7 @@ function LayoutEditorPanel({
                     <div className="flex items-center gap-2">
                       <p className="font-medium text-sm truncate">{zone.name}</p>
                       <Badge variant="outline" className="text-xs px-1.5 py-0">
-                        z:{zone.zIndex ?? (zones.length - index)}
+                        z:{zone.zIndex ?? 1}
                       </Badge>
                     </div>
                     <p className="text-xs text-muted-foreground">
@@ -3391,6 +3416,7 @@ function LayoutEditorPanel({
         zone={editingZone}
         open={zoneDialogOpen}
         onOpenChange={setZoneDialogOpen}
+        onZoneChange={handleZoneDialogChange}
       />
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
