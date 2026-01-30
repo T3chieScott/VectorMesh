@@ -1490,6 +1490,36 @@ function ZoneEditorDialog({
               </div>
             )}
 
+            {/* Ticker Widget Configuration */}
+            {form.watch("type") === "ticker" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Type className="h-4 w-4" />
+                  Ticker Settings
+                </div>
+                <FormField
+                  control={form.control}
+                  name="textContent"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Scrolling Text</FormLabel>
+                      <FormControl>
+                        <textarea 
+                          placeholder="Enter your scrolling ticker text here... Use • to separate items" 
+                          className="w-full min-h-[80px] p-3 rounded-md border border-input bg-background resize-y"
+                          {...field}
+                          value={field.value || ""}
+                          data-testid="input-ticker-text" 
+                        />
+                      </FormControl>
+                      <FormDescription>Text that will scroll across the ticker zone</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+
             {/* Text Widget Configuration */}
             {form.watch("type") === "text" && (
               <div className="space-y-4 p-4 bg-muted/50 rounded-lg">

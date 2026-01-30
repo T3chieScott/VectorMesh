@@ -1182,7 +1182,7 @@ function ZoneRenderer({
       case "media":
         return <MediaWidget media={media} mediaIndex={mediaIndex} isPlaying={isPlaying} />;
       case "ticker":
-        return <TickerWidget />;
+        return <TickerWidget content={zone.textContent} />;
       case "clock":
         return <ClockWidget timezone={timezone} />;
       case "logo":

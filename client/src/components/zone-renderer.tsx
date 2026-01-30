@@ -1022,7 +1022,7 @@ export function ZoneRenderer({
       case "media":
         return <MediaWidget media={media} mediaIndex={mediaIndex} isPlaying={isPlaying} />;
       case "ticker":
-        return <TickerWidget />;
+        return <TickerWidget content={zone.textContent} />;
       case "clock":
         return <ClockWidget timezone={zone.clockTimezone || timezone} label={zone.clockLabel} />;
       case "logo":
