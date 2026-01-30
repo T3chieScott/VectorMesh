@@ -26,7 +26,9 @@ interface ObjectUploaderProps {
   onComplete?: (
     result: UploadResult<Record<string, unknown>, Record<string, unknown>>
   ) => void;
+  onError?: (error: Error) => void;
   buttonClassName?: string;
+  buttonTestId?: string;
   children: ReactNode;
 }
 
@@ -64,7 +66,9 @@ export function ObjectUploader({
   maxFileSize = 10485760, // 10MB default
   onGetUploadParameters,
   onComplete,
+  onError,
   buttonClassName,
+  buttonTestId,
   children,
 }: ObjectUploaderProps) {
   const [showModal, setShowModal] = useState(false);
@@ -83,11 +87,21 @@ export function ObjectUploader({
       .on("complete", (result) => {
         onComplete?.(result);
       })
+      .on("error", (error) => {
+        onError?.(error);
+      })
+      .on("upload-error", (_file, error) => {
+        onError?.(error);
+      })
   );
 
   return (
     <div>
-      <Button onClick={() => setShowModal(true)} className={buttonClassName}>
+      <Button 
+        onClick={() => setShowModal(true)} 
+        className={buttonClassName}
+        data-testid={buttonTestId}
+      >
         {children}
       </Button>
 

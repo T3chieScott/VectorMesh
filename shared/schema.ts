@@ -227,6 +227,8 @@ export interface LayoutZone {
   height: number;
   scaleMode?: "contain" | "cover";
   zIndex?: number;
+  // Media zone configuration
+  mediaId?: string;  // ID of the assigned media asset
   // Zone styling options
   backgroundColor?: string;
   backgroundImage?: string;

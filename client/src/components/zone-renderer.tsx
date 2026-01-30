@@ -1159,8 +1159,13 @@ export function ZoneRenderer({
 
   const renderContent = () => {
     switch (zone.type) {
-      case "media":
-        return <MediaWidget media={media} mediaIndex={mediaIndex} isPlaying={isPlaying} />;
+      case "media": {
+        // If zone has a specific mediaId, filter to show only that media
+        const zoneMedia = zone.mediaId 
+          ? media.filter(m => m.id === zone.mediaId)
+          : media;
+        return <MediaWidget media={zoneMedia} mediaIndex={mediaIndex} isPlaying={isPlaying} />;
+      }
       case "ticker":
         return <TickerWidget content={zone.textContent} speed={zone.tickerScrollSpeed} animation={zone.tickerAnimation} />;
       case "clock":

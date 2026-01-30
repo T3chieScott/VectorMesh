@@ -76,8 +76,10 @@ import {
   Save,
   GripVertical,
   QrCode,
+  Upload,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
+import { ObjectUploader } from "@/components/ObjectUploader";
 import { ZoneRenderer } from "@/components/zone-renderer";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -161,6 +163,8 @@ const zoneFormSchema = z.object({
   width: z.number().min(1).max(100),
   height: z.number().min(1).max(100),
   zIndex: z.number().min(0).max(100),
+  // Media zone configuration
+  mediaId: z.string().optional(),
   // Zone styling options
   backgroundColor: z.string().optional(),
   backgroundImage: z.string().optional(),
@@ -431,6 +435,84 @@ function ZoneEditorDialog({
   const { toast } = useToast();
   const isEditing = !!zone;
   const [isGeocoding, setIsGeocoding] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+
+  // Fetch media assets for selection
+  const { data: mediaAssets } = useQuery<MediaAsset[]>({
+    queryKey: ["/api/media"],
+  });
+
+  // Store upload URLs by file ID for reliable retrieval in complete handler
+  const uploadUrlMapRef = useRef<Map<string, string>>(new Map());
+
+  // Upload handlers
+  const handleUploadComplete = async (result: any) => {
+    if (result.successful?.length > 0) {
+      const file = result.successful[0];
+      // Get URL from our map (most reliable) or fall back to Uppy's built-in properties
+      const uploadURL = uploadUrlMapRef.current.get(file.id) || 
+                        file.response?.body?.uploadURL || 
+                        file.uploadURL;
+      
+      // Clear the stored URL
+      uploadUrlMapRef.current.delete(file.id);
+      
+      if (!uploadURL) {
+        console.error("Upload URL not found for file:", file.id);
+        toast({ title: "Upload completed but file URL not found", variant: "destructive" });
+        setIsUploading(false);
+        return;
+      }
+      
+      try {
+        // Create media record - strip query params from URL to get storage path
+        const response = await apiRequest("POST", "/api/media", {
+          name: file.name,
+          originalPath: uploadURL.split("?")[0],
+          mediaType: file.type?.startsWith("video/")
+            ? "video"
+            : file.type === "image/gif"
+            ? "gif"
+            : "image",
+          mimeType: file.type,
+          fileSize: file.size,
+        });
+        const newMedia = await response.json();
+        
+        // Auto-select the newly uploaded media
+        form.setValue("mediaId", newMedia.id);
+        queryClient.invalidateQueries({ queryKey: ["/api/media"] });
+        toast({ title: "Image uploaded and selected" });
+      } catch (e) {
+        console.error("Failed to save media record:", e);
+        toast({ title: "Failed to save uploaded file", variant: "destructive" });
+      }
+    }
+    setIsUploading(false);
+  };
+
+  const handleGetUploadParameters = async (file: any) => {
+    setIsUploading(true);
+    const res = await fetch("/api/uploads/request-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: file.name,
+        size: file.size,
+        contentType: file.type,
+      }),
+    });
+    const { uploadURL } = await res.json();
+    
+    // Store the upload URL for reliable retrieval in complete handler
+    uploadUrlMapRef.current.set(file.id, uploadURL);
+    
+    return {
+      method: "PUT" as const,
+      url: uploadURL,
+      headers: { "Content-Type": file.type },
+    };
+  };
 
   const form = useForm<ZoneFormValues>({
     resolver: zodResolver(zoneFormSchema),
@@ -442,6 +524,7 @@ function ZoneEditorDialog({
       width: 50,
       height: 50,
       zIndex: 1,
+      mediaId: "",
       backgroundColor: "",
       backgroundImage: "",
       backgroundVideo: "",
@@ -519,6 +602,7 @@ function ZoneEditorDialog({
           width: zone.width,
           height: zone.height,
           zIndex: zone.zIndex,
+          mediaId: zone.mediaId || "",
           backgroundColor: zone.backgroundColor || "",
           backgroundImage: zone.backgroundImage || "",
           backgroundVideo: zone.backgroundVideo || "",
@@ -591,6 +675,7 @@ function ZoneEditorDialog({
           width: 50,
           height: 50,
           zIndex: 1,
+          mediaId: "",
           backgroundColor: "",
           backgroundImage: "",
           backgroundVideo: "",
@@ -1184,6 +1269,78 @@ function ZoneEditorDialog({
                 />
               </div>
             </div>
+
+            {/* Media Zone Configuration */}
+            {form.watch("type") === "media" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Image className="h-4 w-4" />
+                  Media Settings
+                </div>
+                
+                <FormField
+                  control={form.control}
+                  name="mediaId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Select or Upload Image</FormLabel>
+                      <div className="flex gap-2">
+                        <Select
+                          value={field.value || "__none__"}
+                          onValueChange={(val) => field.onChange(val === "__none__" ? "" : val)}
+                        >
+                          <FormControl>
+                            <SelectTrigger className="flex-1" data-testid="select-media-asset">
+                              <SelectValue placeholder="Choose an image..." />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="__none__">None</SelectItem>
+                            {mediaAssets?.filter(a => a.mediaType === "image" || a.mediaType === "gif").map((asset) => (
+                              <SelectItem key={asset.id} value={asset.id}>
+                                {asset.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <ObjectUploader
+                          maxNumberOfFiles={1}
+                          maxFileSize={104857600}
+                          onGetUploadParameters={handleGetUploadParameters}
+                          onComplete={handleUploadComplete}
+                          onError={() => {
+                            setIsUploading(false);
+                            toast({ title: "Upload failed", variant: "destructive" });
+                          }}
+                          buttonClassName={isUploading ? "opacity-50 pointer-events-none" : ""}
+                          buttonTestId="button-upload-media"
+                        >
+                          <Upload className="mr-2 h-4 w-4" />
+                          {isUploading ? "Uploading..." : "Upload"}
+                        </ObjectUploader>
+                      </div>
+                      <FormDescription>
+                        Select an existing image or upload a new one
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {form.watch("mediaId") && (
+                  <div className="mt-2 p-2 bg-background rounded border">
+                    <p className="text-xs text-muted-foreground mb-1">Preview:</p>
+                    <div className="aspect-video bg-muted rounded overflow-hidden">
+                      <img
+                        src={mediaAssets?.find(a => a.id === form.watch("mediaId"))?.originalPath}
+                        alt="Selected media"
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Clock Widget Configuration */}
             {form.watch("type") === "clock" && (
@@ -2873,6 +3030,11 @@ function InteractiveLayoutPreview({
   onDiscardAll?: () => void;
   hasUnsavedChanges?: boolean;
 }) {
+  // Fetch media assets for zone rendering
+  const { data: allMediaAssets } = useQuery<MediaAsset[]>({
+    queryKey: ["/api/media"],
+  });
+
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [dragZoneOverrides, setDragZoneOverrides] = useState<Record<string, Partial<LayoutZone>>>({});
@@ -3148,6 +3310,7 @@ function InteractiveLayoutPreview({
             <div className="absolute inset-0 overflow-hidden">
               <ZoneRenderer
                 zone={zone}
+                media={allMediaAssets || []}
                 showBorder={false}
                 isPlaying={true}
                 fillContainer={true}
