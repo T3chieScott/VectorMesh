@@ -61,10 +61,18 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   qrcode: QrCode,
 };
 
-function TickerWidget({ content }: { content?: string }) {
+function TickerWidget({ content, speed }: { content?: string; speed?: number }) {
+  // Speed is duration in seconds for one complete scroll cycle (lower = faster)
+  const animationDuration = speed || 20;
+  
   return (
     <div className="h-full w-full flex items-center overflow-hidden">
-      <div className="animate-marquee whitespace-nowrap">
+      <div 
+        className="whitespace-nowrap"
+        style={{ 
+          animation: `marquee ${animationDuration}s linear infinite`
+        }}
+      >
         <span className="text-lg font-medium" style={{ fontSize: "max(14px, 3cqh)" }}>
           {content || "Breaking News: Welcome to Digital Signage • Latest updates coming soon • Stay tuned for announcements •"}
         </span>
@@ -1022,7 +1030,7 @@ export function ZoneRenderer({
       case "media":
         return <MediaWidget media={media} mediaIndex={mediaIndex} isPlaying={isPlaying} />;
       case "ticker":
-        return <TickerWidget content={zone.textContent} />;
+        return <TickerWidget content={zone.textContent} speed={zone.tickerScrollSpeed} />;
       case "clock":
         return <ClockWidget timezone={zone.clockTimezone || timezone} label={zone.clockLabel} />;
       case "logo":

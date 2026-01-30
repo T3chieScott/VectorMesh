@@ -195,6 +195,8 @@ const zoneFormSchema = z.object({
   // Text widget configuration
   textContent: z.string().optional(),
   textFontSize: z.enum(["small", "medium", "large", "xlarge"]).optional(),
+  // Ticker widget configuration
+  tickerScrollSpeed: z.number().min(5).max(60).optional(),
   textAlign: z.enum(["left", "center", "right"]).optional(),
   textVerticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
   // Shader widget configuration
@@ -1513,6 +1515,37 @@ function ZoneEditorDialog({
                         />
                       </FormControl>
                       <FormDescription>Text that will scroll across the ticker zone</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="tickerScrollSpeed"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Scroll Speed</FormLabel>
+                      <FormControl>
+                        <div className="flex items-center gap-4">
+                          <Input
+                            type="range"
+                            min="5"
+                            max="60"
+                            step="5"
+                            className="flex-1"
+                            {...field}
+                            value={field.value ?? 20}
+                            onChange={(e) => field.onChange(parseInt(e.target.value))}
+                            data-testid="input-ticker-speed"
+                          />
+                          <span className="text-sm text-muted-foreground w-16">
+                            {field.value ?? 20}s
+                          </span>
+                        </div>
+                      </FormControl>
+                      <FormDescription>
+                        Duration for one complete scroll cycle (lower = faster)
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}

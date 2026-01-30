@@ -263,6 +263,8 @@ export interface LayoutZone {
   // Text widget configuration
   textContent?: string;
   textFontSize?: "small" | "medium" | "large" | "xlarge";
+  // Ticker widget configuration
+  tickerScrollSpeed?: number;  // Duration in seconds for one complete scroll cycle
   textAlign?: "left" | "center" | "right";
   textVerticalAlign?: "top" | "middle" | "bottom";
   // Shader widget configuration

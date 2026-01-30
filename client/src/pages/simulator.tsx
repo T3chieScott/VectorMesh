@@ -81,12 +81,17 @@ const zoneTypeIcons: Record<string, typeof Image> = {
   qrcode: QrCode,
 };
 
-function TickerWidget({ content }: { content?: string }) {
+function TickerWidget({ content, speed }: { content?: string; speed?: number }) {
+  const animationDuration = speed || 20;
+  
   return (
     <div className="h-full w-full bg-gradient-to-r from-primary/90 to-primary flex items-center overflow-hidden">
       <div 
-        className="animate-marquee whitespace-nowrap text-primary-foreground font-medium px-4"
-        style={{ fontSize: "clamp(10px, min(50cqh, 3cqw), 24px)" }}
+        className="whitespace-nowrap text-primary-foreground font-medium px-4"
+        style={{ 
+          fontSize: "clamp(10px, min(50cqh, 3cqw), 24px)",
+          animation: `marquee ${animationDuration}s linear infinite`
+        }}
       >
         {content || "Welcome to SignageHub • Breaking news and updates scroll here • Stay informed with live content"}
       </div>
@@ -1182,7 +1187,7 @@ function ZoneRenderer({
       case "media":
         return <MediaWidget media={media} mediaIndex={mediaIndex} isPlaying={isPlaying} />;
       case "ticker":
-        return <TickerWidget content={zone.textContent} />;
+        return <TickerWidget content={zone.textContent} speed={zone.tickerScrollSpeed} />;
       case "clock":
         return <ClockWidget timezone={timezone} />;
       case "logo":
