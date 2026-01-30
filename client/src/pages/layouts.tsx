@@ -3036,10 +3036,12 @@ function InteractiveLayoutPreview({
   });
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [dragZoneOverrides, setDragZoneOverrides] = useState<Record<string, Partial<LayoutZone>>>({});
   const [snapLines, setSnapLines] = useState<SnapLine[]>([]);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
+  const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null);
 
   // Compute zones to render: merge props with any active drag overrides
   const zonesToRender = useMemo(() => {
@@ -3060,6 +3062,23 @@ function InteractiveLayoutPreview({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Measure wrapper container to fit height
+  useEffect(() => {
+    if (!wrapperRef.current) return;
+    
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerSize({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height,
+        });
+      }
+    });
+    
+    observer.observe(wrapperRef.current);
+    return () => observer.disconnect();
   }, []);
 
   const getSnapPoints = useCallback((excludeZoneId: string) => {
@@ -3239,12 +3258,32 @@ function InteractiveLayoutPreview({
     layout.customWidth,
     layout.customHeight
   );
-  const aspectPadding = (aspectDims.height / aspectDims.width) * 100;
+  const aspectRatioValue = aspectDims.width / aspectDims.height;
+
+  // Calculate preview dimensions to fit height first
+  const previewDimensions = useMemo(() => {
+    if (!containerSize) return null;
+    
+    const availableWidth = containerSize.width;
+    const availableHeight = containerSize.height;
+    
+    // Calculate dimensions based on fitting to height
+    let previewHeight = availableHeight;
+    let previewWidth = previewHeight * aspectRatioValue;
+    
+    // If width exceeds available space, scale down to fit width instead
+    if (previewWidth > availableWidth) {
+      previewWidth = availableWidth;
+      previewHeight = previewWidth / aspectRatioValue;
+    }
+    
+    return { width: previewWidth, height: previewHeight };
+  }, [containerSize, aspectRatioValue]);
 
   return (
-    <div className="space-y-2">
+    <div className="flex flex-col h-full space-y-2">
       {hasUnsavedChanges && onSaveAll && onDiscardAll && (
-        <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+        <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 flex-shrink-0">
           <span className="text-sm text-amber-500 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4" />
             Unsaved changes
@@ -3271,13 +3310,20 @@ function InteractiveLayoutPreview({
         </div>
       )}
       <div 
-        ref={containerRef}
-        className="relative w-full bg-slate-900 rounded-lg overflow-hidden select-none"
-        style={{ paddingBottom: `${aspectPadding}%` }}
-        onClick={() => setSelectedZoneId(null)}
-        data-testid="interactive-layout-preview"
-        tabIndex={0}
+        ref={wrapperRef}
+        className="flex-1 flex items-center justify-center min-h-0"
       >
+        <div 
+          ref={containerRef}
+          className="relative bg-slate-900 rounded-lg overflow-hidden select-none"
+          style={previewDimensions ? { 
+            width: previewDimensions.width, 
+            height: previewDimensions.height 
+          } : { width: '100%', aspectRatio: `${aspectDims.width} / ${aspectDims.height}` }}
+          onClick={() => setSelectedZoneId(null)}
+          data-testid="interactive-layout-preview"
+          tabIndex={0}
+        >
       {snapLines.map((line, i) => (
         <div
           key={i}
@@ -3349,6 +3395,7 @@ function InteractiveLayoutPreview({
           </div>
         );
       })}
+      </div>
       </div>
     </div>
   );
