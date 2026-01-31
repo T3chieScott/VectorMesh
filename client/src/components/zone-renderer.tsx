@@ -474,6 +474,10 @@ interface CountdownWidgetProps {
   numberColor?: string;
   labelColor?: string;
   size?: "small" | "medium" | "large" | "xlarge";
+  fontFamily?: "sans" | "serif" | "mono" | "display";
+  unitGap?: number;
+  timezone?: string;
+  compact?: boolean;
 }
 
 function CountdownWidget({
@@ -493,11 +497,27 @@ function CountdownWidget({
   numberColor,
   labelColor,
   size = "medium",
+  fontFamily = "mono",
+  unitGap,
+  timezone,
+  compact = false,
 }: CountdownWidgetProps) {
   const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
   const [isComplete, setIsComplete] = useState(false);
 
-  const sizeStyles = {
+  const fontFamilyMap = {
+    sans: "ui-sans-serif, system-ui, sans-serif",
+    serif: "ui-serif, Georgia, serif",
+    mono: "ui-monospace, SFMono-Regular, monospace",
+    display: "'Oswald', 'Bebas Neue', Impact, sans-serif",
+  };
+
+  const sizeStyles = compact ? {
+    small: { number: "max(14px, 4cqh)", label: "max(6px, 1.5cqh)", gap: "0.25rem" },
+    medium: { number: "max(20px, 6cqh)", label: "max(8px, 2cqh)", gap: "0.4rem" },
+    large: { number: "max(28px, 10cqh)", label: "max(10px, 2.5cqh)", gap: "0.6rem" },
+    xlarge: { number: "max(40px, 14cqh)", label: "max(12px, 3cqh)", gap: "0.8rem" },
+  } : {
     small: { number: "max(16px, 5cqh)", label: "max(8px, 2cqh)", gap: "0.5rem" },
     medium: { number: "max(24px, 8cqh)", label: "max(10px, 2.5cqh)", gap: "0.75rem" },
     large: { number: "max(32px, 12cqh)", label: "max(12px, 3cqh)", gap: "1rem" },
@@ -515,7 +535,45 @@ function CountdownWidget({
     if (!targetDate) return;
 
     const calculateTimeLeft = () => {
-      const target = new Date(targetDate).getTime();
+      let target: number;
+      
+      if (timezone) {
+        // Parse the target date in the specified timezone
+        // The targetDate is a local datetime string, interpret it in the given timezone
+        try {
+          const dateStr = targetDate.includes("T") ? targetDate : `${targetDate}T00:00:00`;
+          // Create a date formatter for the target timezone to get current time there
+          const targetInTimezone = new Date(dateStr);
+          // Calculate offset by formatting in both UTC and target timezone
+          const formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: timezone,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+          });
+          // Parse the formatted string to get the timezone-adjusted date
+          const parts = formatter.formatToParts(targetInTimezone);
+          const tzParts: Record<string, string> = {};
+          parts.forEach(p => { if (p.type !== 'literal') tzParts[p.type] = p.value; });
+          target = new Date(
+            parseInt(tzParts.year),
+            parseInt(tzParts.month) - 1,
+            parseInt(tzParts.day),
+            parseInt(tzParts.hour),
+            parseInt(tzParts.minute),
+            parseInt(tzParts.second)
+          ).getTime();
+        } catch {
+          target = new Date(targetDate).getTime();
+        }
+      } else {
+        target = new Date(targetDate).getTime();
+      }
+      
       // Guard against invalid date strings
       if (isNaN(target)) {
         setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
@@ -586,12 +644,14 @@ function CountdownWidget({
 
   const visibleUnits = units.filter(u => u.show);
   const sep = separatorMap[separator];
+  const effectiveGap = unitGap !== undefined ? `${unitGap}rem` : sizeStyles[size].gap;
+  const fontStyle = fontFamilyMap[fontFamily];
 
   return (
-    <div className="h-full w-full flex flex-col items-center justify-center text-center p-2">
+    <div className={`h-full w-full flex flex-col items-center justify-center text-center ${compact ? 'p-1' : 'p-2'}`}>
       {title && (
         <div 
-          className="font-semibold opacity-90 mb-2"
+          className={`font-semibold opacity-90 ${compact ? 'mb-1' : 'mb-2'}`}
           style={{ 
             fontSize: sizeStyles[size].label,
             color: labelColor || "inherit"
@@ -602,16 +662,17 @@ function CountdownWidget({
       )}
       <div 
         className="flex items-center justify-center flex-wrap"
-        style={{ gap: sizeStyles[size].gap }}
+        style={{ gap: effectiveGap }}
       >
         {visibleUnits.map((unit, idx) => (
           <div key={unit.label} className="flex items-center">
             <div className="flex flex-col items-center">
               <div 
-                className="font-mono font-bold"
+                className="font-bold"
                 style={{ 
                   fontSize: sizeStyles[size].number,
-                  color: numberColor || "inherit"
+                  color: numberColor || "inherit",
+                  fontFamily: fontStyle,
                 }}
               >
                 {formatNumber(unit.value, unit.maxDigits)}
@@ -628,11 +689,12 @@ function CountdownWidget({
             </div>
             {idx < visibleUnits.length - 1 && sep && (
               <span 
-                className="font-mono font-bold mx-1"
+                className={`font-bold ${compact ? 'mx-0.5' : 'mx-1'}`}
                 style={{ 
                   fontSize: sizeStyles[size].number,
                   color: numberColor || "inherit",
-                  opacity: 0.5
+                  opacity: 0.5,
+                  fontFamily: fontStyle,
                 }}
               >
                 {sep}
@@ -1693,6 +1755,10 @@ export function ZoneRenderer({
             numberColor={zone.countdownNumberColor}
             labelColor={zone.countdownLabelColor}
             size={zone.countdownSize}
+            fontFamily={zone.countdownFontFamily}
+            unitGap={zone.countdownUnitGap}
+            timezone={zone.countdownTimezone}
+            compact={zone.countdownCompact}
           />
         );
       default:

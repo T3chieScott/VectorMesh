@@ -271,6 +271,10 @@ const zoneFormSchema = z.object({
   countdownNumberColor: z.string().optional(),
   countdownLabelColor: z.string().optional(),
   countdownSize: z.enum(["small", "medium", "large", "xlarge"]).optional(),
+  countdownFontFamily: z.enum(["sans", "serif", "mono", "display"]).optional(),
+  countdownUnitGap: z.number().optional(),
+  countdownTimezone: z.string().optional(),
+  countdownCompact: z.boolean().optional(),
 }).refine((data) => {
   // Require lat/lng for weather zones
   if (data.type === "weather") {
@@ -648,6 +652,10 @@ function ZoneEditorDialog({
       countdownNumberColor: "",
       countdownLabelColor: "",
       countdownSize: "medium",
+      countdownFontFamily: "mono",
+      countdownUnitGap: undefined,
+      countdownTimezone: "",
+      countdownCompact: false,
     },
   });
 
@@ -755,6 +763,10 @@ function ZoneEditorDialog({
           countdownNumberColor: zone.countdownNumberColor || "",
           countdownLabelColor: zone.countdownLabelColor || "",
           countdownSize: zone.countdownSize || "medium",
+          countdownFontFamily: zone.countdownFontFamily || "mono",
+          countdownUnitGap: zone.countdownUnitGap,
+          countdownTimezone: zone.countdownTimezone || "",
+          countdownCompact: zone.countdownCompact ?? false,
         });
       } else {
         form.reset({
@@ -857,6 +869,10 @@ function ZoneEditorDialog({
           countdownNumberColor: "",
           countdownLabelColor: "",
           countdownSize: "medium",
+          countdownFontFamily: "mono",
+          countdownUnitGap: undefined,
+          countdownTimezone: "",
+          countdownCompact: false,
         });
       }
     }
@@ -3513,6 +3529,111 @@ function ZoneEditorDialog({
                     />
                   </div>
                 </div>
+
+                {/* Font & Spacing */}
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="countdownFontFamily"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Font Family</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value || "mono"}>
+                          <FormControl>
+                            <SelectTrigger data-testid="select-countdown-font-family">
+                              <SelectValue placeholder="Select font" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="mono">Monospace</SelectItem>
+                            <SelectItem value="sans">Sans-Serif</SelectItem>
+                            <SelectItem value="serif">Serif</SelectItem>
+                            <SelectItem value="display">Display</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="countdownUnitGap"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Unit Gap (rem)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="5"
+                            placeholder="Auto"
+                            {...field}
+                            value={field.value ?? ""}
+                            onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
+                            data-testid="input-countdown-unit-gap"
+                          />
+                        </FormControl>
+                        <FormDescription>Leave empty for automatic spacing based on size</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* Timezone */}
+                <FormField
+                  control={form.control}
+                  name="countdownTimezone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Target Timezone</FormLabel>
+                      <Select onValueChange={(val) => field.onChange(val === "local" ? "" : val)} value={field.value || "local"}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-countdown-timezone">
+                            <SelectValue placeholder="Local time (browser)" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="local">Local Time (Browser)</SelectItem>
+                          <SelectItem value="UTC">UTC</SelectItem>
+                          <SelectItem value="Europe/London">Europe/London (GMT/BST)</SelectItem>
+                          <SelectItem value="Europe/Paris">Europe/Paris (CET/CEST)</SelectItem>
+                          <SelectItem value="Europe/Berlin">Europe/Berlin (CET/CEST)</SelectItem>
+                          <SelectItem value="America/New_York">America/New York (EST/EDT)</SelectItem>
+                          <SelectItem value="America/Chicago">America/Chicago (CST/CDT)</SelectItem>
+                          <SelectItem value="America/Denver">America/Denver (MST/MDT)</SelectItem>
+                          <SelectItem value="America/Los_Angeles">America/Los Angeles (PST/PDT)</SelectItem>
+                          <SelectItem value="Asia/Dubai">Asia/Dubai (GST)</SelectItem>
+                          <SelectItem value="Asia/Singapore">Asia/Singapore (SGT)</SelectItem>
+                          <SelectItem value="Asia/Tokyo">Asia/Tokyo (JST)</SelectItem>
+                          <SelectItem value="Asia/Shanghai">Asia/Shanghai (CST)</SelectItem>
+                          <SelectItem value="Australia/Sydney">Australia/Sydney (AEST/AEDT)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>Interpret the target date/time in this timezone</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Compact Mode */}
+                <FormField
+                  control={form.control}
+                  name="countdownCompact"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? false}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-countdown-compact"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Compact mode (reduced padding and smaller labels)</FormLabel>
+                    </FormItem>
+                  )}
+                />
               </div>
             )}
 
