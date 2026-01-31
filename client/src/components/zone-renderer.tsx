@@ -925,6 +925,8 @@ function NewsWidget({
   }
 
   const newsText = news.map(n => n.title).join(" • ") || "No news available";
+  // Duplicate text for seamless continuous loop
+  const loopText = `${newsText} • ${newsText} • `;
 
   return (
     <div className="h-full w-full flex items-center overflow-hidden">
@@ -933,7 +935,7 @@ function NewsWidget({
         className="animate-marquee whitespace-nowrap" 
         style={{ fontSize: textSizeMap[textSize] || textSizeMap.medium }}
       >
-        {newsText} •
+        {loopText}
       </div>
     </div>
   );
