@@ -252,6 +252,14 @@ export interface LayoutZone {
   // Clock widget configuration
   clockTimezone?: string;  // IANA timezone e.g., "America/New_York", "Europe/London"
   clockLabel?: string;     // Optional label e.g., "New York", "London"
+  clockStyle?: "digital" | "analog";  // Clock face style
+  clockMarkerStyle?: "numbers" | "roman" | "dots" | "lines";  // Marker style for analog
+  clockShowSecondHand?: boolean;     // Show second hand on analog (default true)
+  clockShowHourMarkers?: boolean;    // Show hour markers (default true)
+  clockShowDate?: boolean;           // Show date display (default false)
+  clockHandColor?: string;           // Color for clock hands (hex)
+  clockFaceColor?: string;           // Background color of clock face (hex)
+  clockMarkerColor?: string;         // Color for hour markers (hex)
   // Weather widget configuration
   weatherLocation?: string;
   weatherLat?: number;

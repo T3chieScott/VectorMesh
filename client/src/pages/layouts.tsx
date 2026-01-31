@@ -189,6 +189,14 @@ const zoneFormSchema = z.object({
   // Clock widget configuration
   clockTimezone: z.string().optional(),
   clockLabel: z.string().optional(),
+  clockStyle: z.enum(["digital", "analog"]).optional(),
+  clockMarkerStyle: z.enum(["numbers", "roman", "dots", "lines"]).optional(),
+  clockShowSecondHand: z.boolean().optional(),
+  clockShowHourMarkers: z.boolean().optional(),
+  clockShowDate: z.boolean().optional(),
+  clockHandColor: z.string().optional(),
+  clockFaceColor: z.string().optional(),
+  clockMarkerColor: z.string().optional(),
   // Weather widget configuration
   weatherLocation: z.string().optional(),
   weatherLat: z.number().optional(),
@@ -567,6 +575,14 @@ function ZoneEditorDialog({
       borderRadius: 0,
       clockTimezone: "",
       clockLabel: "",
+      clockStyle: "digital",
+      clockMarkerStyle: "numbers",
+      clockShowSecondHand: true,
+      clockShowHourMarkers: true,
+      clockShowDate: false,
+      clockHandColor: "#ffffff",
+      clockFaceColor: "transparent",
+      clockMarkerColor: "#ffffff",
       weatherLocation: "",
       weatherLat: undefined,
       weatherLng: undefined,
@@ -666,6 +682,14 @@ function ZoneEditorDialog({
           borderRadius: zone.borderRadius || 0,
           clockTimezone: zone.clockTimezone || "",
           clockLabel: zone.clockLabel || "",
+          clockStyle: zone.clockStyle || "digital",
+          clockMarkerStyle: zone.clockMarkerStyle || "numbers",
+          clockShowSecondHand: zone.clockShowSecondHand ?? true,
+          clockShowHourMarkers: zone.clockShowHourMarkers ?? true,
+          clockShowDate: zone.clockShowDate ?? false,
+          clockHandColor: zone.clockHandColor || "#ffffff",
+          clockFaceColor: zone.clockFaceColor || "transparent",
+          clockMarkerColor: zone.clockMarkerColor || "#ffffff",
           weatherLocation: zone.weatherLocation || "",
           weatherLat: zone.weatherLat,
           weatherLng: zone.weatherLng,
@@ -760,6 +784,14 @@ function ZoneEditorDialog({
           borderRadius: 0,
           clockTimezone: "",
           clockLabel: "",
+          clockStyle: "digital",
+          clockMarkerStyle: "numbers",
+          clockShowSecondHand: true,
+          clockShowHourMarkers: true,
+          clockShowDate: false,
+          clockHandColor: "#ffffff",
+          clockFaceColor: "transparent",
+          clockMarkerColor: "#ffffff",
           weatherLocation: "",
           weatherLat: undefined,
           weatherLng: undefined,
@@ -1436,6 +1468,171 @@ function ZoneEditorDialog({
                   <Clock className="h-4 w-4" />
                   Clock Widget Settings
                 </div>
+
+                {/* Clock Style */}
+                <FormField
+                  control={form.control}
+                  name="clockStyle"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Clock Style</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || "digital"}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-clock-style">
+                            <SelectValue placeholder="Select style" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="digital">Digital</SelectItem>
+                          <SelectItem value="analog">Analog (Round)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Analog Clock Options */}
+                {form.watch("clockStyle") === "analog" && (
+                  <div className="space-y-4 pl-4 border-l-2 border-muted">
+                    <FormField
+                      control={form.control}
+                      name="clockMarkerStyle"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Hour Marker Style</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value || "numbers"}>
+                            <FormControl>
+                              <SelectTrigger data-testid="select-clock-marker-style">
+                                <SelectValue placeholder="Select marker style" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="numbers">Numbers (1-12)</SelectItem>
+                              <SelectItem value="roman">Roman Numerals (I-XII)</SelectItem>
+                              <SelectItem value="dots">Dots</SelectItem>
+                              <SelectItem value="lines">Lines</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <div className="flex flex-wrap gap-4">
+                      <FormField
+                        control={form.control}
+                        name="clockShowSecondHand"
+                        render={({ field }) => (
+                          <FormItem className="flex items-center gap-2">
+                            <FormControl>
+                              <Checkbox
+                                checked={field.value ?? true}
+                                onCheckedChange={field.onChange}
+                                data-testid="checkbox-clock-second-hand"
+                              />
+                            </FormControl>
+                            <FormLabel className="!mt-0">Show Second Hand</FormLabel>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="clockShowHourMarkers"
+                        render={({ field }) => (
+                          <FormItem className="flex items-center gap-2">
+                            <FormControl>
+                              <Checkbox
+                                checked={field.value ?? true}
+                                onCheckedChange={field.onChange}
+                                data-testid="checkbox-clock-hour-markers"
+                              />
+                            </FormControl>
+                            <FormLabel className="!mt-0">Show Hour Markers</FormLabel>
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    {/* Colors for analog clock */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <FormField
+                        control={form.control}
+                        name="clockHandColor"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Hand Color</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="color"
+                                {...field}
+                                value={field.value || "#ffffff"}
+                                className="h-9 p-1 cursor-pointer"
+                                data-testid="input-clock-hand-color"
+                              />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="clockFaceColor"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Face Color</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="color"
+                                {...field}
+                                value={field.value === "transparent" ? "#000000" : (field.value || "#000000")}
+                                onChange={(e) => field.onChange(e.target.value)}
+                                className="h-9 p-1 cursor-pointer"
+                                data-testid="input-clock-face-color"
+                              />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="clockMarkerColor"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Marker Color</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="color"
+                                {...field}
+                                value={field.value || "#ffffff"}
+                                className="h-9 p-1 cursor-pointer"
+                                data-testid="input-clock-marker-color"
+                              />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Show Date toggle */}
+                <FormField
+                  control={form.control}
+                  name="clockShowDate"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? false}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-clock-show-date"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show Date</FormLabel>
+                    </FormItem>
+                  )}
+                />
+
                 <FormField
                   control={form.control}
                   name="clockTimezone"
