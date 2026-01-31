@@ -337,6 +337,7 @@ export interface LayoutZone {
   countdownNumberColor?: string;        // Color for the numbers (hex)
   countdownLabelColor?: string;         // Color for the labels (hex)
   countdownSize?: "small" | "medium" | "large" | "xlarge";  // Overall size preset
+  countdownTitleSize?: "small" | "medium" | "large" | "xlarge";  // Title size (independent from timer size)
   countdownFontFamily?: "sans" | "serif" | "mono" | "display";  // Font family for numbers
   countdownUnitGap?: number;            // Gap between units in rem (default based on size)
   countdownTimezone?: string;           // IANA timezone for target date (e.g., "Europe/London")

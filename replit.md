@@ -9,7 +9,7 @@ Key capabilities:
 - Support for images, videos, GIFs, and HTML widgets
 - Zone-based layouts with tickers, clocks, logos, QR codes, countdown timers, and media regions
 - **QR code zones**: Support for URL, WiFi, vCard content types with transparent backgrounds and customizable labels (position, size, color)
-- **Countdown timer zones**: Real-time countdown to target date/time with customizable title, completion message, unit visibility (days/hours/minutes/seconds), custom labels, separator styles, leading zeros toggle, number/label colors, and size presets (small/medium/large/xlarge)
+- **Countdown timer zones**: Real-time countdown to target date/time with customizable title (with independent size control), completion message, unit visibility (days/hours/minutes/seconds), custom labels, separator styles, leading zeros toggle, number/label colors, size presets (small/medium/large/xlarge), font family (mono/sans/serif/display), unit gap control, timezone selection, and compact mode
 - **Layout aspect ratio support**: Presets (16:9, 9:16, 4:3, 1:1) plus custom ratios for portrait displays, LED walls, and specialty screens
 - Client/event separation with brand packs
 - Timeline scheduling with programme blocks

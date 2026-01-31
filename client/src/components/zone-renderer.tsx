@@ -474,6 +474,7 @@ interface CountdownWidgetProps {
   numberColor?: string;
   labelColor?: string;
   size?: "small" | "medium" | "large" | "xlarge";
+  titleSize?: "small" | "medium" | "large" | "xlarge";
   fontFamily?: "sans" | "serif" | "mono" | "display";
   unitGap?: number;
   timezone?: string;
@@ -497,6 +498,7 @@ function CountdownWidget({
   numberColor,
   labelColor,
   size = "medium",
+  titleSize,
   fontFamily = "mono",
   unitGap,
   timezone,
@@ -522,6 +524,13 @@ function CountdownWidget({
     medium: { number: "max(24px, 8cqh)", label: "max(10px, 2.5cqh)", gap: "0.75rem" },
     large: { number: "max(32px, 12cqh)", label: "max(12px, 3cqh)", gap: "1rem" },
     xlarge: { number: "max(48px, 16cqh)", label: "max(14px, 3.5cqh)", gap: "1.25rem" },
+  };
+
+  const titleSizeStyles = {
+    small: "max(12px, 3cqh)",
+    medium: "max(16px, 4cqh)",
+    large: "max(24px, 6cqh)",
+    xlarge: "max(32px, 8cqh)",
   };
 
   const separatorMap = {
@@ -647,26 +656,28 @@ function CountdownWidget({
   const effectiveGap = unitGap !== undefined ? `${unitGap}rem` : sizeStyles[size].gap;
   const fontStyle = fontFamilyMap[fontFamily];
 
+  const effectiveTitleSize = titleSize ? titleSizeStyles[titleSize] : sizeStyles[size].label;
+
   return (
     <div className={`h-full w-full flex flex-col items-center justify-center text-center ${compact ? 'p-1' : 'p-2'}`}>
       {title && (
         <div 
-          className={`font-semibold opacity-90 ${compact ? 'mb-1' : 'mb-2'}`}
+          className="font-semibold opacity-90 mb-1"
           style={{ 
-            fontSize: sizeStyles[size].label,
+            fontSize: effectiveTitleSize,
             color: labelColor || "inherit"
           }}
         >
           {title}
         </div>
       )}
-      <div 
-        className="flex items-center justify-center flex-wrap"
-        style={{ gap: effectiveGap }}
-      >
-        {visibleUnits.map((unit, idx) => (
-          <div key={unit.label} className="flex items-center">
-            <div className="flex flex-col items-center">
+      <div className="flex flex-col items-center">
+        <div 
+          className="flex items-center justify-center flex-wrap"
+          style={{ gap: effectiveGap }}
+        >
+          {visibleUnits.map((unit, idx) => (
+            <div key={unit.label} className="flex items-center">
               <div 
                 className="font-bold"
                 style={{ 
@@ -677,31 +688,52 @@ function CountdownWidget({
               >
                 {formatNumber(unit.value, unit.maxDigits)}
               </div>
+              {idx < visibleUnits.length - 1 && sep && (
+                <span 
+                  className={`font-bold ${compact ? 'mx-0.5' : 'mx-1'}`}
+                  style={{ 
+                    fontSize: sizeStyles[size].number,
+                    color: numberColor || "inherit",
+                    opacity: 0.5,
+                    fontFamily: fontStyle,
+                  }}
+                >
+                  {sep}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+        <div 
+          className="flex justify-center flex-wrap"
+          style={{ gap: effectiveGap }}
+        >
+          {visibleUnits.map((unit, idx) => (
+            <div key={`label-${unit.label}`} className="flex items-center">
               <div 
-                className="opacity-80"
+                className="opacity-80 text-center"
                 style={{ 
                   fontSize: sizeStyles[size].label,
-                  color: labelColor || "inherit"
+                  color: labelColor || "inherit",
+                  minWidth: `${unit.maxDigits + 1}ch`,
                 }}
               >
                 {unit.label}
               </div>
+              {idx < visibleUnits.length - 1 && sep && (
+                <span 
+                  className={`${compact ? 'mx-0.5' : 'mx-1'}`}
+                  style={{ 
+                    fontSize: sizeStyles[size].number,
+                    visibility: 'hidden',
+                  }}
+                >
+                  {sep}
+                </span>
+              )}
             </div>
-            {idx < visibleUnits.length - 1 && sep && (
-              <span 
-                className={`font-bold ${compact ? 'mx-0.5' : 'mx-1'}`}
-                style={{ 
-                  fontSize: sizeStyles[size].number,
-                  color: numberColor || "inherit",
-                  opacity: 0.5,
-                  fontFamily: fontStyle,
-                }}
-              >
-                {sep}
-              </span>
-            )}
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1755,6 +1787,7 @@ export function ZoneRenderer({
             numberColor={zone.countdownNumberColor}
             labelColor={zone.countdownLabelColor}
             size={zone.countdownSize}
+            titleSize={zone.countdownTitleSize}
             fontFamily={zone.countdownFontFamily}
             unitGap={zone.countdownUnitGap}
             timezone={zone.countdownTimezone}

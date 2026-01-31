@@ -271,6 +271,7 @@ const zoneFormSchema = z.object({
   countdownNumberColor: z.string().optional(),
   countdownLabelColor: z.string().optional(),
   countdownSize: z.enum(["small", "medium", "large", "xlarge"]).optional(),
+  countdownTitleSize: z.enum(["small", "medium", "large", "xlarge"]).optional(),
   countdownFontFamily: z.enum(["sans", "serif", "mono", "display"]).optional(),
   countdownUnitGap: z.number().optional(),
   countdownTimezone: z.string().optional(),
@@ -3260,29 +3261,59 @@ function ZoneEditorDialog({
                 />
 
                 {/* Size */}
-                <FormField
-                  control={form.control}
-                  name="countdownSize"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Size</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value || "medium"}>
-                        <FormControl>
-                          <SelectTrigger data-testid="select-countdown-size">
-                            <SelectValue placeholder="Select size" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="small">Small</SelectItem>
-                          <SelectItem value="medium">Medium</SelectItem>
-                          <SelectItem value="large">Large</SelectItem>
-                          <SelectItem value="xlarge">Extra Large</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="countdownSize"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Timer Size</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value || "medium"}>
+                          <FormControl>
+                            <SelectTrigger data-testid="select-countdown-size">
+                              <SelectValue placeholder="Select size" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="small">Small</SelectItem>
+                            <SelectItem value="medium">Medium</SelectItem>
+                            <SelectItem value="large">Large</SelectItem>
+                            <SelectItem value="xlarge">Extra Large</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="countdownTitleSize"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Title Size</FormLabel>
+                        <Select 
+                          onValueChange={(val) => field.onChange(val === "auto" ? undefined : val)} 
+                          value={field.value || "auto"}
+                        >
+                          <FormControl>
+                            <SelectTrigger data-testid="select-countdown-title-size">
+                              <SelectValue placeholder="Auto (based on timer)" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="auto">Auto (based on timer)</SelectItem>
+                            <SelectItem value="small">Small</SelectItem>
+                            <SelectItem value="medium">Medium</SelectItem>
+                            <SelectItem value="large">Large</SelectItem>
+                            <SelectItem value="xlarge">Extra Large</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
                 {/* Units to Show */}
                 <div className="space-y-2">
