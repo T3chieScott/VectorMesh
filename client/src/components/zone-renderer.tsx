@@ -515,15 +515,15 @@ function CountdownWidget({
   };
 
   const sizeStyles = compact ? {
-    small: { number: "max(14px, 4cqh)", label: "max(6px, 1.5cqh)", gap: "0.25rem" },
-    medium: { number: "max(20px, 6cqh)", label: "max(8px, 2cqh)", gap: "0.4rem" },
-    large: { number: "max(28px, 10cqh)", label: "max(10px, 2.5cqh)", gap: "0.6rem" },
-    xlarge: { number: "max(40px, 14cqh)", label: "max(12px, 3cqh)", gap: "0.8rem" },
+    small: { number: "max(14px, 4cqh)", label: "max(6px, 1.5cqh)", gap: "0.18rem", titleGap: "0.1rem" },
+    medium: { number: "max(20px, 6cqh)", label: "max(8px, 2cqh)", gap: "0.28rem", titleGap: "0.15rem" },
+    large: { number: "max(28px, 10cqh)", label: "max(10px, 2.5cqh)", gap: "0.42rem", titleGap: "0.2rem" },
+    xlarge: { number: "max(40px, 14cqh)", label: "max(12px, 3cqh)", gap: "0.56rem", titleGap: "0.25rem" },
   } : {
-    small: { number: "max(16px, 5cqh)", label: "max(8px, 2cqh)", gap: "0.5rem" },
-    medium: { number: "max(24px, 8cqh)", label: "max(10px, 2.5cqh)", gap: "0.75rem" },
-    large: { number: "max(32px, 12cqh)", label: "max(12px, 3cqh)", gap: "1rem" },
-    xlarge: { number: "max(48px, 16cqh)", label: "max(14px, 3.5cqh)", gap: "1.25rem" },
+    small: { number: "max(16px, 5cqh)", label: "max(8px, 2cqh)", gap: "0.35rem", titleGap: "0.15rem" },
+    medium: { number: "max(24px, 8cqh)", label: "max(10px, 2.5cqh)", gap: "0.52rem", titleGap: "0.2rem" },
+    large: { number: "max(32px, 12cqh)", label: "max(12px, 3cqh)", gap: "0.7rem", titleGap: "0.3rem" },
+    xlarge: { number: "max(48px, 16cqh)", label: "max(14px, 3.5cqh)", gap: "0.88rem", titleGap: "0.4rem" },
   };
 
   const titleSizeStyles = {
@@ -547,35 +547,50 @@ function CountdownWidget({
       let target: number;
       
       if (timezone) {
-        // Parse the target date in the specified timezone
-        // The targetDate is a local datetime string, interpret it in the given timezone
+        // The targetDate is entered as a local datetime string (e.g., "2026-07-20T10:00")
+        // The timezone tells us what timezone that datetime refers to (e.g., "Europe/London")
+        // We need to find the UTC timestamp for that datetime in that timezone
         try {
           const dateStr = targetDate.includes("T") ? targetDate : `${targetDate}T00:00:00`;
-          // Create a date formatter for the target timezone to get current time there
-          const targetInTimezone = new Date(dateStr);
-          // Calculate offset by formatting in both UTC and target timezone
-          const formatter = new Intl.DateTimeFormat('en-US', {
+          const [datePart, timePart] = dateStr.split("T");
+          const [year, month, day] = datePart.split("-").map(Number);
+          const [hour, minute, secondStr] = timePart.split(":");
+          const second = parseInt(secondStr || "0");
+          
+          // Create a date in the target timezone and get its UTC equivalent
+          // We do this by finding the offset between local time and the target timezone
+          const testDate = new Date(year, month - 1, day, parseInt(hour), parseInt(minute), second);
+          
+          // Get the target timezone offset at that moment
+          const targetTzFormatter = new Intl.DateTimeFormat('en-US', {
             timeZone: timezone,
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
             hour12: false,
           });
-          // Parse the formatted string to get the timezone-adjusted date
-          const parts = formatter.formatToParts(targetInTimezone);
-          const tzParts: Record<string, string> = {};
-          parts.forEach(p => { if (p.type !== 'literal') tzParts[p.type] = p.value; });
-          target = new Date(
-            parseInt(tzParts.year),
-            parseInt(tzParts.month) - 1,
-            parseInt(tzParts.day),
-            parseInt(tzParts.hour),
-            parseInt(tzParts.minute),
-            parseInt(tzParts.second)
-          ).getTime();
+          const utcFormatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'UTC',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hour12: false,
+          });
+          
+          // Parse both formatted strings to calculate offset
+          const parseFormattedDate = (formatted: string) => {
+            const parts = formatted.split(', ');
+            const [m, d, y] = parts[0].split('/').map(Number);
+            const [h, min, s] = parts[1].split(':').map(Number);
+            return new Date(Date.UTC(y, m - 1, d, h, min, s)).getTime();
+          };
+          
+          const targetFormatted = targetTzFormatter.format(testDate);
+          const utcFormatted = utcFormatter.format(testDate);
+          const targetMs = parseFormattedDate(targetFormatted);
+          const utcMs = parseFormattedDate(utcFormatted);
+          const offsetMs = utcMs - targetMs;
+          
+          // The target time in UTC is the entered time adjusted by the timezone offset
+          target = Date.UTC(year, month - 1, day, parseInt(hour), parseInt(minute), second) - offsetMs;
         } catch {
           target = new Date(targetDate).getTime();
         }
@@ -608,7 +623,7 @@ function CountdownWidget({
     calculateTimeLeft();
     const interval = setInterval(calculateTimeLeft, 1000);
     return () => clearInterval(interval);
-  }, [targetDate]);
+  }, [targetDate, timezone]);
 
   const formatNumber = (num: number, maxDigits: number = 2) => {
     if (showLeadingZeros) {
@@ -662,16 +677,17 @@ function CountdownWidget({
     <div className={`h-full w-full flex flex-col items-center justify-center text-center ${compact ? 'p-1' : 'p-2'}`}>
       {title && (
         <div 
-          className="font-semibold opacity-90 mb-1"
+          className="font-semibold opacity-90"
           style={{ 
             fontSize: effectiveTitleSize,
-            color: labelColor || "inherit"
+            color: labelColor || "inherit",
+            marginBottom: sizeStyles[size].titleGap,
           }}
         >
           {title}
         </div>
       )}
-      <div className="flex flex-col items-center">
+      <div className="flex flex-col items-center" style={{ gap: sizeStyles[size].titleGap }}>
         <div 
           className="flex items-center justify-center flex-wrap"
           style={{ gap: effectiveGap }}
