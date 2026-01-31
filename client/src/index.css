@@ -322,7 +322,7 @@
   }
 
   /* Ticker marquee animation for player simulator - seamless continuous loop */
-  @keyframes marquee {
+  @keyframes marquee-seamless {
     from {
       transform: translateX(0);
     }
@@ -331,10 +331,11 @@
     }
   }
 
-  .animate-marquee {
-    animation: marquee linear infinite;
+  .marquee-container {
+    display: flex;
+    width: max-content;
+    animation: marquee-seamless linear infinite;
     animation-duration: 30s; /* default, overridden by JS */
-    padding-left: 100%; /* Start off-screen from the right */
   }
 
   /* Vertical scroll animation for ticker */

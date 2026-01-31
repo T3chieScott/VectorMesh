@@ -894,11 +894,11 @@ function NewsWidget({
   useEffect(() => {
     if (!scrollRef.current || news.length === 0) return;
     
-    // Use actual rendered scroll width for accurate timing
+    // Use half the scroll width since we have 2 identical copies and animate 50%
     // Speed affects pixels-per-second: Speed 1 = 10px/s, Speed 100 = 300px/s
     const clampedSpeed = Math.max(1, Math.min(100, scrollSpeed));
     const pixelsPerSecond = 10 + (clampedSpeed - 1) * 2.9; // Linear scale from 10 to 300 px/s
-    const scrollWidth = scrollRef.current.scrollWidth || 500; // Fallback if not rendered yet
+    const scrollWidth = (scrollRef.current.scrollWidth || 500) / 2; // Half width for one copy
     const rawDuration = scrollWidth / pixelsPerSecond;
     // Clamp between 5s minimum and 180s maximum for readability
     const duration = Math.max(5, Math.min(180, rawDuration));
@@ -925,17 +925,16 @@ function NewsWidget({
   }
 
   const newsText = news.map(n => n.title).join(" • ") || "No news available";
-  // Duplicate text for seamless continuous loop
-  const loopText = `${newsText} • ${newsText} • `;
 
   return (
     <div className="h-full w-full flex items-center overflow-hidden">
       <div 
         ref={scrollRef}
-        className="animate-marquee whitespace-nowrap" 
+        className="marquee-container whitespace-nowrap" 
         style={{ fontSize: textSizeMap[textSize] || textSizeMap.medium }}
       >
-        {loopText}
+        <span className="pr-8">{newsText} •</span>
+        <span className="pr-8">{newsText} •</span>
       </div>
     </div>
   );
