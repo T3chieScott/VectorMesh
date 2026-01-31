@@ -321,7 +321,17 @@
       radial-gradient(at 80% 100%, hsl(217 91% 60% / 0.1) 0px, transparent 50%);
   }
 
-  /* Ticker marquee animation for player simulator - seamless continuous loop */
+  /* Standard marquee animation for text ticker - scrolls from right to left */
+  @keyframes marquee {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-100%);
+    }
+  }
+
+  /* Seamless marquee animation for news ticker - continuous loop */
   @keyframes marquee-seamless {
     from {
       transform: translateX(0);
