@@ -206,7 +206,7 @@ const zoneFormSchema = z.object({
   newsRssUrl: z.string().optional(),
   newsScrollSpeed: z.number().min(1).max(200).optional(),
   newsItemCount: z.number().min(1).max(50).optional(),
-  newsTextSize: z.enum(["small", "medium", "large"]).optional(),
+  newsTextSize: z.number().min(12).max(72).optional(),
   // Text widget configuration
   textContent: z.string().optional(),
   textFontSize: z.enum(["small", "medium", "large", "xlarge"]).optional(),
@@ -595,7 +595,7 @@ function ZoneEditorDialog({
       newsRssUrl: "",
       newsScrollSpeed: 50,
       newsItemCount: 10,
-      newsTextSize: "medium",
+      newsTextSize: 24,
       textContent: "",
       textFontSize: "medium",
       textAlign: "center",
@@ -706,7 +706,7 @@ function ZoneEditorDialog({
           newsRssUrl: zone.newsRssUrl || "",
           newsScrollSpeed: zone.newsScrollSpeed || 50,
           newsItemCount: zone.newsItemCount || 10,
-          newsTextSize: zone.newsTextSize || "medium",
+          newsTextSize: zone.newsTextSize ?? 24,
           textContent: zone.textContent || "",
           textFontSize: zone.textFontSize || "medium",
           textAlign: zone.textAlign || "center",
@@ -812,7 +812,7 @@ function ZoneEditorDialog({
           newsRssUrl: "",
           newsScrollSpeed: 50,
           newsItemCount: 10,
-          newsTextSize: "medium",
+          newsTextSize: 24,
           textContent: "",
           textFontSize: "medium",
           textAlign: "center",
@@ -1928,21 +1928,22 @@ function ZoneEditorDialog({
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Text Size</FormLabel>
-                        <Select
-                          value={field.value || "medium"}
-                          onValueChange={field.onChange}
-                        >
-                          <FormControl>
-                            <SelectTrigger data-testid="select-news-text-size">
-                              <SelectValue placeholder="Select size" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="small">Small</SelectItem>
-                            <SelectItem value="medium">Medium</SelectItem>
-                            <SelectItem value="large">Large</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <FormControl>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[field.value ?? 24]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={12}
+                              max={72}
+                              step={2}
+                              className="flex-1"
+                              data-testid="slider-news-text-size"
+                            />
+                            <span className="text-sm text-muted-foreground w-16">
+                              {field.value ?? 24}px
+                            </span>
+                          </div>
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}

@@ -1132,24 +1132,21 @@ function NewsWidget({
   rssUrl,
   scrollSpeed = 50,
   itemCount = 10,
-  textSize = "medium",
+  textSize = 24,
   showHeader = true,
 }: { 
   rssUrl?: string;
   scrollSpeed?: number;
   itemCount?: number;
-  textSize?: string;
+  textSize?: number;
   showHeader?: boolean;
 }) {
   const [news, setNews] = useState<{ title: string; link: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const textSizeMap: Record<string, string> = {
-    small: "max(10px, 3cqh)",
-    medium: "max(14px, 4cqh)",
-    large: "max(18px, 5cqh)",
-  };
+  // Use numeric font size directly (in pixels)
+  const fontSize = textSize || 24;
 
   useEffect(() => {
     const fetchNews = async () => {
@@ -1227,7 +1224,7 @@ function NewsWidget({
       <div 
         ref={scrollRef}
         className="marquee-container whitespace-nowrap" 
-        style={{ fontSize: textSizeMap[textSize] || textSizeMap.medium }}
+        style={{ fontSize: `${fontSize}px` }}
       >
         <span className="pr-8">{newsText} •</span>
         <span className="pr-8">{newsText} •</span>
