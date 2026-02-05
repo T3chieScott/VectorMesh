@@ -3808,10 +3808,14 @@ function ZoneListItem({
   layout,
   zone,
   onEdit,
+  isHighlighted,
+  onSelect,
 }: {
   layout: LayoutTemplate;
   zone: LayoutZone;
   onEdit: () => void;
+  isHighlighted?: boolean;
+  onSelect?: () => void;
 }) {
   const { toast } = useToast();
   const Icon = zoneTypeIcons[zone.type] || Grid3X3;
@@ -3834,7 +3838,16 @@ function ZoneListItem({
   });
 
   return (
-    <div className="flex items-center justify-between gap-3 p-2 rounded-md bg-muted/50">
+    <div
+      className={`flex items-center justify-between gap-3 p-2 rounded-md cursor-pointer transition-all ${
+        isHighlighted ? "ring-2 ring-cyan-400 bg-cyan-400/10" : "bg-muted/50"
+      }`}
+      onClick={onSelect}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        onEdit();
+      }}
+    >
       <div className="flex items-center gap-3">
         <div className="flex items-center justify-center w-8 h-8 rounded bg-primary/10">
           <Icon className="h-4 w-4 text-primary" />
@@ -3847,13 +3860,13 @@ function ZoneListItem({
         </div>
       </div>
       <div className="flex items-center gap-1">
-        <Button variant="ghost" size="icon" onClick={onEdit} data-testid={`button-edit-zone-${zone.id}`}>
+        <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onEdit(); }} data-testid={`button-edit-zone-${zone.id}`}>
           <Pencil className="h-4 w-4" />
         </Button>
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => deleteMutation.mutate()}
+          onClick={(e) => { e.stopPropagation(); deleteMutation.mutate(); }}
           disabled={deleteMutation.isPending}
           data-testid={`button-delete-zone-${zone.id}`}
         >
@@ -3915,6 +3928,9 @@ function InteractiveLayoutPreview({
   onSaveAll,
   onDiscardAll,
   hasUnsavedChanges = false,
+  selectedZoneId: controlledSelectedZoneId,
+  onSelectZone,
+  onDoubleClickZone,
 }: {
   layout: LayoutTemplate;
   zones: LayoutZone[];
@@ -3922,6 +3938,9 @@ function InteractiveLayoutPreview({
   onSaveAll?: () => void;
   onDiscardAll?: () => void;
   hasUnsavedChanges?: boolean;
+  selectedZoneId?: string | null;
+  onSelectZone?: (zoneId: string | null) => void;
+  onDoubleClickZone?: (zoneId: string) => void;
 }) {
   // Fetch media assets for zone rendering
   const { data: allMediaAssets } = useQuery<MediaAsset[]>({
@@ -3933,8 +3952,15 @@ function InteractiveLayoutPreview({
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [dragZoneOverrides, setDragZoneOverrides] = useState<Record<string, Partial<LayoutZone>>>({});
   const [snapLines, setSnapLines] = useState<SnapLine[]>([]);
-  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
+  const [internalSelectedZoneId, setInternalSelectedZoneId] = useState<string | null>(null);
   const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null);
+
+  const isControlled = controlledSelectedZoneId !== undefined;
+  const selectedZoneId = isControlled ? controlledSelectedZoneId : internalSelectedZoneId;
+  const setSelectedZoneId = useCallback((id: string | null) => {
+    if (onSelectZone) onSelectZone(id);
+    if (!isControlled) setInternalSelectedZoneId(id);
+  }, [isControlled, onSelectZone]);
 
   // Compute zones to render: merge props with any active drag overrides
   const zonesToRender = useMemo(() => {
@@ -4283,6 +4309,10 @@ function InteractiveLayoutPreview({
                 e.stopPropagation();
                 setSelectedZoneId(zone.id);
               }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                if (onDoubleClickZone) onDoubleClickZone(zone.id);
+              }}
               onMouseDown={(e) => handleMouseDown(e, zone.id, "move")}
             >
               {isSelected && (
@@ -4317,6 +4347,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
   const [zonesOpen, setZonesOpen] = useState(false);
   const [zoneDialogOpen, setZoneDialogOpen] = useState(false);
   const [editingZoneId, setEditingZoneId] = useState<string | undefined>();
+  const [highlightedZoneId, setHighlightedZoneId] = useState<string | null>(null);
   const { toast } = useToast();
 
   const event = events.find((e) => e.id === layout.eventId);
@@ -4454,6 +4485,12 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
             hasUnsavedChanges={hasUnsavedChanges}
             onSaveAll={handleSaveAll}
             onDiscardAll={handleDiscardAll}
+            selectedZoneId={highlightedZoneId}
+            onSelectZone={setHighlightedZoneId}
+            onDoubleClickZone={(zoneId) => {
+              const zone = zones.find(z => z.id === zoneId);
+              if (zone) handleEditZone(zone);
+            }}
           />
         </div>
         <CardHeader className="flex flex-row items-start justify-between gap-4 pt-0 pb-3">
@@ -4671,6 +4708,8 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                       layout={layout}
                       zone={zone}
                       onEdit={() => handleEditZone(zone)}
+                      isHighlighted={highlightedZoneId === zone.id}
+                      onSelect={() => setHighlightedZoneId(highlightedZoneId === zone.id ? null : zone.id)}
                     />
                   ))}
                 </div>
@@ -4950,6 +4989,10 @@ function LayoutEditorPanel({
   zones,
   onZonesChange,
   hasUnsavedChanges,
+  highlightedZoneId,
+  onSelectZone,
+  editZoneIdTrigger,
+  onEditZoneTriggered,
 }: { 
   layout: LayoutTemplate; 
   events: Event[];
@@ -4957,6 +5000,10 @@ function LayoutEditorPanel({
   zones: LayoutZone[];
   onZonesChange: (zones: LayoutZone[]) => void;
   hasUnsavedChanges: boolean;
+  highlightedZoneId?: string | null;
+  onSelectZone?: (zoneId: string | null) => void;
+  editZoneIdTrigger?: string | null;
+  onEditZoneTriggered?: () => void;
 }) {
   const [zoneDialogOpen, setZoneDialogOpen] = useState(false);
   const [editingZoneId, setEditingZoneId] = useState<string | undefined>();
@@ -4964,6 +5011,14 @@ function LayoutEditorPanel({
   const { toast } = useToast();
   const editingZone = editingZoneId ? zones.find(z => z.id === editingZoneId) : undefined;
   const event = events.find((e) => e.id === layout.eventId);
+
+  useEffect(() => {
+    if (editZoneIdTrigger) {
+      setEditingZoneId(editZoneIdTrigger);
+      setZoneDialogOpen(true);
+      if (onEditZoneTriggered) onEditZoneTriggered();
+    }
+  }, [editZoneIdTrigger]);
 
   // Drag and drop state for zone reordering
   const [draggedZoneId, setDraggedZoneId] = useState<string | null>(null);
@@ -5029,7 +5084,13 @@ function LayoutEditorPanel({
   };
 
   const handleZoneItemClick = (zone: LayoutZone) => {
-    // Prevent edit if we just finished a drag operation or are currently dragging
+    if (justDraggedRef.current || draggedZoneId) return;
+    if (onSelectZone) {
+      onSelectZone(highlightedZoneId === zone.id ? null : zone.id);
+    }
+  };
+
+  const handleZoneItemDoubleClick = (zone: LayoutZone) => {
     if (justDraggedRef.current || draggedZoneId) return;
     handleEditZone(zone);
   };
@@ -5224,6 +5285,7 @@ function LayoutEditorPanel({
               const Icon = zoneTypeIcons[zone.type] || Grid3X3;
               const isDragging = draggedZoneId === zone.id;
               const isDragOver = dragOverZoneId === zone.id;
+              const isHighlighted = highlightedZoneId === zone.id;
               return (
                 <div
                   key={zone.id}
@@ -5235,8 +5297,11 @@ function LayoutEditorPanel({
                   onDrop={(e) => handleDrop(e, zone.id)}
                   className={`flex items-center gap-2 p-3 rounded-lg border hover-elevate cursor-pointer transition-all ${
                     isDragging ? "opacity-50 scale-95" : ""
-                  } ${isDragOver ? "border-primary border-2 bg-primary/5" : ""}`}
+                  } ${isDragOver ? "border-primary border-2 bg-primary/5" : ""} ${
+                    isHighlighted ? "ring-2 ring-cyan-400 border-cyan-400 bg-cyan-400/10" : ""
+                  }`}
                   onClick={() => handleZoneItemClick(zone)}
+                  onDoubleClick={() => handleZoneItemDoubleClick(zone)}
                   data-testid={`zone-item-${zone.id}`}
                 >
                   <div 
@@ -5411,6 +5476,9 @@ function LivePreviewPanel({
   hasUnsavedChanges,
   onSaveAll,
   onDiscardAll,
+  highlightedZoneId,
+  onSelectZone,
+  onDoubleClickZone,
 }: { 
   layout: LayoutTemplate;
   zones: LayoutZone[];
@@ -5418,6 +5486,9 @@ function LivePreviewPanel({
   hasUnsavedChanges: boolean;
   onSaveAll: () => void;
   onDiscardAll: () => void;
+  highlightedZoneId?: string | null;
+  onSelectZone?: (zoneId: string | null) => void;
+  onDoubleClickZone?: (zoneId: string) => void;
 }) {
   return (
     <div className="h-full flex flex-col">
@@ -5427,7 +5498,7 @@ function LivePreviewPanel({
           Interactive Preview
         </h3>
         <p className="text-xs text-muted-foreground mt-1">
-          Click zones to select, drag to move, use handles to resize
+          Click to select, drag to move, double-click to edit settings
         </p>
       </div>
       <div className="flex-1 p-4 flex items-center justify-center bg-muted/30 min-h-0">
@@ -5439,6 +5510,9 @@ function LivePreviewPanel({
             hasUnsavedChanges={hasUnsavedChanges}
             onSaveAll={onSaveAll}
             onDiscardAll={onDiscardAll}
+            selectedZoneId={highlightedZoneId}
+            onSelectZone={onSelectZone}
+            onDoubleClickZone={onDoubleClickZone}
           />
         </div>
       </div>
@@ -5464,6 +5538,8 @@ export default function LayoutsPage() {
   // Draft state for non-destructive editing
   const [draftZones, setDraftZones] = useState<LayoutZone[]>(savedZones);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [highlightedZoneId, setHighlightedZoneId] = useState<string | null>(null);
+  const [editZoneIdTrigger, setEditZoneIdTrigger] = useState<string | null>(null);
   
   // Sync draft zones when layout selection changes or server data updates
   useEffect(() => {
@@ -5476,6 +5552,7 @@ export default function LayoutsPage() {
   useEffect(() => {
     setDraftZones(savedZones);
     setHasUnsavedChanges(false);
+    setHighlightedZoneId(null);
   }, [selectedLayoutId]);
 
   const updateZoneMutation = useMutation({
@@ -5588,6 +5665,10 @@ export default function LayoutsPage() {
                 setHasUnsavedChanges(true);
               }}
               hasUnsavedChanges={hasUnsavedChanges}
+              highlightedZoneId={highlightedZoneId}
+              onSelectZone={setHighlightedZoneId}
+              editZoneIdTrigger={editZoneIdTrigger}
+              onEditZoneTriggered={() => setEditZoneIdTrigger(null)}
             />
           </div>
           <div className="flex-1 min-w-0">
@@ -5598,6 +5679,9 @@ export default function LayoutsPage() {
               hasUnsavedChanges={hasUnsavedChanges}
               onSaveAll={handleSaveAll}
               onDiscardAll={handleDiscardAll}
+              highlightedZoneId={highlightedZoneId}
+              onSelectZone={setHighlightedZoneId}
+              onDoubleClickZone={(zoneId) => setEditZoneIdTrigger(zoneId)}
             />
           </div>
         </div>
