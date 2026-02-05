@@ -5536,7 +5536,7 @@ export default function LayoutsPage() {
 
   return (
     <div className="h-full flex" data-testid="layouts-page">
-      <div className="w-64 border-r flex flex-col">
+      <div className="w-48 min-w-48 flex-shrink-0 border-r flex flex-col">
         <div className="p-4 border-b flex items-center justify-between gap-2">
           <h1 className="font-semibold" data-testid="text-layouts-title">Layouts</h1>
           <CreateLayoutDialog events={events} />
@@ -5556,8 +5556,8 @@ export default function LayoutsPage() {
       </div>
 
       {selectedLayout ? (
-        <div className="flex-1 flex">
-          <div className="w-80 border-r">
+        <div className="flex-1 flex min-w-0">
+          <div className="w-72 min-w-56 flex-shrink border-r overflow-auto">
             <LayoutEditorPanel 
               layout={selectedLayout} 
               events={events}
@@ -5570,7 +5570,7 @@ export default function LayoutsPage() {
               hasUnsavedChanges={hasUnsavedChanges}
             />
           </div>
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             <LivePreviewPanel 
               layout={selectedLayout} 
               zones={draftZones}
