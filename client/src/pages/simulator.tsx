@@ -27,26 +27,10 @@ import {
   AlertTriangle,
   Layers,
   Image,
-  Type,
-  Code,
   RefreshCw,
-  CloudSun,
-  Newspaper,
-  Sun,
-  Cloud,
-  CloudRain,
-  CloudSnow,
-  CloudLightning,
-  CloudFog,
-  CloudDrizzle,
-  Snowflake,
-  Droplets,
-  Wind,
-  Images,
-  QrCode,
 } from "lucide-react";
-import { QRCodeSVG } from "qrcode.react";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
+import { ZoneRenderer, zoneTypeIcons } from "@/components/zone-renderer";
 
 interface SimulatorState {
   isPlaying: boolean;
@@ -69,20 +53,8 @@ function getAspectRatioDimensions(aspectRatio: string, customWidth?: number | nu
   }
 }
 
-const zoneTypeIcons: Record<string, typeof Image> = {
-  media: Image,
-  ticker: Type,
-  clock: Clock,
-  logo: Image,
-  html: Code,
-  weather: CloudSun,
-  news: Newspaper,
-  montage: Images,
-  qrcode: QrCode,
-};
-
-function TickerWidget({ content, speed, animation }: { content?: string; speed?: number; animation?: string }) {
-  const animationDuration = speed || 20;
+// Internal widgets removed - using shared ZoneRenderer from @/components/zone-renderer
+// MARKER_DELETE_START
   const animationType = animation || "scroll-left";
   const displayContent = content || "Welcome to SignageHub • Breaking news and updates scroll here • Stay informed with live content";
   
@@ -1536,11 +1508,6 @@ function ZoneRenderer({
             <span className="text-white/60 ml-1">({playlistName})</span>
           )}
         </div>
-      )}
-    </div>
-  );
-}
-
 function PlayerDisplay({
   screen,
   profile,
