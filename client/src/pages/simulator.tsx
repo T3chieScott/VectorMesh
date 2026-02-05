@@ -118,15 +118,19 @@ function PlayerDisplay({
       if (!containerRef.current) return;
       const containerRect = containerRef.current.getBoundingClientRect();
       
-      // Use actual container dimensions with small padding
-      const availableWidth = containerRect.width - 16;
-      const availableHeight = containerRect.height - 16;
+      // Use actual container dimensions with small padding (no padding in fullscreen)
+      const padding = state.isFullscreen ? 0 : 16;
+      const availableWidth = containerRect.width - padding;
+      const availableHeight = containerRect.height - padding;
       
       if (availableWidth <= 0 || availableHeight <= 0) return;
       
       const scaleX = availableWidth / trueWidth;
       const scaleY = availableHeight / trueHeight;
-      const newScale = Math.min(scaleX, scaleY, 1); // Never scale up beyond 1
+      // In fullscreen mode, allow scaling up to fill the screen
+      // In normal mode, cap at 1x to avoid upscaling pixelated content
+      const maxScale = state.isFullscreen ? Infinity : 1;
+      const newScale = Math.min(scaleX, scaleY, maxScale);
       setScale(Math.max(0.05, newScale)); // Minimum 5% scale
     };
 
