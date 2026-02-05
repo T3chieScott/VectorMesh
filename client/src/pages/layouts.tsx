@@ -4151,25 +4151,30 @@ function InteractiveLayoutPreview({
   );
   const aspectRatioValue = aspectDims.width / aspectDims.height;
 
-  // Calculate preview dimensions to fit height first
-  const previewDimensions = useMemo(() => {
-    if (!containerSize) return null;
+  // Use a fixed reference size for rendering, then scale down with CSS transform
+  // This ensures all text/fonts/elements scale uniformly
+  const REFERENCE_HEIGHT = 720; // Render at 720p equivalent, scale to fit
+  const referenceWidth = REFERENCE_HEIGHT * aspectRatioValue;
+  const referenceHeight = REFERENCE_HEIGHT;
+
+  // Calculate scale factor to fit the reference size into available space
+  const scaleInfo = useMemo(() => {
+    if (!containerSize) return { scale: 1, displayWidth: referenceWidth, displayHeight: referenceHeight };
     
     const availableWidth = containerSize.width;
     const availableHeight = containerSize.height;
     
-    // Calculate dimensions based on fitting to height
-    let previewHeight = availableHeight;
-    let previewWidth = previewHeight * aspectRatioValue;
+    // Calculate scale to fit within available space
+    const scaleX = availableWidth / referenceWidth;
+    const scaleY = availableHeight / referenceHeight;
+    const scale = Math.min(scaleX, scaleY, 1); // Don't scale up beyond 1
     
-    // If width exceeds available space, scale down to fit width instead
-    if (previewWidth > availableWidth) {
-      previewWidth = availableWidth;
-      previewHeight = previewWidth / aspectRatioValue;
-    }
-    
-    return { width: previewWidth, height: previewHeight };
-  }, [containerSize, aspectRatioValue]);
+    return { 
+      scale, 
+      displayWidth: referenceWidth * scale, 
+      displayHeight: referenceHeight * scale 
+    };
+  }, [containerSize, referenceWidth, referenceHeight]);
 
   return (
     <div className="flex flex-col h-full space-y-2">
@@ -4204,17 +4209,29 @@ function InteractiveLayoutPreview({
         ref={wrapperRef}
         className="flex-1 flex items-center justify-center min-h-0"
       >
+        {/* Outer container sized to the scaled dimensions */}
         <div 
-          ref={containerRef}
-          className="relative bg-slate-900 rounded-lg overflow-hidden select-none"
-          style={previewDimensions ? { 
-            width: previewDimensions.width, 
-            height: previewDimensions.height 
-          } : { width: '100%', aspectRatio: `${aspectDims.width} / ${aspectDims.height}` }}
-          onClick={() => setSelectedZoneId(null)}
-          data-testid="interactive-layout-preview"
-          tabIndex={0}
+          style={{ 
+            width: scaleInfo.displayWidth, 
+            height: scaleInfo.displayHeight,
+            overflow: 'hidden',
+            borderRadius: '0.5rem',
+          }}
         >
+          {/* Inner container at reference size, scaled down with transform */}
+          <div 
+            ref={containerRef}
+            className="relative bg-slate-900 select-none"
+            style={{ 
+              width: referenceWidth, 
+              height: referenceHeight,
+              transform: `scale(${scaleInfo.scale})`,
+              transformOrigin: 'top left',
+            }}
+            onClick={() => setSelectedZoneId(null)}
+            data-testid="interactive-layout-preview"
+            tabIndex={0}
+          >
       {snapLines.map((line, i) => (
         <div
           key={i}
@@ -4286,7 +4303,8 @@ function InteractiveLayoutPreview({
           </div>
         );
       })}
-      </div>
+          </div>
+        </div>
       </div>
     </div>
   );
