@@ -183,16 +183,30 @@ function PlayerDisplay({
       {/* Zones */}
       {zones.length > 0 ? (
         zones.map((zone) => (
-          <ZoneRenderer
+          <div
             key={zone.id}
-            zone={zone}
-            media={getZoneMedia(zone.id)}
-            mediaIndex={getZoneMediaIndex(zone.id)}
-            isPlaying={state.isPlaying}
-            showBorder={state.showZoneBorders}
-            playlistName={getPlaylistName(zone.id)}
-            timezone={weatherTimezone}
-          />
+            className="absolute"
+            style={{
+              left: `${zone.x}%`,
+              top: `${zone.y}%`,
+              width: `${zone.width}%`,
+              height: `${zone.height}%`,
+              zIndex: zone.zIndex || 1,
+            }}
+          >
+            <div className="absolute inset-0 overflow-hidden">
+              <ZoneRenderer
+                zone={zone}
+                media={getZoneMedia(zone.id)}
+                mediaIndex={getZoneMediaIndex(zone.id)}
+                isPlaying={state.isPlaying}
+                showBorder={state.showZoneBorders}
+                playlistName={getPlaylistName(zone.id)}
+                timezone={weatherTimezone}
+                fillContainer={true}
+              />
+            </div>
+          </div>
         ))
       ) : layout ? (
         <div className="absolute inset-0 flex items-center justify-center text-white/50">
