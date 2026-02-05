@@ -706,7 +706,8 @@ function ZoneEditorDialog({
           newsRssUrl: zone.newsRssUrl || "",
           newsScrollSpeed: zone.newsScrollSpeed || 50,
           newsItemCount: zone.newsItemCount || 10,
-          newsTextSize: zone.newsTextSize ?? 24,
+          newsTextSize: typeof zone.newsTextSize === 'number' ? zone.newsTextSize : 
+            (zone.newsTextSize === 'small' ? 14 : zone.newsTextSize === 'large' ? 36 : 24),
           textContent: zone.textContent || "",
           textFontSize: zone.textFontSize || "medium",
           textAlign: zone.textAlign || "center",
