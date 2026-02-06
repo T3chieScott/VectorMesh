@@ -1684,14 +1684,17 @@ function ShapeWidget({
   const fill = fillEnabled ? fillColor : "none";
   const strokeDasharray = strokeStyle === "dashed" ? "8,4" : strokeStyle === "dotted" ? "2,4" : undefined;
 
+  const sw = strokeWidth;
+  const half = sw / 2;
+
   const renderShape = () => {
     switch (shapeType) {
       case "line": {
         const lineCoords = {
-          "horizontal": { x1: 5, y1: 50, x2: 95, y2: 50 },
-          "vertical": { x1: 50, y1: 5, x2: 50, y2: 95 },
-          "diagonal-down": { x1: 5, y1: 5, x2: 95, y2: 95 },
-          "diagonal-up": { x1: 5, y1: 95, x2: 95, y2: 5 },
+          "horizontal": { x1: half, y1: 50, x2: 100 - half, y2: 50 },
+          "vertical": { x1: 50, y1: half, x2: 50, y2: 100 - half },
+          "diagonal-down": { x1: half, y1: half, x2: 100 - half, y2: 100 - half },
+          "diagonal-up": { x1: half, y1: 100 - half, x2: 100 - half, y2: half },
         };
         const coords = lineCoords[lineDirection];
         return (
@@ -1699,72 +1702,67 @@ function ShapeWidget({
             x1={coords.x1} y1={coords.y1}
             x2={coords.x2} y2={coords.y2}
             stroke={strokeColor}
-            strokeWidth={strokeWidth}
+            strokeWidth={sw}
             strokeDasharray={strokeDasharray}
             strokeLinecap="round"
           />
         );
       }
       case "square":
-        return (
-          <rect
-            x="10" y="10" width="80" height="80"
-            rx={cornerRadius} ry={cornerRadius}
-            fill={fill} stroke={strokeColor} strokeWidth={strokeWidth}
-            strokeDasharray={strokeDasharray}
-          />
-        );
       case "rectangle":
         return (
           <rect
-            x="5" y="15" width="90" height="70"
+            x={half} y={half}
+            width={100 - sw} height={100 - sw}
             rx={cornerRadius} ry={cornerRadius}
-            fill={fill} stroke={strokeColor} strokeWidth={strokeWidth}
+            fill={fill} stroke={strokeColor} strokeWidth={sw}
             strokeDasharray={strokeDasharray}
           />
         );
       case "circle":
         return (
-          <circle
-            cx="50" cy="50" r="40"
-            fill={fill} stroke={strokeColor} strokeWidth={strokeWidth}
+          <ellipse
+            cx="50" cy="50"
+            rx={50 - half} ry={50 - half}
+            fill={fill} stroke={strokeColor} strokeWidth={sw}
             strokeDasharray={strokeDasharray}
           />
         );
       case "oval":
         return (
           <ellipse
-            cx="50" cy="50" rx="45" ry="30"
-            fill={fill} stroke={strokeColor} strokeWidth={strokeWidth}
+            cx="50" cy="50"
+            rx={50 - half} ry={50 - half}
+            fill={fill} stroke={strokeColor} strokeWidth={sw}
             strokeDasharray={strokeDasharray}
           />
         );
       case "triangle":
         return (
           <polygon
-            points="50,10 90,90 10,90"
-            fill={fill} stroke={strokeColor} strokeWidth={strokeWidth}
+            points={`50,${half} ${100 - half},${100 - half} ${half},${100 - half}`}
+            fill={fill} stroke={strokeColor} strokeWidth={sw}
             strokeDasharray={strokeDasharray}
             strokeLinejoin="round"
           />
         );
       case "arch": {
         const angleRad = (archSpan / 2) * (Math.PI / 180);
-        const r = 40;
+        const r = 50 - half;
         const cx = 50;
-        const cy = 55;
+        const cy = 50;
         const startX = cx - r * Math.sin(angleRad);
-        const startY = cy - r * Math.cos(angleRad);
+        const startY = cy + r * Math.cos(angleRad);
         const endX = cx + r * Math.sin(angleRad);
-        const endY = cy - r * Math.cos(angleRad);
+        const endY = cy + r * Math.cos(angleRad);
         const largeArc = archSpan > 180 ? 1 : 0;
-        const d = `M ${startX} ${startY} A ${r} ${r} 0 ${largeArc} 1 ${endX} ${endY}`;
+        const d = `M ${startX} ${startY} A ${r} ${r} 0 ${largeArc} 0 ${endX} ${endY}`;
         return (
           <path
             d={d}
             fill="none"
             stroke={strokeColor}
-            strokeWidth={strokeWidth}
+            strokeWidth={sw}
             strokeDasharray={strokeDasharray}
             strokeLinecap="round"
           />
@@ -1773,19 +1771,21 @@ function ShapeWidget({
       default:
         return (
           <rect
-            x="5" y="15" width="90" height="70"
-            fill={fill} stroke={strokeColor} strokeWidth={strokeWidth}
+            x={half} y={half}
+            width={100 - sw} height={100 - sw}
+            fill={fill} stroke={strokeColor} strokeWidth={sw}
           />
         );
     }
   };
 
   return (
-    <div className="h-full w-full flex items-center justify-center p-1">
+    <div className="h-full w-full">
       <svg
         viewBox="0 0 100 100"
-        className="w-full h-full"
-        preserveAspectRatio="xMidYMid meet"
+        width="100%"
+        height="100%"
+        preserveAspectRatio="none"
         style={{
           opacity: opacity / 100,
           transform: rotation ? `rotate(${rotation}deg)` : undefined,
