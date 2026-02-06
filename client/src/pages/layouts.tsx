@@ -4497,11 +4497,33 @@ function InteractiveLayoutPreview({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setSelectedZoneId(null);
+        return;
+      }
+
+      if (!selectedZoneId) return;
+      const arrowKeys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+      if (!arrowKeys.includes(e.key)) return;
+
+      e.preventDefault();
+      const step = e.shiftKey ? 0.5 : 1;
+      const zone = zones.find(z => z.id === selectedZoneId);
+      if (!zone) return;
+
+      let { x, y } = zone;
+      switch (e.key) {
+        case "ArrowUp":    y = Math.max(0, y - step); break;
+        case "ArrowDown":  y = Math.min(100 - zone.height, y + step); break;
+        case "ArrowLeft":  x = Math.max(0, x - step); break;
+        case "ArrowRight": x = Math.min(100 - zone.width, x + step); break;
+      }
+
+      if (x !== zone.x || y !== zone.y) {
+        onZoneUpdate(selectedZoneId, { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 });
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [selectedZoneId, zones, onZoneUpdate]);
 
   // Measure wrapper container to fit height
   useEffect(() => {
@@ -6027,7 +6049,7 @@ function LivePreviewPanel({
           Interactive Preview
         </h3>
         <p className="text-xs text-muted-foreground mt-1">
-          Click to select, drag to move, double-click to edit settings
+          Click to select, drag to move, arrow keys to nudge, double-click to edit
         </p>
       </div>
       <div className="flex-1 p-4 flex items-center justify-center bg-muted/30 min-h-0">
