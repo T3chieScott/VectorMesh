@@ -82,6 +82,14 @@ import {
   ChevronLeft,
   PanelLeftOpen,
   Calendar,
+  AlignHorizontalJustifyStart,
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalJustifyEnd,
+  AlignVerticalJustifyStart,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  AlignHorizontalSpaceAround,
+  AlignVerticalSpaceAround,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -4833,6 +4841,7 @@ type DragState = {
   startX: number;
   startY: number;
   startZone: { x: number; y: number; width: number; height: number };
+  multiDragStartZones?: Record<string, { x: number; y: number; width: number; height: number }>;
 };
 
 type SnapLine = {
@@ -4853,6 +4862,8 @@ function InteractiveLayoutPreview({
   selectedZoneId: controlledSelectedZoneId,
   onSelectZone,
   onDoubleClickZone,
+  selectedZoneIds: controlledSelectedZoneIds,
+  onSelectedZoneIdsChange,
 }: {
   layout: LayoutTemplate;
   zones: LayoutZone[];
@@ -4863,6 +4874,8 @@ function InteractiveLayoutPreview({
   selectedZoneId?: string | null;
   onSelectZone?: (zoneId: string | null) => void;
   onDoubleClickZone?: (zoneId: string) => void;
+  selectedZoneIds?: Set<string>;
+  onSelectedZoneIdsChange?: (ids: Set<string>) => void;
 }) {
   // Fetch media assets for zone rendering
   const { data: allMediaAssets } = useQuery<MediaAsset[]>({
@@ -4875,14 +4888,35 @@ function InteractiveLayoutPreview({
   const [dragZoneOverrides, setDragZoneOverrides] = useState<Record<string, Partial<LayoutZone>>>({});
   const [snapLines, setSnapLines] = useState<SnapLine[]>([]);
   const [internalSelectedZoneId, setInternalSelectedZoneId] = useState<string | null>(null);
+  const [internalSelectedZoneIds, setInternalSelectedZoneIds] = useState<Set<string>>(new Set());
   const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null);
 
   const isControlled = controlledSelectedZoneId !== undefined;
   const selectedZoneId = isControlled ? controlledSelectedZoneId : internalSelectedZoneId;
+  const selectedZoneIds = controlledSelectedZoneIds || internalSelectedZoneIds;
+
   const setSelectedZoneId = useCallback((id: string | null) => {
     if (onSelectZone) onSelectZone(id);
     if (!isControlled) setInternalSelectedZoneId(id);
-  }, [isControlled, onSelectZone]);
+    const newIds = id ? new Set([id]) : new Set<string>();
+    if (onSelectedZoneIdsChange) onSelectedZoneIdsChange(newIds);
+    else setInternalSelectedZoneIds(newIds);
+  }, [isControlled, onSelectZone, onSelectedZoneIdsChange]);
+
+  const toggleZoneSelection = useCallback((zoneId: string) => {
+    const newIds = new Set(selectedZoneIds);
+    if (newIds.has(zoneId)) {
+      newIds.delete(zoneId);
+    } else {
+      newIds.add(zoneId);
+    }
+    const idsArray = Array.from(newIds);
+    const primaryId = idsArray.length > 0 ? idsArray[idsArray.length - 1] : null;
+    if (onSelectZone) onSelectZone(primaryId);
+    if (!isControlled) setInternalSelectedZoneId(primaryId);
+    if (onSelectedZoneIdsChange) onSelectedZoneIdsChange(newIds);
+    else setInternalSelectedZoneIds(newIds);
+  }, [selectedZoneIds, isControlled, onSelectZone, onSelectedZoneIdsChange]);
 
   // Compute zones to render: merge props with any active drag overrides
   const zonesToRender = useMemo(() => {
@@ -4902,30 +4936,33 @@ function InteractiveLayoutPreview({
         return;
       }
 
-      if (!selectedZoneId) return;
+      const zonesToMove = selectedZoneIds.size > 1
+        ? zones.filter(z => selectedZoneIds.has(z.id))
+        : selectedZoneId ? zones.filter(z => z.id === selectedZoneId) : [];
+
+      if (zonesToMove.length === 0) return;
       const arrowKeys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
       if (!arrowKeys.includes(e.key)) return;
 
       e.preventDefault();
       const step = e.shiftKey ? 0.5 : 1;
-      const zone = zones.find(z => z.id === selectedZoneId);
-      if (!zone) return;
 
-      let { x, y } = zone;
-      switch (e.key) {
-        case "ArrowUp":    y = Math.max(0, y - step); break;
-        case "ArrowDown":  y = Math.min(100 - zone.height, y + step); break;
-        case "ArrowLeft":  x = Math.max(0, x - step); break;
-        case "ArrowRight": x = Math.min(100 - zone.width, x + step); break;
-      }
-
-      if (x !== zone.x || y !== zone.y) {
-        onZoneUpdate(selectedZoneId, { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 });
+      for (const zone of zonesToMove) {
+        let { x, y } = zone;
+        switch (e.key) {
+          case "ArrowUp":    y = Math.max(0, y - step); break;
+          case "ArrowDown":  y = Math.min(100 - zone.height, y + step); break;
+          case "ArrowLeft":  x = Math.max(0, x - step); break;
+          case "ArrowRight": x = Math.min(100 - zone.width, x + step); break;
+        }
+        if (x !== zone.x || y !== zone.y) {
+          onZoneUpdate(zone.id, { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 });
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedZoneId, zones, onZoneUpdate]);
+  }, [selectedZoneId, selectedZoneIds, zones, onZoneUpdate]);
 
   // Measure wrapper container to fit height
   useEffect(() => {
@@ -4980,7 +5017,21 @@ function InteractiveLayoutPreview({
     const zone = zonesToRender.find(z => z.id === zoneId);
     if (!zone || !containerRef.current) return;
 
-    setSelectedZoneId(zoneId);
+    if (!e.shiftKey) {
+      if (!selectedZoneIds.has(zoneId)) {
+        setSelectedZoneId(zoneId);
+      }
+    }
+
+    const multiDragZones = type === "move" && selectedZoneIds.has(zoneId) && selectedZoneIds.size > 1
+      ? Object.fromEntries(
+          Array.from(selectedZoneIds).map(id => {
+            const z = zonesToRender.find(zn => zn.id === id)!;
+            return [id, { x: z.x, y: z.y, width: z.width, height: z.height }];
+          }).filter(([, z]) => z)
+        )
+      : undefined;
+
     setDragState({
       zoneId,
       type,
@@ -4988,8 +5039,9 @@ function InteractiveLayoutPreview({
       startX: e.clientX,
       startY: e.clientY,
       startZone: { x: zone.x, y: zone.y, width: zone.width, height: zone.height },
+      multiDragStartZones: multiDragZones,
     });
-  }, [zonesToRender]);
+  }, [zonesToRender, selectedZoneIds]);
 
   const handleMouseMove = useCallback((e: MouseEvent) => {
     if (!dragState || !containerRef.current) return;
@@ -5038,8 +5090,36 @@ function InteractiveLayoutPreview({
         newY = bottomSnap.value - newHeight;
         newSnapLines.push({ type: "horizontal", position: bottomSnap.value, isCenter: bottomSnap.value === 50 });
       }
+
+      if (dragState.multiDragStartZones) {
+        const actualDeltaX = newX - dragState.startZone.x;
+        const actualDeltaY = newY - dragState.startZone.y;
+        const multiOverrides: Record<string, Partial<LayoutZone>> = {};
+        for (const [id, startZone] of Object.entries(dragState.multiDragStartZones)) {
+          if (id === dragState.zoneId) continue;
+          multiOverrides[id] = {
+            x: Math.round(Math.max(0, Math.min(100 - startZone.width, startZone.x + actualDeltaX))),
+            y: Math.round(Math.max(0, Math.min(100 - startZone.height, startZone.y + actualDeltaY))),
+            width: startZone.width,
+            height: startZone.height,
+          };
+        }
+        setSnapLines(newSnapLines);
+        setDragZoneOverrides(prev => ({
+          ...prev,
+          ...multiOverrides,
+          [dragState.zoneId]: {
+            x: Math.round(newX),
+            y: Math.round(newY),
+            width: Math.round(newWidth),
+            height: Math.round(newHeight),
+          },
+        }));
+        return;
+      }
     } else if (dragState.type === "resize" && dragState.handle) {
       const handle = dragState.handle;
+      const aspectRatio = dragState.startZone.width / dragState.startZone.height;
 
       if (handle.includes("w")) {
         const proposedX = dragState.startZone.x + deltaXPercent;
@@ -5067,6 +5147,57 @@ function InteractiveLayoutPreview({
         newHeight = Math.max(1, Math.min(100 - newY, snap.value - newY));
         if (snap.snapped) newSnapLines.push({ type: "horizontal", position: snap.value });
       }
+
+      if (e.shiftKey) {
+        const isCorner = handle.length === 2;
+        const isHorizontalEdge = handle === "e" || handle === "w";
+        const isVerticalEdge = handle === "n" || handle === "s";
+
+        if (isCorner) {
+          const widthDelta = Math.abs(newWidth - dragState.startZone.width);
+          const heightDelta = Math.abs(newHeight - dragState.startZone.height);
+          if (widthDelta >= heightDelta) {
+            newHeight = newWidth / aspectRatio;
+          } else {
+            newWidth = newHeight * aspectRatio;
+          }
+          if (handle.includes("n")) {
+            newY = dragState.startZone.y + dragState.startZone.height - newHeight;
+          }
+          if (handle.includes("w")) {
+            newX = dragState.startZone.x + dragState.startZone.width - newWidth;
+          }
+        } else if (isHorizontalEdge) {
+          newHeight = newWidth / aspectRatio;
+          newY = dragState.startZone.y + (dragState.startZone.height - newHeight) / 2;
+        } else if (isVerticalEdge) {
+          newWidth = newHeight * aspectRatio;
+          newX = dragState.startZone.x + (dragState.startZone.width - newWidth) / 2;
+        }
+
+        if (newX < 0) {
+          newX = 0;
+          const maxW = handle.includes("w") ? dragState.startZone.x + dragState.startZone.width : 100;
+          newWidth = Math.min(newWidth, maxW);
+          newHeight = newWidth / aspectRatio;
+        }
+        if (newY < 0) {
+          newY = 0;
+          const maxH = handle.includes("n") ? dragState.startZone.y + dragState.startZone.height : 100;
+          newHeight = Math.min(newHeight, maxH);
+          newWidth = newHeight * aspectRatio;
+        }
+        if (newX + newWidth > 100) {
+          newWidth = 100 - newX;
+          newHeight = newWidth / aspectRatio;
+        }
+        if (newY + newHeight > 100) {
+          newHeight = 100 - newY;
+          newWidth = newHeight * aspectRatio;
+        }
+        newWidth = Math.max(1, newWidth);
+        newHeight = Math.max(1, newHeight);
+      }
     }
 
     setSnapLines(newSnapLines);
@@ -5083,9 +5214,15 @@ function InteractiveLayoutPreview({
 
   const handleMouseUp = useCallback(() => {
     if (dragState) {
-      const override = dragZoneOverrides[dragState.zoneId];
-      if (override) {
-        onZoneUpdate(dragState.zoneId, override);
+      if (dragState.multiDragStartZones && Object.keys(dragZoneOverrides).length > 0) {
+        for (const [id, override] of Object.entries(dragZoneOverrides)) {
+          onZoneUpdate(id, override);
+        }
+      } else {
+        const override = dragZoneOverrides[dragState.zoneId];
+        if (override) {
+          onZoneUpdate(dragState.zoneId, override);
+        }
       }
     }
     setDragState(null);
@@ -5217,8 +5354,9 @@ function InteractiveLayoutPreview({
       
       {zonesToRender.map((zone) => {
         const Icon = zoneTypeIcons[zone.type] || Grid3X3;
-        const isSelected = selectedZoneId === zone.id;
-        const isDragging = dragState?.zoneId === zone.id;
+        const isSelected = selectedZoneId === zone.id || selectedZoneIds.has(zone.id);
+        const isMultiSelected = selectedZoneIds.size > 1 && selectedZoneIds.has(zone.id);
+        const isDragging = dragState?.zoneId === zone.id || (dragState?.multiDragStartZones && zone.id in dragState.multiDragStartZones);
         
         return (
           <div
@@ -5260,7 +5398,11 @@ function InteractiveLayoutPreview({
                   : undefined}
               onClick={(e) => {
                 e.stopPropagation();
-                setSelectedZoneId(zone.id);
+                if (e.shiftKey) {
+                  toggleZoneSelection(zone.id);
+                } else {
+                  setSelectedZoneId(zone.id);
+                }
               }}
               onDoubleClick={(e) => {
                 e.stopPropagation();
@@ -5276,7 +5418,7 @@ function InteractiveLayoutPreview({
               )}
             </div>
             
-            {isSelected && resizeHandles.map(({ position, cursor, style }) => (
+            {isSelected && !isMultiSelected && resizeHandles.map(({ position, cursor, style }) => (
               <div
                 key={position}
                 className="absolute w-3 h-3 bg-cyan-400 border-2 border-white rounded-sm hover:bg-cyan-300 z-20"
@@ -5949,6 +6091,7 @@ function LayoutEditorPanel({
   showLayoutList,
   onToggleLayoutList,
   onBackToList,
+  selectedZoneIds,
 }: { 
   layout: LayoutTemplate; 
   events: Event[];
@@ -5963,6 +6106,7 @@ function LayoutEditorPanel({
   showLayoutList?: boolean;
   onToggleLayoutList?: () => void;
   onBackToList?: () => void;
+  selectedZoneIds?: Set<string>;
 }) {
   const [zoneDialogOpen, setZoneDialogOpen] = useState(false);
   const [editingZoneId, setEditingZoneId] = useState<string | undefined>();
@@ -6267,7 +6411,7 @@ function LayoutEditorPanel({
               const Icon = zoneTypeIcons[zone.type] || Grid3X3;
               const isDragging = draggedZoneId === zone.id;
               const isDragOver = dragOverZoneId === zone.id;
-              const isHighlighted = highlightedZoneId === zone.id;
+              const isHighlighted = highlightedZoneId === zone.id || (selectedZoneIds?.has(zone.id) ?? false);
               return (
                 <div
                   key={zone.id}
@@ -6465,6 +6609,8 @@ function LivePreviewPanel({
   highlightedZoneId,
   onSelectZone,
   onDoubleClickZone,
+  selectedZoneIds,
+  onSelectedZoneIdsChange,
 }: { 
   layout: LayoutTemplate;
   zones: LayoutZone[];
@@ -6475,7 +6621,80 @@ function LivePreviewPanel({
   highlightedZoneId?: string | null;
   onSelectZone?: (zoneId: string | null) => void;
   onDoubleClickZone?: (zoneId: string) => void;
+  selectedZoneIds: Set<string>;
+  onSelectedZoneIdsChange: (ids: Set<string>) => void;
 }) {
+  const selectedZones = zones.filter(z => selectedZoneIds.has(z.id));
+
+  const alignZones = (alignment: "left" | "center-h" | "right" | "top" | "center-v" | "bottom" | "distribute-h" | "distribute-v") => {
+    if (selectedZones.length < 2) return;
+
+    switch (alignment) {
+      case "left": {
+        const minX = Math.min(...selectedZones.map(z => z.x));
+        selectedZones.forEach(z => onZoneUpdate(z.id, { x: minX }));
+        break;
+      }
+      case "center-h": {
+        const centers = selectedZones.map(z => z.x + z.width / 2);
+        const avgCenter = centers.reduce((a, b) => a + b, 0) / centers.length;
+        selectedZones.forEach(z => onZoneUpdate(z.id, { x: Math.round((avgCenter - z.width / 2) * 10) / 10 }));
+        break;
+      }
+      case "right": {
+        const maxRight = Math.max(...selectedZones.map(z => z.x + z.width));
+        selectedZones.forEach(z => onZoneUpdate(z.id, { x: Math.round((maxRight - z.width) * 10) / 10 }));
+        break;
+      }
+      case "top": {
+        const minY = Math.min(...selectedZones.map(z => z.y));
+        selectedZones.forEach(z => onZoneUpdate(z.id, { y: minY }));
+        break;
+      }
+      case "center-v": {
+        const centers = selectedZones.map(z => z.y + z.height / 2);
+        const avgCenter = centers.reduce((a, b) => a + b, 0) / centers.length;
+        selectedZones.forEach(z => onZoneUpdate(z.id, { y: Math.round((avgCenter - z.height / 2) * 10) / 10 }));
+        break;
+      }
+      case "bottom": {
+        const maxBottom = Math.max(...selectedZones.map(z => z.y + z.height));
+        selectedZones.forEach(z => onZoneUpdate(z.id, { y: Math.round((maxBottom - z.height) * 10) / 10 }));
+        break;
+      }
+      case "distribute-h": {
+        if (selectedZones.length < 3) return;
+        const sorted = [...selectedZones].sort((a, b) => a.x - b.x);
+        const totalWidth = sorted.reduce((sum, z) => sum + z.width, 0);
+        const firstLeft = sorted[0].x;
+        const lastRight = sorted[sorted.length - 1].x + sorted[sorted.length - 1].width;
+        const totalSpace = lastRight - firstLeft - totalWidth;
+        const gap = totalSpace / (sorted.length - 1);
+        let currentX = sorted[0].x + sorted[0].width + gap;
+        for (let i = 1; i < sorted.length - 1; i++) {
+          onZoneUpdate(sorted[i].id, { x: Math.round(currentX * 10) / 10 });
+          currentX += sorted[i].width + gap;
+        }
+        break;
+      }
+      case "distribute-v": {
+        if (selectedZones.length < 3) return;
+        const sorted = [...selectedZones].sort((a, b) => a.y - b.y);
+        const totalHeight = sorted.reduce((sum, z) => sum + z.height, 0);
+        const firstTop = sorted[0].y;
+        const lastBottom = sorted[sorted.length - 1].y + sorted[sorted.length - 1].height;
+        const totalSpace = lastBottom - firstTop - totalHeight;
+        const gap = totalSpace / (sorted.length - 1);
+        let currentY = sorted[0].y + sorted[0].height + gap;
+        for (let i = 1; i < sorted.length - 1; i++) {
+          onZoneUpdate(sorted[i].id, { y: Math.round(currentY * 10) / 10 });
+          currentY += sorted[i].height + gap;
+        }
+        break;
+      }
+    }
+  };
+
   return (
     <div className="h-full flex flex-col">
       <div className="p-4 border-b">
@@ -6484,8 +6703,43 @@ function LivePreviewPanel({
           Interactive Preview
         </h3>
         <p className="text-xs text-muted-foreground mt-1">
-          Click to select, drag to move, arrow keys to nudge, double-click to edit
+          Click to select, drag to move, Shift+click to multi-select, double-click to edit
         </p>
+        {selectedZones.length >= 2 && (
+          <div className="flex items-center gap-1 mt-2 flex-wrap" data-testid="alignment-toolbar">
+            <span className="text-xs text-muted-foreground mr-1">{selectedZones.length} selected:</span>
+            <Button variant="outline" size="icon" onClick={() => alignZones("left")} title="Align left" data-testid="button-align-left">
+              <AlignHorizontalJustifyStart className="h-3.5 w-3.5" />
+            </Button>
+            <Button variant="outline" size="icon" onClick={() => alignZones("center-h")} title="Align center horizontally" data-testid="button-align-center-h">
+              <AlignHorizontalJustifyCenter className="h-3.5 w-3.5" />
+            </Button>
+            <Button variant="outline" size="icon" onClick={() => alignZones("right")} title="Align right" data-testid="button-align-right">
+              <AlignHorizontalJustifyEnd className="h-3.5 w-3.5" />
+            </Button>
+            <div className="w-px h-5 bg-border mx-0.5" />
+            <Button variant="outline" size="icon" onClick={() => alignZones("top")} title="Align top" data-testid="button-align-top">
+              <AlignVerticalJustifyStart className="h-3.5 w-3.5" />
+            </Button>
+            <Button variant="outline" size="icon" onClick={() => alignZones("center-v")} title="Align center vertically" data-testid="button-align-center-v">
+              <AlignVerticalJustifyCenter className="h-3.5 w-3.5" />
+            </Button>
+            <Button variant="outline" size="icon" onClick={() => alignZones("bottom")} title="Align bottom" data-testid="button-align-bottom">
+              <AlignVerticalJustifyEnd className="h-3.5 w-3.5" />
+            </Button>
+            {selectedZones.length >= 3 && (
+              <>
+                <div className="w-px h-5 bg-border mx-0.5" />
+                <Button variant="outline" size="icon" onClick={() => alignZones("distribute-h")} title="Distribute horizontally" data-testid="button-distribute-h">
+                  <AlignHorizontalSpaceAround className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant="outline" size="icon" onClick={() => alignZones("distribute-v")} title="Distribute vertically" data-testid="button-distribute-v">
+                  <AlignVerticalSpaceAround className="h-3.5 w-3.5" />
+                </Button>
+              </>
+            )}
+          </div>
+        )}
       </div>
       <div className="flex-1 p-4 flex items-start justify-center bg-muted/30 min-h-0">
         <div className="w-full h-full">
@@ -6499,6 +6753,8 @@ function LivePreviewPanel({
             selectedZoneId={highlightedZoneId}
             onSelectZone={onSelectZone}
             onDoubleClickZone={onDoubleClickZone}
+            selectedZoneIds={selectedZoneIds}
+            onSelectedZoneIdsChange={onSelectedZoneIdsChange}
           />
         </div>
       </div>
@@ -6527,6 +6783,7 @@ export default function LayoutsPage() {
   const [highlightedZoneId, setHighlightedZoneId] = useState<string | null>(null);
   const [editZoneIdTrigger, setEditZoneIdTrigger] = useState<string | null>(null);
   const [showLayoutList, setShowLayoutList] = useState(true);
+  const [selectedZoneIds, setSelectedZoneIds] = useState<Set<string>>(new Set());
   
   // Sync draft zones when layout selection changes or server data updates
   useEffect(() => {
@@ -6540,6 +6797,7 @@ export default function LayoutsPage() {
     setDraftZones(savedZones);
     setHasUnsavedChanges(false);
     setHighlightedZoneId(null);
+    setSelectedZoneIds(new Set());
   }, [selectedLayoutId]);
 
   const updateZoneMutation = useMutation({
@@ -6667,6 +6925,7 @@ export default function LayoutsPage() {
               onBackToList={() => {
                 setShowLayoutList(true);
               }}
+              selectedZoneIds={selectedZoneIds}
             />
           </div>
           <div className="flex-1 min-w-0 overflow-hidden h-full">
@@ -6680,6 +6939,8 @@ export default function LayoutsPage() {
               highlightedZoneId={highlightedZoneId}
               onSelectZone={setHighlightedZoneId}
               onDoubleClickZone={(zoneId) => setEditZoneIdTrigger(zoneId)}
+              selectedZoneIds={selectedZoneIds}
+              onSelectedZoneIdsChange={setSelectedZoneIds}
             />
           </div>
         </div>
