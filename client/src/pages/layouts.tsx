@@ -6182,8 +6182,8 @@ export default function LayoutsPage() {
       </div>
 
       {selectedLayout ? (
-        <div className="flex-1 flex min-w-0">
-          <div className="w-72 min-w-56 flex-shrink border-r overflow-auto">
+        <div className="flex-1 flex min-w-0 overflow-hidden">
+          <div className="w-72 flex-shrink-0 border-r overflow-auto">
             <LayoutEditorPanel 
               layout={selectedLayout} 
               events={events}
