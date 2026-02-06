@@ -949,21 +949,23 @@ function ShaderWidget({
 
 function TextWidget({ 
   content,
-  fontSize = "medium",
+  fontSize = 24,
   align = "center",
   verticalAlign = "middle",
 }: { 
   content?: string;
-  fontSize?: string;
+  fontSize?: number | string;
   align?: string;
   verticalAlign?: string;
 }) {
-  const fontSizeMap: Record<string, string> = {
-    small: "max(12px, 3cqh)",
-    medium: "max(16px, 5cqh)",
-    large: "max(24px, 8cqh)",
-    xlarge: "max(32px, 12cqh)",
+  const legacySizeMap: Record<string, number> = {
+    small: 14,
+    medium: 24,
+    large: 36,
+    xlarge: 48,
   };
+
+  const resolvedSize = typeof fontSize === 'number' ? fontSize : (legacySizeMap[fontSize] || 24);
 
   const alignMap: Record<string, string> = {
     left: "flex-start",
@@ -983,7 +985,7 @@ function TextWidget({
       style={{
         justifyContent: alignMap[align] || "center",
         alignItems: verticalAlignMap[verticalAlign] || "center",
-        fontSize: fontSizeMap[fontSize] || fontSizeMap.medium,
+        fontSize: `${resolvedSize}px`,
         textAlign: align as "left" | "center" | "right",
       }}
     >
@@ -1030,11 +1032,13 @@ function WeatherWidget({
   lng,
   unit = "celsius",
   location,
+  fontSize = 24,
 }: { 
   lat?: number;
   lng?: number;
   unit?: string;
   location?: string;
+  fontSize?: number;
 }) {
   const [weather, setWeather] = useState<{
     temperature: number;
@@ -1116,14 +1120,17 @@ function WeatherWidget({
 
   const WeatherIcon = weatherIcons[weather.condition] || Cloud;
 
+  const iconSize = Math.max(16, fontSize * 1.2);
+  const locationSize = Math.max(10, fontSize * 0.5);
+
   return (
     <div className="h-full w-full flex flex-col items-center justify-center text-center p-1">
-      <WeatherIcon className="mb-1" style={{ width: "max(16px, 6cqh)", height: "max(16px, 6cqh)" }} />
-      <div className="font-bold" style={{ fontSize: "max(14px, 6cqh)" }}>
+      <WeatherIcon className="mb-1" style={{ width: `${iconSize}px`, height: `${iconSize}px` }} />
+      <div className="font-bold" style={{ fontSize: `${fontSize}px` }}>
         {weather.temperature}°{unit === "fahrenheit" ? "F" : "C"}
       </div>
       {location && (
-        <div className="text-muted-foreground truncate w-full" style={{ fontSize: "max(8px, 2cqh)" }}>
+        <div className="text-muted-foreground truncate w-full" style={{ fontSize: `${locationSize}px` }}>
           {location.split(",")[0]}
         </div>
       )}
@@ -1860,6 +1867,7 @@ export function ZoneRenderer({
             lng={zone.weatherLng} 
             unit={zone.weatherUnit}
             location={zone.weatherLocation}
+            fontSize={zone.weatherFontSize}
           />
         );
       case "news":

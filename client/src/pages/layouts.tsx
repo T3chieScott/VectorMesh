@@ -208,6 +208,7 @@ const zoneFormSchema = z.object({
   weatherLat: z.number().optional(),
   weatherLng: z.number().optional(),
   weatherUnit: z.enum(["celsius", "fahrenheit"]).optional(),
+  weatherFontSize: z.number().min(12).max(120).optional(),
   // News widget configuration
   newsRssUrl: z.string().optional(),
   newsScrollSpeed: z.number().min(1).max(200).optional(),
@@ -215,7 +216,7 @@ const zoneFormSchema = z.object({
   newsTextSize: z.number().min(12).max(72).optional(),
   // Text widget configuration
   textContent: z.string().optional(),
-  textFontSize: z.enum(["small", "medium", "large", "xlarge"]).optional(),
+  textFontSize: z.union([z.number().min(12).max(120), z.enum(["small", "medium", "large", "xlarge"])]).optional(),
   // Ticker widget configuration
   tickerScrollSpeed: z.number().min(5).max(60).optional(),
   tickerAnimation: z.enum(["scroll-left", "scroll-up", "typewriter", "fade", "slide-in"]).optional(),
@@ -614,12 +615,13 @@ function ZoneEditorDialog({
       weatherLat: undefined,
       weatherLng: undefined,
       weatherUnit: "celsius",
+      weatherFontSize: 24,
       newsRssUrl: "",
       newsScrollSpeed: 50,
       newsItemCount: 10,
       newsTextSize: 24,
       textContent: "",
-      textFontSize: "medium",
+      textFontSize: 24,
       textAlign: "center",
       textVerticalAlign: "middle",
       tickerFontSize: 24,
@@ -741,13 +743,15 @@ function ZoneEditorDialog({
           weatherLat: zone.weatherLat,
           weatherLng: zone.weatherLng,
           weatherUnit: zone.weatherUnit || "celsius",
+          weatherFontSize: zone.weatherFontSize ?? 24,
           newsRssUrl: zone.newsRssUrl || "",
           newsScrollSpeed: zone.newsScrollSpeed || 50,
           newsItemCount: zone.newsItemCount || 10,
           newsTextSize: typeof zone.newsTextSize === 'number' ? zone.newsTextSize : 
             (zone.newsTextSize === 'small' ? 14 : zone.newsTextSize === 'large' ? 36 : 24),
           textContent: zone.textContent || "",
-          textFontSize: zone.textFontSize || "medium",
+          textFontSize: typeof zone.textFontSize === 'number' ? zone.textFontSize :
+            (zone.textFontSize === 'small' ? 14 : zone.textFontSize === 'large' ? 36 : zone.textFontSize === 'xlarge' ? 48 : 24),
           textAlign: zone.textAlign || "center",
           textVerticalAlign: zone.textVerticalAlign || "middle",
           tickerFontSize: zone.tickerFontSize ?? 24,
@@ -865,12 +869,13 @@ function ZoneEditorDialog({
           weatherLat: undefined,
           weatherLng: undefined,
           weatherUnit: "celsius",
+          weatherFontSize: 24,
           newsRssUrl: "",
           newsScrollSpeed: 50,
           newsItemCount: 10,
           newsTextSize: 24,
           textContent: "",
-          textFontSize: "medium",
+          textFontSize: 24,
           textAlign: "center",
           textVerticalAlign: "middle",
           tickerFontSize: 24,
@@ -2001,6 +2006,35 @@ function ZoneEditorDialog({
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={form.control}
+                  name="weatherFontSize"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Text Size</FormLabel>
+                      <FormControl>
+                        <div className="flex items-center gap-4">
+                          <Slider
+                            value={[field.value ?? 24]}
+                            onValueChange={([val]) => field.onChange(val)}
+                            min={12}
+                            max={120}
+                            step={1}
+                            className="flex-1"
+                            data-testid="slider-weather-font-size"
+                          />
+                          <span className="text-sm text-muted-foreground w-16">
+                            {field.value ?? 24}px
+                          </span>
+                        </div>
+                      </FormControl>
+                      <FormDescription>
+                        Font size for the weather display
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
             )}
 
@@ -2249,33 +2283,39 @@ function ZoneEditorDialog({
                     </FormItem>
                   )}
                 />
-                <div className="grid grid-cols-3 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="textFontSize"
-                    render={({ field }) => (
+                <FormField
+                  control={form.control}
+                  name="textFontSize"
+                  render={({ field }) => {
+                    const numVal = typeof field.value === 'number' ? field.value : 24;
+                    return (
                       <FormItem>
-                        <FormLabel>Font Size</FormLabel>
-                        <Select
-                          value={field.value || "medium"}
-                          onValueChange={field.onChange}
-                        >
-                          <FormControl>
-                            <SelectTrigger data-testid="select-text-font-size">
-                              <SelectValue placeholder="Select size" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="small">Small</SelectItem>
-                            <SelectItem value="medium">Medium</SelectItem>
-                            <SelectItem value="large">Large</SelectItem>
-                            <SelectItem value="xlarge">Extra Large</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <FormLabel>Text Size</FormLabel>
+                        <FormControl>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[numVal]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={12}
+                              max={120}
+                              step={1}
+                              className="flex-1"
+                              data-testid="slider-text-font-size"
+                            />
+                            <span className="text-sm text-muted-foreground w-16">
+                              {numVal}px
+                            </span>
+                          </div>
+                        </FormControl>
+                        <FormDescription>
+                          Font size for the static text display
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
-                    )}
-                  />
+                    );
+                  }}
+                />
+                <div className="grid grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
                     name="textAlign"

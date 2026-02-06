@@ -268,6 +268,7 @@ export interface LayoutZone {
   weatherLat?: number;
   weatherLng?: number;
   weatherUnit?: "celsius" | "fahrenheit";
+  weatherFontSize?: number;  // Font size in pixels for weather display (default 24)
   // News widget configuration
   newsRssUrl?: string;
   newsScrollSpeed?: number;
@@ -275,7 +276,7 @@ export interface LayoutZone {
   newsTextSize?: number;
   // Text widget configuration
   textContent?: string;
-  textFontSize?: "small" | "medium" | "large" | "xlarge";
+  textFontSize?: number | "small" | "medium" | "large" | "xlarge";  // Font size in pixels (default 24), legacy enum values converted to numeric
   // Ticker widget configuration
   tickerScrollSpeed?: number;  // Duration in seconds for one complete scroll cycle
   tickerAnimation?: "scroll-left" | "scroll-up" | "typewriter" | "fade" | "slide-in";
