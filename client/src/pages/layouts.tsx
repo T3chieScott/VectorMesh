@@ -6472,7 +6472,7 @@ function LivePreviewPanel({
           Click to select, drag to move, arrow keys to nudge, double-click to edit
         </p>
       </div>
-      <div className="flex-1 p-4 flex items-center justify-center bg-muted/30 min-h-0">
+      <div className="flex-1 p-4 flex items-start justify-center bg-muted/30 min-h-0">
         <div className="w-full h-full">
           <InteractiveLayoutPreview
             layout={layout}
