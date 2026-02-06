@@ -5979,6 +5979,17 @@ function LayoutEditorPanel({
     }
   }, [editZoneIdTrigger]);
 
+  const zoneItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  useEffect(() => {
+    if (highlightedZoneId) {
+      const el = zoneItemRefs.current.get(highlightedZoneId);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  }, [highlightedZoneId]);
+
   // Drag and drop state for zone reordering
   const [draggedZoneId, setDraggedZoneId] = useState<string | null>(null);
   const [dragOverZoneId, setDragOverZoneId] = useState<string | null>(null);
@@ -6260,6 +6271,10 @@ function LayoutEditorPanel({
               return (
                 <div
                   key={zone.id}
+                  ref={(el) => {
+                    if (el) zoneItemRefs.current.set(zone.id, el);
+                    else zoneItemRefs.current.delete(zone.id);
+                  }}
                   draggable
                   onDragStart={(e) => handleDragStart(e, zone.id)}
                   onDragOver={(e) => handleDragOver(e, zone.id)}
@@ -6607,7 +6622,7 @@ export default function LayoutsPage() {
   return (
     <div className="-m-6 flex overflow-hidden" style={{ height: 'calc(100vh - 3.5rem)' }} data-testid="layouts-page">
       {(!selectedLayout || showLayoutList) && (
-        <div className="w-72 min-w-72 flex-shrink-0 border-r flex flex-col overflow-hidden">
+        <div className="w-80 min-w-80 flex-shrink-0 border-r flex flex-col overflow-hidden">
           <div className="p-4 border-b flex items-center justify-between gap-2">
             <h1 className="font-semibold" data-testid="text-layouts-title">Layouts</h1>
             <CreateLayoutDialog events={events} />
