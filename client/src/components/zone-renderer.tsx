@@ -2066,16 +2066,18 @@ export function ZoneRenderer({
     return {};
   };
 
-  const baseStyle: React.CSSProperties = {
-    containerType: "size" as const,
-    ...getBackgroundStyle(),
-    ...(zone.textColor && { color: zone.textColor }),
-    ...getTextShadowStyle(),
-    ...getTextOutlineStyle(),
-    ...(zone.borderColor && zone.borderWidth && { borderColor: zone.borderColor }),
-    ...(zone.borderWidth && { borderWidth: `${zone.borderWidth}px`, borderStyle: "solid" }),
-    ...(zone.borderRadius && { borderRadius: `${zone.borderRadius}px` }),
-  };
+  const baseStyle: React.CSSProperties = zone.type === "shape" 
+    ? { containerType: "size" as const }
+    : {
+        containerType: "size" as const,
+        ...getBackgroundStyle(),
+        ...(zone.textColor && { color: zone.textColor }),
+        ...getTextShadowStyle(),
+        ...getTextOutlineStyle(),
+        ...(zone.borderColor && zone.borderWidth && { borderColor: zone.borderColor }),
+        ...(zone.borderWidth && { borderWidth: `${zone.borderWidth}px`, borderStyle: "solid" }),
+        ...(zone.borderRadius && { borderRadius: `${zone.borderRadius}px` }),
+      };
 
   const zoneStyle: React.CSSProperties = fillContainer
     ? {
@@ -2095,7 +2097,7 @@ export function ZoneRenderer({
 
   return (
     <div
-      className={`absolute overflow-hidden ${showBorder ? "ring-2 ring-primary/50 ring-offset-1" : ""}`}
+      className={`absolute ${zone.type === "shape" ? "" : "overflow-hidden"} ${showBorder && zone.type !== "shape" ? "ring-2 ring-primary/50 ring-offset-1" : ""}`}
       style={zoneStyle}
       data-testid={`zone-${zone.id}`}
     >

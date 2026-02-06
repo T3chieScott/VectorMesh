@@ -4760,7 +4760,7 @@ function InteractiveLayoutPreview({
             }}
             data-testid={`draggable-zone-${zone.id}`}
           >
-            <div className="absolute inset-0 overflow-hidden">
+            <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
               <ZoneRenderer
                 zone={zone}
                 media={allMediaAssets || []}
@@ -4773,9 +4773,18 @@ function InteractiveLayoutPreview({
             <div
               className={`absolute inset-0 transition-all pointer-events-auto ${
                 isSelected 
-                  ? "ring-2 ring-cyan-400 ring-inset shadow-lg shadow-cyan-400/30" 
-                  : "ring-1 ring-transparent hover:ring-white/30"
+                  ? zone.type === "shape"
+                    ? "shadow-lg shadow-cyan-400/30"
+                    : "ring-2 ring-cyan-400 ring-inset shadow-lg shadow-cyan-400/30"
+                  : zone.type === "shape"
+                    ? ""
+                    : "ring-1 ring-transparent hover:ring-white/30"
               } ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+              style={isSelected && zone.type === "shape" 
+                ? { outline: "2px dashed rgba(34, 211, 238, 0.8)", outlineOffset: "-2px" } 
+                : !isSelected && zone.type === "shape" 
+                  ? {} 
+                  : undefined}
               onClick={(e) => {
                 e.stopPropagation();
                 setSelectedZoneId(zone.id);
