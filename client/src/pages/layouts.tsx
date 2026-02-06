@@ -4388,6 +4388,7 @@ type DragState = {
 type SnapLine = {
   type: "horizontal" | "vertical";
   position: number;
+  isCenter?: boolean;
 };
 
 const SNAP_THRESHOLD = 2; // percentage
@@ -4546,24 +4547,24 @@ function InteractiveLayoutPreview({
 
       if (centerXSnap.snapped) {
         newX = centerXSnap.value - newWidth / 2;
-        newSnapLines.push({ type: "vertical", position: centerXSnap.value });
+        newSnapLines.push({ type: "vertical", position: centerXSnap.value, isCenter: centerXSnap.value === 50 });
       } else if (leftSnap.snapped) {
         newX = leftSnap.value;
-        newSnapLines.push({ type: "vertical", position: leftSnap.value });
+        newSnapLines.push({ type: "vertical", position: leftSnap.value, isCenter: leftSnap.value === 50 });
       } else if (rightSnap.snapped) {
         newX = rightSnap.value - newWidth;
-        newSnapLines.push({ type: "vertical", position: rightSnap.value });
+        newSnapLines.push({ type: "vertical", position: rightSnap.value, isCenter: rightSnap.value === 50 });
       }
 
       if (centerYSnap.snapped) {
         newY = centerYSnap.value - newHeight / 2;
-        newSnapLines.push({ type: "horizontal", position: centerYSnap.value });
+        newSnapLines.push({ type: "horizontal", position: centerYSnap.value, isCenter: centerYSnap.value === 50 });
       } else if (topSnap.snapped) {
         newY = topSnap.value;
-        newSnapLines.push({ type: "horizontal", position: topSnap.value });
+        newSnapLines.push({ type: "horizontal", position: topSnap.value, isCenter: topSnap.value === 50 });
       } else if (bottomSnap.snapped) {
         newY = bottomSnap.value - newHeight;
-        newSnapLines.push({ type: "horizontal", position: bottomSnap.value });
+        newSnapLines.push({ type: "horizontal", position: bottomSnap.value, isCenter: bottomSnap.value === 50 });
       }
     } else if (dragState.type === "resize" && dragState.handle) {
       const handle = dragState.handle;
@@ -4734,7 +4735,7 @@ function InteractiveLayoutPreview({
       {snapLines.map((line, i) => (
         <div
           key={i}
-          className="absolute bg-cyan-400 z-50 pointer-events-none"
+          className={`absolute z-50 pointer-events-none ${line.isCenter ? "bg-red-500" : "bg-cyan-400"}`}
           style={line.type === "vertical" 
             ? { left: `${line.position}%`, top: 0, bottom: 0, width: 2 }
             : { top: `${line.position}%`, left: 0, right: 0, height: 2 }
