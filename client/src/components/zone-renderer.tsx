@@ -21,6 +21,7 @@ import {
   Images,
   QrCode,
   Timer,
+  Shapes,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
@@ -61,6 +62,7 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   montage: Images,
   qrcode: QrCode,
   countdown: Timer,
+  shape: Shapes,
 };
 
 function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
@@ -227,6 +229,9 @@ interface ClockWidgetProps {
   handColor?: string;
   faceColor?: string;
   markerColor?: string;
+  timeFontSize?: number;
+  labelFontSize?: number;
+  dateFontSize?: number;
 }
 
 function ClockWidget({
@@ -240,6 +245,9 @@ function ClockWidget({
   handColor = "#ffffff",
   faceColor = "transparent",
   markerColor = "#ffffff",
+  timeFontSize,
+  labelFontSize,
+  dateFontSize,
 }: ClockWidgetProps) {
   const [time, setTime] = useState(new Date());
 
@@ -317,10 +325,13 @@ function ClockWidget({
     const minuteAngle = (minutes + seconds / 60) * 6 - 90;
     const secondAngle = seconds * 6 - 90;
 
+    const analogLabelFontSize = labelFontSize ? `max(${labelFontSize}px, ${Math.round(labelFontSize * 0.3)}cqh)` : "max(10px, 3cqh)";
+    const analogDateFontSize = dateFontSize ? `max(${dateFontSize}px, ${Math.round(dateFontSize * 0.3)}cqh)` : "max(10px, 3cqh)";
+
     return (
       <div className="h-full w-full flex flex-col items-center justify-center p-2">
         {label && (
-          <div className="font-semibold opacity-90 mb-1" style={{ fontSize: "max(10px, 3cqh)", color: markerColor }}>{label}</div>
+          <div className="font-semibold opacity-90 mb-1" style={{ fontSize: analogLabelFontSize, color: markerColor }}>{label}</div>
         )}
         <div className="relative" style={{ width: "min(80%, 80cqh)", aspectRatio: "1" }}>
           <svg viewBox="0 0 200 200" className="w-full h-full">
@@ -437,21 +448,25 @@ function ClockWidget({
           </svg>
         </div>
         {showDate && (
-          <div className="mt-1 opacity-80" style={{ fontSize: "max(10px, 3cqh)", color: markerColor }}>{formatDate(time)}</div>
+          <div className="mt-1 opacity-80" style={{ fontSize: analogDateFontSize, color: markerColor }}>{formatDate(time)}</div>
         )}
       </div>
     );
   }
 
   // Render digital clock (default)
+  const digitalTimeFontSize = timeFontSize ? `max(${timeFontSize}px, ${Math.round(timeFontSize * 0.33)}cqh)` : "max(16px, 8cqh)";
+  const digitalLabelFontSize = labelFontSize ? `max(${labelFontSize}px, ${Math.round(labelFontSize * 0.3)}cqh)` : "max(10px, 3.5cqh)";
+  const digitalDateFontSize = dateFontSize ? `max(${dateFontSize}px, ${Math.round(dateFontSize * 0.3)}cqh)` : "max(10px, 3cqh)";
+
   return (
     <div className="h-full w-full flex flex-col items-center justify-center text-center p-2">
       {label && (
-        <div className="font-semibold opacity-90" style={{ fontSize: "max(10px, 3.5cqh)" }}>{label}</div>
+        <div className="font-semibold opacity-90" style={{ fontSize: digitalLabelFontSize }}>{label}</div>
       )}
-      <div className="font-mono font-bold" style={{ fontSize: "max(16px, 8cqh)" }}>{formatTime(time)}</div>
+      <div className="font-mono font-bold" style={{ fontSize: digitalTimeFontSize }}>{formatTime(time)}</div>
       {showDate !== false && (
-        <div className="opacity-80" style={{ fontSize: "max(10px, 3cqh)" }}>{formatDate(time)}</div>
+        <div className="opacity-80" style={{ fontSize: digitalDateFontSize }}>{formatDate(time)}</div>
       )}
     </div>
   );
@@ -473,8 +488,9 @@ interface CountdownWidgetProps {
   showLeadingZeros?: boolean;
   numberColor?: string;
   labelColor?: string;
-  size?: "small" | "medium" | "large" | "xlarge";
-  titleSize?: "small" | "medium" | "large" | "xlarge";
+  size?: number;
+  titleSize?: number;
+  labelSize?: number;
   fontFamily?: "sans" | "serif" | "mono" | "display";
   unitGap?: number;
   timezone?: string;
@@ -497,8 +513,9 @@ function CountdownWidget({
   showLeadingZeros = true,
   numberColor,
   labelColor,
-  size = "medium",
+  size = 24,
   titleSize,
+  labelSize,
   fontFamily = "mono",
   unitGap,
   timezone,
@@ -514,24 +531,13 @@ function CountdownWidget({
     display: "'Oswald', 'Bebas Neue', Impact, sans-serif",
   };
 
-  const sizeStyles = compact ? {
-    small: { number: "max(14px, 4cqh)", label: "max(6px, 1.5cqh)", gap: "0.18rem", titleGap: "0.1rem" },
-    medium: { number: "max(20px, 6cqh)", label: "max(8px, 2cqh)", gap: "0.28rem", titleGap: "0.15rem" },
-    large: { number: "max(28px, 10cqh)", label: "max(10px, 2.5cqh)", gap: "0.42rem", titleGap: "0.2rem" },
-    xlarge: { number: "max(40px, 14cqh)", label: "max(12px, 3cqh)", gap: "0.56rem", titleGap: "0.25rem" },
-  } : {
-    small: { number: "max(16px, 5cqh)", label: "max(8px, 2cqh)", gap: "0.35rem", titleGap: "0.15rem" },
-    medium: { number: "max(24px, 8cqh)", label: "max(10px, 2.5cqh)", gap: "0.52rem", titleGap: "0.2rem" },
-    large: { number: "max(32px, 12cqh)", label: "max(12px, 3cqh)", gap: "0.7rem", titleGap: "0.3rem" },
-    xlarge: { number: "max(48px, 16cqh)", label: "max(14px, 3.5cqh)", gap: "0.88rem", titleGap: "0.4rem" },
-  };
-
-  const titleSizeStyles = {
-    small: "max(12px, 3cqh)",
-    medium: "max(16px, 4cqh)",
-    large: "max(24px, 6cqh)",
-    xlarge: "max(32px, 8cqh)",
-  };
+  const numberFontSize = `max(${size}px, ${Math.round(size * 0.33)}cqh)`;
+  const effectiveLabelSize = labelSize || Math.max(8, Math.round(size * 0.4));
+  const labelFontSize = `max(${effectiveLabelSize}px, ${Math.round(effectiveLabelSize * 0.25)}cqh)`;
+  const effectiveTitleSizePx = titleSize || Math.max(12, Math.round(size * 0.67));
+  const titleFontSize = `max(${effectiveTitleSizePx}px, ${Math.round(effectiveTitleSizePx * 0.25)}cqh)`;
+  const gap = unitGap !== undefined ? `${unitGap}rem` : `${Math.max(0.2, size * 0.02)}rem`;
+  const titleGap = `${Math.max(0.1, size * 0.008)}rem`;
 
   const separatorMap = {
     colon: ":",
@@ -649,7 +655,7 @@ function CountdownWidget({
         <div 
           className="font-bold"
           style={{ 
-            fontSize: sizeStyles[size].number,
+            fontSize: numberFontSize,
             color: numberColor || "inherit"
           }}
         >
@@ -668,10 +674,7 @@ function CountdownWidget({
 
   const visibleUnits = units.filter(u => u.show);
   const sep = separatorMap[separator];
-  const effectiveGap = unitGap !== undefined ? `${unitGap}rem` : sizeStyles[size].gap;
   const fontStyle = fontFamilyMap[fontFamily];
-
-  const effectiveTitleSize = titleSize ? titleSizeStyles[titleSize] : sizeStyles[size].label;
 
   return (
     <div className={`h-full w-full flex flex-col items-center justify-center text-center ${compact ? 'p-1' : 'p-2'}`}>
@@ -679,25 +682,25 @@ function CountdownWidget({
         <div 
           className="font-semibold opacity-90"
           style={{ 
-            fontSize: effectiveTitleSize,
+            fontSize: titleFontSize,
             color: labelColor || "inherit",
-            marginBottom: sizeStyles[size].titleGap,
+            marginBottom: titleGap,
           }}
         >
           {title}
         </div>
       )}
-      <div className="flex flex-col items-center" style={{ gap: sizeStyles[size].titleGap }}>
+      <div className="flex flex-col items-center" style={{ gap: titleGap }}>
         <div 
           className="flex items-center justify-center flex-wrap"
-          style={{ gap: effectiveGap }}
+          style={{ gap }}
         >
           {visibleUnits.map((unit, idx) => (
             <div key={unit.label} className="flex items-center">
               <div 
                 className="font-bold"
                 style={{ 
-                  fontSize: sizeStyles[size].number,
+                  fontSize: numberFontSize,
                   color: numberColor || "inherit",
                   fontFamily: fontStyle,
                 }}
@@ -708,7 +711,7 @@ function CountdownWidget({
                 <span 
                   className={`font-bold ${compact ? 'mx-0.5' : 'mx-1'}`}
                   style={{ 
-                    fontSize: sizeStyles[size].number,
+                    fontSize: numberFontSize,
                     color: numberColor || "inherit",
                     opacity: 0.5,
                     fontFamily: fontStyle,
@@ -722,14 +725,14 @@ function CountdownWidget({
         </div>
         <div 
           className="flex justify-center flex-wrap"
-          style={{ gap: effectiveGap }}
+          style={{ gap }}
         >
           {visibleUnits.map((unit, idx) => (
             <div key={`label-${unit.label}`} className="flex items-center">
               <div 
                 className="opacity-80 text-center"
                 style={{ 
-                  fontSize: sizeStyles[size].label,
+                  fontSize: labelFontSize,
                   color: labelColor || "inherit",
                   minWidth: `${unit.maxDigits + 1}ch`,
                 }}
@@ -740,7 +743,7 @@ function CountdownWidget({
                 <span 
                   className={`${compact ? 'mx-0.5' : 'mx-1'}`}
                   style={{ 
-                    fontSize: sizeStyles[size].number,
+                    fontSize: numberFontSize,
                     visibility: 'hidden',
                   }}
                 >
@@ -1651,6 +1654,149 @@ function QRCodeWidget({
   );
 }
 
+interface ShapeWidgetProps {
+  shapeType?: "line" | "rectangle" | "square" | "circle" | "oval" | "triangle" | "arch";
+  fillColor?: string;
+  fillEnabled?: boolean;
+  strokeColor?: string;
+  strokeWidth?: number;
+  strokeStyle?: "solid" | "dashed" | "dotted";
+  rotation?: number;
+  cornerRadius?: number;
+  opacity?: number;
+  lineDirection?: "horizontal" | "vertical" | "diagonal-down" | "diagonal-up";
+  archSpan?: number;
+}
+
+function ShapeWidget({
+  shapeType = "rectangle",
+  fillColor = "#3b82f6",
+  fillEnabled = true,
+  strokeColor = "#ffffff",
+  strokeWidth = 2,
+  strokeStyle = "solid",
+  rotation = 0,
+  cornerRadius = 0,
+  opacity = 100,
+  lineDirection = "horizontal",
+  archSpan = 180,
+}: ShapeWidgetProps) {
+  const fill = fillEnabled ? fillColor : "none";
+  const strokeDasharray = strokeStyle === "dashed" ? "8,4" : strokeStyle === "dotted" ? "2,4" : undefined;
+
+  const renderShape = () => {
+    switch (shapeType) {
+      case "line": {
+        const lineCoords = {
+          "horizontal": { x1: 5, y1: 50, x2: 95, y2: 50 },
+          "vertical": { x1: 50, y1: 5, x2: 50, y2: 95 },
+          "diagonal-down": { x1: 5, y1: 5, x2: 95, y2: 95 },
+          "diagonal-up": { x1: 5, y1: 95, x2: 95, y2: 5 },
+        };
+        const coords = lineCoords[lineDirection];
+        return (
+          <line
+            x1={coords.x1} y1={coords.y1}
+            x2={coords.x2} y2={coords.y2}
+            stroke={strokeColor}
+            strokeWidth={strokeWidth}
+            strokeDasharray={strokeDasharray}
+            strokeLinecap="round"
+          />
+        );
+      }
+      case "square":
+        return (
+          <rect
+            x="10" y="10" width="80" height="80"
+            rx={cornerRadius} ry={cornerRadius}
+            fill={fill} stroke={strokeColor} strokeWidth={strokeWidth}
+            strokeDasharray={strokeDasharray}
+          />
+        );
+      case "rectangle":
+        return (
+          <rect
+            x="5" y="15" width="90" height="70"
+            rx={cornerRadius} ry={cornerRadius}
+            fill={fill} stroke={strokeColor} strokeWidth={strokeWidth}
+            strokeDasharray={strokeDasharray}
+          />
+        );
+      case "circle":
+        return (
+          <circle
+            cx="50" cy="50" r="40"
+            fill={fill} stroke={strokeColor} strokeWidth={strokeWidth}
+            strokeDasharray={strokeDasharray}
+          />
+        );
+      case "oval":
+        return (
+          <ellipse
+            cx="50" cy="50" rx="45" ry="30"
+            fill={fill} stroke={strokeColor} strokeWidth={strokeWidth}
+            strokeDasharray={strokeDasharray}
+          />
+        );
+      case "triangle":
+        return (
+          <polygon
+            points="50,10 90,90 10,90"
+            fill={fill} stroke={strokeColor} strokeWidth={strokeWidth}
+            strokeDasharray={strokeDasharray}
+            strokeLinejoin="round"
+          />
+        );
+      case "arch": {
+        const angleRad = (archSpan / 2) * (Math.PI / 180);
+        const r = 40;
+        const cx = 50;
+        const cy = 55;
+        const startX = cx - r * Math.sin(angleRad);
+        const startY = cy - r * Math.cos(angleRad);
+        const endX = cx + r * Math.sin(angleRad);
+        const endY = cy - r * Math.cos(angleRad);
+        const largeArc = archSpan > 180 ? 1 : 0;
+        const d = `M ${startX} ${startY} A ${r} ${r} 0 ${largeArc} 1 ${endX} ${endY}`;
+        return (
+          <path
+            d={d}
+            fill="none"
+            stroke={strokeColor}
+            strokeWidth={strokeWidth}
+            strokeDasharray={strokeDasharray}
+            strokeLinecap="round"
+          />
+        );
+      }
+      default:
+        return (
+          <rect
+            x="5" y="15" width="90" height="70"
+            fill={fill} stroke={strokeColor} strokeWidth={strokeWidth}
+          />
+        );
+    }
+  };
+
+  return (
+    <div className="h-full w-full flex items-center justify-center p-1">
+      <svg
+        viewBox="0 0 100 100"
+        className="w-full h-full"
+        preserveAspectRatio="xMidYMid meet"
+        style={{
+          opacity: opacity / 100,
+          transform: rotation ? `rotate(${rotation}deg)` : undefined,
+        }}
+      >
+        {renderShape()}
+      </svg>
+    </div>
+  );
+}
+
 export interface ZoneRendererProps {
   zone: LayoutZone;
   media?: MediaAsset[];
@@ -1698,6 +1844,9 @@ export function ZoneRenderer({
             handColor={zone.clockHandColor}
             faceColor={zone.clockFaceColor}
             markerColor={zone.clockMarkerColor}
+            timeFontSize={zone.clockTimeFontSize}
+            labelFontSize={zone.clockLabelFontSize}
+            dateFontSize={zone.clockDateFontSize}
           />
         );
       case "logo":
@@ -1799,12 +1948,29 @@ export function ZoneRenderer({
             showLeadingZeros={zone.countdownShowLeadingZeros}
             numberColor={zone.countdownNumberColor}
             labelColor={zone.countdownLabelColor}
-            size={zone.countdownSize}
-            titleSize={zone.countdownTitleSize}
+            size={typeof zone.countdownSize === 'number' ? zone.countdownSize : 24}
+            titleSize={typeof zone.countdownTitleSize === 'number' ? zone.countdownTitleSize : undefined}
+            labelSize={zone.countdownLabelSize}
             fontFamily={zone.countdownFontFamily}
             unitGap={zone.countdownUnitGap}
             timezone={zone.countdownTimezone}
             compact={zone.countdownCompact}
+          />
+        );
+      case "shape":
+        return (
+          <ShapeWidget
+            shapeType={zone.shapeType}
+            fillColor={zone.shapeFillColor}
+            fillEnabled={zone.shapeFillEnabled}
+            strokeColor={zone.shapeStrokeColor}
+            strokeWidth={zone.shapeStrokeWidth}
+            strokeStyle={zone.shapeStrokeStyle}
+            rotation={zone.shapeRotation}
+            cornerRadius={zone.shapeCornerRadius}
+            opacity={zone.shapeOpacity}
+            lineDirection={zone.shapeLineDirection}
+            archSpan={zone.shapeArchSpan}
           />
         );
       default:

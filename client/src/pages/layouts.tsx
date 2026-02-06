@@ -78,6 +78,7 @@ import {
   QrCode,
   Upload,
   Timer,
+  Shapes,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -141,6 +142,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   montage: Images,
   qrcode: QrCode,
   countdown: Timer,
+  shape: Shapes,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -156,11 +158,12 @@ const zoneTypeLabels: Record<string, string> = {
   montage: "Photo Montage (slideshow)",
   qrcode: "QR Code",
   countdown: "Countdown Timer",
+  shape: "Shape (lines/circles/etc.)",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(1).max(100),
@@ -197,6 +200,9 @@ const zoneFormSchema = z.object({
   clockHandColor: z.string().optional(),
   clockFaceColor: z.string().optional(),
   clockMarkerColor: z.string().optional(),
+  clockTimeFontSize: z.number().min(10).max(120).optional(),
+  clockLabelFontSize: z.number().min(8).max(72).optional(),
+  clockDateFontSize: z.number().min(8).max(72).optional(),
   // Weather widget configuration
   weatherLocation: z.string().optional(),
   weatherLat: z.number().optional(),
@@ -270,12 +276,25 @@ const zoneFormSchema = z.object({
   countdownShowLeadingZeros: z.boolean().optional(),
   countdownNumberColor: z.string().optional(),
   countdownLabelColor: z.string().optional(),
-  countdownSize: z.enum(["small", "medium", "large", "xlarge"]).optional(),
-  countdownTitleSize: z.enum(["small", "medium", "large", "xlarge"]).optional(),
+  countdownSize: z.number().min(12).max(120).optional(),
+  countdownTitleSize: z.number().min(8).max(72).optional(),
+  countdownLabelSize: z.number().min(6).max(48).optional(),
   countdownFontFamily: z.enum(["sans", "serif", "mono", "display"]).optional(),
   countdownUnitGap: z.number().optional(),
   countdownTimezone: z.string().optional(),
   countdownCompact: z.boolean().optional(),
+  // Shape widget fields
+  shapeType: z.enum(["line", "rectangle", "square", "circle", "oval", "triangle", "arch"]).optional(),
+  shapeFillColor: z.string().optional(),
+  shapeFillEnabled: z.boolean().optional(),
+  shapeStrokeColor: z.string().optional(),
+  shapeStrokeWidth: z.number().min(0).max(20).optional(),
+  shapeStrokeStyle: z.enum(["solid", "dashed", "dotted"]).optional(),
+  shapeRotation: z.number().min(0).max(360).optional(),
+  shapeCornerRadius: z.number().min(0).max(50).optional(),
+  shapeOpacity: z.number().min(0).max(100).optional(),
+  shapeLineDirection: z.enum(["horizontal", "vertical", "diagonal-down", "diagonal-up"]).optional(),
+  shapeArchSpan: z.number().min(30).max(350).optional(),
 }).refine((data) => {
   // Require lat/lng for weather zones
   if (data.type === "weather") {
@@ -588,6 +607,9 @@ function ZoneEditorDialog({
       clockHandColor: "#ffffff",
       clockFaceColor: "transparent",
       clockMarkerColor: "#ffffff",
+      clockTimeFontSize: undefined,
+      clockLabelFontSize: undefined,
+      clockDateFontSize: undefined,
       weatherLocation: "",
       weatherLat: undefined,
       weatherLng: undefined,
@@ -652,11 +674,24 @@ function ZoneEditorDialog({
       countdownShowLeadingZeros: true,
       countdownNumberColor: "",
       countdownLabelColor: "",
-      countdownSize: "medium",
+      countdownSize: 24,
+      countdownTitleSize: undefined,
+      countdownLabelSize: undefined,
       countdownFontFamily: "mono",
       countdownUnitGap: undefined,
       countdownTimezone: "",
       countdownCompact: false,
+      shapeType: "rectangle",
+      shapeFillColor: "#3b82f6",
+      shapeFillEnabled: true,
+      shapeStrokeColor: "#ffffff",
+      shapeStrokeWidth: 2,
+      shapeStrokeStyle: "solid",
+      shapeRotation: 0,
+      shapeCornerRadius: 0,
+      shapeOpacity: 100,
+      shapeLineDirection: "horizontal",
+      shapeArchSpan: 180,
     },
   });
 
@@ -699,6 +734,9 @@ function ZoneEditorDialog({
           clockHandColor: zone.clockHandColor || "#ffffff",
           clockFaceColor: zone.clockFaceColor || "transparent",
           clockMarkerColor: zone.clockMarkerColor || "#ffffff",
+          clockTimeFontSize: zone.clockTimeFontSize,
+          clockLabelFontSize: zone.clockLabelFontSize,
+          clockDateFontSize: zone.clockDateFontSize,
           weatherLocation: zone.weatherLocation || "",
           weatherLat: zone.weatherLat,
           weatherLng: zone.weatherLng,
@@ -764,11 +802,25 @@ function ZoneEditorDialog({
           countdownShowLeadingZeros: zone.countdownShowLeadingZeros ?? true,
           countdownNumberColor: zone.countdownNumberColor || "",
           countdownLabelColor: zone.countdownLabelColor || "",
-          countdownSize: zone.countdownSize || "medium",
+          countdownSize: typeof zone.countdownSize === 'number' ? zone.countdownSize : (zone.countdownSize === 'small' ? 16 : zone.countdownSize === 'large' ? 32 : zone.countdownSize === 'xlarge' ? 48 : 24),
+          countdownTitleSize: typeof zone.countdownTitleSize === 'number' ? zone.countdownTitleSize : 
+            (zone.countdownTitleSize === 'small' ? 12 : zone.countdownTitleSize === 'medium' ? 16 : zone.countdownTitleSize === 'large' ? 24 : zone.countdownTitleSize === 'xlarge' ? 32 : undefined),
+          countdownLabelSize: zone.countdownLabelSize,
           countdownFontFamily: zone.countdownFontFamily || "mono",
           countdownUnitGap: zone.countdownUnitGap,
           countdownTimezone: zone.countdownTimezone || "",
           countdownCompact: zone.countdownCompact ?? false,
+          shapeType: zone.shapeType || "rectangle",
+          shapeFillColor: zone.shapeFillColor || "#3b82f6",
+          shapeFillEnabled: zone.shapeFillEnabled ?? true,
+          shapeStrokeColor: zone.shapeStrokeColor || "#ffffff",
+          shapeStrokeWidth: zone.shapeStrokeWidth ?? 2,
+          shapeStrokeStyle: zone.shapeStrokeStyle || "solid",
+          shapeRotation: zone.shapeRotation ?? 0,
+          shapeCornerRadius: zone.shapeCornerRadius ?? 0,
+          shapeOpacity: zone.shapeOpacity ?? 100,
+          shapeLineDirection: zone.shapeLineDirection || "horizontal",
+          shapeArchSpan: zone.shapeArchSpan ?? 180,
         });
       } else {
         form.reset({
@@ -806,6 +858,9 @@ function ZoneEditorDialog({
           clockHandColor: "#ffffff",
           clockFaceColor: "transparent",
           clockMarkerColor: "#ffffff",
+          clockTimeFontSize: undefined,
+          clockLabelFontSize: undefined,
+          clockDateFontSize: undefined,
           weatherLocation: "",
           weatherLat: undefined,
           weatherLng: undefined,
@@ -870,11 +925,24 @@ function ZoneEditorDialog({
           countdownShowLeadingZeros: true,
           countdownNumberColor: "",
           countdownLabelColor: "",
-          countdownSize: "medium",
+          countdownSize: 24,
+          countdownTitleSize: undefined,
+          countdownLabelSize: undefined,
           countdownFontFamily: "mono",
           countdownUnitGap: undefined,
           countdownTimezone: "",
           countdownCompact: false,
+          shapeType: "rectangle",
+          shapeFillColor: "#3b82f6",
+          shapeFillEnabled: true,
+          shapeStrokeColor: "#ffffff",
+          shapeStrokeWidth: 2,
+          shapeStrokeStyle: "solid",
+          shapeRotation: 0,
+          shapeCornerRadius: 0,
+          shapeOpacity: 100,
+          shapeLineDirection: "horizontal",
+          shapeArchSpan: 180,
         });
       }
     }
@@ -1715,6 +1783,87 @@ function ZoneEditorDialog({
                       <FormDescription>
                         Shows a location name above the clock
                       </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="clockTimeFontSize"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Time Display Size</FormLabel>
+                      <FormControl>
+                        <div className="flex items-center gap-4">
+                          <Slider
+                            value={[field.value ?? 32]}
+                            onValueChange={([val]) => field.onChange(val)}
+                            min={10}
+                            max={120}
+                            step={2}
+                            className="flex-1"
+                            data-testid="slider-clock-time-font-size"
+                          />
+                          <span className="text-sm text-muted-foreground w-16">
+                            {field.value ?? "auto"}
+                          </span>
+                        </div>
+                      </FormControl>
+                      <FormDescription>Font size for the time display</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="clockLabelFontSize"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Label Size</FormLabel>
+                      <FormControl>
+                        <div className="flex items-center gap-4">
+                          <Slider
+                            value={[field.value ?? 14]}
+                            onValueChange={([val]) => field.onChange(val)}
+                            min={8}
+                            max={72}
+                            step={2}
+                            className="flex-1"
+                            data-testid="slider-clock-label-font-size"
+                          />
+                          <span className="text-sm text-muted-foreground w-16">
+                            {field.value ?? "auto"}
+                          </span>
+                        </div>
+                      </FormControl>
+                      <FormDescription>Font size for the label text</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="clockDateFontSize"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Date Size</FormLabel>
+                      <FormControl>
+                        <div className="flex items-center gap-4">
+                          <Slider
+                            value={[field.value ?? 14]}
+                            onValueChange={([val]) => field.onChange(val)}
+                            min={8}
+                            max={72}
+                            step={2}
+                            className="flex-1"
+                            data-testid="slider-clock-date-font-size"
+                          />
+                          <span className="text-sm text-muted-foreground w-16">
+                            {field.value ?? "auto"}
+                          </span>
+                        </div>
+                      </FormControl>
+                      <FormDescription>Font size for the date display</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -3262,55 +3411,85 @@ function ZoneEditorDialog({
                   )}
                 />
 
-                {/* Size */}
-                <div className="grid grid-cols-2 gap-4">
+                {/* Size Controls */}
+                <div className="space-y-4">
                   <FormField
                     control={form.control}
                     name="countdownSize"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Timer Size</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value || "medium"}>
-                          <FormControl>
-                            <SelectTrigger data-testid="select-countdown-size">
-                              <SelectValue placeholder="Select size" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="small">Small</SelectItem>
-                            <SelectItem value="medium">Medium</SelectItem>
-                            <SelectItem value="large">Large</SelectItem>
-                            <SelectItem value="xlarge">Extra Large</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <FormLabel>Number Size</FormLabel>
+                        <FormControl>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[field.value ?? 24]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={12}
+                              max={120}
+                              step={2}
+                              className="flex-1"
+                              data-testid="slider-countdown-size"
+                            />
+                            <span className="text-sm text-muted-foreground w-16">
+                              {field.value ?? 24}px
+                            </span>
+                          </div>
+                        </FormControl>
+                        <FormDescription>Font size for the countdown numbers</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-
                   <FormField
                     control={form.control}
                     name="countdownTitleSize"
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Title Size</FormLabel>
-                        <Select 
-                          onValueChange={(val) => field.onChange(val === "auto" ? undefined : val)} 
-                          value={field.value || "auto"}
-                        >
-                          <FormControl>
-                            <SelectTrigger data-testid="select-countdown-title-size">
-                              <SelectValue placeholder="Auto (based on timer)" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="auto">Auto (based on timer)</SelectItem>
-                            <SelectItem value="small">Small</SelectItem>
-                            <SelectItem value="medium">Medium</SelectItem>
-                            <SelectItem value="large">Large</SelectItem>
-                            <SelectItem value="xlarge">Extra Large</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <FormControl>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[field.value ?? Math.max(12, Math.round((form.watch("countdownSize") ?? 24) * 0.67))]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={8}
+                              max={72}
+                              step={2}
+                              className="flex-1"
+                              data-testid="slider-countdown-title-size"
+                            />
+                            <span className="text-sm text-muted-foreground w-16">
+                              {field.value ?? "auto"}
+                            </span>
+                          </div>
+                        </FormControl>
+                        <FormDescription>Font size for the title text (leave at auto to scale with numbers)</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="countdownLabelSize"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Label Size</FormLabel>
+                        <FormControl>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[field.value ?? Math.max(8, Math.round((form.watch("countdownSize") ?? 24) * 0.4))]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={6}
+                              max={48}
+                              step={1}
+                              className="flex-1"
+                              data-testid="slider-countdown-label-size"
+                            />
+                            <span className="text-sm text-muted-foreground w-16">
+                              {field.value ?? "auto"}
+                            </span>
+                          </div>
+                        </FormControl>
+                        <FormDescription>Font size for unit labels (Days, Hours, etc.)</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -3667,6 +3846,298 @@ function ZoneEditorDialog({
                     </FormItem>
                   )}
                 />
+              </div>
+            )}
+
+            {/* Shape Widget Configuration */}
+            {form.watch("type") === "shape" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Shapes className="h-4 w-4" />
+                  Shape Settings
+                </div>
+                <FormField
+                  control={form.control}
+                  name="shapeType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Shape Type</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || "rectangle"}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-shape-type">
+                            <SelectValue placeholder="Select shape" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="line">Line</SelectItem>
+                          <SelectItem value="rectangle">Rectangle</SelectItem>
+                          <SelectItem value="square">Square</SelectItem>
+                          <SelectItem value="circle">Circle</SelectItem>
+                          <SelectItem value="oval">Oval</SelectItem>
+                          <SelectItem value="triangle">Triangle</SelectItem>
+                          <SelectItem value="arch">Arch</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                {form.watch("shapeType") === "line" && (
+                  <FormField
+                    control={form.control}
+                    name="shapeLineDirection"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Line Direction</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value || "horizontal"}>
+                          <FormControl>
+                            <SelectTrigger data-testid="select-shape-line-direction">
+                              <SelectValue placeholder="Select direction" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="horizontal">Horizontal</SelectItem>
+                            <SelectItem value="vertical">Vertical</SelectItem>
+                            <SelectItem value="diagonal-down">Diagonal (down)</SelectItem>
+                            <SelectItem value="diagonal-up">Diagonal (up)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+                {form.watch("shapeType") === "arch" && (
+                  <FormField
+                    control={form.control}
+                    name="shapeArchSpan"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Arch Span</FormLabel>
+                        <FormControl>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[field.value ?? 180]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={30}
+                              max={350}
+                              step={5}
+                              className="flex-1"
+                              data-testid="slider-shape-arch-span"
+                            />
+                            <span className="text-sm text-muted-foreground w-16">
+                              {field.value ?? 180}&deg;
+                            </span>
+                          </div>
+                        </FormControl>
+                        <FormDescription>Angle of the arch in degrees</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="shapeFillEnabled"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2">
+                        <FormControl>
+                          <input
+                            type="checkbox"
+                            checked={field.value ?? true}
+                            onChange={field.onChange}
+                            className="rounded"
+                            data-testid="checkbox-shape-fill-enabled"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Fill Enabled</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+                  {form.watch("shapeFillEnabled") !== false && (
+                    <FormField
+                      control={form.control}
+                      name="shapeFillColor"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Fill Color</FormLabel>
+                          <FormControl>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="color"
+                                value={field.value || "#3b82f6"}
+                                onChange={(e) => field.onChange(e.target.value)}
+                                className="w-8 h-8 rounded border cursor-pointer"
+                                data-testid="color-shape-fill"
+                              />
+                              <Input
+                                value={field.value || "#3b82f6"}
+                                onChange={field.onChange}
+                                className="flex-1"
+                                data-testid="input-shape-fill-color"
+                              />
+                            </div>
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="shapeStrokeColor"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Stroke Color</FormLabel>
+                        <FormControl>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="color"
+                              value={field.value || "#ffffff"}
+                              onChange={(e) => field.onChange(e.target.value)}
+                              className="w-8 h-8 rounded border cursor-pointer"
+                              data-testid="color-shape-stroke"
+                            />
+                            <Input
+                              value={field.value || "#ffffff"}
+                              onChange={field.onChange}
+                              className="flex-1"
+                              data-testid="input-shape-stroke-color"
+                            />
+                          </div>
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="shapeStrokeWidth"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Stroke Width</FormLabel>
+                        <FormControl>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[field.value ?? 2]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={0}
+                              max={20}
+                              step={1}
+                              className="flex-1"
+                              data-testid="slider-shape-stroke-width"
+                            />
+                            <span className="text-sm text-muted-foreground w-12">
+                              {field.value ?? 2}px
+                            </span>
+                          </div>
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name="shapeStrokeStyle"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Stroke Style</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || "solid"}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-shape-stroke-style">
+                            <SelectValue placeholder="Select style" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="solid">Solid</SelectItem>
+                          <SelectItem value="dashed">Dashed</SelectItem>
+                          <SelectItem value="dotted">Dotted</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                {(form.watch("shapeType") === "rectangle" || form.watch("shapeType") === "square") && (
+                  <FormField
+                    control={form.control}
+                    name="shapeCornerRadius"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Corner Radius</FormLabel>
+                        <FormControl>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[field.value ?? 0]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={0}
+                              max={50}
+                              step={1}
+                              className="flex-1"
+                              data-testid="slider-shape-corner-radius"
+                            />
+                            <span className="text-sm text-muted-foreground w-12">
+                              {field.value ?? 0}px
+                            </span>
+                          </div>
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="shapeRotation"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Rotation</FormLabel>
+                        <FormControl>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[field.value ?? 0]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={0}
+                              max={360}
+                              step={5}
+                              className="flex-1"
+                              data-testid="slider-shape-rotation"
+                            />
+                            <span className="text-sm text-muted-foreground w-12">
+                              {field.value ?? 0}&deg;
+                            </span>
+                          </div>
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="shapeOpacity"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Opacity</FormLabel>
+                        <FormControl>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[field.value ?? 100]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={0}
+                              max={100}
+                              step={5}
+                              className="flex-1"
+                              data-testid="slider-shape-opacity"
+                            />
+                            <span className="text-sm text-muted-foreground w-12">
+                              {field.value ?? 100}%
+                            </span>
+                          </div>
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </div>
               </div>
             )}
 

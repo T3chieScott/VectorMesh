@@ -13,7 +13,7 @@ export const screenTypeEnum = pgEnum("screen_type", ["standard", "led_wall"]);
 export const orientationEnum = pgEnum("orientation", ["landscape", "portrait"]);
 export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "gif"]);
 export const programmeStatusEnum = pgEnum("programme_status", ["draft", "published"]);
-export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown"]);
+export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown", "shape"]);
 export const scaleModeEnum = pgEnum("scale_mode", ["contain", "cover"]);
 
 // ============ CLIENTS ============
@@ -220,7 +220,7 @@ export type LayoutTemplate = typeof layoutTemplates.$inferSelect;
 export interface LayoutZone {
   id: string;
   name: string;
-  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown";
+  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown" | "shape";
   x: number;
   y: number;
   width: number;
@@ -260,6 +260,9 @@ export interface LayoutZone {
   clockHandColor?: string;           // Color for clock hands (hex)
   clockFaceColor?: string;           // Background color of clock face (hex)
   clockMarkerColor?: string;         // Color for hour markers (hex)
+  clockTimeFontSize?: number;        // Font size for time display in px (digital clock)
+  clockLabelFontSize?: number;       // Font size for label text in px
+  clockDateFontSize?: number;        // Font size for date display in px
   // Weather widget configuration
   weatherLocation?: string;
   weatherLat?: number;
@@ -269,7 +272,7 @@ export interface LayoutZone {
   newsRssUrl?: string;
   newsScrollSpeed?: number;
   newsItemCount?: number;
-  newsTextSize?: "small" | "medium" | "large";
+  newsTextSize?: number;
   // Text widget configuration
   textContent?: string;
   textFontSize?: "small" | "medium" | "large" | "xlarge";
@@ -336,12 +339,25 @@ export interface LayoutZone {
   countdownShowLeadingZeros?: boolean;  // Show leading zeros (default true)
   countdownNumberColor?: string;        // Color for the numbers (hex)
   countdownLabelColor?: string;         // Color for the labels (hex)
-  countdownSize?: "small" | "medium" | "large" | "xlarge";  // Overall size preset
-  countdownTitleSize?: "small" | "medium" | "large" | "xlarge";  // Title size (independent from timer size)
+  countdownSize?: number;              // Font size for countdown numbers in px
+  countdownTitleSize?: number;         // Font size for countdown title in px
+  countdownLabelSize?: number;         // Font size for unit labels (Days, Hours, etc.) in px
   countdownFontFamily?: "sans" | "serif" | "mono" | "display";  // Font family for numbers
   countdownUnitGap?: number;            // Gap between units in rem (default based on size)
   countdownTimezone?: string;           // IANA timezone for target date (e.g., "Europe/London")
   countdownCompact?: boolean;           // Compact mode - smaller labels, tighter spacing
+  // Shape widget configuration
+  shapeType?: "line" | "rectangle" | "square" | "circle" | "oval" | "triangle" | "arch";
+  shapeFillColor?: string;             // Fill color (hex)
+  shapeFillEnabled?: boolean;          // Whether fill is enabled (default true)
+  shapeStrokeColor?: string;           // Stroke/border color (hex)
+  shapeStrokeWidth?: number;           // Stroke width in px
+  shapeStrokeStyle?: "solid" | "dashed" | "dotted";  // Stroke line style
+  shapeRotation?: number;              // Rotation angle in degrees (0-360)
+  shapeCornerRadius?: number;          // Corner radius for rectangles/squares in px
+  shapeOpacity?: number;               // Overall opacity (0-100, default 100)
+  shapeLineDirection?: "horizontal" | "vertical" | "diagonal-down" | "diagonal-up";  // Direction for line shapes
+  shapeArchSpan?: number;              // Arch span angle in degrees (default 180)
 }
 
 // ============ PROGRAMMES ============
