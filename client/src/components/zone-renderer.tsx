@@ -22,9 +22,29 @@ import {
   QrCode,
   Timer,
   Shapes,
+  Calendar,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
+
+const PLAYER_VARIABLES: { token: string; preview: string }[] = [
+  { token: "{{screen_name}}", preview: "Lobby Screen 1" },
+  { token: "{{room_name}}", preview: "Main Hall" },
+  { token: "{{event_name}}", preview: "Tech Summit 2025" },
+  { token: "{{client_name}}", preview: "Acme Corp" },
+  { token: "{{date}}", preview: new Date().toLocaleDateString() },
+  { token: "{{time}}", preview: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
+  { token: "{{day}}", preview: new Date().toLocaleDateString('en', { weekday: 'long' }) },
+];
+
+function resolvePlayerVariables(text: string): string {
+  if (!text) return text;
+  let resolved = text;
+  for (const v of PLAYER_VARIABLES) {
+    resolved = resolved.replaceAll(v.token, v.preview);
+  }
+  return resolved;
+}
 
 // Convert GCS URLs to local /objects/ path for serving through the sidecar
 function getMediaUrl(originalPath: string | undefined): string {
@@ -63,12 +83,13 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   qrcode: QrCode,
   countdown: Timer,
   shape: Shapes,
+  schedule: Calendar,
 };
 
 function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
   const animationDuration = speed || 20;
   const animationType = animation || "scroll-left";
-  const displayContent = content || "Breaking News: Welcome to Digital Signage • Latest updates coming soon • Stay tuned for announcements •";
+  const displayContent = resolvePlayerVariables(content || "Breaking News: Welcome to Digital Signage • Latest updates coming soon • Stay tuned for announcements •");
   const textSize = fontSize || 24;
   
   // Split content for animations that show items one at a time
@@ -989,7 +1010,7 @@ function TextWidget({
         textAlign: align as "left" | "center" | "right",
       }}
     >
-      {content || "Sample text content"}
+      {resolvePlayerVariables(content || "Sample text content")}
     </div>
   );
 }
@@ -1662,6 +1683,36 @@ function QRCodeWidget({
   );
 }
 
+const SIGNAGE_ICONS_RENDER = [
+  { id: "arrow-right", svg: '<path d="M5 12h14M12 5l7 7-7 7"/>' },
+  { id: "arrow-left", svg: '<path d="M19 12H5M12 19l-7-7 7-7"/>' },
+  { id: "arrow-up", svg: '<path d="M12 19V5M5 12l7-7 7 7"/>' },
+  { id: "arrow-down", svg: '<path d="M12 5v14M19 12l-7 7-7-7"/>' },
+  { id: "arrow-up-right", svg: '<path d="M7 17L17 7M17 7H7M17 7v10"/>' },
+  { id: "arrow-up-left", svg: '<path d="M17 17L7 7M7 7h10M7 7v10"/>' },
+  { id: "toilet", svg: '<path d="M8 2v4M16 2v4M6 6h4v3a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V6h2M14 6h4v3c0 1.7-1.3 3-3 3s-3-1.3-3-3V6M7 12v10M17 12v10"/>' },
+  { id: "toilet-male", svg: '<circle cx="12" cy="4" r="2"/><path d="M15 22v-5l2-3v-4a1 1 0 0 0-1-1h-8a1 1 0 0 0-1 1v4l2 3v5"/>' },
+  { id: "toilet-female", svg: '<circle cx="12" cy="4" r="2"/><path d="M14 9h-4l-1 7h2v6h2v-6h2l-1-7"/>' },
+  { id: "accessible", svg: '<circle cx="11" cy="5" r="2"/><path d="M11 7v5h4l2 5M7 17a4 4 0 0 0 8 0"/>' },
+  { id: "fire-exit", svg: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>' },
+  { id: "fire-extinguisher", svg: '<path d="M10 2h4M12 2v4M8 6h8v3a4 4 0 0 1-4 4 4 4 0 0 1-4-4V6M9 13v7a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-7"/>' },
+  { id: "warning", svg: '<path d="M12 2L2 22h20L12 2zM12 9v5M12 17h.01"/>' },
+  { id: "no-entry", svg: '<circle cx="12" cy="12" r="10"/><path d="M4 12h16"/>' },
+  { id: "restaurant", svg: '<path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2M7 2v20M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/>' },
+  { id: "coffee", svg: '<path d="M17 8h1a4 4 0 1 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8zM6 2v2M10 2v2M14 2v2"/>' },
+  { id: "wifi", svg: '<path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/>' },
+  { id: "parking", svg: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 17V7h4a3 3 0 0 1 0 6H9"/>' },
+  { id: "elevator", svg: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 16l4-4 4 4M8 8l4 4 4-4"/>' },
+  { id: "stairs", svg: '<path d="M22 5h-5v5h-5v5H7v5H2"/>' },
+  { id: "info", svg: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>' },
+  { id: "medical", svg: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8M8 12h8"/>' },
+  { id: "no-smoking", svg: '<circle cx="12" cy="12" r="10"/><path d="M4.93 4.93l14.14 14.14M8 12h4M16 8v4"/>' },
+  { id: "smoking", svg: '<path d="M8 17h8M3 17h2M19 13v4M15 13v4M4 17v-3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3"/>' },
+  { id: "phone", svg: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>' },
+  { id: "reception", svg: '<path d="M2 18h20M6 18V8a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10M10 18v-4h4v4"/>' },
+  { id: "cloakroom", svg: '<path d="M12 2a4 4 0 0 0-4 4M12 2a4 4 0 0 1 4 4M12 2v3M4 10l8-4 8 4M6 22V10M18 22V10"/>' },
+];
+
 interface ShapeWidgetProps {
   shapeType?: "line" | "rectangle" | "square" | "circle" | "oval" | "triangle" | "arch";
   fillColor?: string;
@@ -1674,6 +1725,121 @@ interface ShapeWidgetProps {
   opacity?: number;
   lineDirection?: "horizontal" | "vertical" | "diagonal-down" | "diagonal-up";
   archSpan?: number;
+  icon?: string;
+}
+
+function ScheduleWidget({
+  viewMode = "hourly",
+  entries = [],
+  showCurrentTime = true,
+  timeFormat = "24h",
+  startHour = 8,
+  endHour = 18,
+  headerText,
+}: {
+  viewMode?: string;
+  entries?: Array<{ id: string; title: string; startTime: string; endTime: string; day?: string; color?: string; room?: string }>;
+  showCurrentTime?: boolean;
+  timeFormat?: string;
+  startHour?: number;
+  endHour?: number;
+  headerText?: string;
+}) {
+  const formatTime = (time: string) => {
+    if (timeFormat === "12h") {
+      const [h, m] = time.split(":").map(Number);
+      const period = h >= 12 ? "PM" : "AM";
+      const hour12 = h % 12 || 12;
+      return `${hour12}:${String(m).padStart(2, "0")} ${period}`;
+    }
+    return time;
+  };
+
+  const totalHours = endHour - startHour;
+  const sampleEntries = entries.length > 0 ? entries : [
+    { id: "1", title: "Morning Session", startTime: "09:00", endTime: "10:30", color: "#3b82f6" },
+    { id: "2", title: "Lunch Break", startTime: "12:00", endTime: "13:00", color: "#22c55e" },
+    { id: "3", title: "Afternoon Workshop", startTime: "14:00", endTime: "16:00", color: "#8b5cf6" },
+  ];
+
+  if (viewMode === "agenda") {
+    return (
+      <div className="h-full w-full flex flex-col p-3 overflow-hidden">
+        {headerText && <div className="text-sm font-semibold mb-2 shrink-0">{headerText}</div>}
+        <div className="flex-1 overflow-auto space-y-1">
+          {[...sampleEntries].sort((a, b) => a.startTime.localeCompare(b.startTime)).map((entry) => (
+            <div key={entry.id} className="flex items-center gap-2 text-xs p-1.5 rounded" style={{ borderLeft: `3px solid ${entry.color || "#3b82f6"}` }}>
+              <span className="font-mono text-muted-foreground shrink-0">{formatTime(entry.startTime)} - {formatTime(entry.endTime)}</span>
+              <span className="font-medium truncate">{entry.title}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (viewMode === "daily") {
+    const days = [...new Set(sampleEntries.map(e => e.day || "Today").filter(Boolean))];
+    if (days.length === 0) days.push("Today");
+    return (
+      <div className="h-full w-full flex flex-col p-3 overflow-hidden">
+        {headerText && <div className="text-sm font-semibold mb-2 shrink-0">{headerText}</div>}
+        <div className="flex-1 overflow-auto space-y-3">
+          {days.map((day) => (
+            <div key={day}>
+              <div className="text-xs font-semibold text-muted-foreground mb-1">{day}</div>
+              <div className="space-y-1">
+                {sampleEntries
+                  .filter(e => (e.day || "Today") === day)
+                  .sort((a, b) => a.startTime.localeCompare(b.startTime))
+                  .map((entry) => (
+                    <div key={entry.id} className="flex items-center gap-2 text-xs p-1.5 rounded" style={{ borderLeft: `3px solid ${entry.color || "#3b82f6"}` }}>
+                      <span className="font-mono text-muted-foreground shrink-0">{formatTime(entry.startTime)} - {formatTime(entry.endTime)}</span>
+                      <span className="font-medium truncate">{entry.title}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full w-full flex flex-col p-2 overflow-hidden">
+      {headerText && <div className="text-xs font-semibold mb-1 shrink-0">{headerText}</div>}
+      <div className="flex-1 overflow-auto relative">
+        {Array.from({ length: totalHours + 1 }, (_, i) => startHour + i).map((hour) => (
+          <div key={hour} className="flex items-start border-t border-border/30 relative" style={{ height: `${100 / (totalHours + 1)}%`, minHeight: "24px" }}>
+            <span className="text-[10px] text-muted-foreground w-10 shrink-0 -mt-1.5 font-mono">
+              {formatTime(`${String(hour).padStart(2, "0")}:00`)}
+            </span>
+          </div>
+        ))}
+        {sampleEntries.map((entry) => {
+          const [sh, sm] = entry.startTime.split(":").map(Number);
+          const [eh, em] = entry.endTime.split(":").map(Number);
+          const startOffset = ((sh - startHour) + sm / 60) / (totalHours + 1) * 100;
+          const duration = ((eh - sh) + (em - sm) / 60) / (totalHours + 1) * 100;
+          return (
+            <div
+              key={entry.id}
+              className="absolute left-10 right-1 rounded text-[10px] px-1.5 py-0.5 overflow-hidden text-white font-medium"
+              style={{
+                top: `${startOffset}%`,
+                height: `${duration}%`,
+                backgroundColor: entry.color || "#3b82f6",
+                minHeight: "16px",
+              }}
+            >
+              {entry.title}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function ShapeWidget({
@@ -1688,6 +1854,7 @@ function ShapeWidget({
   opacity = 100,
   lineDirection = "horizontal",
   archSpan = 180,
+  icon,
 }: ShapeWidgetProps) {
   const fill = fillEnabled ? fillColor : "none";
   const strokeDasharray = strokeStyle === "dashed" ? "8,4" : strokeStyle === "dotted" ? "2,4" : undefined;
@@ -1788,7 +1955,7 @@ function ShapeWidget({
   };
 
   return (
-    <div className="h-full w-full">
+    <div className="h-full w-full relative">
       <svg
         viewBox="0 0 100 100"
         width="100%"
@@ -1801,6 +1968,15 @@ function ShapeWidget({
       >
         {renderShape()}
       </svg>
+      {icon && (() => {
+        const iconDef = SIGNAGE_ICONS_RENDER.find(i => i.id === icon);
+        if (!iconDef) return null;
+        return (
+          <div className="absolute inset-0 flex items-center justify-center" style={{ pointerEvents: 'none' }}>
+            <svg viewBox="0 0 24 24" className="w-1/2 h-1/2" fill="none" stroke={strokeColor || '#ffffff'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: iconDef.svg }} />
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1966,6 +2142,18 @@ export function ZoneRenderer({
             compact={zone.countdownCompact}
           />
         );
+      case "schedule":
+        return (
+          <ScheduleWidget
+            viewMode={zone.scheduleViewMode}
+            entries={zone.scheduleEntries}
+            showCurrentTime={zone.scheduleShowCurrentTime}
+            timeFormat={zone.scheduleTimeFormat}
+            startHour={zone.scheduleStartHour}
+            endHour={zone.scheduleEndHour}
+            headerText={zone.scheduleHeaderText}
+          />
+        );
       case "shape":
         return (
           <ShapeWidget
@@ -1980,6 +2168,7 @@ export function ZoneRenderer({
             opacity={zone.shapeOpacity}
             lineDirection={zone.shapeLineDirection}
             archSpan={zone.shapeArchSpan}
+            icon={zone.shapeIcon}
           />
         );
       default:

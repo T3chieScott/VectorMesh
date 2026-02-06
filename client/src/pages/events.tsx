@@ -47,6 +47,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Label } from "@/components/ui/label";
 import {
   Plus,
   MoreHorizontal,
@@ -55,6 +57,8 @@ import {
   Calendar as CalendarIcon,
   Building2,
   Clock,
+  Palette,
+  X,
 } from "lucide-react";
 import type { Client, Event } from "@shared/schema";
 
@@ -65,9 +69,98 @@ const eventFormSchema = z.object({
   startDate: z.date({ required_error: "Start date is required" }),
   endDate: z.date({ required_error: "End date is required" }),
   isActive: z.boolean().default(true),
+  colorPalette: z.array(z.object({
+    name: z.string(),
+    color: z.string(),
+  })).optional(),
 });
 
 type EventFormValues = z.infer<typeof eventFormSchema>;
+
+function ColorPaletteEditor({ 
+  value = [], 
+  onChange 
+}: { 
+  value: Array<{ name: string; color: string }>;
+  onChange: (palette: Array<{ name: string; color: string }>) => void;
+}) {
+  const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState("#3B82F6");
+
+  const addColor = () => {
+    const name = newName.trim() || `Color ${value.length + 1}`;
+    onChange([...value, { name, color: newColor }]);
+    setNewName("");
+    setNewColor("#3B82F6");
+  };
+
+  const removeColor = (index: number) => {
+    onChange(value.filter((_, i) => i !== index));
+  };
+
+  const updateColor = (index: number, updates: Partial<{ name: string; color: string }>) => {
+    onChange(value.map((c, i) => i === index ? { ...c, ...updates } : c));
+  };
+
+  return (
+    <div className="space-y-3">
+      <Label className="flex items-center gap-2">
+        <Palette className="h-4 w-4" />
+        Brand Colour Palette
+      </Label>
+      {value.length > 0 && (
+        <div className="space-y-2">
+          {value.map((entry, index) => (
+            <div key={index} className="flex items-center gap-2">
+              <input
+                type="color"
+                value={entry.color}
+                onChange={(e) => updateColor(index, { color: e.target.value })}
+                className="w-8 h-8 rounded cursor-pointer border-0 p-0"
+                data-testid={`input-palette-color-${index}`}
+              />
+              <Input
+                value={entry.name}
+                onChange={(e) => updateColor(index, { name: e.target.value })}
+                className="flex-1"
+                data-testid={`input-palette-name-${index}`}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => removeColor(index)}
+                data-testid={`button-remove-palette-color-${index}`}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <input
+          type="color"
+          value={newColor}
+          onChange={(e) => setNewColor(e.target.value)}
+          className="w-8 h-8 rounded cursor-pointer border-0 p-0"
+          data-testid="input-new-palette-color"
+        />
+        <Input
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="Colour name"
+          className="flex-1"
+          data-testid="input-new-palette-name"
+        />
+        <Button type="button" variant="outline" size="sm" onClick={addColor} data-testid="button-add-palette-color">
+          <Plus className="h-4 w-4 mr-1" />
+          Add
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function EventCard({ event, client }: { event: Event; client?: Client }) {
   const [editOpen, setEditOpen] = useState(false);
@@ -86,6 +179,7 @@ function EventCard({ event, client }: { event: Event; client?: Client }) {
       startDate: new Date(event.startDate),
       endDate: new Date(event.endDate),
       isActive: event.isActive ?? true,
+      colorPalette: (event.colorPalette as Array<{ name: string; color: string }>) || [],
     },
   });
 
@@ -317,6 +411,20 @@ function EventCard({ event, client }: { event: Event; client?: Client }) {
                         </FormItem>
                       )}
                     />
+                    <FormField
+                      control={form.control}
+                      name="colorPalette"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormControl>
+                            <ColorPaletteEditor
+                              value={field.value || []}
+                              onChange={field.onChange}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
                     <div className="flex justify-end gap-2">
                       <Button
                         type="button"
@@ -347,7 +455,7 @@ function EventCard({ event, client }: { event: Event; client?: Client }) {
           </DropdownMenuContent>
         </DropdownMenu>
       </CardHeader>
-      <CardContent className="pt-0">
+      <CardContent className="pt-0 space-y-2">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Clock className="h-4 w-4" />
           <span>
@@ -355,6 +463,20 @@ function EventCard({ event, client }: { event: Event; client?: Client }) {
             {format(new Date(event.endDate), "MMM d, yyyy")}
           </span>
         </div>
+        {(event.colorPalette as Array<{ name: string; color: string }> | null)?.length ? (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Palette className="h-3.5 w-3.5 text-muted-foreground" />
+            {(event.colorPalette as Array<{ name: string; color: string }>).map((c, i) => (
+              <div
+                key={i}
+                className="w-5 h-5 rounded-sm border border-border"
+                style={{ backgroundColor: c.color }}
+                title={c.name}
+                data-testid={`palette-swatch-${event.id}-${i}`}
+              />
+            ))}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -373,6 +495,7 @@ function CreateEventDialog({ clients }: { clients: Client[] }) {
       startDate: new Date(),
       endDate: new Date(),
       isActive: true,
+      colorPalette: [],
     },
   });
 
@@ -529,6 +652,20 @@ function CreateEventDialog({ clients }: { clients: Client[] }) {
                 )}
               />
             </div>
+            <FormField
+              control={form.control}
+              name="colorPalette"
+              render={({ field }) => (
+                <FormItem>
+                  <FormControl>
+                    <ColorPaletteEditor
+                      value={field.value || []}
+                      onChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                 Cancel

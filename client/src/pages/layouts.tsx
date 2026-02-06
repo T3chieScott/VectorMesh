@@ -79,6 +79,9 @@ import {
   Upload,
   Timer,
   Shapes,
+  ChevronLeft,
+  PanelLeftOpen,
+  Calendar,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -93,6 +96,203 @@ const ASPECT_RATIO_OPTIONS = [
   { value: "1:1", label: "1:1 (Square)", description: "Square displays" },
   { value: "custom", label: "Custom", description: "Custom ratio" },
 ];
+
+function ColorPickerWithPalette({
+  value,
+  onChange,
+  palette = [],
+  placeholder,
+  "data-testid": testId,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  palette?: Array<{ name: string; color: string }>;
+  placeholder?: string;
+  "data-testid"?: string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex gap-2">
+        <input
+          type="color"
+          className="w-9 h-9 rounded cursor-pointer border border-border p-0.5"
+          value={value || "#000000"}
+          onChange={(e) => onChange(e.target.value)}
+          data-testid={testId}
+        />
+        <Input
+          placeholder={placeholder || "#000000"}
+          value={value || ""}
+          onChange={(e) => onChange(e.target.value)}
+          data-testid={testId ? `${testId}-text` : undefined}
+        />
+      </div>
+      {palette.length > 0 && (
+        <div className="flex gap-1 flex-wrap">
+          {palette.map((c, i) => (
+            <button
+              key={i}
+              type="button"
+              className="w-6 h-6 rounded-sm border border-border cursor-pointer transition-transform hover:scale-110"
+              style={{ backgroundColor: c.color }}
+              onClick={() => onChange(c.color)}
+              title={c.name}
+              data-testid={testId ? `${testId}-palette-${i}` : undefined}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const SIGNAGE_ICONS = [
+  { id: "arrow-right", label: "Arrow Right", category: "Directions", svg: '<path d="M5 12h14M12 5l7 7-7 7"/>' },
+  { id: "arrow-left", label: "Arrow Left", category: "Directions", svg: '<path d="M19 12H5M12 19l-7-7 7-7"/>' },
+  { id: "arrow-up", label: "Arrow Up", category: "Directions", svg: '<path d="M12 19V5M5 12l7-7 7 7"/>' },
+  { id: "arrow-down", label: "Arrow Down", category: "Directions", svg: '<path d="M12 5v14M19 12l-7 7-7-7"/>' },
+  { id: "arrow-up-right", label: "Arrow Up-Right", category: "Directions", svg: '<path d="M7 17L17 7M17 7H7M17 7v10"/>' },
+  { id: "arrow-up-left", label: "Arrow Up-Left", category: "Directions", svg: '<path d="M17 17L7 7M7 7h10M7 7v10"/>' },
+  { id: "toilet", label: "Toilets", category: "Facilities", svg: '<path d="M8 2v4M16 2v4M6 6h4v3a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V6h2M14 6h4v3c0 1.7-1.3 3-3 3s-3-1.3-3-3V6M7 12v10M17 12v10"/>' },
+  { id: "toilet-male", label: "Male WC", category: "Facilities", svg: '<circle cx="12" cy="4" r="2"/><path d="M15 22v-5l2-3v-4a1 1 0 0 0-1-1h-8a1 1 0 0 0-1 1v4l2 3v5"/>' },
+  { id: "toilet-female", label: "Female WC", category: "Facilities", svg: '<circle cx="12" cy="4" r="2"/><path d="M14 9h-4l-1 7h2v6h2v-6h2l-1-7"/>' },
+  { id: "accessible", label: "Accessible", category: "Facilities", svg: '<circle cx="11" cy="5" r="2"/><path d="M11 7v5h4l2 5M7 17a4 4 0 0 0 8 0"/>' },
+  { id: "fire-exit", label: "Fire Exit", category: "Safety", svg: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>' },
+  { id: "fire-extinguisher", label: "Fire Extinguisher", category: "Safety", svg: '<path d="M10 2h4M12 2v4M8 6h8v3a4 4 0 0 1-4 4 4 4 0 0 1-4-4V6M9 13v7a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-7"/>' },
+  { id: "warning", label: "Warning", category: "Safety", svg: '<path d="M12 2L2 22h20L12 2zM12 9v5M12 17h.01"/>' },
+  { id: "no-entry", label: "No Entry", category: "Safety", svg: '<circle cx="12" cy="12" r="10"/><path d="M4 12h16"/>' },
+  { id: "restaurant", label: "Restaurant", category: "Amenities", svg: '<path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2M7 2v20M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/>' },
+  { id: "coffee", label: "Coffee", category: "Amenities", svg: '<path d="M17 8h1a4 4 0 1 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8zM6 2v2M10 2v2M14 2v2"/>' },
+  { id: "wifi", label: "WiFi", category: "Amenities", svg: '<path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/>' },
+  { id: "parking", label: "Parking", category: "Amenities", svg: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 17V7h4a3 3 0 0 1 0 6H9"/>' },
+  { id: "elevator", label: "Elevator/Lift", category: "Facilities", svg: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 16l4-4 4 4M8 8l4 4 4-4"/>' },
+  { id: "stairs", label: "Stairs", category: "Facilities", svg: '<path d="M22 5h-5v5h-5v5H7v5H2"/>' },
+  { id: "info", label: "Information", category: "General", svg: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>' },
+  { id: "medical", label: "Medical/First Aid", category: "Safety", svg: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8M8 12h8"/>' },
+  { id: "no-smoking", label: "No Smoking", category: "Safety", svg: '<circle cx="12" cy="12" r="10"/><path d="M4.93 4.93l14.14 14.14M8 12h4M16 8v4"/>' },
+  { id: "smoking", label: "Smoking Area", category: "Amenities", svg: '<path d="M8 17h8M3 17h2M19 13v4M15 13v4M4 17v-3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3"/>' },
+  { id: "phone", label: "Phone", category: "General", svg: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>' },
+  { id: "reception", label: "Reception", category: "Facilities", svg: '<path d="M2 18h20M6 18V8a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10M10 18v-4h4v4"/>' },
+  { id: "cloakroom", label: "Cloakroom", category: "Facilities", svg: '<path d="M12 2a4 4 0 0 0-4 4M12 2a4 4 0 0 1 4 4M12 2v3M4 10l8-4 8 4M6 22V10M18 22V10"/>' },
+];
+
+function SignageIconPicker({ value, onChange, fillColor }: { value?: string; onChange: (icon: string) => void; fillColor?: string }) {
+  const [open, setOpen] = useState(false);
+  const categories = [...new Set(SIGNAGE_ICONS.map(i => i.category))];
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setOpen(!open)}
+          data-testid="button-pick-signage-icon"
+        >
+          {value ? (
+            <svg viewBox="0 0 24 24" className="h-4 w-4 mr-1" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: SIGNAGE_ICONS.find(i => i.id === value)?.svg || '' }} />
+          ) : null}
+          {value ? SIGNAGE_ICONS.find(i => i.id === value)?.label || "Select Icon" : "Select Signage Icon"}
+        </Button>
+        {value && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => onChange("")}
+            data-testid="button-clear-signage-icon"
+          >
+            Clear
+          </Button>
+        )}
+      </div>
+      {open && (
+        <div className="border border-border rounded-md p-2 bg-popover max-h-[300px] overflow-auto">
+          {categories.map(cat => (
+            <div key={cat} className="mb-2">
+              <div className="text-xs text-muted-foreground font-medium mb-1 px-1">{cat}</div>
+              <div className="grid grid-cols-4 gap-1">
+                {SIGNAGE_ICONS.filter(i => i.category === cat).map(icon => (
+                  <button
+                    key={icon.id}
+                    type="button"
+                    className={`flex flex-col items-center gap-0.5 p-2 rounded cursor-pointer border ${value === icon.id ? 'border-primary bg-primary/10' : 'border-transparent hover-elevate'}`}
+                    onClick={() => { onChange(icon.id); setOpen(false); }}
+                    title={icon.label}
+                    data-testid={`button-icon-${icon.id}`}
+                  >
+                    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: icon.svg }} />
+                    <span className="text-[9px] text-muted-foreground truncate w-full text-center">{icon.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const PLAYER_VARIABLES = [
+  { token: "{{screen_name}}", label: "Screen Name", description: "Name of the display screen", preview: "Lobby Screen 1" },
+  { token: "{{room_name}}", label: "Room Name", description: "Room or location name", preview: "Main Hall" },
+  { token: "{{event_name}}", label: "Event Name", description: "Current event name", preview: "Tech Summit 2025" },
+  { token: "{{client_name}}", label: "Client Name", description: "Client/brand name", preview: "Acme Corp" },
+  { token: "{{date}}", label: "Date", description: "Current date", preview: new Date().toLocaleDateString() },
+  { token: "{{time}}", label: "Time", description: "Current time", preview: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
+  { token: "{{day}}", label: "Day of Week", description: "Current day name", preview: new Date().toLocaleDateString('en', { weekday: 'long' }) },
+];
+
+function resolvePlayerVariables(text: string): string {
+  if (!text) return text;
+  let resolved = text;
+  for (const v of PLAYER_VARIABLES) {
+    resolved = resolved.replaceAll(v.token, v.preview);
+  }
+  return resolved;
+}
+
+function VariableInsertMenu({ onInsert, textareaRef }: { onInsert: (token: string) => void; textareaRef?: React.RefObject<HTMLTextAreaElement | null> }) {
+  const [open, setOpen] = useState(false);
+
+  const handleInsert = (token: string) => {
+    onInsert(token);
+    setOpen(false);
+  };
+
+  return (
+    <div className="relative">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => setOpen(!open)}
+        data-testid="button-insert-variable"
+      >
+        <Code className="h-3 w-3 mr-1" />
+        Insert Variable
+      </Button>
+      {open && (
+        <div className="absolute z-50 top-full mt-1 left-0 bg-popover border border-border rounded-md shadow-lg p-1 min-w-[220px]">
+          {PLAYER_VARIABLES.map((v) => (
+            <button
+              key={v.token}
+              type="button"
+              className="w-full text-left px-3 py-2 text-sm rounded-sm hover-elevate cursor-pointer flex items-center justify-between gap-2"
+              onClick={() => handleInsert(v.token)}
+              data-testid={`button-var-${v.label.toLowerCase().replace(/\s+/g, '-')}`}
+            >
+              <span className="font-medium">{v.label}</span>
+              <code className="text-xs text-muted-foreground bg-muted px-1 rounded">{v.token}</code>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const layoutFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -143,6 +343,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   qrcode: QrCode,
   countdown: Timer,
   shape: Shapes,
+  schedule: Calendar,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -159,11 +360,12 @@ const zoneTypeLabels: Record<string, string> = {
   qrcode: "QR Code",
   countdown: "Countdown Timer",
   shape: "Shape (lines/circles/etc.)",
+  schedule: "Room Schedule",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(1).max(100),
@@ -296,6 +498,22 @@ const zoneFormSchema = z.object({
   shapeOpacity: z.number().min(0).max(100).optional(),
   shapeLineDirection: z.enum(["horizontal", "vertical", "diagonal-down", "diagonal-up"]).optional(),
   shapeArchSpan: z.number().min(30).max(350).optional(),
+  shapeIcon: z.string().optional(),
+  scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
+  scheduleEntries: z.array(z.object({
+    id: z.string(),
+    title: z.string(),
+    startTime: z.string(),
+    endTime: z.string(),
+    day: z.string().optional(),
+    color: z.string().optional(),
+    room: z.string().optional(),
+  })).optional(),
+  scheduleShowCurrentTime: z.boolean().optional(),
+  scheduleTimeFormat: z.enum(["12h", "24h"]).optional(),
+  scheduleStartHour: z.number().min(0).max(23).optional(),
+  scheduleEndHour: z.number().min(1).max(24).optional(),
+  scheduleHeaderText: z.string().optional(),
 }).refine((data) => {
   // Require lat/lng for weather zones
   if (data.type === "weather") {
@@ -499,6 +717,16 @@ function ZoneEditorDialog({
     queryKey: ["/api/media"],
   });
 
+  // Fetch event palette for colour pickers
+  const { data: events } = useQuery<Event[]>({
+    queryKey: ["/api/events"],
+  });
+  const eventPalette = useMemo(() => {
+    if (!layout.eventId) return [];
+    const event = events?.find(e => e.id === layout.eventId);
+    return (event?.colorPalette as Array<{ name: string; color: string }>) || [];
+  }, [layout.eventId, events]);
+
   // Store upload URLs by file ID for reliable retrieval in complete handler
   const uploadUrlMapRef = useRef<Map<string, string>>(new Map());
 
@@ -694,6 +922,14 @@ function ZoneEditorDialog({
       shapeOpacity: 100,
       shapeLineDirection: "horizontal",
       shapeArchSpan: 180,
+      shapeIcon: "",
+      scheduleViewMode: "hourly",
+      scheduleEntries: [],
+      scheduleShowCurrentTime: true,
+      scheduleTimeFormat: "24h",
+      scheduleStartHour: 8,
+      scheduleEndHour: 18,
+      scheduleHeaderText: "",
     },
   });
 
@@ -826,6 +1062,14 @@ function ZoneEditorDialog({
           shapeOpacity: zone.shapeOpacity ?? 100,
           shapeLineDirection: zone.shapeLineDirection || "horizontal",
           shapeArchSpan: zone.shapeArchSpan ?? 180,
+          shapeIcon: zone.shapeIcon || "",
+          scheduleViewMode: zone.scheduleViewMode || "hourly",
+          scheduleEntries: zone.scheduleEntries || [],
+          scheduleShowCurrentTime: zone.scheduleShowCurrentTime ?? true,
+          scheduleTimeFormat: zone.scheduleTimeFormat || "24h",
+          scheduleStartHour: zone.scheduleStartHour ?? 8,
+          scheduleEndHour: zone.scheduleEndHour ?? 18,
+          scheduleHeaderText: zone.scheduleHeaderText || "",
         });
       } else {
         form.reset({
@@ -949,6 +1193,14 @@ function ZoneEditorDialog({
           shapeOpacity: 100,
           shapeLineDirection: "horizontal",
           shapeArchSpan: 180,
+          shapeIcon: "",
+          scheduleViewMode: "hourly",
+          scheduleEntries: [],
+          scheduleShowCurrentTime: true,
+          scheduleTimeFormat: "24h",
+          scheduleStartHour: 8,
+          scheduleEndHour: 18,
+          scheduleHeaderText: "",
         });
       }
     }
@@ -1074,21 +1326,13 @@ function ZoneEditorDialog({
                     <FormItem>
                       <FormLabel>Background Color</FormLabel>
                       <FormControl>
-                        <div className="flex gap-2">
-                          <Input 
-                            type="color" 
-                            className="w-12 h-9 p-1 cursor-pointer"
-                            value={field.value || "#000000"} 
-                            onChange={(e) => field.onChange(e.target.value)}
-                            data-testid="input-bg-color"
-                          />
-                          <Input 
-                            placeholder="#000000 or transparent" 
-                            {...field}
-                            value={field.value || ""}
-                            data-testid="input-bg-color-text"
-                          />
-                        </div>
+                        <ColorPickerWithPalette
+                          value={field.value || "#000000"}
+                          onChange={field.onChange}
+                          palette={eventPalette}
+                          placeholder="#000000 or transparent"
+                          data-testid="input-bg-color"
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -1101,21 +1345,13 @@ function ZoneEditorDialog({
                     <FormItem>
                       <FormLabel>Text Color</FormLabel>
                       <FormControl>
-                        <div className="flex gap-2">
-                          <Input 
-                            type="color" 
-                            className="w-12 h-9 p-1 cursor-pointer"
-                            value={field.value || "#ffffff"} 
-                            onChange={(e) => field.onChange(e.target.value)}
-                            data-testid="input-text-color"
-                          />
-                          <Input 
-                            placeholder="#ffffff" 
-                            {...field}
-                            value={field.value || ""}
-                            data-testid="input-text-color-text"
-                          />
-                        </div>
+                        <ColorPickerWithPalette
+                          value={field.value || "#ffffff"}
+                          onChange={field.onChange}
+                          palette={eventPalette}
+                          placeholder="#ffffff"
+                          data-testid="input-text-color"
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -1178,22 +1414,13 @@ function ZoneEditorDialog({
                         <FormItem>
                           <FormLabel>Shadow Color</FormLabel>
                           <FormControl>
-                            <div className="flex gap-2">
-                              <Input 
-                                type="color" 
-                                className="w-10 h-9 p-1 cursor-pointer"
-                                value={field.value || "#000000"} 
-                                onChange={(e) => field.onChange(e.target.value)}
-                                data-testid="input-text-shadow-color"
-                              />
-                              <Input 
-                                placeholder="#000000" 
-                                {...field}
-                                value={field.value || ""}
-                                className="flex-1"
-                                data-testid="input-text-shadow-color-text"
-                              />
-                            </div>
+                            <ColorPickerWithPalette
+                              value={field.value || "#000000"}
+                              onChange={field.onChange}
+                              palette={eventPalette}
+                              placeholder="#000000"
+                              data-testid="input-text-shadow-color"
+                            />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -1233,22 +1460,13 @@ function ZoneEditorDialog({
                       <FormItem>
                         <FormLabel>Outline Color</FormLabel>
                         <FormControl>
-                          <div className="flex gap-2">
-                            <Input 
-                              type="color" 
-                              className="w-10 h-9 p-1 cursor-pointer"
-                              value={field.value || "#000000"} 
-                              onChange={(e) => field.onChange(e.target.value)}
-                              data-testid="input-text-outline-color"
-                            />
-                            <Input 
-                              placeholder="#000000" 
-                              {...field}
-                              value={field.value || ""}
-                              className="flex-1"
-                              data-testid="input-text-outline-color-text"
-                            />
-                          </div>
+                          <ColorPickerWithPalette
+                            value={field.value || "#000000"}
+                            onChange={field.onChange}
+                            palette={eventPalette}
+                            placeholder="#000000"
+                            data-testid="input-text-outline-color"
+                          />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -1317,22 +1535,13 @@ function ZoneEditorDialog({
                         <FormItem>
                           <FormLabel>End Color</FormLabel>
                           <FormControl>
-                            <div className="flex gap-2">
-                              <Input 
-                                type="color" 
-                                className="w-12 h-9 p-1 cursor-pointer"
-                                value={field.value || "#000000"} 
-                                onChange={(e) => field.onChange(e.target.value)}
-                                data-testid="input-gradient-end-color"
-                              />
-                              <Input 
-                                placeholder="#000000" 
-                                {...field}
-                                value={field.value || ""}
-                                className="flex-1"
-                                data-testid="input-gradient-end-color-text"
-                              />
-                            </div>
+                            <ColorPickerWithPalette
+                              value={field.value || "#000000"}
+                              onChange={field.onChange}
+                              palette={eventPalette}
+                              placeholder="#000000"
+                              data-testid="input-gradient-end-color"
+                            />
                           </FormControl>
                           <FormDescription>Start color is the Background Color above</FormDescription>
                           <FormMessage />
@@ -1415,22 +1624,13 @@ function ZoneEditorDialog({
                     <FormItem>
                       <FormLabel>Border Color</FormLabel>
                       <FormControl>
-                        <div className="flex gap-2">
-                          <Input 
-                            type="color" 
-                            className="w-10 h-9 p-1 cursor-pointer"
-                            value={field.value || "#ffffff"} 
-                            onChange={(e) => field.onChange(e.target.value)}
-                            data-testid="input-border-color"
-                          />
-                          <Input 
-                            placeholder="#fff" 
-                            {...field}
-                            value={field.value || ""}
-                            className="flex-1"
-                            data-testid="input-border-color-text"
-                          />
-                        </div>
+                        <ColorPickerWithPalette
+                          value={field.value || "#ffffff"}
+                          onChange={field.onChange}
+                          palette={eventPalette}
+                          placeholder="#fff"
+                          data-testid="input-border-color"
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -1655,11 +1855,11 @@ function ZoneEditorDialog({
                           <FormItem>
                             <FormLabel className="text-xs">Hand Color</FormLabel>
                             <FormControl>
-                              <Input
-                                type="color"
-                                {...field}
+                              <ColorPickerWithPalette
                                 value={field.value || "#ffffff"}
-                                className="h-9 p-1 cursor-pointer"
+                                onChange={field.onChange}
+                                palette={eventPalette}
+                                placeholder="#ffffff"
                                 data-testid="input-clock-hand-color"
                               />
                             </FormControl>
@@ -1673,12 +1873,11 @@ function ZoneEditorDialog({
                           <FormItem>
                             <FormLabel className="text-xs">Face Color</FormLabel>
                             <FormControl>
-                              <Input
-                                type="color"
-                                {...field}
+                              <ColorPickerWithPalette
                                 value={field.value === "transparent" ? "#000000" : (field.value || "#000000")}
-                                onChange={(e) => field.onChange(e.target.value)}
-                                className="h-9 p-1 cursor-pointer"
+                                onChange={field.onChange}
+                                palette={eventPalette}
+                                placeholder="#000000"
                                 data-testid="input-clock-face-color"
                               />
                             </FormControl>
@@ -1692,11 +1891,11 @@ function ZoneEditorDialog({
                           <FormItem>
                             <FormLabel className="text-xs">Marker Color</FormLabel>
                             <FormControl>
-                              <Input
-                                type="color"
-                                {...field}
+                              <ColorPickerWithPalette
                                 value={field.value || "#ffffff"}
-                                className="h-9 p-1 cursor-pointer"
+                                onChange={field.onChange}
+                                palette={eventPalette}
+                                placeholder="#ffffff"
                                 data-testid="input-clock-marker-color"
                               />
                             </FormControl>
@@ -2149,7 +2348,10 @@ function ZoneEditorDialog({
                   name="textContent"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Scrolling Text</FormLabel>
+                      <div className="flex items-center justify-between gap-2">
+                        <FormLabel>Scrolling Text</FormLabel>
+                        <VariableInsertMenu onInsert={(token) => field.onChange((field.value || "") + token)} />
+                      </div>
                       <FormControl>
                         <textarea 
                           placeholder="Enter your scrolling ticker text here... Use • to separate items" 
@@ -2159,7 +2361,7 @@ function ZoneEditorDialog({
                           data-testid="input-ticker-text" 
                         />
                       </FormControl>
-                      <FormDescription>Text that will scroll across the ticker zone</FormDescription>
+                      <FormDescription>Text that will scroll across the ticker zone. Use variables like {"{{screen_name}}"} for dynamic content.</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -2269,7 +2471,10 @@ function ZoneEditorDialog({
                   name="textContent"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Text Content</FormLabel>
+                      <div className="flex items-center justify-between gap-2">
+                        <FormLabel>Text Content</FormLabel>
+                        <VariableInsertMenu onInsert={(token) => field.onChange((field.value || "") + token)} />
+                      </div>
                       <FormControl>
                         <textarea 
                           placeholder="Enter your text here..." 
@@ -2279,7 +2484,7 @@ function ZoneEditorDialog({
                           data-testid="input-text-content" 
                         />
                       </FormControl>
-                      <FormDescription>The text to display in this zone</FormDescription>
+                      <FormDescription>The text to display in this zone. Use variables like {"{{event_name}}"} for dynamic content.</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -2465,21 +2670,13 @@ function ZoneEditorDialog({
                       <FormItem>
                         <FormLabel>Primary Color (u_color1)</FormLabel>
                         <FormControl>
-                          <div className="flex items-center gap-2">
-                            <input 
-                              type="color" 
-                              value={field.value || "#ff6b6b"} 
-                              onChange={(e) => field.onChange(e.target.value)}
-                              className="h-9 w-12 rounded border border-input cursor-pointer"
-                              data-testid="input-shader-color1"
-                            />
-                            <Input 
-                              value={field.value || "#ff6b6b"} 
-                              onChange={(e) => field.onChange(e.target.value)}
-                              placeholder="#ff6b6b"
-                              className="flex-1 font-mono"
-                            />
-                          </div>
+                          <ColorPickerWithPalette
+                            value={field.value || "#ff6b6b"}
+                            onChange={field.onChange}
+                            palette={eventPalette}
+                            placeholder="#ff6b6b"
+                            data-testid="input-shader-color1"
+                          />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -2492,21 +2689,13 @@ function ZoneEditorDialog({
                       <FormItem>
                         <FormLabel>Secondary Color (u_color2)</FormLabel>
                         <FormControl>
-                          <div className="flex items-center gap-2">
-                            <input 
-                              type="color" 
-                              value={field.value || "#4ecdc4"} 
-                              onChange={(e) => field.onChange(e.target.value)}
-                              className="h-9 w-12 rounded border border-input cursor-pointer"
-                              data-testid="input-shader-color2"
-                            />
-                            <Input 
-                              value={field.value || "#4ecdc4"} 
-                              onChange={(e) => field.onChange(e.target.value)}
-                              placeholder="#4ecdc4"
-                              className="flex-1 font-mono"
-                            />
-                          </div>
+                          <ColorPickerWithPalette
+                            value={field.value || "#4ecdc4"}
+                            onChange={field.onChange}
+                            palette={eventPalette}
+                            placeholder="#4ecdc4"
+                            data-testid="input-shader-color2"
+                          />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -3175,23 +3364,15 @@ function ZoneEditorDialog({
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Foreground Color</FormLabel>
-                          <div className="flex gap-2">
-                            <FormControl>
-                              <Input
-                                type="color"
-                                {...field}
-                                value={field.value || "#000000"}
-                                className="w-12 h-9 p-1 cursor-pointer"
-                                data-testid="input-qr-fg-color"
-                              />
-                            </FormControl>
-                            <Input
+                          <FormControl>
+                            <ColorPickerWithPalette
                               value={field.value || "#000000"}
                               onChange={field.onChange}
+                              palette={eventPalette}
                               placeholder="#000000"
-                              className="flex-1"
+                              data-testid="input-qr-fg-color"
                             />
-                          </div>
+                          </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -3202,23 +3383,15 @@ function ZoneEditorDialog({
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Background Color</FormLabel>
-                          <div className="flex gap-2">
-                            <FormControl>
-                              <Input
-                                type="color"
-                                {...field}
-                                value={field.value || "#ffffff"}
-                                className="w-12 h-9 p-1 cursor-pointer"
-                                data-testid="input-qr-bg-color"
-                              />
-                            </FormControl>
-                            <Input
+                          <FormControl>
+                            <ColorPickerWithPalette
                               value={field.value || "#ffffff"}
                               onChange={field.onChange}
+                              palette={eventPalette}
                               placeholder="#ffffff"
-                              className="flex-1"
+                              data-testid="input-qr-bg-color"
                             />
-                          </div>
+                          </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -3361,23 +3534,15 @@ function ZoneEditorDialog({
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Label Color</FormLabel>
-                            <div className="flex gap-2">
-                              <FormControl>
-                                <Input
-                                  type="color"
-                                  {...field}
-                                  value={field.value || "#000000"}
-                                  className="w-12 h-9 p-1 cursor-pointer"
-                                  data-testid="input-qr-label-color"
-                                />
-                              </FormControl>
-                              <Input
+                            <FormControl>
+                              <ColorPickerWithPalette
                                 value={field.value || "#000000"}
                                 onChange={field.onChange}
+                                palette={eventPalette}
                                 placeholder="#000000"
-                                className="flex-1"
+                                data-testid="input-qr-label-color"
                               />
-                            </div>
+                            </FormControl>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -3739,23 +3904,15 @@ function ZoneEditorDialog({
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel className="text-sm">Number Color</FormLabel>
-                          <div className="flex gap-2">
-                            <FormControl>
-                              <Input
-                                type="color"
-                                {...field}
-                                value={field.value || "#ffffff"}
-                                className="w-12 h-9 p-1 cursor-pointer"
-                                data-testid="input-countdown-number-color"
-                              />
-                            </FormControl>
-                            <Input
-                              value={field.value || ""}
+                          <FormControl>
+                            <ColorPickerWithPalette
+                              value={field.value || "#ffffff"}
                               onChange={field.onChange}
+                              palette={eventPalette}
                               placeholder="inherit"
-                              className="flex-1"
+                              data-testid="input-countdown-number-color"
                             />
-                          </div>
+                          </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -3766,23 +3923,15 @@ function ZoneEditorDialog({
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel className="text-sm">Label Color</FormLabel>
-                          <div className="flex gap-2">
-                            <FormControl>
-                              <Input
-                                type="color"
-                                {...field}
-                                value={field.value || "#cccccc"}
-                                className="w-12 h-9 p-1 cursor-pointer"
-                                data-testid="input-countdown-label-color"
-                              />
-                            </FormControl>
-                            <Input
-                              value={field.value || ""}
+                          <FormControl>
+                            <ColorPickerWithPalette
+                              value={field.value || "#cccccc"}
                               onChange={field.onChange}
+                              palette={eventPalette}
                               placeholder="inherit"
-                              className="flex-1"
+                              data-testid="input-countdown-label-color"
                             />
-                          </div>
+                          </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -3930,6 +4079,24 @@ function ZoneEditorDialog({
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={form.control}
+                  name="shapeIcon"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Signage Icon (Optional)</FormLabel>
+                      <FormControl>
+                        <SignageIconPicker
+                          value={field.value || ""}
+                          onChange={field.onChange}
+                          fillColor={form.watch("shapeFillColor")}
+                        />
+                      </FormControl>
+                      <FormDescription>Add a signage icon overlay to this shape</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 {form.watch("shapeType") === "line" && (
                   <FormField
                     control={form.control}
@@ -4011,21 +4178,13 @@ function ZoneEditorDialog({
                         <FormItem>
                           <FormLabel>Fill Color</FormLabel>
                           <FormControl>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="color"
-                                value={field.value || "#3b82f6"}
-                                onChange={(e) => field.onChange(e.target.value)}
-                                className="w-8 h-8 rounded border cursor-pointer"
-                                data-testid="color-shape-fill"
-                              />
-                              <Input
-                                value={field.value || "#3b82f6"}
-                                onChange={field.onChange}
-                                className="flex-1"
-                                data-testid="input-shape-fill-color"
-                              />
-                            </div>
+                            <ColorPickerWithPalette
+                              value={field.value || "#3b82f6"}
+                              onChange={field.onChange}
+                              palette={eventPalette}
+                              placeholder="#3b82f6"
+                              data-testid="color-shape-fill"
+                            />
                           </FormControl>
                         </FormItem>
                       )}
@@ -4040,21 +4199,13 @@ function ZoneEditorDialog({
                       <FormItem>
                         <FormLabel>Stroke Color</FormLabel>
                         <FormControl>
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="color"
-                              value={field.value || "#ffffff"}
-                              onChange={(e) => field.onChange(e.target.value)}
-                              className="w-8 h-8 rounded border cursor-pointer"
-                              data-testid="color-shape-stroke"
-                            />
-                            <Input
-                              value={field.value || "#ffffff"}
-                              onChange={field.onChange}
-                              className="flex-1"
-                              data-testid="input-shape-stroke-color"
-                            />
-                          </div>
+                          <ColorPickerWithPalette
+                            value={field.value || "#ffffff"}
+                            onChange={field.onChange}
+                            palette={eventPalette}
+                            placeholder="#ffffff"
+                            data-testid="color-shape-stroke"
+                          />
                         </FormControl>
                       </FormItem>
                     )}
@@ -4185,6 +4336,257 @@ function ZoneEditorDialog({
                       </FormItem>
                     )}
                   />
+                </div>
+              </div>
+            )}
+
+            {form.watch("type") === "schedule" && (
+              <div className="space-y-4 border rounded-md p-4" data-testid="schedule-config-section">
+                <h4 className="font-medium flex items-center gap-2">
+                  <Clock className="h-4 w-4" />
+                  Schedule Settings
+                </h4>
+
+                <FormField
+                  control={form.control}
+                  name="scheduleViewMode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>View Mode</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || "hourly"}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-schedule-view-mode">
+                            <SelectValue placeholder="Select view mode" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="hourly">Hourly Timeline</SelectItem>
+                          <SelectItem value="daily">Daily View</SelectItem>
+                          <SelectItem value="agenda">Agenda List</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="scheduleTimeFormat"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Time Format</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value || "24h"}>
+                          <FormControl>
+                            <SelectTrigger data-testid="select-schedule-time-format">
+                              <SelectValue placeholder="Select format" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="12h">12-hour (AM/PM)</SelectItem>
+                            <SelectItem value="24h">24-hour</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="scheduleShowCurrentTime"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2 pt-6">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value ?? true}
+                            onCheckedChange={field.onChange}
+                            data-testid="checkbox-schedule-show-current-time"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Show Current Time</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {form.watch("scheduleViewMode") === "hourly" && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="scheduleStartHour"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Start Hour</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min={0}
+                              max={23}
+                              value={field.value ?? 8}
+                              onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                              data-testid="input-schedule-start-hour"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="scheduleEndHour"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>End Hour</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={24}
+                              value={field.value ?? 18}
+                              onChange={(e) => field.onChange(parseInt(e.target.value) || 18)}
+                              data-testid="input-schedule-end-hour"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
+
+                <FormField
+                  control={form.control}
+                  name="scheduleHeaderText"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Header Text</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="e.g. Conference Room A"
+                          value={field.value || ""}
+                          onChange={field.onChange}
+                          data-testid="input-schedule-header-text"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <FormLabel>Schedule Entries</FormLabel>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const entries = form.watch("scheduleEntries") || [];
+                        form.setValue("scheduleEntries", [
+                          ...entries,
+                          {
+                            id: `entry-${Date.now()}`,
+                            title: "",
+                            startTime: "09:00",
+                            endTime: "10:00",
+                            day: "",
+                            color: "#3b82f6",
+                            room: "",
+                          },
+                        ]);
+                      }}
+                      data-testid="button-add-schedule-entry"
+                    >
+                      <Plus className="h-3 w-3 mr-1" /> Add Entry
+                    </Button>
+                  </div>
+                  {(form.watch("scheduleEntries") || []).map((entry, index) => (
+                    <div key={entry.id} className="border rounded-md p-3 space-y-2" data-testid={`schedule-entry-${index}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <Input
+                          placeholder="Session title"
+                          value={entry.title}
+                          onChange={(e) => {
+                            const entries = [...(form.watch("scheduleEntries") || [])];
+                            entries[index] = { ...entries[index], title: e.target.value };
+                            form.setValue("scheduleEntries", entries);
+                          }}
+                          data-testid={`input-schedule-entry-title-${index}`}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            const entries = [...(form.watch("scheduleEntries") || [])];
+                            entries.splice(index, 1);
+                            form.setValue("scheduleEntries", entries);
+                          }}
+                          data-testid={`button-remove-schedule-entry-${index}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Input
+                          type="time"
+                          value={entry.startTime}
+                          onChange={(e) => {
+                            const entries = [...(form.watch("scheduleEntries") || [])];
+                            entries[index] = { ...entries[index], startTime: e.target.value };
+                            form.setValue("scheduleEntries", entries);
+                          }}
+                          data-testid={`input-schedule-entry-start-${index}`}
+                        />
+                        <Input
+                          type="time"
+                          value={entry.endTime}
+                          onChange={(e) => {
+                            const entries = [...(form.watch("scheduleEntries") || [])];
+                            entries[index] = { ...entries[index], endTime: e.target.value };
+                            form.setValue("scheduleEntries", entries);
+                          }}
+                          data-testid={`input-schedule-entry-end-${index}`}
+                        />
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <Input
+                          placeholder="Day (optional)"
+                          value={entry.day || ""}
+                          onChange={(e) => {
+                            const entries = [...(form.watch("scheduleEntries") || [])];
+                            entries[index] = { ...entries[index], day: e.target.value };
+                            form.setValue("scheduleEntries", entries);
+                          }}
+                          data-testid={`input-schedule-entry-day-${index}`}
+                        />
+                        <Input
+                          placeholder="Room (optional)"
+                          value={entry.room || ""}
+                          onChange={(e) => {
+                            const entries = [...(form.watch("scheduleEntries") || [])];
+                            entries[index] = { ...entries[index], room: e.target.value };
+                            form.setValue("scheduleEntries", entries);
+                          }}
+                          data-testid={`input-schedule-entry-room-${index}`}
+                        />
+                        <div className="flex gap-1">
+                          <input
+                            type="color"
+                            className="w-9 h-9 rounded cursor-pointer border border-border p-0.5"
+                            value={entry.color || "#3b82f6"}
+                            onChange={(e) => {
+                              const entries = [...(form.watch("scheduleEntries") || [])];
+                              entries[index] = { ...entries[index], color: e.target.value };
+                              form.setValue("scheduleEntries", entries);
+                            }}
+                            data-testid={`color-schedule-entry-${index}`}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -5544,6 +5946,9 @@ function LayoutEditorPanel({
   onSelectZone,
   editZoneIdTrigger,
   onEditZoneTriggered,
+  showLayoutList,
+  onToggleLayoutList,
+  onBackToList,
 }: { 
   layout: LayoutTemplate; 
   events: Event[];
@@ -5555,6 +5960,9 @@ function LayoutEditorPanel({
   onSelectZone?: (zoneId: string | null) => void;
   editZoneIdTrigger?: string | null;
   onEditZoneTriggered?: () => void;
+  showLayoutList?: boolean;
+  onToggleLayoutList?: () => void;
+  onBackToList?: () => void;
 }) {
   const [zoneDialogOpen, setZoneDialogOpen] = useState(false);
   const [editingZoneId, setEditingZoneId] = useState<string | undefined>();
@@ -5775,25 +6183,31 @@ function LayoutEditorPanel({
 
   return (
     <div className="h-full flex flex-col">
-      <div className="p-4 border-b flex items-center justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-semibold truncate">{layout.name}</h2>
-          <div className="flex items-center gap-2 mt-1 flex-wrap">
-            <Badge variant="outline">
-              {layout.aspectRatio === "custom" && layout.customWidth && layout.customHeight
-                ? `${layout.customWidth}:${layout.customHeight}`
-                : layout.aspectRatio || "16:9"}
-            </Badge>
-            {event && (
-              <span className="text-xs text-muted-foreground">{event.name}</span>
-            )}
-          </div>
-        </div>
+      <div className="p-3 border-b space-y-2">
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleAddZone} data-testid="button-add-zone-editor">
-            <Plus className="h-4 w-4 mr-1" />
-            Add Zone
-          </Button>
+          {!showLayoutList && (
+            <Button variant="ghost" size="icon" onClick={onBackToList} data-testid="button-back-to-layouts">
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+          )}
+          {showLayoutList && (
+            <Button variant="ghost" size="icon" onClick={onToggleLayoutList} data-testid="button-hide-layout-list">
+              <PanelLeftOpen className="h-4 w-4" />
+            </Button>
+          )}
+          <div className="min-w-0 flex-1">
+            <h2 className="font-semibold truncate text-sm">{layout.name}</h2>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge variant="outline" className="text-xs">
+                {layout.aspectRatio === "custom" && layout.customWidth && layout.customHeight
+                  ? `${layout.customWidth}:${layout.customHeight}`
+                  : layout.aspectRatio || "16:9"}
+              </Badge>
+              {event && (
+                <span className="text-xs text-muted-foreground truncate">{event.name}</span>
+              )}
+            </div>
+          </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" data-testid="button-layout-actions">
@@ -5818,6 +6232,12 @@ function LayoutEditorPanel({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="flex-1" onClick={handleAddZone} data-testid="button-add-zone-editor">
+            <Plus className="h-4 w-4 mr-1" />
+            Add Zone
+          </Button>
         </div>
       </div>
 
@@ -6091,6 +6511,7 @@ export default function LayoutsPage() {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [highlightedZoneId, setHighlightedZoneId] = useState<string | null>(null);
   const [editZoneIdTrigger, setEditZoneIdTrigger] = useState<string | null>(null);
+  const [showLayoutList, setShowLayoutList] = useState(true);
   
   // Sync draft zones when layout selection changes or server data updates
   useEffect(() => {
@@ -6143,6 +6564,7 @@ export default function LayoutsPage() {
   useEffect(() => {
     if (layouts.length > 0 && !selectedLayoutId) {
       setSelectedLayoutId(layouts[0].id);
+      setShowLayoutList(false);
     }
     if (selectedLayoutId && !layouts.find(l => l.id === selectedLayoutId)) {
       setSelectedLayoutId(layouts.length > 0 ? layouts[0].id : null);
@@ -6184,28 +6606,33 @@ export default function LayoutsPage() {
 
   return (
     <div className="h-full flex overflow-hidden" data-testid="layouts-page">
-      <div className="w-44 min-w-44 flex-shrink-0 border-r flex flex-col overflow-hidden">
-        <div className="p-4 border-b flex items-center justify-between gap-2">
-          <h1 className="font-semibold" data-testid="text-layouts-title">Layouts</h1>
-          <CreateLayoutDialog events={events} />
-        </div>
-        <ScrollArea className="flex-1">
-          <div className="p-2 space-y-1">
-            {layouts.map((layout) => (
-              <LayoutListItem
-                key={layout.id}
-                layout={layout}
-                isSelected={layout.id === selectedLayoutId}
-                onSelect={() => setSelectedLayoutId(layout.id)}
-              />
-            ))}
+      {(!selectedLayout || showLayoutList) && (
+        <div className="w-48 min-w-48 flex-shrink-0 border-r flex flex-col overflow-hidden">
+          <div className="p-4 border-b flex items-center justify-between gap-2">
+            <h1 className="font-semibold" data-testid="text-layouts-title">Layouts</h1>
+            <CreateLayoutDialog events={events} />
           </div>
-        </ScrollArea>
-      </div>
+          <ScrollArea className="flex-1">
+            <div className="p-2 space-y-1">
+              {layouts.map((layout) => (
+                <LayoutListItem
+                  key={layout.id}
+                  layout={layout}
+                  isSelected={layout.id === selectedLayoutId}
+                  onSelect={() => {
+                    setSelectedLayoutId(layout.id);
+                    setShowLayoutList(false);
+                  }}
+                />
+              ))}
+            </div>
+          </ScrollArea>
+        </div>
+      )}
 
       {selectedLayout ? (
         <div className="flex-1 flex min-w-0 overflow-hidden">
-          <div className="w-64 flex-shrink-0 border-r overflow-auto">
+          <div className="w-72 flex-shrink-0 border-r overflow-auto">
             <LayoutEditorPanel 
               layout={selectedLayout} 
               events={events}
@@ -6220,6 +6647,11 @@ export default function LayoutsPage() {
               onSelectZone={setHighlightedZoneId}
               editZoneIdTrigger={editZoneIdTrigger}
               onEditZoneTriggered={() => setEditZoneIdTrigger(null)}
+              showLayoutList={showLayoutList}
+              onToggleLayoutList={() => setShowLayoutList(!showLayoutList)}
+              onBackToList={() => {
+                setShowLayoutList(true);
+              }}
             />
           </div>
           <div className="flex-1 min-w-0">

@@ -7,10 +7,15 @@ This is an onsite digital signage platform for a conference and exhibition centr
 Key capabilities:
 - Manage up to 50+ screens with mixed sizes and aspect ratios
 - Support for images, videos, GIFs, and HTML widgets
-- Zone-based layouts with tickers, clocks, logos, QR codes, countdown timers, and media regions
+- Zone-based layouts with tickers, clocks, logos, QR codes, countdown timers, schedules, and media regions
 - **QR code zones**: Support for URL, WiFi, vCard content types with transparent backgrounds and customizable labels (position, size, color)
 - **Countdown timer zones**: Real-time countdown to target date/time with customizable title (with independent size control), completion message, unit visibility (days/hours/minutes/seconds), custom labels, separator styles, leading zeros toggle, number/label colors, size presets (small/medium/large/xlarge), font family (mono/sans/serif/display), unit gap control, timezone selection, and compact mode
 - **Layout aspect ratio support**: Presets (16:9, 9:16, 4:3, 1:1) plus custom ratios for portrait displays, LED walls, and specialty screens
+- **Room schedule zones**: Hourly timeline, daily, and agenda view modes with configurable time slots, entries, and 12h/24h formatting
+- **Dynamic player variables**: Placeholder tokens ({{screen_name}}, {{room_name}}, {{event_name}}, {{date}}, {{time}}, {{day}}) for reusable layouts resolved at display time
+- **Event colour palettes**: Per-event brand colour palettes integrated into all zone colour pickers via swatches
+- **Signage icons**: 27 curated signage icons (arrows, toilets, fire exit, restaurant, WiFi, parking, etc.) as overlays on shape zones
+- **Collapsible layout panel**: Layout list auto-hides when editing, with back button navigation
 - Client/event separation with brand packs
 - Timeline scheduling with programme blocks
 - Live override mode for temporary takeovers

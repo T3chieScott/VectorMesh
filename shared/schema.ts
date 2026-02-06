@@ -13,7 +13,7 @@ export const screenTypeEnum = pgEnum("screen_type", ["standard", "led_wall"]);
 export const orientationEnum = pgEnum("orientation", ["landscape", "portrait"]);
 export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "gif"]);
 export const programmeStatusEnum = pgEnum("programme_status", ["draft", "published"]);
-export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown", "shape"]);
+export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown", "shape", "schedule"]);
 export const scaleModeEnum = pgEnum("scale_mode", ["contain", "cover"]);
 
 // ============ CLIENTS ============
@@ -45,6 +45,7 @@ export const events = pgTable("events", {
   startDate: timestamp("start_date").notNull(),
   endDate: timestamp("end_date").notNull(),
   isActive: boolean("is_active").default(true),
+  colorPalette: jsonb("color_palette").$type<Array<{ name: string; color: string }>>(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -220,7 +221,7 @@ export type LayoutTemplate = typeof layoutTemplates.$inferSelect;
 export interface LayoutZone {
   id: string;
   name: string;
-  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown" | "shape";
+  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown" | "shape" | "schedule";
   x: number;
   y: number;
   width: number;
@@ -359,6 +360,23 @@ export interface LayoutZone {
   shapeOpacity?: number;               // Overall opacity (0-100, default 100)
   shapeLineDirection?: "horizontal" | "vertical" | "diagonal-down" | "diagonal-up";  // Direction for line shapes
   shapeArchSpan?: number;              // Arch span angle in degrees (default 180)
+  shapeIcon?: string;                  // Signage icon identifier (e.g., "arrow-right", "toilet", "fire-exit")
+  // Schedule widget configuration
+  scheduleViewMode?: "hourly" | "daily" | "agenda";
+  scheduleEntries?: Array<{
+    id: string;
+    title: string;
+    startTime: string;
+    endTime: string;
+    day?: string;
+    color?: string;
+    room?: string;
+  }>;
+  scheduleShowCurrentTime?: boolean;
+  scheduleTimeFormat?: "12h" | "24h";
+  scheduleStartHour?: number;
+  scheduleEndHour?: number;
+  scheduleHeaderText?: string;
 }
 
 // ============ PROGRAMMES ============
