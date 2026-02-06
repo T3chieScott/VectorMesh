@@ -6880,7 +6880,7 @@ export default function LayoutsPage() {
   return (
     <div className="-m-6 flex overflow-hidden" style={{ height: 'calc(100vh - 3.5rem)' }} data-testid="layouts-page">
       {(!selectedLayout || showLayoutList) && (
-        <div className="w-80 min-w-80 flex-shrink-0 border-r flex flex-col overflow-hidden">
+        <div className="w-80 min-w-80 flex-shrink-0 border-r flex flex-col overflow-hidden bg-background">
           <div className="p-4 border-b flex items-center justify-between gap-2">
             <h1 className="font-semibold" data-testid="text-layouts-title">Layouts</h1>
             <CreateLayoutDialog events={events} />
@@ -6905,7 +6905,7 @@ export default function LayoutsPage() {
 
       {selectedLayout ? (
         <div className="flex-1 flex min-w-0 overflow-hidden h-full">
-          <div className="w-[26rem] flex-shrink-0 border-r overflow-hidden flex flex-col h-full">
+          <div className="w-[26rem] min-w-[20rem] shrink border-r overflow-hidden flex flex-col h-full">
             <LayoutEditorPanel 
               layout={selectedLayout} 
               events={events}
