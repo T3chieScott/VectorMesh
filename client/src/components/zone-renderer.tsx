@@ -1552,7 +1552,7 @@ function QRCodeWidget({
   vcardOrg,
   label,
   labelPosition = "below",
-  labelFontSize = "medium",
+  labelFontSize = 16,
   labelColor = "#000000",
 }: {
   contentType?: "url" | "email" | "phone" | "location" | "text" | "wifi" | "vcard";
@@ -1572,7 +1572,7 @@ function QRCodeWidget({
   vcardOrg?: string;
   label?: string;
   labelPosition?: "above" | "below";
-  labelFontSize?: "small" | "medium" | "large";
+  labelFontSize?: number | string;
   labelColor?: string;
 }) {
   const generateQRContent = (): string => {
@@ -1622,8 +1622,9 @@ function QRCodeWidget({
   }
 
   const effectiveBgColor = transparentBackground ? "transparent" : backgroundColor;
-  const fontSizeMap = { small: "clamp(10px, 2cqh, 14px)", medium: "clamp(12px, 3cqh, 18px)", large: "clamp(14px, 4cqh, 24px)" };
-  const fontSize = fontSizeMap[labelFontSize] || fontSizeMap.medium;
+  const legacyFontSizeMap: Record<string, number> = { small: 12, medium: 16, large: 24 };
+  const resolvedFontSize = typeof labelFontSize === 'number' ? labelFontSize : (legacyFontSizeMap[labelFontSize] || 16);
+  const fontSize = `${resolvedFontSize}px`;
 
   const labelElement = label ? (
     <p 

@@ -259,7 +259,7 @@ const zoneFormSchema = z.object({
   qrTransparentBackground: z.boolean().optional(),
   qrLabel: z.string().optional(),
   qrLabelPosition: z.enum(["above", "below"]).optional(),
-  qrLabelFontSize: z.enum(["small", "medium", "large"]).optional(),
+  qrLabelFontSize: z.union([z.number().min(12).max(120), z.enum(["small", "medium", "large"])]).optional(),
   qrLabelColor: z.string().optional(),
   // Countdown timer fields
   countdownTargetDate: z.string().optional(),
@@ -658,7 +658,7 @@ function ZoneEditorDialog({
       qrTransparentBackground: false,
       qrLabel: "",
       qrLabelPosition: "below",
-      qrLabelFontSize: "medium",
+      qrLabelFontSize: 16,
       qrLabelColor: "#000000",
       // Countdown timer defaults
       countdownTargetDate: "",
@@ -788,7 +788,8 @@ function ZoneEditorDialog({
           qrTransparentBackground: zone.qrTransparentBackground || false,
           qrLabel: zone.qrLabel || "",
           qrLabelPosition: zone.qrLabelPosition || "below",
-          qrLabelFontSize: zone.qrLabelFontSize || "medium",
+          qrLabelFontSize: typeof zone.qrLabelFontSize === 'number' ? zone.qrLabelFontSize :
+            (zone.qrLabelFontSize === 'small' ? 12 : zone.qrLabelFontSize === 'large' ? 24 : 16),
           qrLabelColor: zone.qrLabelColor || "#000000",
           // Countdown timer fields
           countdownTargetDate: zone.countdownTargetDate || "",
@@ -912,7 +913,7 @@ function ZoneEditorDialog({
           qrTransparentBackground: false,
           qrLabel: "",
           qrLabelPosition: "below",
-          qrLabelFontSize: "medium",
+          qrLabelFontSize: 16,
           qrLabelColor: "#000000",
           // Countdown timer defaults
           countdownTargetDate: "",
@@ -3326,24 +3327,31 @@ function ZoneEditorDialog({
                         <FormField
                           control={form.control}
                           name="qrLabelFontSize"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Font Size</FormLabel>
-                              <Select onValueChange={field.onChange} value={field.value || "medium"}>
+                          render={({ field }) => {
+                            const numVal = typeof field.value === 'number' ? field.value : 16;
+                            return (
+                              <FormItem>
+                                <FormLabel>Label Text Size</FormLabel>
                                 <FormControl>
-                                  <SelectTrigger data-testid="select-qr-label-size">
-                                    <SelectValue placeholder="Select size" />
-                                  </SelectTrigger>
+                                  <div className="flex items-center gap-4">
+                                    <Slider
+                                      value={[numVal]}
+                                      onValueChange={([val]) => field.onChange(val)}
+                                      min={12}
+                                      max={120}
+                                      step={1}
+                                      className="flex-1"
+                                      data-testid="slider-qr-label-font-size"
+                                    />
+                                    <span className="text-sm text-muted-foreground w-16">
+                                      {numVal}px
+                                    </span>
+                                  </div>
                                 </FormControl>
-                                <SelectContent>
-                                  <SelectItem value="small">Small</SelectItem>
-                                  <SelectItem value="medium">Medium</SelectItem>
-                                  <SelectItem value="large">Large</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
+                                <FormMessage />
+                              </FormItem>
+                            );
+                          }}
                         />
                       </div>
 

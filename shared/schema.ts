@@ -309,7 +309,7 @@ export interface LayoutZone {
   qrErrorCorrection?: "L" | "M" | "Q" | "H";  // Error correction level (default M)
   qrLabel?: string;           // Optional label text to display with QR code
   qrLabelPosition?: "above" | "below";  // Label position relative to QR code
-  qrLabelFontSize?: "small" | "medium" | "large";  // Label font size
+  qrLabelFontSize?: number | "small" | "medium" | "large";  // Label font size in pixels (default 16), legacy enum values converted to numeric
   qrLabelColor?: string;      // Label text color
   // WiFi-specific (used when qrContentType is "wifi")
   qrWifiSsid?: string;
