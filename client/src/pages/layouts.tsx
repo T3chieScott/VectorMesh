@@ -5753,9 +5753,9 @@ function LayoutEditorPanel({
 
   return (
     <div className="h-full flex flex-col">
-      <div className="p-4 border-b flex items-center justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold">{layout.name}</h2>
+      <div className="p-4 border-b flex items-center justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-lg font-semibold truncate">{layout.name}</h2>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <Badge variant="outline">
               {layout.aspectRatio === "custom" && layout.customWidth && layout.customHeight
@@ -6161,8 +6161,8 @@ export default function LayoutsPage() {
   }
 
   return (
-    <div className="h-full flex" data-testid="layouts-page">
-      <div className="w-48 min-w-48 flex-shrink-0 border-r flex flex-col">
+    <div className="h-full flex overflow-hidden" data-testid="layouts-page">
+      <div className="w-44 min-w-44 flex-shrink-0 border-r flex flex-col overflow-hidden">
         <div className="p-4 border-b flex items-center justify-between gap-2">
           <h1 className="font-semibold" data-testid="text-layouts-title">Layouts</h1>
           <CreateLayoutDialog events={events} />
@@ -6183,7 +6183,7 @@ export default function LayoutsPage() {
 
       {selectedLayout ? (
         <div className="flex-1 flex min-w-0 overflow-hidden">
-          <div className="w-72 flex-shrink-0 border-r overflow-auto">
+          <div className="w-64 flex-shrink-0 border-r overflow-auto">
             <LayoutEditorPanel 
               layout={selectedLayout} 
               events={events}
