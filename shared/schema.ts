@@ -361,6 +361,10 @@ export interface LayoutZone {
   shapeLineDirection?: "horizontal" | "vertical" | "diagonal-down" | "diagonal-up";  // Direction for line shapes
   shapeArchSpan?: number;              // Arch span angle in degrees (default 180)
   shapeIcon?: string;                  // Signage icon identifier (e.g., "arrow-right", "toilet", "fire-exit")
+  shapeIconText?: string;              // Text label displayed next to the icon
+  shapeIconTextPosition?: "left" | "right" | "top" | "bottom";  // Position of text relative to icon
+  shapeIconTextSize?: number;          // Font size of icon text in px (default 14)
+  shapeIconTextColor?: string;         // Color of icon text (hex, default matches stroke)
   // Schedule widget configuration
   scheduleViewMode?: "hourly" | "daily" | "agenda";
   scheduleEntries?: Array<{
