@@ -5179,7 +5179,7 @@ function InteractiveLayoutPreview({
       )}
       <div 
         ref={wrapperRef}
-        className="flex-1 flex items-center justify-center min-h-0"
+        className="flex-1 flex items-start justify-center min-h-0 pt-4"
       >
         {/* Outer container sized to the scaled dimensions */}
         <div 
@@ -6632,7 +6632,7 @@ export default function LayoutsPage() {
 
       {selectedLayout ? (
         <div className="flex-1 flex min-w-0 overflow-hidden">
-          <div className="w-72 flex-shrink-0 border-r overflow-auto">
+          <div className="w-80 flex-shrink-0 border-r overflow-hidden flex flex-col">
             <LayoutEditorPanel 
               layout={selectedLayout} 
               events={events}
