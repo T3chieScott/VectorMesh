@@ -4121,6 +4121,97 @@ function ZoneEditorDialog({
                     </FormItem>
                   )}
                 />
+                {form.watch("shapeIcon") && (
+                  <div className="space-y-3 pl-4 border-l-2 border-muted">
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Icon Text</div>
+                    <FormField
+                      control={form.control}
+                      name="shapeIconText"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Label Text</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              value={field.value || ""}
+                              placeholder="e.g. Toilets, Exit, WiFi..."
+                              data-testid="input-shape-icon-text"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    {form.watch("shapeIconText") && (
+                      <>
+                        <FormField
+                          control={form.control}
+                          name="shapeIconTextPosition"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Text Position</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value || "right"}>
+                                <FormControl>
+                                  <SelectTrigger data-testid="select-shape-icon-text-position">
+                                    <SelectValue placeholder="Position" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="left">Left of icon</SelectItem>
+                                  <SelectItem value="right">Right of icon</SelectItem>
+                                  <SelectItem value="top">Above icon</SelectItem>
+                                  <SelectItem value="bottom">Below icon</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <div className="grid grid-cols-2 gap-3">
+                          <FormField
+                            control={form.control}
+                            name="shapeIconTextSize"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Text Size</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    min={8}
+                                    max={200}
+                                    value={field.value ?? 14}
+                                    onChange={(e) => field.onChange(Number(e.target.value))}
+                                    data-testid="input-shape-icon-text-size"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="shapeIconTextColor"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Text Color</FormLabel>
+                                <FormControl>
+                                  <ColorPickerWithPalette
+                                    value={field.value || form.watch("shapeStrokeColor") || "#ffffff"}
+                                    onChange={field.onChange}
+                                    palette={eventPalette}
+                                    placeholder="Matches stroke"
+                                    data-testid="color-shape-icon-text"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 {form.watch("shapeType") === "line" && (
                   <FormField
                     control={form.control}
