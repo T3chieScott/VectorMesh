@@ -1690,6 +1690,8 @@ const SIGNAGE_ICONS_RENDER = [
   { id: "arrow-down", svg: '<path d="M12 5v14M19 12l-7 7-7-7"/>' },
   { id: "arrow-up-right", svg: '<path d="M7 17L17 7M17 7H7M17 7v10"/>' },
   { id: "arrow-up-left", svg: '<path d="M17 17L7 7M7 7h10M7 7v10"/>' },
+  { id: "arrow-down-right", svg: '<path d="M7 7L17 17M17 17H7M17 17V7"/>' },
+  { id: "arrow-down-left", svg: '<path d="M17 7L7 17M7 17h10M7 17V7"/>' },
   { id: "toilet", svg: '<path d="M8 2v4M16 2v4M6 6h4v3a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V6h2M14 6h4v3c0 1.7-1.3 3-3 3s-3-1.3-3-3V6M7 12v10M17 12v10"/>' },
   { id: "toilet-male", svg: '<circle cx="12" cy="4" r="2"/><path d="M15 22v-5l2-3v-4a1 1 0 0 0-1-1h-8a1 1 0 0 0-1 1v4l2 3v5"/>' },
   { id: "toilet-female", svg: '<circle cx="12" cy="4" r="2"/><path d="M14 9h-4l-1 7h2v6h2v-6h2l-1-7"/>' },
@@ -1727,7 +1729,7 @@ interface ShapeWidgetProps {
   archSpan?: number;
   icon?: string;
   iconText?: string;
-  iconTextPosition?: "left" | "right" | "top" | "bottom";
+  iconTextPosition?: "left" | "right" | "top" | "bottom" | "center";
   iconTextSize?: number;
   iconTextColor?: string;
 }
@@ -1981,6 +1983,7 @@ function ShapeWidget({
         if (!iconDef) return null;
         const textColor = iconTextColor || strokeColor || '#ffffff';
         const hasText = iconText && iconText.trim().length > 0;
+        const isCentered = iconTextPosition === "center";
         const isVertical = iconTextPosition === "top" || iconTextPosition === "bottom";
         const isReversed = iconTextPosition === "left" || iconTextPosition === "top";
         return (
@@ -1988,11 +1991,11 @@ function ShapeWidget({
             className="absolute inset-0 flex items-center justify-center"
             style={{
               pointerEvents: 'none',
-              flexDirection: hasText && isVertical ? 'column' : 'row',
-              gap: hasText ? '4px' : undefined,
+              flexDirection: hasText && !isCentered && isVertical ? 'column' : 'row',
+              gap: hasText && !isCentered ? '4px' : undefined,
             }}
           >
-            {hasText && isReversed && (
+            {hasText && !isCentered && isReversed && (
               <span
                 style={{
                   color: textColor,
@@ -2007,21 +2010,41 @@ function ShapeWidget({
                 {iconText}
               </span>
             )}
-            <svg
-              viewBox="0 0 24 24"
-              style={{
-                width: hasText ? '35%' : '50%',
-                height: hasText ? '35%' : '50%',
-                flexShrink: 0,
-              }}
-              fill="none"
-              stroke={strokeColor || '#ffffff'}
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              dangerouslySetInnerHTML={{ __html: iconDef.svg }}
-            />
-            {hasText && !isReversed && (
+            <div style={{ position: 'relative', width: hasText ? '35%' : '50%', height: hasText ? '35%' : '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg
+                viewBox="0 0 24 24"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                }}
+                fill="none"
+                stroke={strokeColor || '#ffffff'}
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                dangerouslySetInnerHTML={{ __html: iconDef.svg }}
+              />
+              {hasText && isCentered && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: '110%',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    color: textColor,
+                    fontSize: `${iconTextSize}px`,
+                    fontWeight: 600,
+                    lineHeight: 1.2,
+                    whiteSpace: 'nowrap',
+                    textAlign: 'center',
+                  }}
+                  data-testid="text-shape-icon-label"
+                >
+                  {iconText}
+                </span>
+              )}
+            </div>
+            {hasText && !isCentered && !isReversed && (
               <span
                 style={{
                   color: textColor,

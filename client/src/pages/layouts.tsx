@@ -161,6 +161,8 @@ const SIGNAGE_ICONS = [
   { id: "arrow-down", label: "Arrow Down", category: "Directions", svg: '<path d="M12 5v14M19 12l-7 7-7-7"/>' },
   { id: "arrow-up-right", label: "Arrow Up-Right", category: "Directions", svg: '<path d="M7 17L17 7M17 7H7M17 7v10"/>' },
   { id: "arrow-up-left", label: "Arrow Up-Left", category: "Directions", svg: '<path d="M17 17L7 7M7 7h10M7 7v10"/>' },
+  { id: "arrow-down-right", label: "Arrow Down-Right", category: "Directions", svg: '<path d="M7 7L17 17M17 17H7M17 17V7"/>' },
+  { id: "arrow-down-left", label: "Arrow Down-Left", category: "Directions", svg: '<path d="M17 7L7 17M7 17h10M7 17V7"/>' },
   { id: "toilet", label: "Toilets", category: "Facilities", svg: '<path d="M8 2v4M16 2v4M6 6h4v3a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V6h2M14 6h4v3c0 1.7-1.3 3-3 3s-3-1.3-3-3V6M7 12v10M17 12v10"/>' },
   { id: "toilet-male", label: "Male WC", category: "Facilities", svg: '<circle cx="12" cy="4" r="2"/><path d="M15 22v-5l2-3v-4a1 1 0 0 0-1-1h-8a1 1 0 0 0-1 1v4l2 3v5"/>' },
   { id: "toilet-female", label: "Female WC", category: "Facilities", svg: '<circle cx="12" cy="4" r="2"/><path d="M14 9h-4l-1 7h2v6h2v-6h2l-1-7"/>' },
@@ -4161,6 +4163,7 @@ function ZoneEditorDialog({
                                   <SelectItem value="right">Right of icon</SelectItem>
                                   <SelectItem value="top">Above icon</SelectItem>
                                   <SelectItem value="bottom">Below icon</SelectItem>
+                                  <SelectItem value="center">Centered on icon</SelectItem>
                                 </SelectContent>
                               </Select>
                               <FormMessage />
