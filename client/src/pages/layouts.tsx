@@ -6607,7 +6607,7 @@ export default function LayoutsPage() {
   return (
     <div className="h-full flex overflow-hidden" data-testid="layouts-page">
       {(!selectedLayout || showLayoutList) && (
-        <div className="w-56 min-w-56 flex-shrink-0 border-r flex flex-col overflow-hidden">
+        <div className="w-64 min-w-64 flex-shrink-0 border-r flex flex-col overflow-hidden">
           <div className="p-4 border-b flex items-center justify-between gap-2">
             <h1 className="font-semibold" data-testid="text-layouts-title">Layouts</h1>
             <CreateLayoutDialog events={events} />
@@ -6631,8 +6631,8 @@ export default function LayoutsPage() {
       )}
 
       {selectedLayout ? (
-        <div className="flex-1 flex min-w-0 overflow-hidden">
-          <div className="w-80 flex-shrink-0 border-r overflow-hidden flex flex-col">
+        <div className="flex-1 flex min-w-0 overflow-hidden h-full">
+          <div className="w-80 flex-shrink-0 border-r overflow-hidden flex flex-col h-full">
             <LayoutEditorPanel 
               layout={selectedLayout} 
               events={events}
@@ -6654,7 +6654,7 @@ export default function LayoutsPage() {
               }}
             />
           </div>
-          <div className="flex-1 min-w-0 overflow-hidden">
+          <div className="flex-1 min-w-0 overflow-hidden h-full">
             <LivePreviewPanel 
               layout={selectedLayout} 
               zones={draftZones}
