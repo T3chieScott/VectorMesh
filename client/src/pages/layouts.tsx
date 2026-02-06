@@ -6182,8 +6182,8 @@ function LayoutEditorPanel({
   };
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="p-3 border-b space-y-2">
+    <div className="flex flex-col" style={{ height: '100%', maxHeight: '100%' }}>
+      <div className="p-3 border-b space-y-2 flex-shrink-0">
         <div className="flex items-center gap-2">
           {!showLayoutList && (
             <Button variant="ghost" size="icon" onClick={onBackToList} data-testid="button-back-to-layouts">
@@ -6241,7 +6241,7 @@ function LayoutEditorPanel({
         </div>
       </div>
 
-      <ScrollArea className="flex-1">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-4 space-y-3">
           {zones.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
@@ -6325,7 +6325,7 @@ function LayoutEditorPanel({
             })
           )}
         </div>
-      </ScrollArea>
+      </div>
 
       <ZoneEditorDialog
         layout={layout}
@@ -6605,9 +6605,9 @@ export default function LayoutsPage() {
   }
 
   return (
-    <div className="h-full flex overflow-hidden" data-testid="layouts-page">
+    <div className="-m-6 flex overflow-hidden" style={{ height: 'calc(100vh - 3.5rem)' }} data-testid="layouts-page">
       {(!selectedLayout || showLayoutList) && (
-        <div className="w-64 min-w-64 flex-shrink-0 border-r flex flex-col overflow-hidden">
+        <div className="w-72 min-w-72 flex-shrink-0 border-r flex flex-col overflow-hidden">
           <div className="p-4 border-b flex items-center justify-between gap-2">
             <h1 className="font-semibold" data-testid="text-layouts-title">Layouts</h1>
             <CreateLayoutDialog events={events} />
@@ -6632,7 +6632,7 @@ export default function LayoutsPage() {
 
       {selectedLayout ? (
         <div className="flex-1 flex min-w-0 overflow-hidden h-full">
-          <div className="w-80 flex-shrink-0 border-r overflow-hidden flex flex-col h-full">
+          <div className="w-96 flex-shrink-0 border-r overflow-hidden flex flex-col h-full">
             <LayoutEditorPanel 
               layout={selectedLayout} 
               events={events}
