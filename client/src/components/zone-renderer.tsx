@@ -1726,6 +1726,10 @@ interface ShapeWidgetProps {
   lineDirection?: "horizontal" | "vertical" | "diagonal-down" | "diagonal-up";
   archSpan?: number;
   icon?: string;
+  iconText?: string;
+  iconTextPosition?: "left" | "right" | "top" | "bottom";
+  iconTextSize?: number;
+  iconTextColor?: string;
 }
 
 function ScheduleWidget({
@@ -1855,6 +1859,10 @@ function ShapeWidget({
   lineDirection = "horizontal",
   archSpan = 180,
   icon,
+  iconText,
+  iconTextPosition = "right",
+  iconTextSize = 14,
+  iconTextColor,
 }: ShapeWidgetProps) {
   const fill = fillEnabled ? fillColor : "none";
   const strokeDasharray = strokeStyle === "dashed" ? "8,4" : strokeStyle === "dotted" ? "2,4" : undefined;
@@ -1971,9 +1979,63 @@ function ShapeWidget({
       {icon && (() => {
         const iconDef = SIGNAGE_ICONS_RENDER.find(i => i.id === icon);
         if (!iconDef) return null;
+        const textColor = iconTextColor || strokeColor || '#ffffff';
+        const hasText = iconText && iconText.trim().length > 0;
+        const isVertical = iconTextPosition === "top" || iconTextPosition === "bottom";
+        const isReversed = iconTextPosition === "left" || iconTextPosition === "top";
         return (
-          <div className="absolute inset-0 flex items-center justify-center" style={{ pointerEvents: 'none' }}>
-            <svg viewBox="0 0 24 24" className="w-1/2 h-1/2" fill="none" stroke={strokeColor || '#ffffff'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: iconDef.svg }} />
+          <div
+            className="absolute inset-0 flex items-center justify-center"
+            style={{
+              pointerEvents: 'none',
+              flexDirection: hasText && isVertical ? 'column' : 'row',
+              gap: hasText ? '4px' : undefined,
+            }}
+          >
+            {hasText && isReversed && (
+              <span
+                style={{
+                  color: textColor,
+                  fontSize: `${iconTextSize}px`,
+                  fontWeight: 600,
+                  lineHeight: 1.2,
+                  whiteSpace: 'nowrap',
+                  textAlign: 'center',
+                }}
+                data-testid="text-shape-icon-label"
+              >
+                {iconText}
+              </span>
+            )}
+            <svg
+              viewBox="0 0 24 24"
+              style={{
+                width: hasText ? '35%' : '50%',
+                height: hasText ? '35%' : '50%',
+                flexShrink: 0,
+              }}
+              fill="none"
+              stroke={strokeColor || '#ffffff'}
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              dangerouslySetInnerHTML={{ __html: iconDef.svg }}
+            />
+            {hasText && !isReversed && (
+              <span
+                style={{
+                  color: textColor,
+                  fontSize: `${iconTextSize}px`,
+                  fontWeight: 600,
+                  lineHeight: 1.2,
+                  whiteSpace: 'nowrap',
+                  textAlign: 'center',
+                }}
+                data-testid="text-shape-icon-label"
+              >
+                {iconText}
+              </span>
+            )}
           </div>
         );
       })()}
@@ -2169,6 +2231,10 @@ export function ZoneRenderer({
             lineDirection={zone.shapeLineDirection}
             archSpan={zone.shapeArchSpan}
             icon={zone.shapeIcon}
+            iconText={zone.shapeIconText}
+            iconTextPosition={zone.shapeIconTextPosition}
+            iconTextSize={zone.shapeIconTextSize}
+            iconTextColor={zone.shapeIconTextColor}
           />
         );
       default:
