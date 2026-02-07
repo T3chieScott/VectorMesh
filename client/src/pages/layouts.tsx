@@ -577,24 +577,26 @@ function MontageMediaPicker({
     (asset) => asset.mediaType === "image" || asset.mediaType === "gif"
   ) || [];
 
+  const cleanIds = selectedIds.filter((i) => i != null && i !== "");
+
   const toggleSelection = (id: string) => {
-    if (selectedIds.includes(id)) {
-      onSelectionChange(selectedIds.filter((i) => i !== id));
+    if (cleanIds.includes(id)) {
+      onSelectionChange(cleanIds.filter((i) => i !== id));
     } else {
-      onSelectionChange([...selectedIds, id]);
+      onSelectionChange([...cleanIds, id]);
     }
   };
 
   const moveUp = (index: number) => {
     if (index <= 0) return;
-    const newIds = [...selectedIds];
+    const newIds = [...cleanIds];
     [newIds[index - 1], newIds[index]] = [newIds[index], newIds[index - 1]];
     onSelectionChange(newIds);
   };
 
   const moveDown = (index: number) => {
-    if (index >= selectedIds.length - 1) return;
-    const newIds = [...selectedIds];
+    if (index >= cleanIds.length - 1) return;
+    const newIds = [...cleanIds];
     [newIds[index], newIds[index + 1]] = [newIds[index + 1], newIds[index]];
     onSelectionChange(newIds);
   };
@@ -614,7 +616,7 @@ function MontageMediaPicker({
   }
 
   // Get selected items in order
-  const selectedAssets = selectedIds
+  const selectedAssets = cleanIds
     .map((id) => imageAssets.find((a) => a.id === id))
     .filter(Boolean) as MediaAsset[];
 
@@ -674,7 +676,7 @@ function MontageMediaPicker({
       <ScrollArea className="h-40 border rounded-md p-2">
         <div className="grid grid-cols-5 gap-2">
           {imageAssets.map((asset) => {
-            const isSelected = selectedIds.includes(asset.id);
+            const isSelected = cleanIds.includes(asset.id);
             return (
               <button
                 key={asset.id}
@@ -695,7 +697,7 @@ function MontageMediaPicker({
                 {isSelected && (
                   <div className="absolute top-1 right-1 bg-primary text-primary-foreground rounded-full w-4 h-4 flex items-center justify-center">
                     <span className="text-xs">
-                      {selectedIds.indexOf(asset.id) + 1}
+                      {cleanIds.indexOf(asset.id) + 1}
                     </span>
                   </div>
                 )}
