@@ -1336,14 +1336,15 @@ function MontageWidget({
 }) {
   const [displayOrder, setDisplayOrder] = useState<string[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [topImage, setTopImage] = useState<string>("");
-  const [bottomImage, setBottomImage] = useState<string>("");
-  const [topOpacity, setTopOpacity] = useState(0);
-  const [transitionEnabled, setTransitionEnabled] = useState(false);
+  const [layerA, setLayerA] = useState<string>("");
+  const [layerB, setLayerB] = useState<string>("");
+  const [activeLayer, setActiveLayer] = useState<"a" | "b">("a");
+  const [crossfading, setCrossfading] = useState(false);
   const [kenBurnsState, setKenBurnsState] = useState({ scale: 1, x: 0, y: 0 });
   const [hasError, setHasError] = useState(false);
   const currentIndexRef = useRef(0);
   const displayOrderRef = useRef<string[]>([]);
+  const activeLayerRef = useRef<"a" | "b">("a");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
@@ -1371,10 +1372,11 @@ function MontageWidget({
     currentIndexRef.current = 0;
     setCurrentIndex(0);
     if (order.length > 0) {
-      setBottomImage(order[0]);
-      setTopImage(order.length > 1 ? order[1] : order[0]);
-      setTopOpacity(0);
-      setTransitionEnabled(false);
+      setLayerA(order[0]);
+      setLayerB(order.length > 1 ? order[1] : order[0]);
+      setActiveLayer("a");
+      activeLayerRef.current = "a";
+      setCrossfading(false);
     }
   }, [mediaIds, shuffle]);
 
@@ -1395,38 +1397,37 @@ function MontageWidget({
       if (!isMountedRef.current) return;
       const order = displayOrderRef.current;
       const nextIdx = (currentIndexRef.current + 1) % order.length;
+      const current = activeLayerRef.current;
+      const next = current === "a" ? "b" : "a";
+
+      if (next === "a") {
+        setLayerA(order[nextIdx]);
+      } else {
+        setLayerB(order[nextIdx]);
+      }
 
       if (transition === "none") {
         currentIndexRef.current = nextIdx;
         setCurrentIndex(nextIdx);
-        setBottomImage(order[nextIdx]);
-        const followingIdx = (nextIdx + 1) % order.length;
-        setTopImage(order[followingIdx]);
+        setActiveLayer(next);
+        activeLayerRef.current = next;
         setKenBurnsState(generateKenBurnsParams());
         return;
       }
 
-      setTopImage(order[nextIdx]);
-      setTransitionEnabled(true);
+      setCrossfading(true);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           if (!isMountedRef.current) return;
-          setTopOpacity(1);
+          setActiveLayer(next);
+          activeLayerRef.current = next;
+
           transitionTimerRef.current = setTimeout(() => {
             if (!isMountedRef.current) return;
             currentIndexRef.current = nextIdx;
             setCurrentIndex(nextIdx);
-            setBottomImage(order[nextIdx]);
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => {
-                if (!isMountedRef.current) return;
-                setTransitionEnabled(false);
-                setTopOpacity(0);
-                const followingIdx = (nextIdx + 1) % order.length;
-                setTopImage(order[followingIdx]);
-                setKenBurnsState(generateKenBurnsParams());
-              });
-            });
+            setCrossfading(false);
+            setKenBurnsState(generateKenBurnsParams());
           }, transitionDuration + 50);
         });
       });
@@ -1436,7 +1437,7 @@ function MontageWidget({
       if (timerRef.current) clearTimeout(timerRef.current);
       if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
     };
-  }, [autoPlay, displayOrder, duration, transitionDuration, currentIndex, generateKenBurnsParams]);
+  }, [autoPlay, displayOrder, duration, transitionDuration, currentIndex, generateKenBurnsParams, transition]);
 
   useEffect(() => {
     setKenBurnsState(generateKenBurnsParams());
@@ -1475,10 +1476,10 @@ function MontageWidget({
     );
   }
 
-  const bottomUrl = getUrl(bottomImage);
-  const topUrl = getUrl(topImage);
+  const urlA = getUrl(layerA);
+  const urlB = getUrl(layerB);
 
-  if (!bottomUrl) {
+  if (!urlA && !urlB) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-muted/30">
         <div className="text-center">
@@ -1489,17 +1490,23 @@ function MontageWidget({
     );
   }
 
-  const getTopTransformStyle = (): React.CSSProperties => {
+  const aIsActive = activeLayer === "a";
+
+  const getLayerStyle = (isActive: boolean, isLayerA: boolean): React.CSSProperties => {
     const base: React.CSSProperties = {
       position: "absolute",
       inset: 0,
-      zIndex: 2,
-      transition: transitionEnabled ? `opacity ${transitionDuration}ms ease-in-out, transform ${transitionDuration}ms ease-in-out` : "none",
-      opacity: topOpacity,
+      zIndex: isActive ? 2 : 1,
+      transition: crossfading ? `opacity ${transitionDuration}ms ease-in-out, transform ${transitionDuration}ms ease-in-out` : "none",
+      opacity: isActive ? 1 : 0,
     };
 
     if (transition === "none" || transition === "fade") {
       return base;
+    }
+
+    if (!isActive && !crossfading) {
+      return { ...base, opacity: 0 };
     }
 
     const slideOffset = "100%";
@@ -1513,16 +1520,16 @@ function MontageWidget({
     if (slideTransforms[transition]) {
       return {
         ...base,
-        transform: topOpacity === 1 ? "translate(0)" : slideTransforms[transition],
-        opacity: topOpacity === 1 ? 1 : 0,
+        transform: isActive ? "translate(0)" : slideTransforms[transition],
+        opacity: isActive ? 1 : 0,
       };
     }
 
     if (transition === "zoom-in") {
-      return { ...base, transform: topOpacity === 1 ? "scale(1)" : "scale(0.5)" };
+      return { ...base, transform: isActive ? "scale(1)" : "scale(0.5)" };
     }
     if (transition === "zoom-out") {
-      return { ...base, transform: topOpacity === 1 ? "scale(1)" : "scale(1.5)" };
+      return { ...base, transform: isActive ? "scale(1)" : "scale(1.5)" };
     }
 
     return base;
@@ -1537,11 +1544,11 @@ function MontageWidget({
   };
 
   return (
-    <div className="h-full w-full relative overflow-hidden" style={{ backgroundColor: "black" }}>
-      <div style={{ position: "absolute", inset: 0, zIndex: 1 }}>
-        <div className="h-full w-full" style={getKenBurnsStyle()}>
+    <div className="h-full w-full relative overflow-hidden">
+      <div style={getLayerStyle(aIsActive, true)}>
+        <div className="h-full w-full" style={aIsActive ? getKenBurnsStyle() : {}}>
           <img
-            src={bottomUrl}
+            src={urlA}
             alt=""
             className="h-full w-full"
             style={{ objectFit: fitMode, border: "none" }}
@@ -1549,17 +1556,17 @@ function MontageWidget({
           />
         </div>
       </div>
-      {displayOrder.length > 1 && topUrl && (
-        <div style={{ ...getTopTransformStyle(), backgroundColor: "black" }}>
+      <div style={getLayerStyle(!aIsActive, false)}>
+        <div className="h-full w-full" style={!aIsActive ? getKenBurnsStyle() : {}}>
           <img
-            src={topUrl}
+            src={urlB}
             alt=""
             className="h-full w-full"
             style={{ objectFit: fitMode, border: "none" }}
-            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+            onError={() => setHasError(true)}
           />
         </div>
-      )}
+      </div>
     </div>
   );
 }
