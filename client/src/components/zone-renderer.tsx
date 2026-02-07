@@ -2016,6 +2016,10 @@ function ShapeWidget({
                 style={{
                   width: '100%',
                   height: '100%',
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  aspectRatio: '1 / 1',
+                  objectFit: 'contain',
                 }}
                 fill="none"
                 stroke={strokeColor || '#ffffff'}
