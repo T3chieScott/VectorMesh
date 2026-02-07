@@ -1334,11 +1334,16 @@ function MontageWidget({
   shuffle?: boolean;
   autoPlay?: boolean;
 }) {
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [isTransitioning, setIsTransitioning] = useState(false);
   const [displayOrder, setDisplayOrder] = useState<string[]>(mediaIds);
+  const [layerA, setLayerA] = useState<string>("");
+  const [layerB, setLayerB] = useState<string>("");
+  const [activeLayer, setActiveLayer] = useState<"A" | "B">("A");
+  const [isTransitioning, setIsTransitioning] = useState(false);
   const [kenBurnsState, setKenBurnsState] = useState({ scale: 1, x: 0, y: 0 });
   const [hasError, setHasError] = useState(false);
+  const currentIndexRef = useRef(0);
+  const activeLayerRef = useRef<"A" | "B">("A");
+  const displayOrderRef = useRef<string[]>(mediaIds);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
@@ -1346,6 +1351,11 @@ function MontageWidget({
   const { data: allMedia = [], isLoading: isMediaLoading } = useQuery<MediaAsset[]>({
     queryKey: ["/api/media"],
   });
+
+  const getMontageMediaUrl = useCallback((id: string) => {
+    if (!id) return "";
+    return `/api/media/${id}/file`;
+  }, []);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -1355,24 +1365,31 @@ function MontageWidget({
   }, []);
 
   useEffect(() => {
+    let order: string[];
     if (shuffle && mediaIds.length > 0) {
-      const shuffled = [...mediaIds].sort(() => Math.random() - 0.5);
-      setDisplayOrder(shuffled);
+      order = [...mediaIds].sort(() => Math.random() - 0.5);
     } else {
-      setDisplayOrder(mediaIds);
+      order = [...mediaIds];
     }
-    setCurrentIndex(0);
+    setDisplayOrder(order);
+    displayOrderRef.current = order;
+    currentIndexRef.current = 0;
+    if (order.length > 0) {
+      setLayerA(order[0]);
+      setLayerB(order.length > 1 ? order[1] : order[0]);
+      setActiveLayer("A");
+      activeLayerRef.current = "A";
+      setIsTransitioning(false);
+    }
   }, [mediaIds, shuffle]);
 
   const generateKenBurnsParams = useCallback(() => {
     if (!kenBurns) return { scale: 1, x: 0, y: 0 };
-    
     const intensity = kenBurnsIntensity / 100;
     const scale = 1 + (0.05 + Math.random() * 0.1) * intensity;
     const maxOffset = (scale - 1) * 50;
     const x = (Math.random() * 2 - 1) * maxOffset;
     const y = (Math.random() * 2 - 1) * maxOffset;
-    
     return { scale, x, y };
   }, [kenBurns, kenBurnsIntensity]);
 
@@ -1382,16 +1399,30 @@ function MontageWidget({
     const scheduleNext = () => {
       timerRef.current = setTimeout(() => {
         if (!isMountedRef.current) return;
-        
+
         setIsTransitioning(true);
-        
+
         transitionTimerRef.current = setTimeout(() => {
           if (!isMountedRef.current) return;
-          
-          setCurrentIndex((prev) => (prev + 1) % displayOrder.length);
+
+          const order = displayOrderRef.current;
+          const prevActive = activeLayerRef.current;
+          const newActive = prevActive === "A" ? "B" : "A";
+          currentIndexRef.current = (currentIndexRef.current + 1) % order.length;
+          const nextIdx = (currentIndexRef.current + 1) % order.length;
+          const nextMediaId = order[nextIdx];
+
+          if (prevActive === "A") {
+            setLayerA(nextMediaId);
+          } else {
+            setLayerB(nextMediaId);
+          }
+
+          activeLayerRef.current = newActive;
+          setActiveLayer(newActive);
           setKenBurnsState(generateKenBurnsParams());
           setIsTransitioning(false);
-          
+
           scheduleNext();
         }, transitionDuration);
       }, duration * 1000);
@@ -1431,88 +1462,6 @@ function MontageWidget({
     );
   }
 
-  const currentMediaId = displayOrder[currentIndex];
-  const nextIndex = (currentIndex + 1) % displayOrder.length;
-  const nextMediaId = displayOrder[nextIndex];
-
-  const getMontageMediaUrl = (id: string) => {
-    const asset = allMedia.find(m => m.id === id);
-    return getMediaUrl(asset?.originalPath);
-  };
-
-  const getTransitionStyle = (isActive: boolean, isNext: boolean): React.CSSProperties => {
-    const base: React.CSSProperties = {
-      position: "absolute",
-      inset: 0,
-      transition: `all ${transitionDuration}ms ease-in-out`,
-    };
-
-    if (transition === "none") {
-      return { ...base, opacity: isActive ? 1 : 0 };
-    }
-
-    if (transition === "fade") {
-      return {
-        ...base,
-        opacity: isActive ? (isTransitioning ? 0 : 1) : (isNext && isTransitioning ? 1 : 0),
-      };
-    }
-
-    const slideOffset = "100%";
-    const transforms: Record<string, { active: string; next: string }> = {
-      "slide-left": { active: `translateX(-${slideOffset})`, next: `translateX(${slideOffset})` },
-      "slide-right": { active: `translateX(${slideOffset})`, next: `translateX(-${slideOffset})` },
-      "slide-up": { active: `translateY(-${slideOffset})`, next: `translateY(${slideOffset})` },
-      "slide-down": { active: `translateY(${slideOffset})`, next: `translateY(-${slideOffset})` },
-    };
-
-    if (transforms[transition]) {
-      const t = transforms[transition];
-      return {
-        ...base,
-        transform: isActive 
-          ? (isTransitioning ? t.active : "translate(0)")
-          : (isNext ? (isTransitioning ? "translate(0)" : t.next) : t.next),
-        opacity: isActive || (isNext && isTransitioning) ? 1 : 0,
-      };
-    }
-
-    if (transition === "zoom-in" || transition === "zoom-out") {
-      const zoomScale = transition === "zoom-in" ? 1.5 : 0.5;
-      return {
-        ...base,
-        transform: isActive 
-          ? (isTransitioning ? `scale(${zoomScale})` : "scale(1)")
-          : (isNext ? (isTransitioning ? "scale(1)" : `scale(${1/zoomScale})`) : "scale(1)"),
-        opacity: isActive ? (isTransitioning ? 0 : 1) : (isNext && isTransitioning ? 1 : 0),
-      };
-    }
-
-    return base;
-  };
-
-  const getKenBurnsStyle = (): React.CSSProperties => {
-    if (!kenBurns) return {};
-    return {
-      transform: `scale(${kenBurnsState.scale}) translate(${kenBurnsState.x}%, ${kenBurnsState.y}%)`,
-      transition: `transform ${duration}s ease-in-out`,
-    };
-  };
-
-  const currentUrl = getMontageMediaUrl(currentMediaId);
-  const nextUrl = getMontageMediaUrl(nextMediaId);
-
-  if (!currentUrl) {
-    return (
-      <div className="h-full w-full flex items-center justify-center bg-muted/30">
-        <div className="text-center">
-          <Images className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">Media not found</p>
-        </div>
-      </div>
-    );
-  }
-
   if (hasError) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-muted/30">
@@ -1524,12 +1473,82 @@ function MontageWidget({
     );
   }
 
+  const urlA = getMontageMediaUrl(layerA);
+  const urlB = getMontageMediaUrl(layerB);
+
+  if (!urlA && !urlB) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-muted/30">
+        <div className="text-center">
+          <Images className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">Media not found</p>
+        </div>
+      </div>
+    );
+  }
+
+  const getLayerStyle = (layer: "A" | "B"): React.CSSProperties => {
+    const isActive = activeLayer === layer;
+    const isIncoming = !isActive;
+    const shouldShow = isActive ? !isTransitioning : isTransitioning;
+
+    const base: React.CSSProperties = {
+      position: "absolute",
+      inset: 0,
+      transition: isTransitioning ? `all ${transitionDuration}ms ease-in-out` : "none",
+    };
+
+    if (transition === "none") {
+      return { ...base, opacity: shouldShow ? 1 : 0, transition: "none" };
+    }
+
+    if (transition === "fade") {
+      return { ...base, opacity: shouldShow ? 1 : 0, zIndex: isIncoming && isTransitioning ? 2 : 1 };
+    }
+
+    const slideOffset = "100%";
+    const transforms: Record<string, { out: string; in: string }> = {
+      "slide-left": { out: `translateX(-${slideOffset})`, in: `translateX(${slideOffset})` },
+      "slide-right": { out: `translateX(${slideOffset})`, in: `translateX(-${slideOffset})` },
+      "slide-up": { out: `translateY(-${slideOffset})`, in: `translateY(${slideOffset})` },
+      "slide-down": { out: `translateY(${slideOffset})`, in: `translateY(-${slideOffset})` },
+    };
+
+    if (transforms[transition]) {
+      const t = transforms[transition];
+      if (isActive) {
+        return { ...base, transform: isTransitioning ? t.out : "translate(0)", opacity: 1, zIndex: 1 };
+      } else {
+        return { ...base, transform: isTransitioning ? "translate(0)" : t.in, opacity: isTransitioning ? 1 : 0, zIndex: 2 };
+      }
+    }
+
+    if (transition === "zoom-in" || transition === "zoom-out") {
+      const zoomScale = transition === "zoom-in" ? 1.5 : 0.5;
+      if (isActive) {
+        return { ...base, transform: isTransitioning ? `scale(${zoomScale})` : "scale(1)", opacity: isTransitioning ? 0 : 1, zIndex: 1 };
+      } else {
+        return { ...base, transform: isTransitioning ? "scale(1)" : `scale(${1/zoomScale})`, opacity: isTransitioning ? 1 : 0, zIndex: 2 };
+      }
+    }
+
+    return { ...base, opacity: shouldShow ? 1 : 0 };
+  };
+
+  const getKenBurnsStyle = (): React.CSSProperties => {
+    if (!kenBurns) return {};
+    return {
+      transform: `scale(${kenBurnsState.scale}) translate(${kenBurnsState.x}%, ${kenBurnsState.y}%)`,
+      transition: `transform ${duration}s ease-in-out`,
+    };
+  };
+
   return (
     <div className="h-full w-full relative overflow-hidden">
-      <div style={getTransitionStyle(true, false)}>
-        <div className="h-full w-full" style={getKenBurnsStyle()}>
+      <div style={getLayerStyle("A")}>
+        <div className="h-full w-full" style={activeLayer === "A" ? getKenBurnsStyle() : {}}>
           <img
-            src={currentUrl}
+            src={urlA}
             alt=""
             className="h-full w-full"
             style={{ objectFit: fitMode, border: "none" }}
@@ -1537,20 +1556,17 @@ function MontageWidget({
           />
         </div>
       </div>
-      {displayOrder.length > 1 && nextUrl && (
-        <div style={getTransitionStyle(false, true)}>
+      <div style={getLayerStyle("B")}>
+        <div className="h-full w-full" style={activeLayer === "B" ? getKenBurnsStyle() : {}}>
           <img
-            src={nextUrl}
+            src={urlB}
             alt=""
             className="h-full w-full"
             style={{ objectFit: fitMode, border: "none" }}
-            onError={(e) => {
-              const target = e.target as HTMLImageElement;
-              target.style.display = "none";
-            }}
+            onError={() => setHasError(true)}
           />
         </div>
-      )}
+      </div>
     </div>
   );
 }
