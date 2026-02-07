@@ -2010,7 +2010,7 @@ function ShapeWidget({
                 {iconText}
               </span>
             )}
-            <div style={{ position: 'relative', width: hasText ? '55%' : '75%', height: hasText ? '55%' : '75%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ position: 'relative', width: hasText ? '70%' : '100%', height: hasText ? '70%' : '100%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <svg
                 viewBox="0 0 24 24"
                 style={{
