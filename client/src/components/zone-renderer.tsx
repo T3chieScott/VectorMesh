@@ -1537,7 +1537,7 @@ function MontageWidget({
   };
 
   return (
-    <div className="h-full w-full relative overflow-hidden">
+    <div className="h-full w-full relative overflow-hidden" style={{ backgroundColor: "black" }}>
       <div style={{ position: "absolute", inset: 0, zIndex: 1 }}>
         <div className="h-full w-full" style={getKenBurnsStyle()}>
           <img
@@ -1550,7 +1550,7 @@ function MontageWidget({
         </div>
       </div>
       {displayOrder.length > 1 && topUrl && (
-        <div style={getTopTransformStyle()}>
+        <div style={{ ...getTopTransformStyle(), backgroundColor: "black" }}>
           <img
             src={topUrl}
             alt=""
