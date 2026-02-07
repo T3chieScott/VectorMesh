@@ -1412,20 +1412,19 @@ function MontageWidget({
         requestAnimationFrame(() => {
           if (!isMountedRef.current) return;
           setTopOpacity(1);
+          transitionTimerRef.current = setTimeout(() => {
+            if (!isMountedRef.current) return;
+            currentIndexRef.current = nextIdx;
+            setCurrentIndex(nextIdx);
+            setBottomImage(order[nextIdx]);
+            setTransitionEnabled(false);
+            setTopOpacity(0);
+            const followingIdx = (nextIdx + 1) % order.length;
+            setTopImage(order[followingIdx]);
+            setKenBurnsState(generateKenBurnsParams());
+          }, transitionDuration + 50);
         });
       });
-
-      transitionTimerRef.current = setTimeout(() => {
-        if (!isMountedRef.current) return;
-        currentIndexRef.current = nextIdx;
-        setCurrentIndex(nextIdx);
-        setBottomImage(order[nextIdx]);
-        setTransitionEnabled(false);
-        setTopOpacity(0);
-        const followingIdx = (nextIdx + 1) % order.length;
-        setTopImage(order[followingIdx]);
-        setKenBurnsState(generateKenBurnsParams());
-      }, transitionDuration + 50);
     }, duration * 1000);
 
     return () => {
