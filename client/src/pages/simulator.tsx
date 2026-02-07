@@ -81,9 +81,8 @@ function PlayerDisplay({
     }
   }, [zones]);
 
-  // Calculate true dimensions based on layout aspect ratio
-  const baseWidth = profile?.width || 1920;
-  const baseHeight = profile?.height || 1080;
+  // Use same 720p reference dimensions as layout editor for pixel-perfect match
+  const REFERENCE_HEIGHT = 720;
   
   const layoutAspect = layout 
     ? getAspectRatioDimensions(
@@ -93,24 +92,12 @@ function PlayerDisplay({
       )
     : null;
   
-  // If layout has aspect ratio, calculate dimensions to fit within profile while preserving ratio
-  let trueWidth = baseWidth;
-  let trueHeight = baseHeight;
+  const aspectRatio = layoutAspect 
+    ? layoutAspect.width / layoutAspect.height 
+    : (profile ? (profile.width || 1920) / (profile.height || 1080) : 16 / 9);
   
-  if (layoutAspect) {
-    const layoutRatio = layoutAspect.width / layoutAspect.height;
-    const profileRatio = baseWidth / baseHeight;
-    
-    if (layoutRatio > profileRatio) {
-      // Layout is wider - use full width, calculate height
-      trueWidth = baseWidth;
-      trueHeight = Math.round(baseWidth / layoutRatio);
-    } else {
-      // Layout is taller - use full height, calculate width
-      trueHeight = baseHeight;
-      trueWidth = Math.round(baseHeight * layoutRatio);
-    }
-  }
+  const trueWidth = Math.round(REFERENCE_HEIGHT * aspectRatio);
+  const trueHeight = REFERENCE_HEIGHT;
 
   // Calculate scale to fit container while preserving true dimensions
   useEffect(() => {
@@ -127,11 +114,8 @@ function PlayerDisplay({
       
       const scaleX = availableWidth / trueWidth;
       const scaleY = availableHeight / trueHeight;
-      // In fullscreen mode, allow scaling up to fill the screen
-      // In normal mode, cap at 1x to avoid upscaling pixelated content
-      const maxScale = state.isFullscreen ? Infinity : 1;
-      const newScale = Math.min(scaleX, scaleY, maxScale);
-      setScale(Math.max(0.05, newScale)); // Minimum 5% scale
+      const newScale = Math.min(scaleX, scaleY);
+      setScale(Math.max(0.05, newScale));
     };
 
     // Initial delay to allow container to render with proper height
