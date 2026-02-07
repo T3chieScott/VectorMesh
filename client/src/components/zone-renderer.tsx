@@ -1417,11 +1417,16 @@ function MontageWidget({
             currentIndexRef.current = nextIdx;
             setCurrentIndex(nextIdx);
             setBottomImage(order[nextIdx]);
-            setTransitionEnabled(false);
-            setTopOpacity(0);
-            const followingIdx = (nextIdx + 1) % order.length;
-            setTopImage(order[followingIdx]);
-            setKenBurnsState(generateKenBurnsParams());
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                if (!isMountedRef.current) return;
+                setTransitionEnabled(false);
+                setTopOpacity(0);
+                const followingIdx = (nextIdx + 1) % order.length;
+                setTopImage(order[followingIdx]);
+                setKenBurnsState(generateKenBurnsParams());
+              });
+            });
           }, transitionDuration + 50);
         });
       });
