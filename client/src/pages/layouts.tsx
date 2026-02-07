@@ -631,7 +631,7 @@ function MontageMediaPicker({
                 className="relative group w-16 h-16 rounded-md overflow-hidden border-2 border-primary"
               >
                 <img
-                  src={asset.thumbnailPath || asset.originalPath}
+                  src={`/api/media/${asset.id}/file`}
                   alt={asset.name}
                   className="w-full h-full object-cover"
                 />
@@ -688,7 +688,7 @@ function MontageMediaPicker({
                 data-testid={`montage-media-${asset.id}`}
               >
                 <img
-                  src={asset.thumbnailPath || asset.originalPath}
+                  src={`/api/media/${asset.id}/file`}
                   alt={asset.name}
                   className="w-full h-full object-cover"
                 />
@@ -1769,7 +1769,7 @@ function ZoneEditorDialog({
                     <p className="text-xs text-muted-foreground mb-1">Preview:</p>
                     <div className="aspect-video bg-muted rounded overflow-hidden">
                       <img
-                        src={mediaAssets?.find(a => a.id === form.watch("mediaId"))?.originalPath}
+                        src={(() => { const mid = form.watch("mediaId"); return mid ? `/api/media/${mid}/file` : undefined; })()}
                         alt="Selected media"
                         className="w-full h-full object-contain"
                       />
