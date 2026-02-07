@@ -1334,16 +1334,16 @@ function MontageWidget({
   shuffle?: boolean;
   autoPlay?: boolean;
 }) {
-  const [displayOrder, setDisplayOrder] = useState<string[]>(mediaIds);
-  const [layerA, setLayerA] = useState<string>("");
-  const [layerB, setLayerB] = useState<string>("");
-  const [activeLayer, setActiveLayer] = useState<"A" | "B">("A");
-  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [displayOrder, setDisplayOrder] = useState<string[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [topImage, setTopImage] = useState<string>("");
+  const [bottomImage, setBottomImage] = useState<string>("");
+  const [topOpacity, setTopOpacity] = useState(0);
+  const [transitionEnabled, setTransitionEnabled] = useState(false);
   const [kenBurnsState, setKenBurnsState] = useState({ scale: 1, x: 0, y: 0 });
   const [hasError, setHasError] = useState(false);
   const currentIndexRef = useRef(0);
-  const activeLayerRef = useRef<"A" | "B">("A");
-  const displayOrderRef = useRef<string[]>(mediaIds);
+  const displayOrderRef = useRef<string[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
@@ -1352,34 +1352,29 @@ function MontageWidget({
     queryKey: ["/api/media"],
   });
 
-  const getMontageMediaUrl = useCallback((id: string) => {
+  const getUrl = useCallback((id: string) => {
     if (!id) return "";
     return `/api/media/${id}/file`;
   }, []);
 
   useEffect(() => {
     isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
+    return () => { isMountedRef.current = false; };
   }, []);
 
   useEffect(() => {
-    let order: string[];
-    if (shuffle && mediaIds.length > 0) {
-      order = [...mediaIds].sort(() => Math.random() - 0.5);
-    } else {
-      order = [...mediaIds];
-    }
+    const order = shuffle && mediaIds.length > 0
+      ? [...mediaIds].sort(() => Math.random() - 0.5)
+      : [...mediaIds];
     setDisplayOrder(order);
     displayOrderRef.current = order;
     currentIndexRef.current = 0;
+    setCurrentIndex(0);
     if (order.length > 0) {
-      setLayerA(order[0]);
-      setLayerB(order.length > 1 ? order[1] : order[0]);
-      setActiveLayer("A");
-      activeLayerRef.current = "A";
-      setIsTransitioning(false);
+      setBottomImage(order[0]);
+      setTopImage(order.length > 1 ? order[1] : order[0]);
+      setTopOpacity(0);
+      setTransitionEnabled(false);
     }
   }, [mediaIds, shuffle]);
 
@@ -1396,45 +1391,48 @@ function MontageWidget({
   useEffect(() => {
     if (!autoPlay || displayOrder.length <= 1) return;
 
-    const scheduleNext = () => {
-      timerRef.current = setTimeout(() => {
-        if (!isMountedRef.current) return;
+    timerRef.current = setTimeout(() => {
+      if (!isMountedRef.current) return;
+      const order = displayOrderRef.current;
+      const nextIdx = (currentIndexRef.current + 1) % order.length;
 
-        setIsTransitioning(true);
+      if (transition === "none") {
+        currentIndexRef.current = nextIdx;
+        setCurrentIndex(nextIdx);
+        setBottomImage(order[nextIdx]);
+        const followingIdx = (nextIdx + 1) % order.length;
+        setTopImage(order[followingIdx]);
+        setKenBurnsState(generateKenBurnsParams());
+        return;
+      }
 
-        transitionTimerRef.current = setTimeout(() => {
+      setTopImage(order[nextIdx]);
+      setTransitionEnabled(true);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
           if (!isMountedRef.current) return;
+          setTopOpacity(1);
+        });
+      });
 
-          const order = displayOrderRef.current;
-          const prevActive = activeLayerRef.current;
-          const newActive = prevActive === "A" ? "B" : "A";
-          currentIndexRef.current = (currentIndexRef.current + 1) % order.length;
-          const nextIdx = (currentIndexRef.current + 1) % order.length;
-          const nextMediaId = order[nextIdx];
-
-          if (prevActive === "A") {
-            setLayerA(nextMediaId);
-          } else {
-            setLayerB(nextMediaId);
-          }
-
-          activeLayerRef.current = newActive;
-          setActiveLayer(newActive);
-          setKenBurnsState(generateKenBurnsParams());
-          setIsTransitioning(false);
-
-          scheduleNext();
-        }, transitionDuration);
-      }, duration * 1000);
-    };
-
-    scheduleNext();
+      transitionTimerRef.current = setTimeout(() => {
+        if (!isMountedRef.current) return;
+        currentIndexRef.current = nextIdx;
+        setCurrentIndex(nextIdx);
+        setBottomImage(order[nextIdx]);
+        setTransitionEnabled(false);
+        setTopOpacity(0);
+        const followingIdx = (nextIdx + 1) % order.length;
+        setTopImage(order[followingIdx]);
+        setKenBurnsState(generateKenBurnsParams());
+      }, transitionDuration + 50);
+    }, duration * 1000);
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
     };
-  }, [autoPlay, displayOrder.length, duration, transitionDuration, generateKenBurnsParams]);
+  }, [autoPlay, displayOrder, duration, transitionDuration, currentIndex, generateKenBurnsParams]);
 
   useEffect(() => {
     setKenBurnsState(generateKenBurnsParams());
@@ -1473,10 +1471,10 @@ function MontageWidget({
     );
   }
 
-  const urlA = getMontageMediaUrl(layerA);
-  const urlB = getMontageMediaUrl(layerB);
+  const bottomUrl = getUrl(bottomImage);
+  const topUrl = getUrl(topImage);
 
-  if (!urlA && !urlB) {
+  if (!bottomUrl) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-muted/30">
         <div className="text-center">
@@ -1487,52 +1485,43 @@ function MontageWidget({
     );
   }
 
-  const getLayerStyle = (layer: "A" | "B"): React.CSSProperties => {
-    const isActive = activeLayer === layer;
-    const isIncoming = !isActive;
-    const shouldShow = isActive ? !isTransitioning : isTransitioning;
-
+  const getTopTransformStyle = (): React.CSSProperties => {
     const base: React.CSSProperties = {
       position: "absolute",
       inset: 0,
-      transition: isTransitioning ? `all ${transitionDuration}ms ease-in-out` : "none",
+      zIndex: 2,
+      transition: transitionEnabled ? `opacity ${transitionDuration}ms ease-in-out, transform ${transitionDuration}ms ease-in-out` : "none",
+      opacity: topOpacity,
     };
 
-    if (transition === "none") {
-      return { ...base, opacity: shouldShow ? 1 : 0, transition: "none" };
-    }
-
-    if (transition === "fade") {
-      return { ...base, opacity: shouldShow ? 1 : 0, zIndex: isIncoming && isTransitioning ? 2 : 1 };
+    if (transition === "none" || transition === "fade") {
+      return base;
     }
 
     const slideOffset = "100%";
-    const transforms: Record<string, { out: string; in: string }> = {
-      "slide-left": { out: `translateX(-${slideOffset})`, in: `translateX(${slideOffset})` },
-      "slide-right": { out: `translateX(${slideOffset})`, in: `translateX(-${slideOffset})` },
-      "slide-up": { out: `translateY(-${slideOffset})`, in: `translateY(${slideOffset})` },
-      "slide-down": { out: `translateY(${slideOffset})`, in: `translateY(-${slideOffset})` },
+    const slideTransforms: Record<string, string> = {
+      "slide-left": `translateX(${slideOffset})`,
+      "slide-right": `translateX(-${slideOffset})`,
+      "slide-up": `translateY(${slideOffset})`,
+      "slide-down": `translateY(-${slideOffset})`,
     };
 
-    if (transforms[transition]) {
-      const t = transforms[transition];
-      if (isActive) {
-        return { ...base, transform: isTransitioning ? t.out : "translate(0)", opacity: 1, zIndex: 1 };
-      } else {
-        return { ...base, transform: isTransitioning ? "translate(0)" : t.in, opacity: isTransitioning ? 1 : 0, zIndex: 2 };
-      }
+    if (slideTransforms[transition]) {
+      return {
+        ...base,
+        transform: topOpacity === 1 ? "translate(0)" : slideTransforms[transition],
+        opacity: topOpacity === 1 ? 1 : 0,
+      };
     }
 
-    if (transition === "zoom-in" || transition === "zoom-out") {
-      const zoomScale = transition === "zoom-in" ? 1.5 : 0.5;
-      if (isActive) {
-        return { ...base, transform: isTransitioning ? `scale(${zoomScale})` : "scale(1)", opacity: isTransitioning ? 0 : 1, zIndex: 1 };
-      } else {
-        return { ...base, transform: isTransitioning ? "scale(1)" : `scale(${1/zoomScale})`, opacity: isTransitioning ? 1 : 0, zIndex: 2 };
-      }
+    if (transition === "zoom-in") {
+      return { ...base, transform: topOpacity === 1 ? "scale(1)" : "scale(0.5)" };
+    }
+    if (transition === "zoom-out") {
+      return { ...base, transform: topOpacity === 1 ? "scale(1)" : "scale(1.5)" };
     }
 
-    return { ...base, opacity: shouldShow ? 1 : 0 };
+    return base;
   };
 
   const getKenBurnsStyle = (): React.CSSProperties => {
@@ -1545,10 +1534,10 @@ function MontageWidget({
 
   return (
     <div className="h-full w-full relative overflow-hidden">
-      <div style={getLayerStyle("A")}>
-        <div className="h-full w-full" style={activeLayer === "A" ? getKenBurnsStyle() : {}}>
+      <div style={{ position: "absolute", inset: 0, zIndex: 1 }}>
+        <div className="h-full w-full" style={getKenBurnsStyle()}>
           <img
-            src={urlA}
+            src={bottomUrl}
             alt=""
             className="h-full w-full"
             style={{ objectFit: fitMode, border: "none" }}
@@ -1556,17 +1545,17 @@ function MontageWidget({
           />
         </div>
       </div>
-      <div style={getLayerStyle("B")}>
-        <div className="h-full w-full" style={activeLayer === "B" ? getKenBurnsStyle() : {}}>
+      {displayOrder.length > 1 && topUrl && (
+        <div style={getTopTransformStyle()}>
           <img
-            src={urlB}
+            src={topUrl}
             alt=""
             className="h-full w-full"
             style={{ objectFit: fitMode, border: "none" }}
-            onError={() => setHasError(true)}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
           />
         </div>
-      </div>
+      )}
     </div>
   );
 }

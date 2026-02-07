@@ -577,7 +577,14 @@ function MontageMediaPicker({
     (asset) => asset.mediaType === "image" || asset.mediaType === "gif"
   ) || [];
 
-  const cleanIds = selectedIds.filter((i) => i != null && i !== "");
+  const existingAssetIds = new Set(imageAssets.map(a => a.id));
+  const cleanIds = selectedIds.filter((i) => i != null && i !== "" && existingAssetIds.has(i));
+
+  useEffect(() => {
+    if (imageAssets.length > 0 && selectedIds.length > 0 && cleanIds.length !== selectedIds.length) {
+      onSelectionChange(cleanIds);
+    }
+  }, [imageAssets.length, selectedIds, cleanIds.length]);
 
   const toggleSelection = (id: string) => {
     if (cleanIds.includes(id)) {
@@ -5483,7 +5490,7 @@ function InteractiveLayoutPreview({
             }}
             data-testid={`draggable-zone-${zone.id}`}
           >
-            <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
+            <div className={`absolute inset-0 pointer-events-none ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
               <ZoneRenderer
                 zone={zone}
                 media={allMediaAssets || []}
