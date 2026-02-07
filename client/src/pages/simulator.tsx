@@ -198,7 +198,7 @@ function PlayerDisplay({
               zIndex: zone.zIndex || 1,
             }}
           >
-            <div className="absolute inset-0 overflow-hidden">
+            <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
               <ZoneRenderer
                 zone={zone}
                 media={getZoneMedia(zone.id)}
