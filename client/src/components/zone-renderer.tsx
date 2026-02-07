@@ -2028,15 +2028,16 @@ function ShapeWidget({
                 <span
                   style={{
                     position: 'absolute',
-                    top: '110%',
+                    top: '50%',
                     left: '50%',
-                    transform: 'translateX(-50%)',
+                    transform: 'translate(-50%, -50%)',
                     color: textColor,
                     fontSize: `${iconTextSize}px`,
                     fontWeight: 600,
                     lineHeight: 1.2,
                     whiteSpace: 'nowrap',
                     textAlign: 'center',
+                    textShadow: `0 1px 3px rgba(0,0,0,0.5)`,
                   }}
                   data-testid="text-shape-icon-label"
                 >

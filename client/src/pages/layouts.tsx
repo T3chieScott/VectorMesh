@@ -510,7 +510,7 @@ const zoneFormSchema = z.object({
   shapeArchSpan: z.number().min(30).max(350).optional(),
   shapeIcon: z.string().optional(),
   shapeIconText: z.string().optional(),
-  shapeIconTextPosition: z.enum(["left", "right", "top", "bottom"]).optional(),
+  shapeIconTextPosition: z.enum(["left", "right", "top", "bottom", "center"]).optional(),
   shapeIconTextSize: z.number().min(8).max(200).optional(),
   shapeIconTextColor: z.string().optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),

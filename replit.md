@@ -14,7 +14,7 @@ Key capabilities:
 - **Room schedule zones**: Hourly timeline, daily, and agenda view modes with configurable time slots, entries, and 12h/24h formatting
 - **Dynamic player variables**: Placeholder tokens ({{screen_name}}, {{room_name}}, {{event_name}}, {{date}}, {{time}}, {{day}}) for reusable layouts resolved at display time
 - **Event colour palettes**: Per-event brand colour palettes integrated into all zone colour pickers via swatches
-- **Signage icons**: 27 curated signage icons (arrows, toilets, fire exit, restaurant, WiFi, parking, etc.) as overlays on shape zones, with optional text labels (left/right/top/bottom positioning, configurable size and color)
+- **Signage icons**: 29 curated signage icons (arrows incl. diagonal, toilets, fire exit, restaurant, WiFi, parking, etc.) as overlays on shape zones, with optional text labels (left/right/top/bottom/center positioning, configurable size and color)
 - **Collapsible layout panel**: Layout list auto-hides when editing, with back button navigation
 - Client/event separation with brand packs
 - Timeline scheduling with programme blocks
