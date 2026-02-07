@@ -360,7 +360,9 @@ export interface LayoutZone {
   shapeOpacity?: number;               // Overall opacity (0-100, default 100)
   shapeLineDirection?: "horizontal" | "vertical" | "diagonal-down" | "diagonal-up";  // Direction for line shapes
   shapeArchSpan?: number;              // Arch span angle in degrees (default 180)
+  shapeAlignment?: "left" | "center" | "right";  // Horizontal alignment of shape content within zone (default center)
   shapeIcon?: string;                  // Signage icon identifier (e.g., "arrow-right", "toilet", "fire-exit")
+  shapeIconColor?: string;             // Color of the icon SVG (hex, default matches stroke)
   shapeIconText?: string;              // Text label displayed next to the icon
   shapeIconTextPosition?: "left" | "right" | "top" | "bottom" | "center";  // Position of text relative to icon
   shapeIconTextSize?: number;          // Font size of icon text in px (default 14)

@@ -90,6 +90,9 @@ import {
   AlignVerticalJustifyEnd,
   AlignHorizontalSpaceAround,
   AlignVerticalSpaceAround,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -508,7 +511,9 @@ const zoneFormSchema = z.object({
   shapeOpacity: z.number().min(0).max(100).optional(),
   shapeLineDirection: z.enum(["horizontal", "vertical", "diagonal-down", "diagonal-up"]).optional(),
   shapeArchSpan: z.number().min(30).max(350).optional(),
+  shapeAlignment: z.enum(["left", "center", "right"]).optional(),
   shapeIcon: z.string().optional(),
+  shapeIconColor: z.string().optional(),
   shapeIconText: z.string().optional(),
   shapeIconTextPosition: z.enum(["left", "right", "top", "bottom", "center"]).optional(),
   shapeIconTextSize: z.number().min(8).max(200).optional(),
@@ -945,7 +950,9 @@ function ZoneEditorDialog({
       shapeOpacity: 100,
       shapeLineDirection: "horizontal",
       shapeArchSpan: 180,
+      shapeAlignment: "center",
       shapeIcon: "",
+      shapeIconColor: "",
       shapeIconText: "",
       shapeIconTextPosition: "right",
       shapeIconTextSize: 14,
@@ -1089,7 +1096,9 @@ function ZoneEditorDialog({
           shapeOpacity: zone.shapeOpacity ?? 100,
           shapeLineDirection: zone.shapeLineDirection || "horizontal",
           shapeArchSpan: zone.shapeArchSpan ?? 180,
+          shapeAlignment: zone.shapeAlignment || "center",
           shapeIcon: zone.shapeIcon || "",
+          shapeIconColor: zone.shapeIconColor || "",
           shapeIconText: zone.shapeIconText || "",
           shapeIconTextPosition: zone.shapeIconTextPosition || "right",
           shapeIconTextSize: zone.shapeIconTextSize ?? 14,
@@ -1224,7 +1233,9 @@ function ZoneEditorDialog({
           shapeOpacity: 100,
           shapeLineDirection: "horizontal",
           shapeArchSpan: 180,
+          shapeAlignment: "center",
           shapeIcon: "",
+          shapeIconColor: "",
           shapeIconText: "",
           shapeIconTextPosition: "right",
           shapeIconTextSize: 14,
@@ -4116,6 +4127,38 @@ function ZoneEditorDialog({
                 />
                 <FormField
                   control={form.control}
+                  name="shapeAlignment"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Content Alignment</FormLabel>
+                      <FormControl>
+                        <div className="flex gap-1">
+                          {([
+                            { value: "left", icon: AlignLeft, label: "Left" },
+                            { value: "center", icon: AlignCenter, label: "Center" },
+                            { value: "right", icon: AlignRight, label: "Right" },
+                          ] as const).map(({ value, icon: Icon, label }) => (
+                            <Button
+                              key={value}
+                              type="button"
+                              variant={field.value === value ? "default" : "outline"}
+                              size="sm"
+                              onClick={() => field.onChange(value)}
+                              data-testid={`button-shape-align-${value}`}
+                            >
+                              <Icon className="h-4 w-4 mr-1" />
+                              {label}
+                            </Button>
+                          ))}
+                        </div>
+                      </FormControl>
+                      <FormDescription>Align shape and icon content within the zone</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
                   name="shapeIcon"
                   render={({ field }) => (
                     <FormItem>
@@ -4134,6 +4177,27 @@ function ZoneEditorDialog({
                 />
                 {form.watch("shapeIcon") && (
                   <div className="space-y-3 pl-4 border-l-2 border-muted">
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Icon Settings</div>
+                    <FormField
+                      control={form.control}
+                      name="shapeIconColor"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Icon Colour</FormLabel>
+                          <FormControl>
+                            <ColorPickerWithPalette
+                              value={field.value || form.watch("shapeStrokeColor") || "#ffffff"}
+                              onChange={field.onChange}
+                              palette={eventPalette}
+                              placeholder="Matches stroke"
+                              data-testid="color-shape-icon"
+                            />
+                          </FormControl>
+                          <FormDescription>Colour of the icon itself</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
                     <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Icon Text</div>
                     <FormField
                       control={form.control}

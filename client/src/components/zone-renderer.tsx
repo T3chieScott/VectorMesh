@@ -1732,7 +1732,9 @@ interface ShapeWidgetProps {
   opacity?: number;
   lineDirection?: "horizontal" | "vertical" | "diagonal-down" | "diagonal-up";
   archSpan?: number;
+  alignment?: "left" | "center" | "right";
   icon?: string;
+  iconColor?: string;
   iconText?: string;
   iconTextPosition?: "left" | "right" | "top" | "bottom" | "center";
   iconTextSize?: number;
@@ -1865,7 +1867,9 @@ function ShapeWidget({
   opacity = 100,
   lineDirection = "horizontal",
   archSpan = 180,
+  alignment = "center",
   icon,
+  iconColor,
   iconText,
   iconTextPosition = "right",
   iconTextSize = 14,
@@ -1969,6 +1973,8 @@ function ShapeWidget({
     }
   };
 
+  const alignJustify = alignment === "left" ? "flex-start" : alignment === "right" ? "flex-end" : "center";
+
   return (
     <div className="h-full w-full relative">
       <svg
@@ -1986,6 +1992,7 @@ function ShapeWidget({
       {icon && (() => {
         const iconDef = SIGNAGE_ICONS_RENDER.find(i => i.id === icon);
         if (!iconDef) return null;
+        const resolvedIconColor = iconColor || strokeColor || '#ffffff';
         const textColor = iconTextColor || strokeColor || '#ffffff';
         const hasText = iconText && iconText.trim().length > 0;
         const isCentered = iconTextPosition === "center";
@@ -1993,11 +2000,14 @@ function ShapeWidget({
         const isReversed = iconTextPosition === "left" || iconTextPosition === "top";
         return (
           <div
-            className="absolute inset-0 flex items-center justify-center"
+            className="absolute inset-0 flex items-center"
             style={{
               pointerEvents: 'none',
+              justifyContent: alignJustify,
               flexDirection: hasText && !isCentered && isVertical ? 'column' : 'row',
               gap: hasText && !isCentered ? '4px' : undefined,
+              paddingLeft: alignment === "left" ? '8px' : undefined,
+              paddingRight: alignment === "right" ? '8px' : undefined,
             }}
           >
             {hasText && !isCentered && isReversed && (
@@ -2027,7 +2037,7 @@ function ShapeWidget({
                   objectFit: 'contain',
                 }}
                 fill="none"
-                stroke={strokeColor || '#ffffff'}
+                stroke={resolvedIconColor}
                 strokeWidth="2"
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -2263,7 +2273,9 @@ export function ZoneRenderer({
             opacity={zone.shapeOpacity}
             lineDirection={zone.shapeLineDirection}
             archSpan={zone.shapeArchSpan}
+            alignment={zone.shapeAlignment}
             icon={zone.shapeIcon}
+            iconColor={zone.shapeIconColor}
             iconText={zone.shapeIconText}
             iconTextPosition={zone.shapeIconTextPosition}
             iconTextSize={zone.shapeIconTextSize}
