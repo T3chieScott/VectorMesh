@@ -618,6 +618,7 @@ function CreateScreenDialog({ profiles, events }: { profiles: DisplayProfile[]; 
 export default function ScreensPage() {
   const { data: screens = [], isLoading: screensLoading } = useQuery<Screen[]>({
     queryKey: ["/api/screens"],
+    refetchInterval: 10000,
   });
 
   const { data: profiles = [], isLoading: profilesLoading } = useQuery<
