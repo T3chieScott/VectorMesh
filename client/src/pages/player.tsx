@@ -258,6 +258,11 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
 
   const getZoneMedia = (zoneId: string): MediaAsset[] => {
     if (!content) return [];
+    const zone = zones.find(z => z.id === zoneId);
+    if (zone?.mediaId) {
+      const specific = content.media.filter(m => m.id === zone.mediaId);
+      if (specific.length > 0) return specific;
+    }
     return content.media;
   };
 
