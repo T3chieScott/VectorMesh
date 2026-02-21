@@ -294,14 +294,17 @@ export default function SimulatorPage() {
 
   const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
     queryKey: ["/api/layouts"],
+    refetchInterval: 7000,
   });
 
   const { data: media = [] } = useQuery<MediaAsset[]>({
     queryKey: ["/api/media"],
+    refetchInterval: 7000,
   });
 
   const { data: liveOverrides = [] } = useQuery<LiveOverride[]>({
     queryKey: ["/api/live-overrides"],
+    refetchInterval: 7000,
   });
 
   const { data: playlists = [] } = useQuery<Playlist[]>({

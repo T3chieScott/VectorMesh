@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useRoute } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -25,6 +25,7 @@ import DiagnosticsPage from "@/pages/diagnostics";
 import SimulatorPage from "@/pages/simulator";
 import SchedulePage from "@/pages/schedule";
 import SettingsPage from "@/pages/settings";
+import PlayerPage from "@/pages/player";
 
 function AuthenticatedRouter() {
   return (
@@ -72,8 +73,19 @@ function AuthenticatedLayout() {
   );
 }
 
+function PlayerRoute() {
+  const [match, params] = useRoute("/player/:screenId");
+  if (!match || !params?.screenId) return null;
+  return <PlayerPage screenId={params.screenId} />;
+}
+
 function AppContent() {
+  const [isPlayerRoute] = useRoute("/player/:screenId");
   const { user, isLoading } = useAuth();
+
+  if (isPlayerRoute) {
+    return <PlayerRoute />;
+  }
 
   if (isLoading) {
     return (

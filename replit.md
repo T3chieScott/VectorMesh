@@ -21,6 +21,9 @@ Key capabilities:
 - Live override mode for temporary takeovers
 - Player health monitoring and fallback behavior
 - Player Simulator for testing content layouts before deployment
+- **Raspberry Pi Player**: Standalone player page at `/player/:screenId` that renders content fullscreen in kiosk mode, with 7-second auto-refresh polling (change detection), programme/schedule-aware content resolution, live override support, and offline fallback screens
+- **Simulator auto-refresh**: Simulator polls for layout/media/override changes every 7 seconds with TanStack Query structural sharing (only re-renders on actual data changes)
+- **Pi setup script**: `pi-player/setup.sh` configures Raspberry Pi for kiosk mode with Chromium, autostart service, pairing via code, and management scripts
 
 ## User Preferences
 

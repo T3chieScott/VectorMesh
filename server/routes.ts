@@ -923,12 +923,127 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/player/:screenId/content", async (req, res) => {
+    try {
+      const screen = await storage.getScreen(req.params.screenId);
+      if (!screen) {
+        return res.status(404).json({ error: "Screen not found" });
+      }
+
+      const now = new Date();
+      let layout: any = null;
+      let liveOverride: any = null;
+
+      const overrides = await storage.getLiveOverrides();
+      const activeOverride = overrides.find(o => {
+        if (!o.isActive || new Date(o.startTime) > now || new Date(o.endTime) < now) return false;
+        if (!o.targets || (o.targets as any[]).length === 0) return true;
+        return (o.targets as any[]).some((t: any) => 
+          (t.type === "screen" && t.id === screen.id)
+        );
+      });
+
+      if (activeOverride && activeOverride.layoutTemplateId) {
+        layout = await storage.getLayoutTemplate(activeOverride.layoutTemplateId);
+        liveOverride = activeOverride;
+      }
+
+      if (!layout && screen.currentEventId) {
+        const [programmes, allVersions] = await Promise.all([
+          storage.getProgrammes(),
+          storage.getProgrammeVersions(),
+        ]);
+        const eventProgrammes = programmes.filter(p => p.eventId === screen.currentEventId);
+        const publishedVersions = allVersions.filter(v => 
+          v.status === "published" && eventProgrammes.some(p => p.id === v.programmeId)
+        );
+        
+        const allBlocks = await Promise.all(
+          publishedVersions.map(v => storage.getScheduleBlocks(v.id))
+        );
+        const flatBlocks = allBlocks.flat().sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+        for (const block of flatBlocks) {
+          const targets = block.targets as any[] || [];
+          const targetMatch = targets.length === 0 || targets.some((t: any) => 
+            t.type === "screen" && t.id === screen.id
+          );
+          if (!targetMatch) continue;
+
+          const timeRules = block.timeRules as any[] || [];
+          const timeMatch = timeRules.length === 0 || timeRules.some((rule: any) => {
+            if (rule.startDate && new Date(rule.startDate) > now) return false;
+            if (rule.endDate && new Date(rule.endDate) < now) return false;
+            if (rule.daysOfWeek && rule.daysOfWeek.length > 0) {
+              if (!rule.daysOfWeek.includes(now.getDay())) return false;
+            }
+            if (rule.startTime) {
+              const [h, m] = rule.startTime.split(":").map(Number);
+              if (now.getHours() < h || (now.getHours() === h && now.getMinutes() < m)) return false;
+            }
+            if (rule.endTime) {
+              const [h, m] = rule.endTime.split(":").map(Number);
+              if (now.getHours() > h || (now.getHours() === h && now.getMinutes() > m)) return false;
+            }
+            return true;
+          });
+
+          if (timeMatch && block.layoutTemplateId) {
+            layout = await storage.getLayoutTemplate(block.layoutTemplateId);
+            break;
+          }
+        }
+      }
+
+      if (!layout) {
+        const layouts = await storage.getLayoutTemplates();
+        if (screen.currentEventId) {
+          layout = layouts.find(l => l.eventId === screen.currentEventId) || null;
+        }
+        if (!layout && layouts.length > 0) {
+          layout = layouts[0];
+        }
+      }
+
+      const profile = screen.displayProfileId 
+        ? await storage.getDisplayProfile(screen.displayProfileId) 
+        : null;
+      const mediaAssets = await storage.getMediaAssets();
+      const allPlaylists = await storage.getPlaylists();
+      const playlistItemsMap: Record<string, any[]> = {};
+      for (const pl of allPlaylists) {
+        const items = await storage.getPlaylistItems(pl.id);
+        playlistItemsMap[pl.id] = items;
+      }
+
+      let event = null;
+      if (screen.currentEventId) {
+        event = await storage.getEvent(screen.currentEventId);
+      }
+
+      res.json({
+        screen,
+        profile,
+        layout,
+        media: mediaAssets,
+        playlists: allPlaylists,
+        playlistItems: playlistItemsMap,
+        liveOverride,
+        event,
+        timestamp: now.toISOString(),
+      });
+    } catch (error) {
+      console.error("Error fetching player content:", error);
+      res.status(500).json({ error: "Failed to fetch player content" });
+    }
+  });
+
   // ============ WEATHER WIDGET ============
   // Cache weather data for 10 minutes to reduce API calls
   const weatherCache = new Map<string, { data: any; timestamp: number }>();
   const WEATHER_CACHE_TTL = 10 * 60 * 1000;
 
-  app.get("/api/widgets/weather", requireAuth, async (req, res) => {
+  const handleWeatherRequest = async (req: Request, res: Response) => {
     try {
       const lat = parseFloat(req.query.lat as string);
       const lng = parseFloat(req.query.lng as string);
@@ -1003,14 +1118,16 @@ export async function registerRoutes(
       console.error("Error fetching weather:", error);
       res.status(500).json({ error: "Failed to fetch weather data" });
     }
-  });
+  };
+  app.get("/api/widgets/weather", requireAuth, handleWeatherRequest);
+  app.get("/api/player/widgets/weather", handleWeatherRequest);
 
   // ============ NEWS WIDGET ============
   // Cache RSS feeds for 5 minutes
   const newsCache = new Map<string, { data: any; timestamp: number }>();
   const NEWS_CACHE_TTL = 5 * 60 * 1000;
 
-  app.get("/api/widgets/news", requireAuth, async (req, res) => {
+  const handleNewsRequest = async (req: Request, res: Response) => {
     try {
       const rssUrl = req.query.url as string;
       const itemCount = Math.min(parseInt(req.query.count as string) || 10, 50);
@@ -1053,7 +1170,9 @@ export async function registerRoutes(
       console.error("Error fetching news:", error);
       res.status(500).json({ error: "Failed to fetch news feed" });
     }
-  });
+  };
+  app.get("/api/widgets/news", requireAuth, handleNewsRequest);
+  app.get("/api/player/widgets/news", handleNewsRequest);
 
   // Geocoding endpoint to convert location names to coordinates
   app.get("/api/widgets/geocode", requireAuth, async (req, res) => {
