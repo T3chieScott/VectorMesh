@@ -54,13 +54,14 @@ import {
   Zap,
   Unlink,
 } from "lucide-react";
-import type { Screen, DisplayProfile, LiveOverride, Event } from "@shared/schema";
+import type { Screen, DisplayProfile, LiveOverride, Event, LayoutTemplate } from "@shared/schema";
 
 const screenFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   location: z.string().optional(),
   displayProfileId: z.string().optional(),
   currentEventId: z.string().nullable().optional(),
+  fallbackLayoutId: z.string().nullable().optional(),
 });
 
 type ScreenFormValues = z.infer<typeof screenFormSchema>;
@@ -73,11 +74,13 @@ function ScreenCard({
   screen,
   profiles,
   events,
+  layouts,
   activeOverride,
 }: {
   screen: Screen;
   profiles: DisplayProfile[];
   events: Event[];
+  layouts: LayoutTemplate[];
   activeOverride: LiveOverride | null;
 }) {
   const [editOpen, setEditOpen] = useState(false);
@@ -125,6 +128,7 @@ function ScreenCard({
       location: screen.location || "",
       displayProfileId: screen.displayProfileId || "",
       currentEventId: screen.currentEventId || "",
+      fallbackLayoutId: screen.fallbackLayoutId || "",
     },
   });
 
@@ -133,6 +137,7 @@ function ScreenCard({
       apiRequest("PATCH", `/api/screens/${screen.id}`, {
         ...data,
         currentEventId: data.currentEventId || null,
+        fallbackLayoutId: data.fallbackLayoutId || null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
@@ -337,6 +342,34 @@ function ScreenCard({
                               {events.map((e) => (
                                 <SelectItem key={e.id} value={e.id}>
                                   {e.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="fallbackLayoutId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Fallback Layout</FormLabel>
+                          <Select
+                            onValueChange={(val) => field.onChange(val === "__none__" ? null : val)}
+                            defaultValue={field.value || "__none__"}
+                          >
+                            <FormControl>
+                              <SelectTrigger data-testid="select-edit-screen-fallback-layout">
+                                <SelectValue placeholder="Black screen (no fallback)" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="__none__">Black screen (no fallback)</SelectItem>
+                              {layouts.map((l) => (
+                                <SelectItem key={l.id} value={l.id}>
+                                  {l.name}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -631,6 +664,10 @@ export default function ScreensPage() {
     queryKey: ["/api/events"],
   });
 
+  const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
+    queryKey: ["/api/layout-templates"],
+  });
+
   const { data: liveOverrides = [] } = useQuery<LiveOverride[]>({
     queryKey: ["/api/live-overrides"],
     refetchInterval: 10000,
@@ -722,6 +759,7 @@ export default function ScreensPage() {
               screen={screen} 
               profiles={profiles}
               events={events}
+              layouts={layouts}
               activeOverride={getActiveOverrideForScreen(screen.id)}
             />
           ))}

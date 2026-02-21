@@ -138,6 +138,7 @@ export const screens = pgTable("screens", {
   ipAddress: text("ip_address"),
   hardwareClass: text("hardware_class"),
   currentEventId: varchar("current_event_id").references(() => events.id),
+  fallbackLayoutId: varchar("fallback_layout_id").references(() => layoutTemplates.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -145,6 +146,7 @@ export const screens = pgTable("screens", {
 export const screensRelations = relations(screens, ({ one, many }) => ({
   displayProfile: one(displayProfiles, { fields: [screens.displayProfileId], references: [displayProfiles.id] }),
   currentEvent: one(events, { fields: [screens.currentEventId], references: [events.id] }),
+  fallbackLayout: one(layoutTemplates, { fields: [screens.fallbackLayoutId], references: [layoutTemplates.id] }),
   groupMemberships: many(screenGroupMemberships),
   heartbeats: many(playerHeartbeats),
 }));

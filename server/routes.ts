@@ -1070,14 +1070,8 @@ export async function registerRoutes(
         }
       }
 
-      if (!layout) {
-        const layouts = await storage.getLayoutTemplates();
-        if (screen.currentEventId) {
-          layout = layouts.find(l => l.eventId === screen.currentEventId) || null;
-        }
-        if (!layout && layouts.length > 0) {
-          layout = layouts[0];
-        }
+      if (!layout && screen.fallbackLayoutId) {
+        layout = await storage.getLayoutTemplate(screen.fallbackLayoutId);
       }
 
       const profile = screen.displayProfileId 
