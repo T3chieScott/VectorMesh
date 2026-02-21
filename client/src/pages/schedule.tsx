@@ -155,7 +155,10 @@ function TimeBlockRenderer({
   const end = parseTime(rule.endTime);
   
   const startMinutes = start.hours * 60 + start.minutes;
-  const endMinutes = end.hours * 60 + end.minutes;
+  let endMinutes = end.hours * 60 + end.minutes;
+  if (endMinutes <= startMinutes) {
+    endMinutes = 24 * 60;
+  }
   const durationMinutes = endMinutes - startMinutes;
   
   if (durationMinutes <= 0) return null;

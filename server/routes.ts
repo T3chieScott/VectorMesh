@@ -1052,13 +1052,25 @@ export async function registerRoutes(
             if (rule.daysOfWeek && rule.daysOfWeek.length > 0) {
               if (!rule.daysOfWeek.includes(now.getDay())) return false;
             }
-            if (rule.startTime) {
-              const [h, m] = rule.startTime.split(":").map(Number);
-              if (now.getHours() < h || (now.getHours() === h && now.getMinutes() < m)) return false;
-            }
-            if (rule.endTime) {
-              const [h, m] = rule.endTime.split(":").map(Number);
-              if (now.getHours() > h || (now.getHours() === h && now.getMinutes() > m)) return false;
+            if (rule.startTime && rule.endTime) {
+              const [sh, sm] = rule.startTime.split(":").map(Number);
+              const [eh, em] = rule.endTime.split(":").map(Number);
+              const startMins = sh * 60 + sm;
+              let endMins = eh * 60 + em;
+              const nowMins = now.getHours() * 60 + now.getMinutes();
+              if (endMins <= startMins) {
+                endMins = 24 * 60;
+              }
+              if (nowMins < startMins || nowMins > endMins) return false;
+            } else {
+              if (rule.startTime) {
+                const [h, m] = rule.startTime.split(":").map(Number);
+                if (now.getHours() < h || (now.getHours() === h && now.getMinutes() < m)) return false;
+              }
+              if (rule.endTime) {
+                const [h, m] = rule.endTime.split(":").map(Number);
+                if (now.getHours() > h || (now.getHours() === h && now.getMinutes() > m)) return false;
+              }
             }
             return true;
           });
