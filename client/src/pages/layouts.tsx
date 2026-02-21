@@ -1740,7 +1740,7 @@ function ZoneEditorDialog({
                   name="mediaId"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Select or Upload Image</FormLabel>
+                      <FormLabel>Select or Upload Media</FormLabel>
                       <div className="flex gap-2">
                         <Select
                           value={field.value || "__none__"}
@@ -1748,14 +1748,14 @@ function ZoneEditorDialog({
                         >
                           <FormControl>
                             <SelectTrigger className="flex-1" data-testid="select-media-asset">
-                              <SelectValue placeholder="Choose an image..." />
+                              <SelectValue placeholder="Choose media..." />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
                             <SelectItem value="__none__">None</SelectItem>
-                            {mediaAssets?.filter(a => a.mediaType === "image" || a.mediaType === "gif").map((asset) => (
+                            {mediaAssets?.filter(a => a.mediaType === "image" || a.mediaType === "gif" || a.mediaType === "video").map((asset) => (
                               <SelectItem key={asset.id} value={asset.id}>
-                                {asset.name}
+                                {asset.name}{asset.mediaType === "video" ? " (Video)" : ""}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -1777,7 +1777,7 @@ function ZoneEditorDialog({
                         </ObjectUploader>
                       </div>
                       <FormDescription>
-                        Select an existing image or upload a new one
+                        Select an existing image/video or upload a new one
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -1788,11 +1788,16 @@ function ZoneEditorDialog({
                   <div className="mt-2 p-2 bg-background rounded border">
                     <p className="text-xs text-muted-foreground mb-1">Preview:</p>
                     <div className="aspect-video bg-muted rounded overflow-hidden">
-                      <img
-                        src={(() => { const mid = form.watch("mediaId"); return mid ? `/api/media/${mid}/file` : undefined; })()}
-                        alt="Selected media"
-                        className="w-full h-full object-contain"
-                      />
+                      {(() => {
+                        const mid = form.watch("mediaId");
+                        if (!mid) return null;
+                        const selectedAsset = mediaAssets?.find(a => a.id === mid);
+                        const url = `/api/media/${mid}/file`;
+                        if (selectedAsset?.mediaType === "video") {
+                          return <video src={url} className="w-full h-full object-contain" autoPlay loop muted playsInline />;
+                        }
+                        return <img src={url} alt="Selected media" className="w-full h-full object-contain" />;
+                      })()}
                     </div>
                   </div>
                 )}
