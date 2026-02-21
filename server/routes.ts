@@ -46,6 +46,15 @@ export async function registerRoutes(
   // Setup object storage routes for serving uploaded files
   registerObjectStorageRoutes(app);
 
+  const STALE_THRESHOLD_MS = 60000;
+  setInterval(async () => {
+    try {
+      await storage.markStaleScreensOffline(STALE_THRESHOLD_MS);
+    } catch (err) {
+      console.error("Error in offline sweep:", err);
+    }
+  }, 30000);
+
   // ============ HEALTH CHECK ============
   app.get("/api/health", async (req, res) => {
     try {
@@ -330,6 +339,7 @@ export async function registerRoutes(
   // ============ SCREENS ============
   app.get("/api/screens", requireAuth, async (req, res) => {
     try {
+      await storage.markStaleScreensOffline(STALE_THRESHOLD_MS);
       const screens = await storage.getScreens();
       res.json(screens.map(({ deviceToken, ...s }) => s));
     } catch (error) {

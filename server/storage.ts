@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, desc, gte, lte } from "drizzle-orm";
+import { eq, and, desc, gte, lte, lt } from "drizzle-orm";
 import {
   clients,
   events,
@@ -99,6 +99,7 @@ export interface IStorage {
   getScreenByPairingCode(code: string): Promise<Screen | undefined>;
   getScreenByDeviceToken(token: string): Promise<Screen | undefined>;
   unpairScreen(id: string, newPairingCode: string): Promise<Screen | undefined>;
+  markStaleScreensOffline(staleThresholdMs: number): Promise<number>;
   createScreen(data: InsertScreen): Promise<Screen>;
   updateScreen(id: string, data: Partial<InsertScreen>): Promise<Screen | undefined>;
   deleteScreen(id: string): Promise<boolean>;
@@ -366,6 +367,21 @@ export class DatabaseStorage implements IStorage {
       .where(eq(screens.id, id))
       .returning();
     return screen;
+  }
+
+  async markStaleScreensOffline(staleThresholdMs: number): Promise<number> {
+    const cutoff = new Date(Date.now() - staleThresholdMs);
+    const result = await db
+      .update(screens)
+      .set({ isOnline: false } as any)
+      .where(
+        and(
+          eq(screens.isOnline, true),
+          lt(screens.lastSeen, cutoff)
+        )
+      )
+      .returning();
+    return result.length;
   }
 
   async createScreen(data: InsertScreen): Promise<Screen> {
