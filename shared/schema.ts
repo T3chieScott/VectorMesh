@@ -131,6 +131,7 @@ export const screens = pgTable("screens", {
   location: text("location"),
   displayProfileId: varchar("display_profile_id").references(() => displayProfiles.id),
   pairingCode: varchar("pairing_code", { length: 6 }),
+  deviceToken: text("device_token"),
   isPaired: boolean("is_paired").default(false),
   isOnline: boolean("is_online").default(false),
   lastSeen: timestamp("last_seen"),
