@@ -27,7 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import {
   Dialog,
   DialogContent,
@@ -291,7 +291,7 @@ function DayColumn({
 
 function TimeGutter() {
   return (
-    <div className="w-16 flex-shrink-0 border-r border-border bg-muted/30">
+    <div className="w-16 flex-shrink-0 border-r border-border bg-muted/30 sticky left-0 z-20">
       <div className="sticky top-0 z-10 h-[52px] border-b bg-card" />
       <div className="relative" style={{ height: `${24 * HOUR_HEIGHT}px` }}>
         {HOURS.map((hour) => (
@@ -1092,8 +1092,8 @@ export default function SchedulePage() {
                   <Skeleton className="h-[400px] w-full" />
                 </div>
               ) : (
-                <ScrollArea className="h-[600px]">
-                  <div className="flex">
+                <div className="h-[600px] overflow-auto relative">
+                  <div className="flex" style={{ minWidth: `${64 + weekDays.length * 140}px` }}>
                     <TimeGutter />
                     {weekDays.map((date) => (
                       <DayColumn
@@ -1107,7 +1107,7 @@ export default function SchedulePage() {
                       />
                     ))}
                   </div>
-                </ScrollArea>
+                </div>
               )}
             </CardContent>
           </Card>
