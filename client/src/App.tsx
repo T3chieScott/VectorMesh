@@ -74,13 +74,21 @@ function AuthenticatedLayout() {
 }
 
 function PlayerRoute() {
-  const [match, params] = useRoute("/player/:screenId");
-  if (!match || !params?.screenId) return null;
-  return <PlayerPage screenId={params.screenId} />;
+  const [matchWithId, params] = useRoute("/player/:screenId");
+  const [matchBase] = useRoute("/player");
+  if (matchWithId && params?.screenId) {
+    return <PlayerPage screenId={params.screenId} />;
+  }
+  if (matchBase) {
+    return <PlayerPage screenId="" />;
+  }
+  return null;
 }
 
 function AppContent() {
-  const [isPlayerRoute] = useRoute("/player/:screenId");
+  const [isPlayerRouteWithId] = useRoute("/player/:screenId");
+  const [isPlayerRouteBase] = useRoute("/player");
+  const isPlayerRoute = isPlayerRouteWithId || isPlayerRouteBase;
   const { user, isLoading } = useAuth();
 
   if (isPlayerRoute) {

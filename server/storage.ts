@@ -97,6 +97,7 @@ export interface IStorage {
   getScreens(): Promise<Screen[]>;
   getScreen(id: string): Promise<Screen | undefined>;
   getScreenByPairingCode(code: string): Promise<Screen | undefined>;
+  getScreenByDeviceToken(token: string): Promise<Screen | undefined>;
   createScreen(data: InsertScreen): Promise<Screen>;
   updateScreen(id: string, data: Partial<InsertScreen>): Promise<Screen | undefined>;
   deleteScreen(id: string): Promise<boolean>;
@@ -343,6 +344,11 @@ export class DatabaseStorage implements IStorage {
 
   async getScreenByPairingCode(code: string): Promise<Screen | undefined> {
     const [screen] = await db.select().from(screens).where(eq(screens.pairingCode, code));
+    return screen;
+  }
+
+  async getScreenByDeviceToken(token: string): Promise<Screen | undefined> {
+    const [screen] = await db.select().from(screens).where(eq(screens.deviceToken, token));
     return screen;
   }
 

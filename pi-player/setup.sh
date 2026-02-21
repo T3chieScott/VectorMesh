@@ -4,19 +4,19 @@
 #
 # This script configures a Raspberry Pi to run as a digital signage player.
 # It sets up Chromium in kiosk mode to connect to your Signage Hub.
+# Pairing is done through the on-screen interface using a pairing code.
 #
 # Usage:
-#   curl -sSL https://your-hub-url/pi-setup.sh | bash -s -- YOUR_HUB_URL PAIRING_CODE
+#   curl -sSL https://your-hub-url/pi-setup.sh | bash -s -- YOUR_HUB_URL
 #
 # Or download and run:
 #   chmod +x setup.sh
-#   ./setup.sh https://your-hub-url ABC123
+#   ./setup.sh https://your-hub-url
 #
 
 set -e
 
 HUB_URL="${1}"
-PAIRING_CODE="${2}"
 PLAYER_USER="pi"
 CONFIG_DIR="/home/${PLAYER_USER}/.signage-hub"
 LOG_FILE="/var/log/signage-player.log"
@@ -37,7 +37,6 @@ if [ -z "$HUB_URL" ]; then
   echo "=========================================="
   echo ""
   read -p "Enter your Signage Hub URL (e.g., https://your-app.replit.app): " HUB_URL
-  read -p "Enter the screen pairing code: " PAIRING_CODE
 fi
 
 if [ -z "$HUB_URL" ]; then
@@ -55,54 +54,26 @@ sudo apt-get install -y -qq chromium-browser unclutter xdotool > /dev/null 2>&1
 
 mkdir -p "$CONFIG_DIR"
 
-if [ -n "$PAIRING_CODE" ]; then
-  log "Pairing with Signage Hub using code: $PAIRING_CODE"
-  
-  PAIR_RESPONSE=$(curl -s -X POST "${HUB_URL}/api/player/pair" \
-    -H "Content-Type: application/json" \
-    -d "{\"pairingCode\": \"${PAIRING_CODE}\", \"hardwareInfo\": {\"class\": \"raspberry_pi\", \"model\": \"$(cat /proc/device-tree/model 2>/dev/null || echo 'unknown')\"}}")
-  
-  SCREEN_ID=$(echo "$PAIR_RESPONSE" | grep -o '"screenId":"[^"]*"' | cut -d'"' -f4)
-  SCREEN_NAME=$(echo "$PAIR_RESPONSE" | grep -o '"name":"[^"]*"' | cut -d'"' -f4)
-  
-  if [ -n "$SCREEN_ID" ]; then
-    log "Paired successfully!"
-    log "Screen: $SCREEN_NAME (ID: $SCREEN_ID)"
-    echo "$SCREEN_ID" > "$CONFIG_DIR/screen_id"
-  else
-    warn "Pairing failed. You can pair manually later."
-    warn "Response: $PAIR_RESPONSE"
-    read -p "Enter the screen ID manually (from Signage Hub > Screens): " SCREEN_ID
-    echo "$SCREEN_ID" > "$CONFIG_DIR/screen_id"
-  fi
-else
-  if [ -f "$CONFIG_DIR/screen_id" ]; then
-    SCREEN_ID=$(cat "$CONFIG_DIR/screen_id")
-    log "Using existing screen ID: $SCREEN_ID"
-  else
-    read -p "Enter the screen ID (from Signage Hub > Screens): " SCREEN_ID
-    echo "$SCREEN_ID" > "$CONFIG_DIR/screen_id"
-  fi
-fi
-
 echo "$HUB_URL" > "$CONFIG_DIR/hub_url"
 
-PLAYER_URL="${HUB_URL}/player/${SCREEN_ID}"
+PLAYER_URL="${HUB_URL}/player"
 log "Player URL: $PLAYER_URL"
+log ""
+log "The display will show a pairing screen on first launch."
+log "Enter the pairing code from Signage Hub > Screens to connect."
 
 log "Creating kiosk launch script..."
 cat > "$CONFIG_DIR/start-kiosk.sh" << 'KIOSK_EOF'
 #!/bin/bash
 CONFIG_DIR="$HOME/.signage-hub"
 HUB_URL=$(cat "$CONFIG_DIR/hub_url" 2>/dev/null)
-SCREEN_ID=$(cat "$CONFIG_DIR/screen_id" 2>/dev/null)
 
-if [ -z "$HUB_URL" ] || [ -z "$SCREEN_ID" ]; then
+if [ -z "$HUB_URL" ]; then
   echo "Missing configuration. Run setup.sh again."
   exit 1
 fi
 
-PLAYER_URL="${HUB_URL}/player/${SCREEN_ID}"
+PLAYER_URL="${HUB_URL}/player"
 
 xset s off
 xset -dpms
@@ -187,11 +158,19 @@ echo "Player stopped"
 EOF
 chmod +x "$CONFIG_DIR/stop.sh"
 
+cat > "$CONFIG_DIR/unpair.sh" << 'EOF'
+#!/bin/bash
+echo "Clearing pairing data..."
+rm -f ~/.signage-hub/screen_id
+echo "Display unpaired. Restart the player to see the pairing screen."
+echo "Run: ~/.signage-hub/restart.sh"
+EOF
+chmod +x "$CONFIG_DIR/unpair.sh"
+
 cat > "$CONFIG_DIR/status.sh" << 'EOF'
 #!/bin/bash
 echo "=== Signage Hub Player Status ==="
 echo "Hub URL: $(cat ~/.signage-hub/hub_url 2>/dev/null || echo 'Not configured')"
-echo "Screen ID: $(cat ~/.signage-hub/screen_id 2>/dev/null || echo 'Not configured')"
 echo ""
 systemctl status signage-player --no-pager 2>/dev/null || echo "Service not running"
 echo ""
@@ -200,6 +179,9 @@ echo "Hostname: $(hostname)"
 echo "Uptime: $(uptime -p)"
 echo "Temperature: $(vcgencmd measure_temp 2>/dev/null || echo 'N/A')"
 echo "Memory: $(free -h | awk '/Mem:/{print $3 "/" $2}')"
+echo ""
+echo "Pairing is managed through the on-screen interface."
+echo "To unpair: ~/.signage-hub/unpair.sh"
 EOF
 chmod +x "$CONFIG_DIR/status.sh"
 
@@ -209,12 +191,15 @@ log "  Setup Complete!"
 log "=========================================="
 log ""
 log "Player URL: $PLAYER_URL"
-log "Screen ID: $SCREEN_ID"
 log ""
 log "Management commands:"
 log "  ~/.signage-hub/status.sh   - Check player status"
 log "  ~/.signage-hub/restart.sh  - Restart the player"
 log "  ~/.signage-hub/stop.sh     - Stop the player"
+log "  ~/.signage-hub/unpair.sh   - Unpair this display"
+log ""
+log "On first launch, the display will show a pairing screen."
+log "Enter the pairing code from your Signage Hub to connect."
 log ""
 log "The player will start automatically on next boot."
 log "To start now, reboot or run:"

@@ -1325,6 +1325,7 @@ function MontageWidget({
   autoPlay = true,
   providedMedia,
   mediaBaseUrl,
+  deviceToken,
 }: {
   mediaIds: string[];
   duration?: number;
@@ -1337,6 +1338,7 @@ function MontageWidget({
   autoPlay?: boolean;
   providedMedia?: MediaAsset[];
   mediaBaseUrl?: string;
+  deviceToken?: string;
 }) {
   const [displayOrder, setDisplayOrder] = useState<string[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -1363,8 +1365,9 @@ function MontageWidget({
   const baseUrl = mediaBaseUrl || "/api/media";
   const getUrl = useCallback((id: string) => {
     if (!id) return "";
-    return `${baseUrl}/${id}/file`;
-  }, [baseUrl]);
+    const url = `${baseUrl}/${id}/file`;
+    return deviceToken ? `${url}?token=${deviceToken}` : url;
+  }, [baseUrl, deviceToken]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -2117,6 +2120,7 @@ export interface ZoneRendererProps {
   timezone?: string;
   fillContainer?: boolean;
   mediaBaseUrl?: string;
+  deviceToken?: string;
 }
 
 export function ZoneRenderer({
@@ -2129,6 +2133,7 @@ export function ZoneRenderer({
   timezone,
   fillContainer = false,
   mediaBaseUrl,
+  deviceToken,
 }: ZoneRendererProps) {
   const ZoneIcon = zoneTypeIcons[zone.type] || Layers;
 
@@ -2219,6 +2224,7 @@ export function ZoneRenderer({
             autoPlay={zone.montageAutoPlay}
             providedMedia={media}
             mediaBaseUrl={mediaBaseUrl}
+            deviceToken={deviceToken}
           />
         );
       case "qrcode":

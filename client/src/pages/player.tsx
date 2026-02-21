@@ -14,13 +14,122 @@ interface PlayerContentData {
   timestamp: string;
 }
 
-export default function PlayerPage({ screenId }: { screenId: string }) {
+const TOKEN_KEY = "signage_device_token";
+const SCREEN_KEY = "signage_screen_id";
+
+function getStoredAuth(): { token: string; screenId: string } | null {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const screenId = localStorage.getItem(SCREEN_KEY);
+  if (token && screenId) return { token, screenId };
+  return null;
+}
+
+function storeAuth(token: string, screenId: string) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(SCREEN_KEY, screenId);
+}
+
+function clearAuth() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(SCREEN_KEY);
+}
+
+function playerFetch(url: string, token: string, options?: RequestInit): Promise<Response> {
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...options?.headers,
+      "x-device-token": token,
+    },
+  });
+}
+
+function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: string) => void }) {
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handlePair = async () => {
+    if (code.length < 4) {
+      setError("Please enter a valid pairing code");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/player/pair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pairingCode: code.toUpperCase().trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || "Invalid pairing code");
+      }
+      const data = await res.json();
+      if (!data.deviceToken) {
+        throw new Error("Server did not return a device token");
+      }
+      storeAuth(data.deviceToken, data.screenId);
+      onPaired(data.screenId, data.deviceToken);
+    } catch (err: any) {
+      setError(err.message || "Failed to pair");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black flex items-center justify-center" data-testid="pairing-screen">
+      <div className="text-center text-white max-w-md px-8">
+        <div className="w-20 h-20 mx-auto mb-8 rounded-2xl bg-white/10 flex items-center justify-center">
+          <svg className="w-10 h-10 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+          </svg>
+        </div>
+        <h1 className="text-2xl font-bold mb-2">Pair This Display</h1>
+        <p className="text-white/60 mb-8 text-sm">
+          Enter the pairing code shown on the Screens page in Signage Hub
+        </p>
+        <input
+          data-testid="pairing-code-input"
+          type="text"
+          value={code}
+          onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))}
+          onKeyDown={(e) => e.key === "Enter" && handlePair()}
+          placeholder="PAIRING CODE"
+          className="w-full text-center text-3xl tracking-[0.5em] font-mono bg-white/10 border border-white/20 rounded-lg px-4 py-4 text-white placeholder-white/30 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          maxLength={6}
+          autoFocus
+          disabled={loading}
+        />
+        {error && (
+          <p className="text-red-400 text-sm mt-3" data-testid="pairing-error">{error}</p>
+        )}
+        <button
+          data-testid="pair-button"
+          onClick={handlePair}
+          disabled={loading || code.length < 4}
+          className="mt-6 w-full py-3 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium transition-colors"
+        >
+          {loading ? "Pairing..." : "Connect Display"}
+        </button>
+        <p className="text-white/30 text-xs mt-6">
+          This display will be securely linked to your Signage Hub account
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function PlayerContent({ screenId, token }: { screenId: string; token: string }) {
   const [content, setContent] = useState<PlayerContentData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string>("");
   const [zoneMediaIndices, setZoneMediaIndices] = useState<Record<string, number>>({});
   const [weatherTimezone, setWeatherTimezone] = useState<string | undefined>(undefined);
+  const [authError, setAuthError] = useState(false);
   const contentHashRef = useRef<string>("");
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
@@ -28,7 +137,12 @@ export default function PlayerPage({ screenId }: { screenId: string }) {
 
   const fetchContent = useCallback(async () => {
     try {
-      const res = await fetch(`/api/player/${screenId}/content`);
+      const res = await playerFetch(`/api/player/${screenId}/content`, token);
+      if (res.status === 401 || res.status === 403) {
+        clearAuth();
+        setAuthError(true);
+        return;
+      }
       if (!res.ok) {
         throw new Error(`Failed to fetch content: ${res.status}`);
       }
@@ -54,7 +168,7 @@ export default function PlayerPage({ screenId }: { screenId: string }) {
       setIsConnected(false);
       setError(err.message || "Connection lost");
     }
-  }, [screenId]);
+  }, [screenId, token]);
 
   useEffect(() => {
     fetchContent();
@@ -65,7 +179,7 @@ export default function PlayerPage({ screenId }: { screenId: string }) {
   useEffect(() => {
     heartbeatIntervalRef.current = setInterval(async () => {
       try {
-        await fetch("/api/player/heartbeat", {
+        await playerFetch("/api/player/heartbeat", token, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -83,7 +197,7 @@ export default function PlayerPage({ screenId }: { screenId: string }) {
     return () => {
       if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
     };
-  }, [screenId]);
+  }, [screenId, token]);
 
   const layout = content?.layout || null;
   const zones = (layout?.zones as LayoutZone[]) || [];
@@ -91,14 +205,14 @@ export default function PlayerPage({ screenId }: { screenId: string }) {
   useEffect(() => {
     const weatherZone = zones.find(z => z.type === "weather" && z.weatherLat && z.weatherLng);
     if (weatherZone && weatherZone.weatherLat && weatherZone.weatherLng) {
-      fetch(`/api/player/widgets/weather?lat=${weatherZone.weatherLat}&lng=${weatherZone.weatherLng}&unit=${weatherZone.weatherUnit || "celsius"}`)
+      playerFetch(`/api/player/widgets/weather?lat=${weatherZone.weatherLat}&lng=${weatherZone.weatherLng}&unit=${weatherZone.weatherUnit || "celsius"}`, token)
         .then(res => res.json())
         .then(data => {
           if (data.timezone) setWeatherTimezone(data.timezone);
         })
         .catch(() => {});
     }
-  }, [zones.length, layout?.id]);
+  }, [zones.length, layout?.id, token]);
 
   useEffect(() => {
     if (zones.length === 0) return;
@@ -151,6 +265,29 @@ export default function PlayerPage({ screenId }: { screenId: string }) {
     return zoneMediaIndices[zoneId] || 0;
   };
 
+  if (authError) {
+    return (
+      <div className="fixed inset-0 bg-black flex items-center justify-center">
+        <div className="text-center text-white">
+          <div className="w-16 h-16 mx-auto mb-6 rounded-full border-2 border-red-500 flex items-center justify-center">
+            <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+          </div>
+          <p className="text-xl font-semibold mb-2">Device Unpaired</p>
+          <p className="text-white/60 text-sm mb-6">This device is no longer paired. It needs to be re-paired.</p>
+          <button
+            data-testid="re-pair-button"
+            onClick={() => window.location.reload()}
+            className="px-6 py-2 bg-blue-600 rounded-lg text-white font-medium hover:bg-blue-700 transition-colors"
+          >
+            Re-pair Display
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (error && !content) {
     return (
       <div className="fixed inset-0 bg-black flex items-center justify-center">
@@ -162,7 +299,7 @@ export default function PlayerPage({ screenId }: { screenId: string }) {
           </div>
           <p className="text-xl font-semibold mb-2">Connection Lost</p>
           <p className="text-white/60 text-sm">Attempting to reconnect to Signage Hub...</p>
-          <p className="text-white/40 text-xs mt-4">Screen ID: {screenId}</p>
+          <p className="text-white/40 text-xs mt-4">Screen: {screenId}</p>
         </div>
       </div>
     );
@@ -174,7 +311,7 @@ export default function PlayerPage({ screenId }: { screenId: string }) {
         <div className="text-center text-white">
           <div className="w-12 h-12 mx-auto mb-4 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
           <p className="text-lg">Connecting to Signage Hub...</p>
-          <p className="text-white/40 text-xs mt-2">Screen ID: {screenId}</p>
+          <p className="text-white/40 text-xs mt-2">Screen: {screenId}</p>
         </div>
       </div>
     );
@@ -246,6 +383,7 @@ export default function PlayerPage({ screenId }: { screenId: string }) {
                   timezone={weatherTimezone}
                   fillContainer={true}
                   mediaBaseUrl="/api/player/media"
+                  deviceToken={token}
                 />
               </div>
             </div>
@@ -261,4 +399,37 @@ export default function PlayerPage({ screenId }: { screenId: string }) {
       )}
     </div>
   );
+}
+
+export default function PlayerPage({ screenId }: { screenId: string }) {
+  const [auth, setAuth] = useState<{ token: string; screenId: string } | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const stored = getStoredAuth();
+    if (stored) {
+      setAuth(stored);
+    }
+    setReady(true);
+  }, []);
+
+  if (!ready) {
+    return (
+      <div className="fixed inset-0 bg-black flex items-center justify-center">
+        <div className="w-12 h-12 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
+      </div>
+    );
+  }
+
+  if (!auth) {
+    return (
+      <PairingScreen
+        onPaired={(pairedScreenId, token) => {
+          setAuth({ token, screenId: pairedScreenId });
+        }}
+      />
+    );
+  }
+
+  return <PlayerContent screenId={auth.screenId} token={auth.token} />;
 }

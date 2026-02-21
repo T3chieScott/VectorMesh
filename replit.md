@@ -21,9 +21,10 @@ Key capabilities:
 - Live override mode for temporary takeovers
 - Player health monitoring and fallback behavior
 - Player Simulator for testing content layouts before deployment
-- **Raspberry Pi Player**: Standalone player page at `/player/:screenId` that renders content fullscreen in kiosk mode, with 7-second auto-refresh polling (change detection), programme/schedule-aware content resolution, live override support, and offline fallback screens
+- **Raspberry Pi Player**: Standalone player page at `/player` that renders content fullscreen in kiosk mode, with 7-second auto-refresh polling (change detection), programme/schedule-aware content resolution, live override support, and offline fallback screens
+- **Secure device pairing**: Player pages are locked behind device-specific tokens. On first visit, displays show a pairing code input screen. After successful pairing, a secure 64-character hex token is generated and stored in localStorage. All player API endpoints (`/api/player/*`) require the `x-device-token` header or `?token=` query parameter. Invalid/missing tokens return 401/403. Admin API strips `deviceToken` from screen responses.
 - **Simulator auto-refresh**: Simulator polls for layout/media/override changes every 7 seconds with TanStack Query structural sharing (only re-renders on actual data changes)
-- **Pi setup script**: `pi-player/setup.sh` configures Raspberry Pi for kiosk mode with Chromium, autostart service, pairing via code, and management scripts
+- **Pi setup script**: `pi-player/setup.sh` configures Raspberry Pi for kiosk mode with Chromium, autostart service, and management scripts. Pairing is done through the on-screen interface.
 
 ## User Preferences
 

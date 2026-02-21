@@ -2,6 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
+import crypto from "crypto";
 import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, insertScheduleBlockSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
 import { getSignedUploadUrl, getPublicUrl, objectStorageService } from "./objectStorage";
 import { isAuthenticated } from "./replit_integrations/auth";
@@ -9,6 +10,29 @@ import { registerObjectStorageRoutes } from "./replit_integrations/object_storag
 import { find as findTimezone } from "geo-tz";
 
 const requireAuth = isAuthenticated;
+
+async function validateDeviceToken(req: Request, res: Response, next: NextFunction) {
+  const token = (req.headers["x-device-token"] as string) || (req.query.token as string);
+  if (!token) {
+    return res.status(401).json({ error: "Device token required" });
+  }
+
+  const screenId = req.params.screenId;
+  if (screenId) {
+    const screen = await storage.getScreen(screenId);
+    if (!screen || screen.deviceToken !== token) {
+      return res.status(403).json({ error: "Invalid device token" });
+    }
+    (req as any).pairedScreen = screen;
+  } else {
+    const screen = await storage.getScreenByDeviceToken(token);
+    if (!screen) {
+      return res.status(403).json({ error: "Invalid device token" });
+    }
+    (req as any).pairedScreen = screen;
+  }
+  next();
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -307,7 +331,7 @@ export async function registerRoutes(
   app.get("/api/screens", requireAuth, async (req, res) => {
     try {
       const screens = await storage.getScreens();
-      res.json(screens);
+      res.json(screens.map(({ deviceToken, ...s }) => s));
     } catch (error) {
       console.error("Error fetching screens:", error);
       res.status(500).json({ error: "Failed to fetch screens" });
@@ -320,7 +344,8 @@ export async function registerRoutes(
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
-      res.json(screen);
+      const { deviceToken, ...safeScreen } = screen;
+      res.json(safeScreen);
     } catch (error) {
       console.error("Error fetching screen:", error);
       res.status(500).json({ error: "Failed to fetch screen" });
@@ -859,8 +884,8 @@ export async function registerRoutes(
 
   // ============ PLAYER API (for Raspberry Pi nodes) ============
 
-  // Public media file endpoint for unauthenticated player access
-  app.get("/api/player/media/:id/file", async (req, res) => {
+  // Secured media file endpoint for paired player devices
+  app.get("/api/player/media/:id/file", validateDeviceToken, async (req, res) => {
     try {
       const asset = await storage.getMediaAsset(req.params.id);
       if (!asset) {
@@ -888,6 +913,8 @@ export async function registerRoutes(
       if (!screen) {
         return res.status(404).json({ error: "Invalid pairing code" });
       }
+
+      const deviceToken = crypto.randomBytes(32).toString("hex");
       
       await storage.updateScreen(screen.id, {
         isPaired: true,
@@ -895,16 +922,17 @@ export async function registerRoutes(
         lastSeen: new Date(),
         hardwareClass: hardwareInfo?.class || "raspberry_pi",
         ipAddress: req.ip,
+        deviceToken,
       });
       
-      res.json({ screenId: screen.id, name: screen.name });
+      res.json({ screenId: screen.id, name: screen.name, deviceToken });
     } catch (error) {
       console.error("Error pairing screen:", error);
       res.status(500).json({ error: "Failed to pair screen" });
     }
   });
 
-  app.post("/api/player/heartbeat", async (req, res) => {
+  app.post("/api/player/heartbeat", validateDeviceToken, async (req, res) => {
     try {
       const data = insertPlayerHeartbeatSchema.parse(req.body);
       await storage.createPlayerHeartbeat(data);
@@ -919,7 +947,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/player/:screenId/manifest", async (req, res) => {
+  app.get("/api/player/:screenId/manifest", validateDeviceToken, async (req, res) => {
     try {
       const screen = await storage.getScreen(req.params.screenId);
       if (!screen) {
@@ -945,7 +973,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/player/:screenId/content", async (req, res) => {
+  app.get("/api/player/:screenId/content", validateDeviceToken, async (req, res) => {
     try {
       const screen = await storage.getScreen(req.params.screenId);
       if (!screen) {
@@ -1142,7 +1170,7 @@ export async function registerRoutes(
     }
   };
   app.get("/api/widgets/weather", requireAuth, handleWeatherRequest);
-  app.get("/api/player/widgets/weather", handleWeatherRequest);
+  app.get("/api/player/widgets/weather", validateDeviceToken, handleWeatherRequest);
 
   // ============ NEWS WIDGET ============
   // Cache RSS feeds for 5 minutes
@@ -1194,7 +1222,7 @@ export async function registerRoutes(
     }
   };
   app.get("/api/widgets/news", requireAuth, handleNewsRequest);
-  app.get("/api/player/widgets/news", handleNewsRequest);
+  app.get("/api/player/widgets/news", validateDeviceToken, handleNewsRequest);
 
   // Geocoding endpoint to convert location names to coordinates
   app.get("/api/widgets/geocode", requireAuth, async (req, res) => {
