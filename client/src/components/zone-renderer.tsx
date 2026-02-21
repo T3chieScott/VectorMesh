@@ -1323,6 +1323,8 @@ function MontageWidget({
   kenBurnsIntensity = 10,
   shuffle = false,
   autoPlay = true,
+  providedMedia,
+  mediaBaseUrl,
 }: {
   mediaIds: string[];
   duration?: number;
@@ -1333,6 +1335,8 @@ function MontageWidget({
   kenBurnsIntensity?: number;
   shuffle?: boolean;
   autoPlay?: boolean;
+  providedMedia?: MediaAsset[];
+  mediaBaseUrl?: string;
 }) {
   const [displayOrder, setDisplayOrder] = useState<string[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -1349,14 +1353,18 @@ function MontageWidget({
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 
-  const { data: allMedia = [], isLoading: isMediaLoading } = useQuery<MediaAsset[]>({
+  const hasProvidedMedia = providedMedia && providedMedia.length > 0;
+  const { data: fetchedMedia = [], isLoading: isMediaLoading } = useQuery<MediaAsset[]>({
     queryKey: ["/api/media"],
+    enabled: !hasProvidedMedia,
   });
+  const allMedia = hasProvidedMedia ? providedMedia : fetchedMedia;
 
+  const baseUrl = mediaBaseUrl || "/api/media";
   const getUrl = useCallback((id: string) => {
     if (!id) return "";
-    return `/api/media/${id}/file`;
-  }, []);
+    return `${baseUrl}/${id}/file`;
+  }, [baseUrl]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -2106,6 +2114,7 @@ export interface ZoneRendererProps {
   playlistName?: string;
   timezone?: string;
   fillContainer?: boolean;
+  mediaBaseUrl?: string;
 }
 
 export function ZoneRenderer({
@@ -2117,6 +2126,7 @@ export function ZoneRenderer({
   playlistName,
   timezone,
   fillContainer = false,
+  mediaBaseUrl,
 }: ZoneRendererProps) {
   const ZoneIcon = zoneTypeIcons[zone.type] || Layers;
 
@@ -2205,6 +2215,8 @@ export function ZoneRenderer({
             kenBurnsIntensity={zone.montageKenBurnsIntensity}
             shuffle={zone.montageShuffle}
             autoPlay={zone.montageAutoPlay}
+            providedMedia={media}
+            mediaBaseUrl={mediaBaseUrl}
           />
         );
       case "qrcode":

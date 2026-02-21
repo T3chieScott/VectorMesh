@@ -246,6 +246,7 @@ export default function PlayerPage({ screenId }: { screenId: string }) {
                   showBorder={false}
                   timezone={weatherTimezone}
                   fillContainer={true}
+                  mediaBaseUrl="/api/player/media"
                 />
               </div>
             </div>

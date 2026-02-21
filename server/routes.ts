@@ -858,6 +858,28 @@ export async function registerRoutes(
   });
 
   // ============ PLAYER API (for Raspberry Pi nodes) ============
+
+  // Public media file endpoint for unauthenticated player access
+  app.get("/api/player/media/:id/file", async (req, res) => {
+    try {
+      const asset = await storage.getMediaAsset(req.params.id);
+      if (!asset) {
+        return res.status(404).json({ error: "Media asset not found" });
+      }
+
+      const normalizedPath = objectStorageService.normalizeObjectEntityPath(asset.originalPath);
+      if (normalizedPath.startsWith("/objects/")) {
+        const file = await objectStorageService.getObjectEntityFile(normalizedPath);
+        await objectStorageService.downloadObject(file, res);
+      } else {
+        res.redirect(asset.originalPath);
+      }
+    } catch (error) {
+      console.error("Error serving player media file:", error);
+      res.status(500).json({ error: "Failed to serve media file" });
+    }
+  });
+
   app.post("/api/player/pair", async (req, res) => {
     try {
       const { pairingCode, hardwareInfo } = req.body;
