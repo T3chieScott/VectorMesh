@@ -53,12 +53,13 @@ import {
   Copy,
   Zap,
 } from "lucide-react";
-import type { Screen, DisplayProfile, LiveOverride } from "@shared/schema";
+import type { Screen, DisplayProfile, LiveOverride, Event } from "@shared/schema";
 
 const screenFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   location: z.string().optional(),
   displayProfileId: z.string().optional(),
+  currentEventId: z.string().nullable().optional(),
 });
 
 type ScreenFormValues = z.infer<typeof screenFormSchema>;
@@ -70,10 +71,12 @@ function generatePairingCode(): string {
 function ScreenCard({
   screen,
   profiles,
+  events,
   activeOverride,
 }: {
   screen: Screen;
   profiles: DisplayProfile[];
+  events: Event[];
   activeOverride: LiveOverride | null;
 }) {
   const [editOpen, setEditOpen] = useState(false);
@@ -120,12 +123,16 @@ function ScreenCard({
       name: screen.name,
       location: screen.location || "",
       displayProfileId: screen.displayProfileId || "",
+      currentEventId: screen.currentEventId || "",
     },
   });
 
   const updateMutation = useMutation({
     mutationFn: (data: ScreenFormValues) =>
-      apiRequest("PATCH", `/api/screens/${screen.id}`, data),
+      apiRequest("PATCH", `/api/screens/${screen.id}`, {
+        ...data,
+        currentEventId: data.currentEventId || null,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
       setEditOpen(false);
@@ -297,6 +304,34 @@ function ScreenCard({
                         </FormItem>
                       )}
                     />
+                    <FormField
+                      control={form.control}
+                      name="currentEventId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Current Event</FormLabel>
+                          <Select
+                            onValueChange={(val) => field.onChange(val === "__none__" ? null : val)}
+                            defaultValue={field.value || "__none__"}
+                          >
+                            <FormControl>
+                              <SelectTrigger data-testid="select-edit-screen-event">
+                                <SelectValue placeholder="No event assigned" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="__none__">No event assigned</SelectItem>
+                              {events.map((e) => (
+                                <SelectItem key={e.id} value={e.id}>
+                                  {e.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
                     <div className="flex justify-end gap-2">
                       <Button
                         type="button"
@@ -367,6 +402,11 @@ function ScreenCard({
             {profile.width}x{profile.height} • {profile.orientation}
           </div>
         )}
+        {screen.currentEventId && (
+          <div className="text-sm text-muted-foreground">
+            Event: {events.find((e) => e.id === screen.currentEventId)?.name || "Unknown"}
+          </div>
+        )}
         {!screen.isPaired && screen.pairingCode && (
           <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
             <div>
@@ -395,7 +435,7 @@ function ScreenCard({
   );
 }
 
-function CreateScreenDialog({ profiles }: { profiles: DisplayProfile[] }) {
+function CreateScreenDialog({ profiles, events }: { profiles: DisplayProfile[]; events: Event[] }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
 
@@ -405,6 +445,7 @@ function CreateScreenDialog({ profiles }: { profiles: DisplayProfile[] }) {
       name: "",
       location: "",
       displayProfileId: "",
+      currentEventId: "",
     },
   });
 
@@ -412,6 +453,7 @@ function CreateScreenDialog({ profiles }: { profiles: DisplayProfile[] }) {
     mutationFn: (data: ScreenFormValues) =>
       apiRequest("POST", "/api/screens", {
         ...data,
+        currentEventId: data.currentEventId || null,
         pairingCode: generatePairingCode(),
       }),
     onSuccess: () => {
@@ -500,6 +542,34 @@ function CreateScreenDialog({ profiles }: { profiles: DisplayProfile[] }) {
                 </FormItem>
               )}
             />
+            <FormField
+              control={form.control}
+              name="currentEventId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Current Event (optional)</FormLabel>
+                  <Select
+                    onValueChange={(val) => field.onChange(val === "__none__" ? null : val)}
+                    defaultValue={field.value || "__none__"}
+                  >
+                    <FormControl>
+                      <SelectTrigger data-testid="select-screen-event">
+                        <SelectValue placeholder="No event assigned" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="__none__">No event assigned</SelectItem>
+                      {events.map((e) => (
+                        <SelectItem key={e.id} value={e.id}>
+                          {e.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <div className="flex justify-end gap-2">
               <Button
                 type="button"
@@ -532,6 +602,10 @@ export default function ScreensPage() {
     DisplayProfile[]
   >({
     queryKey: ["/api/display-profiles"],
+  });
+
+  const { data: events = [] } = useQuery<Event[]>({
+    queryKey: ["/api/events"],
   });
 
   const { data: liveOverrides = [] } = useQuery<LiveOverride[]>({
@@ -567,7 +641,7 @@ export default function ScreensPage() {
             Manage display screens and their configurations
           </p>
         </div>
-        <CreateScreenDialog profiles={profiles} />
+        <CreateScreenDialog profiles={profiles} events={events} />
       </div>
 
       {/* Stats */}
@@ -614,7 +688,7 @@ export default function ScreensPage() {
               Get started by adding your first screen. You'll receive a pairing
               code to connect the physical display.
             </p>
-            <CreateScreenDialog profiles={profiles} />
+            <CreateScreenDialog profiles={profiles} events={events} />
           </CardContent>
         </Card>
       ) : (
@@ -623,7 +697,8 @@ export default function ScreensPage() {
             <ScreenCard 
               key={screen.id} 
               screen={screen} 
-              profiles={profiles} 
+              profiles={profiles}
+              events={events}
               activeOverride={getActiveOverrideForScreen(screen.id)}
             />
           ))}
