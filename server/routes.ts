@@ -410,12 +410,7 @@ export async function registerRoutes(
   app.post("/api/screens/:id/unpair", requireAuth, async (req, res) => {
     try {
       const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const screen = await storage.updateScreen(req.params.id, {
-        isPaired: false,
-        isOnline: false,
-        deviceToken: null,
-        pairingCode: newCode,
-      });
+      const screen = await storage.unpairScreen(req.params.id, newCode);
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
