@@ -97,8 +97,8 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
           value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))}
           onKeyDown={(e) => e.key === "Enter" && handlePair()}
-          placeholder="PAIRING CODE"
-          className="w-full text-center text-3xl tracking-[0.5em] font-mono bg-white/10 border border-white/20 rounded-lg px-4 py-4 text-white placeholder-white/30 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          placeholder="CODE"
+          className="w-full text-center text-3xl tracking-[0.3em] font-mono bg-white/10 border border-white/20 rounded-lg px-4 py-4 text-white placeholder:text-base placeholder:tracking-normal placeholder:text-white/30 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
           maxLength={6}
           autoFocus
           disabled={loading}
