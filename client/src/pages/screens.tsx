@@ -226,11 +226,6 @@ function ScreenCard({
                 <Badge variant="destructive" className="gap-1">
                   <WifiOff className="h-3 w-3" />
                   Offline
-                  {screen.lastSeen && (
-                    <span className="opacity-80">
-                      · {formatDistanceToNow(new Date(screen.lastSeen), { addSuffix: true })}
-                    </span>
-                  )}
                 </Badge>
               ) : (
                 <Badge variant="secondary">Unpaired</Badge>
