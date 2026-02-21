@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { addMinutes } from "date-fns";
+import { addMinutes, formatDistanceToNow } from "date-fns";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -226,6 +226,11 @@ function ScreenCard({
                 <Badge variant="destructive" className="gap-1">
                   <WifiOff className="h-3 w-3" />
                   Offline
+                  {screen.lastSeen && (
+                    <span className="opacity-80">
+                      · {formatDistanceToNow(new Date(screen.lastSeen), { addSuffix: true })}
+                    </span>
+                  )}
                 </Badge>
               ) : (
                 <Badge variant="secondary">Unpaired</Badge>
@@ -448,8 +453,8 @@ function ScreenCard({
           </div>
         )}
         {screen.lastSeen && (
-          <p className="text-xs text-muted-foreground">
-            Last seen: {new Date(screen.lastSeen).toLocaleString()}
+          <p className="text-xs text-muted-foreground" title={new Date(screen.lastSeen).toLocaleString()}>
+            Last seen: {formatDistanceToNow(new Date(screen.lastSeen), { addSuffix: true })}
           </p>
         )}
       </CardContent>
