@@ -1371,10 +1371,12 @@ function MontageWidget({
     return () => { isMountedRef.current = false; };
   }, []);
 
+  const mediaIdsKey = JSON.stringify(mediaIds);
   useEffect(() => {
-    const order = shuffle && mediaIds.length > 0
-      ? [...mediaIds].sort(() => Math.random() - 0.5)
-      : [...mediaIds];
+    const ids = JSON.parse(mediaIdsKey) as string[];
+    const order = shuffle && ids.length > 0
+      ? [...ids].sort(() => Math.random() - 0.5)
+      : [...ids];
     setDisplayOrder(order);
     displayOrderRef.current = order;
     currentIndexRef.current = 0;
@@ -1386,7 +1388,7 @@ function MontageWidget({
       activeLayerRef.current = "a";
       setCrossfading(false);
     }
-  }, [mediaIds, shuffle]);
+  }, [mediaIdsKey, shuffle]);
 
   const generateKenBurnsParams = useCallback(() => {
     if (!kenBurns) return { scale: 1, x: 0, y: 0 };
@@ -1552,7 +1554,7 @@ function MontageWidget({
   };
 
   return (
-    <div className="h-full w-full relative overflow-hidden">
+    <div className="h-full w-full relative overflow-hidden" data-testid="montage-widget" data-montage-index={currentIndex} data-montage-active={activeLayer}>
       <div style={getLayerStyle(aIsActive, true)}>
         <div className="h-full w-full" style={aIsActive ? getKenBurnsStyle() : {}}>
           <img

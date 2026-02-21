@@ -41,7 +41,6 @@ export default function PlayerPage({ screenId }: { screenId: string }) {
         liveOverrideActive: data.liveOverride?.isActive,
         mediaIds: data.media.map((m: any) => m.id).sort(),
         playlistItems: data.playlistItems,
-        timestamp: data.timestamp,
       });
 
       if (newHash !== contentHashRef.current) {
