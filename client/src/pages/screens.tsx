@@ -52,6 +52,7 @@ import {
   RefreshCw,
   Copy,
   Zap,
+  Unlink,
 } from "lucide-react";
 import type { Screen, DisplayProfile, LiveOverride, Event } from "@shared/schema";
 
@@ -160,6 +161,18 @@ function ScreenCard({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
       toast({ title: "Pairing code regenerated" });
+    },
+  });
+
+  const unpairMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", `/api/screens/${screen.id}/unpair`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
+      toast({ title: "Device unpaired", description: "The display will return to the pairing screen on its next refresh." });
+    },
+    onError: () => {
+      toast({ title: "Failed to unpair device", variant: "destructive" });
     },
   });
 
@@ -358,6 +371,15 @@ function ScreenCard({
               >
                 <RefreshCw className="mr-2 h-4 w-4" />
                 Regenerate Code
+              </DropdownMenuItem>
+            )}
+            {screen.isPaired && (
+              <DropdownMenuItem
+                onSelect={() => unpairMutation.mutate()}
+                data-testid={`button-unpair-${screen.id}`}
+              >
+                <Unlink className="mr-2 h-4 w-4" />
+                Unpair Device
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />

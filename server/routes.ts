@@ -407,6 +407,26 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/screens/:id/unpair", requireAuth, async (req, res) => {
+    try {
+      const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+      const screen = await storage.updateScreen(req.params.id, {
+        isPaired: false,
+        isOnline: false,
+        deviceToken: null,
+        pairingCode: newCode,
+      });
+      if (!screen) {
+        return res.status(404).json({ error: "Screen not found" });
+      }
+      const { deviceToken, ...safeScreen } = screen;
+      res.json(safeScreen);
+    } catch (error) {
+      console.error("Error unpairing screen:", error);
+      res.status(500).json({ error: "Failed to unpair screen" });
+    }
+  });
+
   app.delete("/api/screens/:id", requireAuth, async (req, res) => {
     try {
       const deleted = await storage.deleteScreen(req.params.id);
