@@ -13,6 +13,7 @@ import {
   LayoutDashboard,
   Tv2,
   FolderOpen,
+  Shield,
 } from "lucide-react";
 import {
   Sidebar,
@@ -27,6 +28,7 @@ import {
   SidebarFooter,
 } from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/use-auth";
 
 const mainNavItems = [
@@ -111,6 +113,14 @@ const systemNavItems = [
   },
 ];
 
+const adminNavItems = [
+  {
+    title: "User Management",
+    url: "/admin/users",
+    icon: Shield,
+  },
+];
+
 export function AppSidebar() {
   const [location] = useLocation();
   const { user } = useAuth();
@@ -168,6 +178,9 @@ export function AppSidebar() {
         <NavGroup label="Content" items={contentNavItems} />
         <NavGroup label="Display" items={displayNavItems} />
         <NavGroup label="System" items={systemNavItems} />
+        {user?.role === "admin" && (
+          <NavGroup label="Admin" items={adminNavItems} />
+        )}
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border p-4">
@@ -187,6 +200,11 @@ export function AppSidebar() {
                 {user.email || "No email"}
               </span>
             </div>
+            {user.role === "admin" && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 border-primary/30 text-primary shrink-0">
+                Admin
+              </Badge>
+            )}
           </div>
         )}
       </SidebarFooter>

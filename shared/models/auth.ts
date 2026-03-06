@@ -21,9 +21,21 @@ export const users = pgTable("users", {
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
+  role: varchar("role").default("site_user").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
+
+// User-Site assignments: links users to the client/sites they can access
+export const userSites = pgTable("user_sites", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  clientId: varchar("client_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type UserSite = typeof userSites.$inferSelect;
+export type InsertUserSite = typeof userSites.$inferInsert;

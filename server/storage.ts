@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, desc, gte, lte, lt } from "drizzle-orm";
+import { eq, and, desc, gte, lte, lt, inArray } from "drizzle-orm";
 import {
   clients,
   events,
@@ -51,12 +51,20 @@ import {
   type PlaylistItem,
   type InsertPlaylistItem,
 } from "@shared/schema";
-import { users, type User, type UpsertUser } from "@shared/models/auth";
+import { users, userSites, type User, type UpsertUser, type UserSite } from "@shared/models/auth";
 
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
+  getAllUsers(): Promise<User[]>;
+  updateUserRole(id: string, role: string): Promise<User | undefined>;
+
+  // User-Site assignments
+  getUserSites(userId: string): Promise<UserSite[]>;
+  getUserClientIds(userId: string): Promise<string[]>;
+  addUserToSite(userId: string, clientId: string): Promise<UserSite>;
+  removeUserFromSite(userId: string, clientId: string): Promise<boolean>;
 
   // Clients
   getClients(): Promise<Client[]>;
@@ -175,18 +183,54 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertUser(userData: UpsertUser): Promise<User> {
+    const { role, ...upsertData } = userData;
     const [user] = await db
       .insert(users)
       .values(userData)
       .onConflictDoUpdate({
         target: users.id,
         set: {
-          ...userData,
+          ...upsertData,
           updatedAt: new Date(),
         },
       })
       .returning();
     return user;
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    return db.select().from(users).orderBy(desc(users.createdAt));
+  }
+
+  async updateUserRole(id: string, role: string): Promise<User | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({ role, updatedAt: new Date() })
+      .where(eq(users.id, id))
+      .returning();
+    return user;
+  }
+
+  // User-Site assignments
+  async getUserSites(userId: string): Promise<UserSite[]> {
+    return db.select().from(userSites).where(eq(userSites.userId, userId));
+  }
+
+  async getUserClientIds(userId: string): Promise<string[]> {
+    const sites = await db.select({ clientId: userSites.clientId }).from(userSites).where(eq(userSites.userId, userId));
+    return sites.map(s => s.clientId);
+  }
+
+  async addUserToSite(userId: string, clientId: string): Promise<UserSite> {
+    const existing = await db.select().from(userSites).where(and(eq(userSites.userId, userId), eq(userSites.clientId, clientId)));
+    if (existing.length > 0) return existing[0];
+    const [site] = await db.insert(userSites).values({ userId, clientId }).returning();
+    return site;
+  }
+
+  async removeUserFromSite(userId: string, clientId: string): Promise<boolean> {
+    const result = await db.delete(userSites).where(and(eq(userSites.userId, userId), eq(userSites.clientId, clientId)));
+    return (result.rowCount ?? 0) > 0;
   }
 
   // Clients

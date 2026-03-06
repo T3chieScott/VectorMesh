@@ -8,7 +8,7 @@ export * from "./models/auth";
 
 // ============ ENUMS ============
 
-export const userRoleEnum = pgEnum("user_role", ["admin", "editor", "viewer"]);
+export const userRoleEnum = pgEnum("user_role", ["admin", "site_user"]);
 export const screenTypeEnum = pgEnum("screen_type", ["standard", "led_wall"]);
 export const orientationEnum = pgEnum("orientation", ["landscape", "portrait"]);
 export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "gif"]);

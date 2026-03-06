@@ -59,11 +59,18 @@ The server entry point is `server/index.ts`, with routes registered in `server/r
 
 Core entities include: Clients, Events, Brand Packs, Display Profiles, Screen Groups, Screens, Media Assets, Layout Templates, Programmes, Schedule Blocks, Playlists, Live Overrides, and Player Heartbeats.
 
-### Authentication
+### Authentication & Authorization
 - Replit Auth integration using OpenID Connect
 - Session storage in PostgreSQL `sessions` table
-- User data stored in `users` table
+- User data stored in `users` table with `role` column ("admin" | "site_user")
 - Protected routes use `isAuthenticated` middleware
+- **RBAC (Role-Based Access Control)**: Two-tier system
+  - **Admin**: Full platform access, can manage users, create/delete sites, see all data
+  - **Site User**: Scoped to assigned sites only via `user_sites` join table (userId → clientId)
+- Middleware: `requireAdmin` (403 if not admin), `loadUserContext` (sets `req.dbUser` and `req.allowedClientIds`)
+- Access chain: resources → eventId → event.clientId → user's allowed clientIds
+- Admin user management UI at `/admin/users` (admin-only sidebar item)
+- Admin API: `GET/PATCH /api/admin/users`, `POST/DELETE /api/admin/users/:id/sites`
 
 ### Key Design Patterns
 - **Shared Schema**: Types defined once in `shared/` and used by both frontend and backend

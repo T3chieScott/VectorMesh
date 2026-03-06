@@ -11,6 +11,45 @@ import { find as findTimezone } from "geo-tz";
 
 const requireAuth = isAuthenticated;
 
+async function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const userId = (req as any).user?.claims?.sub;
+  if (!userId) return res.status(401).json({ error: "Unauthorized" });
+  const user = await storage.getUser(userId);
+  if (!user || user.role !== "admin") {
+    return res.status(403).json({ error: "Admin access required" });
+  }
+  (req as any).dbUser = user;
+  next();
+}
+
+async function loadUserContext(req: Request, res: Response, next: NextFunction) {
+  const userId = (req as any).user?.claims?.sub;
+  if (!userId) return res.status(401).json({ error: "Unauthorized" });
+  const user = await storage.getUser(userId);
+  if (!user) return res.status(401).json({ error: "User not found" });
+  (req as any).dbUser = user;
+  if (user.role === "admin") {
+    (req as any).allowedClientIds = null;
+  } else {
+    (req as any).allowedClientIds = await storage.getUserClientIds(userId);
+  }
+  next();
+}
+
+function isAdmin(req: Request): boolean {
+  return (req as any).dbUser?.role === "admin";
+}
+
+function getAllowedClientIds(req: Request): string[] | null {
+  return (req as any).allowedClientIds;
+}
+
+function canAccessClient(req: Request, clientId: string): boolean {
+  if (isAdmin(req)) return true;
+  const allowed = getAllowedClientIds(req);
+  return allowed ? allowed.includes(clientId) : false;
+}
+
 async function validateDeviceToken(req: Request, res: Response, next: NextFunction) {
   const token = (req.headers["x-device-token"] as string) || (req.query.token as string);
   if (!token) {
@@ -81,21 +120,26 @@ export async function registerRoutes(
   });
 
   // ============ CLIENTS ============
-  app.get("/api/clients", requireAuth, async (req, res) => {
+  app.get("/api/clients", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const clients = await storage.getClients();
-      res.json(clients);
+      const allClients = await storage.getClients();
+      const allowed = getAllowedClientIds(req);
+      const filtered = allowed ? allClients.filter(c => allowed.includes(c.id)) : allClients;
+      res.json(filtered);
     } catch (error) {
       console.error("Error fetching clients:", error);
       res.status(500).json({ error: "Failed to fetch clients" });
     }
   });
 
-  app.get("/api/clients/:id", requireAuth, async (req, res) => {
+  app.get("/api/clients/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
       const client = await storage.getClient(req.params.id);
       if (!client) {
         return res.status(404).json({ error: "Client not found" });
+      }
+      if (!canAccessClient(req, client.id)) {
+        return res.status(403).json({ error: "Access denied" });
       }
       res.json(client);
     } catch (error) {
@@ -104,8 +148,11 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/clients", requireAuth, async (req, res) => {
+  app.post("/api/clients", requireAuth, loadUserContext, async (req, res) => {
     try {
+      if (!isAdmin(req)) {
+        return res.status(403).json({ error: "Admin access required to create sites" });
+      }
       const data = insertClientSchema.parse(req.body);
       const client = await storage.createClient(data);
       res.status(201).json(client);
@@ -118,8 +165,11 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/clients/:id", requireAuth, async (req, res) => {
+  app.patch("/api/clients/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
+      if (!canAccessClient(req, req.params.id)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const data = insertClientSchema.partial().parse(req.body);
       const client = await storage.updateClient(req.params.id, data);
       if (!client) {
@@ -135,8 +185,11 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/clients/:id", requireAuth, async (req, res) => {
+  app.delete("/api/clients/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
+      if (!isAdmin(req)) {
+        return res.status(403).json({ error: "Admin access required to delete sites" });
+      }
       const deleted = await storage.deleteClient(req.params.id);
       if (!deleted) {
         return res.status(404).json({ error: "Client not found" });
@@ -149,21 +202,26 @@ export async function registerRoutes(
   });
 
   // ============ EVENTS ============
-  app.get("/api/events", requireAuth, async (req, res) => {
+  app.get("/api/events", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const events = await storage.getEvents();
-      res.json(events);
+      const allEvents = await storage.getEvents();
+      const allowed = getAllowedClientIds(req);
+      const filtered = allowed ? allEvents.filter(e => allowed.includes(e.clientId)) : allEvents;
+      res.json(filtered);
     } catch (error) {
       console.error("Error fetching events:", error);
       res.status(500).json({ error: "Failed to fetch events" });
     }
   });
 
-  app.get("/api/events/:id", requireAuth, async (req, res) => {
+  app.get("/api/events/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
       const event = await storage.getEvent(req.params.id);
       if (!event) {
         return res.status(404).json({ error: "Event not found" });
+      }
+      if (!canAccessClient(req, event.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
       }
       res.json(event);
     } catch (error) {
@@ -172,7 +230,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/events", requireAuth, async (req, res) => {
+  app.post("/api/events", requireAuth, loadUserContext, async (req, res) => {
     try {
       const body = {
         ...req.body,
@@ -180,6 +238,9 @@ export async function registerRoutes(
         endDate: req.body.endDate ? new Date(req.body.endDate) : undefined,
       };
       const data = insertEventSchema.parse(body);
+      if (!canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const event = await storage.createEvent(data);
       res.status(201).json(event);
     } catch (error) {
@@ -191,8 +252,11 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/events/:id", requireAuth, async (req, res) => {
+  app.patch("/api/events/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
+      const existing = await storage.getEvent(req.params.id);
+      if (!existing) return res.status(404).json({ error: "Event not found" });
+      if (!canAccessClient(req, existing.clientId)) return res.status(403).json({ error: "Access denied" });
       const body = {
         ...req.body,
         startDate: req.body.startDate ? new Date(req.body.startDate) : undefined,
@@ -213,8 +277,11 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/events/:id", requireAuth, async (req, res) => {
+  app.delete("/api/events/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
+      const existing = await storage.getEvent(req.params.id);
+      if (!existing) return res.status(404).json({ error: "Event not found" });
+      if (!canAccessClient(req, existing.clientId)) return res.status(403).json({ error: "Access denied" });
       const deleted = await storage.deleteEvent(req.params.id);
       if (!deleted) {
         return res.status(404).json({ error: "Event not found" });
@@ -282,10 +349,22 @@ export async function registerRoutes(
   });
 
   // ============ SCREEN GROUPS ============
-  app.get("/api/screen-groups", requireAuth, async (req, res) => {
+  app.get("/api/screen-groups", requireAuth, loadUserContext, async (req, res) => {
     try {
       const groups = await storage.getScreenGroups();
-      res.json(groups);
+      const allowed = getAllowedClientIds(req);
+      if (!allowed) return res.json(groups);
+      const allowedEvents = (await storage.getEvents()).filter(e => allowed.includes(e.clientId));
+      const allowedEventIds = new Set(allowedEvents.map(e => e.id));
+      const screens = await storage.getScreens();
+      const allowedScreenIds = new Set(
+        screens.filter(s => !s.currentEventId || allowedEventIds.has(s.currentEventId)).map(s => s.id)
+      );
+      const filtered = groups.filter(g => {
+        const memberIds = (g.screenIds as string[]) || [];
+        return memberIds.length === 0 || memberIds.some(id => allowedScreenIds.has(id));
+      });
+      res.json(filtered);
     } catch (error) {
       console.error("Error fetching screen groups:", error);
       res.status(500).json({ error: "Failed to fetch screen groups" });
@@ -337,22 +416,36 @@ export async function registerRoutes(
   });
 
   // ============ SCREENS ============
-  app.get("/api/screens", requireAuth, async (req, res) => {
+  app.get("/api/screens", requireAuth, loadUserContext, async (req, res) => {
     try {
       await storage.markStaleScreensOffline(STALE_THRESHOLD_MS);
       const screens = await storage.getScreens();
-      res.json(screens.map(({ deviceToken, ...s }) => s));
+      const allowed = getAllowedClientIds(req);
+      let filtered = screens;
+      if (allowed) {
+        const allowedEvents = (await storage.getEvents()).filter(e => allowed.includes(e.clientId));
+        const allowedEventIds = new Set(allowedEvents.map(e => e.id));
+        filtered = screens.filter(s => !s.currentEventId || allowedEventIds.has(s.currentEventId));
+      }
+      res.json(filtered.map(({ deviceToken, ...s }) => s));
     } catch (error) {
       console.error("Error fetching screens:", error);
       res.status(500).json({ error: "Failed to fetch screens" });
     }
   });
 
-  app.get("/api/screens/:id", requireAuth, async (req, res) => {
+  app.get("/api/screens/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
       const screen = await storage.getScreen(req.params.id);
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
+      }
+      const allowed = getAllowedClientIds(req);
+      if (allowed && screen.currentEventId) {
+        const event = await storage.getEvent(screen.currentEventId);
+        if (event && !allowed.includes(event.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
       }
       const { deviceToken, ...safeScreen } = screen;
       res.json(safeScreen);
@@ -362,7 +455,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/screens", requireAuth, async (req, res) => {
+  app.post("/api/screens", requireAuth, loadUserContext, async (req, res) => {
     try {
       const body = {
         ...req.body,
@@ -370,6 +463,12 @@ export async function registerRoutes(
         currentEventId: req.body.currentEventId || null,
       };
       const data = insertScreenSchema.parse(body);
+      if (data.currentEventId) {
+        const event = await storage.getEvent(data.currentEventId);
+        if (event && !canAccessClient(req, event.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
       const screen = await storage.createScreen(data);
       res.status(201).json(screen);
     } catch (error) {
@@ -381,7 +480,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/screens/:id", requireAuth, async (req, res) => {
+  app.patch("/api/screens/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
       const body = {
         ...req.body,
@@ -456,19 +555,29 @@ export async function registerRoutes(
   });
 
   // ============ MEDIA ASSETS ============
-  app.get("/api/media", requireAuth, async (req, res) => {
+  app.get("/api/media", requireAuth, loadUserContext, async (req, res) => {
     try {
       const assets = await storage.getMediaAssets();
-      res.json(assets);
+      const allowed = getAllowedClientIds(req);
+      if (!allowed) return res.json(assets);
+      const allowedEvents = (await storage.getEvents()).filter(e => allowed.includes(e.clientId));
+      const allowedEventIds = new Set(allowedEvents.map(e => e.id));
+      res.json(assets.filter(a => !a.eventId || allowedEventIds.has(a.eventId)));
     } catch (error) {
       console.error("Error fetching media assets:", error);
       res.status(500).json({ error: "Failed to fetch media assets" });
     }
   });
 
-  app.post("/api/media", requireAuth, async (req, res) => {
+  app.post("/api/media", requireAuth, loadUserContext, async (req, res) => {
     try {
       const data = insertMediaAssetSchema.parse(req.body);
+      if (data.eventId) {
+        const event = await storage.getEvent(data.eventId);
+        if (event && !canAccessClient(req, event.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
       const asset = await storage.createMediaAsset(data);
       res.status(201).json(asset);
     } catch (error) {
@@ -545,19 +654,29 @@ export async function registerRoutes(
   });
 
   // ============ LAYOUT TEMPLATES ============
-  app.get("/api/layouts", requireAuth, async (req, res) => {
+  app.get("/api/layouts", requireAuth, loadUserContext, async (req, res) => {
     try {
       const layouts = await storage.getLayoutTemplates();
-      res.json(layouts);
+      const allowed = getAllowedClientIds(req);
+      if (!allowed) return res.json(layouts);
+      const allowedEvents = (await storage.getEvents()).filter(e => allowed.includes(e.clientId));
+      const allowedEventIds = new Set(allowedEvents.map(e => e.id));
+      res.json(layouts.filter(l => !l.eventId || allowedEventIds.has(l.eventId)));
     } catch (error) {
       console.error("Error fetching layouts:", error);
       res.status(500).json({ error: "Failed to fetch layouts" });
     }
   });
 
-  app.post("/api/layouts", requireAuth, async (req, res) => {
+  app.post("/api/layouts", requireAuth, loadUserContext, async (req, res) => {
     try {
       const data = insertLayoutTemplateSchema.parse(req.body);
+      if (data.eventId) {
+        const event = await storage.getEvent(data.eventId);
+        if (event && !canAccessClient(req, event.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
       const layout = await storage.createLayoutTemplate(data);
       res.status(201).json(layout);
     } catch (error) {
@@ -600,19 +719,27 @@ export async function registerRoutes(
   });
 
   // ============ PROGRAMMES ============
-  app.get("/api/programmes", requireAuth, async (req, res) => {
+  app.get("/api/programmes", requireAuth, loadUserContext, async (req, res) => {
     try {
       const programmes = await storage.getProgrammes();
-      res.json(programmes);
+      const allowed = getAllowedClientIds(req);
+      if (!allowed) return res.json(programmes);
+      const allowedEvents = (await storage.getEvents()).filter(e => allowed.includes(e.clientId));
+      const allowedEventIds = new Set(allowedEvents.map(e => e.id));
+      res.json(programmes.filter(p => allowedEventIds.has(p.eventId)));
     } catch (error) {
       console.error("Error fetching programmes:", error);
       res.status(500).json({ error: "Failed to fetch programmes" });
     }
   });
 
-  app.post("/api/programmes", requireAuth, async (req, res) => {
+  app.post("/api/programmes", requireAuth, loadUserContext, async (req, res) => {
     try {
       const data = insertProgrammeSchema.parse(req.body);
+      const event = await storage.getEvent(data.eventId);
+      if (event && !canAccessClient(req, event.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const programme = await storage.createProgramme(data);
       await storage.createProgrammeVersion({ programmeId: programme.id, versionNumber: 1, status: "draft" });
       res.status(201).json(programme);
@@ -684,19 +811,29 @@ export async function registerRoutes(
   });
 
   // ============ PLAYLISTS ============
-  app.get("/api/playlists", requireAuth, async (req, res) => {
+  app.get("/api/playlists", requireAuth, loadUserContext, async (req, res) => {
     try {
       const playlists = await storage.getPlaylists();
-      res.json(playlists);
+      const allowed = getAllowedClientIds(req);
+      if (!allowed) return res.json(playlists);
+      const allowedEvents = (await storage.getEvents()).filter(e => allowed.includes(e.clientId));
+      const allowedEventIds = new Set(allowedEvents.map(e => e.id));
+      res.json(playlists.filter(p => !p.eventId || allowedEventIds.has(p.eventId)));
     } catch (error) {
       console.error("Error fetching playlists:", error);
       res.status(500).json({ error: "Failed to fetch playlists" });
     }
   });
 
-  app.post("/api/playlists", requireAuth, async (req, res) => {
+  app.post("/api/playlists", requireAuth, loadUserContext, async (req, res) => {
     try {
       const data = insertPlaylistSchema.parse(req.body);
+      if (data.eventId) {
+        const event = await storage.getEvent(data.eventId);
+        if (event && !canAccessClient(req, event.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
       const playlist = await storage.createPlaylist(data);
       res.status(201).json(playlist);
     } catch (error) {
@@ -843,17 +980,21 @@ export async function registerRoutes(
   });
 
   // ============ LIVE OVERRIDES ============
-  app.get("/api/live-overrides", requireAuth, async (req, res) => {
+  app.get("/api/live-overrides", requireAuth, loadUserContext, async (req, res) => {
     try {
       const overrides = await storage.getLiveOverrides();
-      res.json(overrides);
+      const allowed = getAllowedClientIds(req);
+      if (!allowed) return res.json(overrides);
+      const allowedEvents = (await storage.getEvents()).filter(e => allowed.includes(e.clientId));
+      const allowedEventIds = new Set(allowedEvents.map(e => e.id));
+      res.json(overrides.filter(o => !o.eventId || allowedEventIds.has(o.eventId)));
     } catch (error) {
       console.error("Error fetching live overrides:", error);
       res.status(500).json({ error: "Failed to fetch live overrides" });
     }
   });
 
-  app.post("/api/live-overrides", requireAuth, async (req, res) => {
+  app.post("/api/live-overrides", requireAuth, loadUserContext, async (req, res) => {
     try {
       const body = {
         ...req.body,
@@ -861,6 +1002,12 @@ export async function registerRoutes(
         endTime: req.body.endTime ? new Date(req.body.endTime) : undefined,
       };
       const data = insertLiveOverrideSchema.parse(body);
+      if (data.eventId) {
+        const event = await storage.getEvent(data.eventId);
+        if (event && !canAccessClient(req, event.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
       const override = await storage.createLiveOverride(data);
       res.status(201).json(override);
     } catch (error) {
@@ -1284,6 +1431,71 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error geocoding:", error);
       res.status(500).json({ error: "Failed to geocode location" });
+    }
+  });
+
+  // ============ ADMIN: USER MANAGEMENT ============
+  app.get("/api/admin/users", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const allUsers = await storage.getAllUsers();
+      const usersWithSites = await Promise.all(
+        allUsers.map(async (u) => {
+          const sites = await storage.getUserSites(u.id);
+          return { ...u, sites };
+        })
+      );
+      res.json(usersWithSites);
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
+  app.patch("/api/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { role } = req.body;
+      if (!role || !["admin", "site_user"].includes(role)) {
+        return res.status(400).json({ error: "Invalid role. Must be 'admin' or 'site_user'" });
+      }
+      const user = await storage.updateUserRole(req.params.id, role);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json(user);
+    } catch (error) {
+      console.error("Error updating user role:", error);
+      res.status(500).json({ error: "Failed to update user role" });
+    }
+  });
+
+  app.post("/api/admin/users/:id/sites", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { clientId } = req.body;
+      if (!clientId) {
+        return res.status(400).json({ error: "clientId is required" });
+      }
+      const client = await storage.getClient(clientId);
+      if (!client) {
+        return res.status(404).json({ error: "Client/site not found" });
+      }
+      const userSite = await storage.addUserToSite(req.params.id, clientId);
+      res.status(201).json(userSite);
+    } catch (error) {
+      console.error("Error assigning user to site:", error);
+      res.status(500).json({ error: "Failed to assign user to site" });
+    }
+  });
+
+  app.delete("/api/admin/users/:id/sites/:clientId", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const removed = await storage.removeUserFromSite(req.params.id, req.params.clientId);
+      if (!removed) {
+        return res.status(404).json({ error: "Assignment not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error removing user from site:", error);
+      res.status(500).json({ error: "Failed to remove user from site" });
     }
   });
 

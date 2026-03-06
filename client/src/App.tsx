@@ -1,4 +1,4 @@
-import { Switch, Route, useRoute } from "wouter";
+import { Switch, Route, useRoute, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -25,7 +25,16 @@ import DiagnosticsPage from "@/pages/diagnostics";
 import SimulatorPage from "@/pages/simulator";
 import SchedulePage from "@/pages/schedule";
 import SettingsPage from "@/pages/settings";
+import AdminUsersPage from "@/pages/admin-users";
 import PlayerPage from "@/pages/player";
+
+function AdminRoute({ component: Component }: { component: () => JSX.Element }) {
+  const { user } = useAuth();
+  if (user?.role !== "admin") {
+    return <Redirect to="/" />;
+  }
+  return <Component />;
+}
 
 function AuthenticatedRouter() {
   return (
@@ -44,6 +53,7 @@ function AuthenticatedRouter() {
       <Route path="/simulator" component={SimulatorPage} />
       <Route path="/schedule" component={SchedulePage} />
       <Route path="/settings" component={SettingsPage} />
+      <Route path="/admin/users">{() => <AdminRoute component={AdminUsersPage} />}</Route>
       <Route component={NotFound} />
     </Switch>
   );
