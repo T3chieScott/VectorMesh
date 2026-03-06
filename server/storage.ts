@@ -59,6 +59,7 @@ export interface IStorage {
   upsertUser(user: UpsertUser): Promise<User>;
   getAllUsers(): Promise<User[]>;
   updateUserRole(id: string, role: string): Promise<User | undefined>;
+  deleteUser(id: string): Promise<boolean>;
 
   // User-Site assignments
   getUserSites(userId: string): Promise<UserSite[]>;
@@ -230,6 +231,12 @@ export class DatabaseStorage implements IStorage {
 
   async removeUserFromSite(userId: string, clientId: string): Promise<boolean> {
     const result = await db.delete(userSites).where(and(eq(userSites.userId, userId), eq(userSites.clientId, clientId)));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async deleteUser(id: string): Promise<boolean> {
+    await db.delete(userSites).where(eq(userSites.userId, id));
+    const result = await db.delete(users).where(eq(users.id, id));
     return (result.rowCount ?? 0) > 0;
   }
 

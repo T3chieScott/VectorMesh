@@ -1486,6 +1486,23 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const adminUser = (req as any).dbUser;
+      if (adminUser.id === req.params.id) {
+        return res.status(400).json({ error: "You cannot delete your own account" });
+      }
+      const deleted = await storage.deleteUser(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting user:", error);
+      res.status(500).json({ error: "Failed to delete user" });
+    }
+  });
+
   app.delete("/api/admin/users/:id/sites/:clientId", requireAuth, requireAdmin, async (req, res) => {
     try {
       const removed = await storage.removeUserFromSite(req.params.id, req.params.clientId);
