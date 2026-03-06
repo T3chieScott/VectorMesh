@@ -472,7 +472,7 @@ function CreateProfileDialog() {
 }
 
 export default function SettingsPage() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { data: profiles = [] } = useQuery<DisplayProfile[]>({
     queryKey: ["/api/display-profiles"],
   });
@@ -515,10 +515,9 @@ export default function SettingsPage() {
                 </div>
               </div>
               <Separator />
-              <div className="flex justify-end">
-                <a href="/api/logout">
-                  <Button variant="outline" data-testid="button-logout">Sign Out</Button>
-                </a>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => window.location.href = "/change-password"} data-testid="button-change-password">Change Password</Button>
+                <Button variant="outline" onClick={() => logout()} data-testid="button-logout">Sign Out</Button>
               </div>
             </CardContent>
           </Card>

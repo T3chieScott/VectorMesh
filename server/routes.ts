@@ -3,35 +3,31 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
 import crypto from "crypto";
+import bcrypt from "bcryptjs";
 import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, insertScheduleBlockSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
 import { getSignedUploadUrl, getPublicUrl, objectStorageService } from "./objectStorage";
-import { isAuthenticated } from "./replit_integrations/auth";
+import { setupAuth, isAuthenticated } from "./auth";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { find as findTimezone } from "geo-tz";
+import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail } from "./email";
 
 const requireAuth = isAuthenticated;
 
 async function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  const userId = (req as any).user?.claims?.sub;
-  if (!userId) return res.status(401).json({ error: "Unauthorized" });
-  const user = await storage.getUser(userId);
+  const user = (req as any).dbUser;
   if (!user || user.role !== "admin") {
     return res.status(403).json({ error: "Admin access required" });
   }
-  (req as any).dbUser = user;
   next();
 }
 
 async function loadUserContext(req: Request, res: Response, next: NextFunction) {
-  const userId = (req as any).user?.claims?.sub;
-  if (!userId) return res.status(401).json({ error: "Unauthorized" });
-  const user = await storage.getUser(userId);
+  const user = (req as any).dbUser;
   if (!user) return res.status(401).json({ error: "User not found" });
-  (req as any).dbUser = user;
   if (user.role === "admin") {
     (req as any).allowedClientIds = null;
   } else {
-    (req as any).allowedClientIds = await storage.getUserClientIds(userId);
+    (req as any).allowedClientIds = await storage.getUserClientIds(user.id);
   }
   next();
 }
@@ -77,10 +73,182 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // Setup authentication
-  const { setupAuth, registerAuthRoutes } = await import("./replit_integrations/auth");
-  await setupAuth(app);
-  registerAuthRoutes(app);
+  setupAuth(app);
+
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password required" });
+      }
+      const user = await storage.getUserByEmail(email.toLowerCase().trim());
+      if (!user || !user.passwordHash) {
+        return res.status(401).json({ error: "Invalid email or password" });
+      }
+      if (!user.isActive) {
+        return res.status(401).json({ error: "Account deactivated" });
+      }
+      const valid = await bcrypt.compare(password, user.passwordHash);
+      if (!valid) {
+        return res.status(401).json({ error: "Invalid email or password" });
+      }
+      const { passwordHash, ...safeUser } = user;
+      req.session.regenerate((err) => {
+        if (err) {
+          console.error("Session regeneration error:", err);
+          return res.status(500).json({ error: "Login failed" });
+        }
+        (req.session as any).userId = user.id;
+        req.session.save((err) => {
+          if (err) {
+            console.error("Session save error:", err);
+            return res.status(500).json({ error: "Login failed" });
+          }
+          res.json({ ...safeUser });
+        });
+      });
+    } catch (error) {
+      console.error("Login error:", error);
+      res.status(500).json({ error: "Login failed" });
+    }
+  });
+
+  app.post("/api/auth/logout", (req, res) => {
+    req.session.destroy((err) => {
+      if (err) {
+        return res.status(500).json({ error: "Logout failed" });
+      }
+      res.clearCookie("connect.sid");
+      res.json({ ok: true });
+    });
+  });
+
+  app.get("/api/auth/user", requireAuth, async (req, res) => {
+    const user = (req as any).dbUser;
+    const { passwordHash, ...safeUser } = user;
+    res.json(safeUser);
+  });
+
+  app.post("/api/auth/change-password", requireAuth, async (req, res) => {
+    try {
+      const { currentPassword, newPassword } = req.body;
+      if (!newPassword || newPassword.length < 8) {
+        return res.status(400).json({ error: "New password must be at least 8 characters" });
+      }
+      const user = (req as any).dbUser;
+      if (user.passwordHash && currentPassword) {
+        const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+        if (!valid) {
+          return res.status(400).json({ error: "Current password is incorrect" });
+        }
+      }
+      const hash = await bcrypt.hash(newPassword, 12);
+      await storage.setUserPassword(user.id, hash);
+      await storage.updateUser(user.id, { mustChangePassword: false });
+      if (user.email) {
+        await sendPasswordChangedEmail(user.email, user.firstName || "User");
+      }
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Change password error:", error);
+      res.status(500).json({ error: "Failed to change password" });
+    }
+  });
+
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ error: "Email required" });
+      }
+      res.json({ ok: true, message: "If an account exists with that email, a reset link has been sent." });
+      const user = await storage.getUserByEmail(email.toLowerCase().trim());
+      if (user && user.isActive && user.email) {
+        const token = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+        await storage.createPasswordResetToken(user.id, token, expiresAt);
+        await sendPasswordResetEmail(user.email, user.firstName || "User", token);
+      }
+    } catch (error) {
+      console.error("Forgot password error:", error);
+      res.json({ ok: true, message: "If an account exists with that email, a reset link has been sent." });
+    }
+  });
+
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+      const { token, newPassword } = req.body;
+      if (!token || !newPassword || newPassword.length < 8) {
+        return res.status(400).json({ error: "Token and new password (min 8 chars) required" });
+      }
+      const resetToken = await storage.getPasswordResetToken(token);
+      if (!resetToken) {
+        return res.status(400).json({ error: "Invalid or expired reset link" });
+      }
+      if (resetToken.usedAt) {
+        return res.status(400).json({ error: "This reset link has already been used" });
+      }
+      if (new Date() > resetToken.expiresAt) {
+        return res.status(400).json({ error: "This reset link has expired" });
+      }
+      const hash = await bcrypt.hash(newPassword, 12);
+      await storage.setUserPassword(resetToken.userId, hash);
+      await storage.updateUser(resetToken.userId, { mustChangePassword: false });
+      await storage.markPasswordResetTokenUsed(resetToken.id);
+      const user = await storage.getUser(resetToken.userId);
+      if (user?.email) {
+        await sendPasswordChangedEmail(user.email, user.firstName || "User");
+      }
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Reset password error:", error);
+      res.status(500).json({ error: "Failed to reset password" });
+    }
+  });
+
+  app.get("/api/auth/setup-status", async (_req, res) => {
+    const allUsers = await storage.getAllUsers();
+    const hasUsersWithPasswords = allUsers.some(u => u.passwordHash);
+    res.json({ needsSetup: !hasUsersWithPasswords, userCount: allUsers.length });
+  });
+
+  app.post("/api/auth/setup", async (req, res) => {
+    try {
+      const allUsers = await storage.getAllUsers();
+      const hasUsersWithPasswords = allUsers.some(u => u.passwordHash);
+      if (hasUsersWithPasswords) {
+        return res.status(400).json({ error: "Setup already completed" });
+      }
+      const { email, password, firstName, lastName } = req.body;
+      if (!email || !password || password.length < 8) {
+        return res.status(400).json({ error: "Email and password (min 8 chars) required" });
+      }
+      const hash = await bcrypt.hash(password, 12);
+      const existingUser = await storage.getUserByEmail(email.toLowerCase().trim());
+      if (existingUser) {
+        await storage.setUserPassword(existingUser.id, hash);
+        await storage.updateUser(existingUser.id, { role: "admin", mustChangePassword: false });
+        const { passwordHash, ...safeUser } = (await storage.getUser(existingUser.id))!;
+        (req.session as any).userId = existingUser.id;
+        return res.json(safeUser);
+      }
+      const user = await storage.createUser({
+        email: email.toLowerCase().trim(),
+        firstName: firstName || "Admin",
+        lastName: lastName || "",
+        role: "admin",
+        passwordHash: hash,
+        mustChangePassword: false,
+        isActive: true,
+      });
+      (req.session as any).userId = user.id;
+      const { passwordHash, ...safeUser } = user;
+      res.json(safeUser);
+    } catch (error) {
+      console.error("Setup error:", error);
+      res.status(500).json({ error: "Setup failed" });
+    }
+  });
 
   // Setup object storage routes for serving uploaded files
   registerObjectStorageRoutes(app);
@@ -1441,7 +1609,8 @@ export async function registerRoutes(
       const usersWithSites = await Promise.all(
         allUsers.map(async (u) => {
           const sites = await storage.getUserSites(u.id);
-          return { ...u, sites };
+          const { passwordHash, ...safeUser } = u;
+          return { ...safeUser, sites };
         })
       );
       res.json(usersWithSites);
@@ -1451,20 +1620,103 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/admin/users", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { email, firstName, lastName, role, password } = req.body;
+      if (!email || !password || password.length < 8) {
+        return res.status(400).json({ error: "Email and password (min 8 chars) required" });
+      }
+      if (role && !["admin", "site_user"].includes(role)) {
+        return res.status(400).json({ error: "Invalid role" });
+      }
+      const existing = await storage.getUserByEmail(email.toLowerCase().trim());
+      if (existing) {
+        return res.status(409).json({ error: "A user with this email already exists" });
+      }
+      const hash = await bcrypt.hash(password, 12);
+      const user = await storage.createUser({
+        email: email.toLowerCase().trim(),
+        firstName: firstName || "",
+        lastName: lastName || "",
+        role: role || "site_user",
+        passwordHash: hash,
+        mustChangePassword: true,
+        isActive: true,
+      });
+      await sendWelcomeEmail(user.email!, firstName || "User", password);
+      const { passwordHash, ...safeUser } = user;
+      res.status(201).json(safeUser);
+    } catch (error) {
+      console.error("Error creating user:", error);
+      res.status(500).json({ error: "Failed to create user" });
+    }
+  });
+
   app.patch("/api/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
     try {
-      const { role } = req.body;
-      if (!role || !["admin", "site_user"].includes(role)) {
-        return res.status(400).json({ error: "Invalid role. Must be 'admin' or 'site_user'" });
+      const { role, firstName, lastName, email, isActive } = req.body;
+      const updateData: Record<string, any> = {};
+      if (role !== undefined) {
+        if (!["admin", "site_user"].includes(role)) {
+          return res.status(400).json({ error: "Invalid role. Must be 'admin' or 'site_user'" });
+        }
+        updateData.role = role;
       }
-      const user = await storage.updateUserRole(req.params.id, role);
+      if (firstName !== undefined) updateData.firstName = firstName;
+      if (lastName !== undefined) updateData.lastName = lastName;
+      if (email !== undefined) {
+        const existing = await storage.getUserByEmail(email.toLowerCase().trim());
+        if (existing && existing.id !== req.params.id) {
+          return res.status(409).json({ error: "Email already in use" });
+        }
+        updateData.email = email.toLowerCase().trim();
+      }
+      if (isActive !== undefined) updateData.isActive = isActive;
+      if (Object.keys(updateData).length === 0) {
+        return res.status(400).json({ error: "No fields to update" });
+      }
+      const user = await storage.updateUser(req.params.id, updateData);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-      res.json(user);
+      const { passwordHash, ...safeUser } = user;
+      res.json(safeUser);
     } catch (error) {
-      console.error("Error updating user role:", error);
-      res.status(500).json({ error: "Failed to update user role" });
+      console.error("Error updating user:", error);
+      res.status(500).json({ error: "Failed to update user" });
+    }
+  });
+
+  app.post("/api/admin/users/:id/reset-password", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.params.id);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const tempPassword = crypto.randomBytes(6).toString("base64url");
+      const hash = await bcrypt.hash(tempPassword, 12);
+      await storage.setUserPassword(user.id, hash);
+      await storage.updateUser(user.id, { mustChangePassword: true });
+      if (user.email) {
+        await sendAdminPasswordResetEmail(user.email, user.firstName || "User", tempPassword);
+      }
+      res.json({ ok: true, temporaryPassword: tempPassword });
+    } catch (error) {
+      console.error("Error resetting password:", error);
+      res.status(500).json({ error: "Failed to reset password" });
+    }
+  });
+
+  app.post("/api/admin/users/:id/force-change-password", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const user = await storage.updateUser(req.params.id, { mustChangePassword: true });
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error forcing password change:", error);
+      res.status(500).json({ error: "Failed to force password change" });
     }
   });
 

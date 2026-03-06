@@ -6,16 +6,19 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Users, Shield, Building2, Plus, X, UserCog, Trash2 } from "lucide-react";
+import { Users, Shield, Building2, Plus, X, UserCog, Trash2, UserPlus, Pencil, KeyRound, ShieldAlert, CircleCheck, CircleX } from "lucide-react";
 import type { Client } from "@shared/schema";
 import type { User, UserSite } from "@shared/models/auth";
 
-type UserWithSites = User & { sites: UserSite[] };
+type UserWithSites = Omit<User, "passwordHash"> & { sites: UserSite[] };
 
 function UserCard({
   user,
@@ -27,6 +30,9 @@ function UserCard({
   onAssignSite,
   onRemoveSite,
   onDelete,
+  onEdit,
+  onResetPassword,
+  onForceChangePassword,
   isRoleUpdating,
   isDeleting,
 }: {
@@ -39,6 +45,9 @@ function UserCard({
   onAssignSite: (userId: string) => void;
   onRemoveSite: (userId: string, clientId: string) => void;
   onDelete: (userId: string) => void;
+  onEdit: (user: UserWithSites) => void;
+  onResetPassword: (userId: string) => void;
+  onForceChangePassword: (userId: string) => void;
   isRoleUpdating: boolean;
   isDeleting: boolean;
 }) {
@@ -71,17 +80,37 @@ function UserCard({
               </div>
             )}
             <div>
-              <p className="font-medium" data-testid={`text-username-${user.id}`}>
-                {user.firstName} {user.lastName}
-                {isSelf && <span className="text-xs text-muted-foreground ml-2">(you)</span>}
-              </p>
+              <div className="flex items-center gap-2">
+                <p className="font-medium" data-testid={`text-username-${user.id}`}>
+                  {user.firstName} {user.lastName}
+                  {isSelf && <span className="text-xs text-muted-foreground ml-2">(you)</span>}
+                </p>
+                {!user.isActive && (
+                  <Badge variant="destructive" className="text-xs" data-testid={`badge-inactive-${user.id}`}>
+                    <CircleX className="h-3 w-3 mr-1" />
+                    Inactive
+                  </Badge>
+                )}
+                {user.isActive && (
+                  <Badge variant="outline" className="text-xs text-green-600 border-green-200 dark:border-green-800" data-testid={`badge-active-${user.id}`}>
+                    <CircleCheck className="h-3 w-3 mr-1" />
+                    Active
+                  </Badge>
+                )}
+                {user.mustChangePassword && (
+                  <Badge variant="outline" className="text-xs text-amber-600 border-amber-200 dark:border-amber-800" data-testid={`badge-must-change-${user.id}`}>
+                    <ShieldAlert className="h-3 w-3 mr-1" />
+                    Must Change Password
+                  </Badge>
+                )}
+              </div>
               <p className="text-sm text-muted-foreground" data-testid={`text-email-${user.id}`}>
                 {user.email}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Select
               value={user.role}
               onValueChange={(role) => onRoleChange(user.id, role)}
@@ -106,32 +135,46 @@ function UserCard({
               </SelectContent>
             </Select>
 
+            <Button variant="ghost" size="icon" onClick={() => onEdit(user)} data-testid={`button-edit-user-${user.id}`}>
+              <Pencil className="h-4 w-4" />
+            </Button>
+
             {!isSelf && (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10" data-testid={`button-delete-user-${user.id}`}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete User</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Are you sure you want to delete {user.firstName} {user.lastName} ({user.email})? This will remove their account and all site assignments. This action cannot be undone.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={() => onDelete(user.id)}
-                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                      data-testid="button-confirm-delete"
-                    >
-                      {isDeleting ? "Deleting..." : "Delete"}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+              <>
+                <Button variant="ghost" size="icon" onClick={() => onResetPassword(user.id)} title="Reset Password" data-testid={`button-reset-password-${user.id}`}>
+                  <KeyRound className="h-4 w-4" />
+                </Button>
+
+                <Button variant="ghost" size="icon" onClick={() => onForceChangePassword(user.id)} title="Force Password Change" data-testid={`button-force-change-${user.id}`}>
+                  <ShieldAlert className="h-4 w-4" />
+                </Button>
+
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10" data-testid={`button-delete-user-${user.id}`}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete User</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Are you sure you want to delete {user.firstName} {user.lastName} ({user.email})? This will remove their account and all site assignments. This action cannot be undone.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => onDelete(user.id)}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        data-testid="button-confirm-delete"
+                      >
+                        {isDeleting ? "Deleting..." : "Delete"}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </>
             )}
           </div>
         </div>
@@ -186,6 +229,170 @@ function UserCard({
   );
 }
 
+function CreateUserDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [email, setEmail] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [role, setRole] = useState("site_user");
+  const [password, setPassword] = useState("");
+
+  const createMutation = useMutation({
+    mutationFn: async (data: { email: string; firstName: string; lastName: string; role: string; password: string }) => {
+      const res = await apiRequest("POST", "/api/admin/users", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      toast({ title: "User created successfully" });
+      onOpenChange(false);
+      setEmail("");
+      setFirstName("");
+      setLastName("");
+      setRole("site_user");
+      setPassword("");
+    },
+    onError: (err: any) => {
+      toast({ title: err?.message?.includes("409") ? "Email already exists" : "Failed to create user", variant: "destructive" });
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Create New User</DialogTitle>
+          <DialogDescription>Add a new user account. They will receive a welcome email with their temporary password and must change it on first login.</DialogDescription>
+        </DialogHeader>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            createMutation.mutate({ email, firstName, lastName, role, password });
+          }}
+          className="space-y-4"
+        >
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="create-firstName">First Name</Label>
+              <Input id="create-firstName" value={firstName} onChange={(e) => setFirstName(e.target.value)} data-testid="input-create-first-name" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="create-lastName">Last Name</Label>
+              <Input id="create-lastName" value={lastName} onChange={(e) => setLastName(e.target.value)} data-testid="input-create-last-name" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="create-email">Email</Label>
+            <Input id="create-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required data-testid="input-create-email" />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="create-password">Temporary Password</Label>
+            <Input id="create-password" type="text" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} placeholder="Min 8 characters" data-testid="input-create-password" />
+          </div>
+          <div className="space-y-2">
+            <Label>Role</Label>
+            <Select value={role} onValueChange={setRole}>
+              <SelectTrigger data-testid="select-create-role">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="admin">Admin</SelectItem>
+                <SelectItem value="site_user">Site User</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Button type="submit" className="w-full" disabled={createMutation.isPending} data-testid="button-confirm-create-user">
+            {createMutation.isPending ? "Creating..." : "Create User"}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditUserDialog({ user, open, onOpenChange }: { user: UserWithSites | null; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [email, setEmail] = useState(user?.email || "");
+  const [firstName, setFirstName] = useState(user?.firstName || "");
+  const [lastName, setLastName] = useState(user?.lastName || "");
+  const [role, setRole] = useState(user?.role || "site_user");
+  const [isActive, setIsActive] = useState(user?.isActive ?? true);
+
+  const updateMutation = useMutation({
+    mutationFn: async (data: { email: string; firstName: string; lastName: string; role: string; isActive: boolean }) => {
+      const res = await apiRequest("PATCH", `/api/admin/users/${user?.id}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      toast({ title: "User updated" });
+      onOpenChange(false);
+    },
+    onError: (err: any) => {
+      toast({ title: err?.message?.includes("409") ? "Email already in use" : "Failed to update user", variant: "destructive" });
+    },
+  });
+
+  if (!user) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit User</DialogTitle>
+          <DialogDescription>Update user details for {user.firstName} {user.lastName}</DialogDescription>
+        </DialogHeader>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            updateMutation.mutate({ email, firstName, lastName, role, isActive });
+          }}
+          className="space-y-4"
+        >
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-firstName">First Name</Label>
+              <Input id="edit-firstName" value={firstName} onChange={(e) => setFirstName(e.target.value)} data-testid="input-edit-first-name" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-lastName">Last Name</Label>
+              <Input id="edit-lastName" value={lastName} onChange={(e) => setLastName(e.target.value)} data-testid="input-edit-last-name" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-email">Email</Label>
+            <Input id="edit-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required data-testid="input-edit-email" />
+          </div>
+          <div className="space-y-2">
+            <Label>Role</Label>
+            <Select value={role} onValueChange={setRole}>
+              <SelectTrigger data-testid="select-edit-role">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="admin">Admin</SelectItem>
+                <SelectItem value="site_user">Site User</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="edit-active">Account Active</Label>
+              <p className="text-xs text-muted-foreground">Inactive users cannot log in</p>
+            </div>
+            <Switch id="edit-active" checked={isActive} onCheckedChange={setIsActive} data-testid="switch-edit-active" />
+          </div>
+          <Button type="submit" className="w-full" disabled={updateMutation.isPending} data-testid="button-confirm-edit-user">
+            {updateMutation.isPending ? "Saving..." : "Save Changes"}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function AdminUsersPage() {
   const { toast } = useToast();
   const { user: currentUser } = useAuth();
@@ -195,6 +402,8 @@ export default function AdminUsersPage() {
   const [activeTab, setActiveTab] = useState("all");
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [editingUser, setEditingUser] = useState<UserWithSites | null>(null);
 
   const { data: usersData, isLoading: usersLoading } = useQuery<UserWithSites[]>({
     queryKey: ["/api/admin/users"],
@@ -305,6 +514,37 @@ export default function AdminUsersPage() {
     },
   });
 
+  const resetPasswordMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await apiRequest("POST", `/api/admin/users/${userId}/reset-password`);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      toast({
+        title: "Password reset",
+        description: `Temporary password: ${data.temporaryPassword}. The user will be emailed and must change it on next login.`,
+      });
+    },
+    onError: () => {
+      toast({ title: "Failed to reset password", variant: "destructive" });
+    },
+  });
+
+  const forceChangeMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await apiRequest("POST", `/api/admin/users/${userId}/force-change-password`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      toast({ title: "User will be required to change their password on next login" });
+    },
+    onError: () => {
+      toast({ title: "Failed to flag password change", variant: "destructive" });
+    },
+  });
+
   if (usersLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -352,6 +592,9 @@ export default function AdminUsersPage() {
       onAssignSite={(userId) => setAssignDialogUserId(userId)}
       onRemoveSite={(userId, clientId) => removeSiteMutation.mutate({ userId, clientId })}
       onDelete={(userId) => deleteUserMutation.mutate(userId)}
+      onEdit={(u) => setEditingUser(u)}
+      onResetPassword={(userId) => resetPasswordMutation.mutate(userId)}
+      onForceChangePassword={(userId) => forceChangeMutation.mutate(userId)}
       isRoleUpdating={updateRoleMutation.isPending}
       isDeleting={deleteUserMutation.isPending}
     />
@@ -362,8 +605,12 @@ export default function AdminUsersPage() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-admin-users-title">User Management</h1>
-          <p className="text-muted-foreground">Manage user roles and site access</p>
+          <p className="text-muted-foreground">Manage user accounts, roles and site access</p>
         </div>
+        <Button onClick={() => setShowCreateDialog(true)} data-testid="button-create-user">
+          <UserPlus className="h-4 w-4 mr-2" />
+          Create User
+        </Button>
       </div>
 
       {selectedCount > 0 && (
@@ -496,6 +743,14 @@ export default function AdminUsersPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <CreateUserDialog open={showCreateDialog} onOpenChange={setShowCreateDialog} />
+
+      <EditUserDialog
+        user={editingUser}
+        open={!!editingUser}
+        onOpenChange={(open) => { if (!open) setEditingUser(null); }}
+      />
 
       <AlertDialog open={showBatchDeleteConfirm} onOpenChange={setShowBatchDeleteConfirm}>
         <AlertDialogContent className="max-h-[85vh] flex flex-col">

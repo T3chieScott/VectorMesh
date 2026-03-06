@@ -1,6 +1,6 @@
 import { Switch, Route, useRoute, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ThemeProvider";
@@ -11,6 +11,11 @@ import { useAuth } from "@/hooks/use-auth";
 
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/landing";
+import LoginPage from "@/pages/login";
+import ForgotPasswordPage from "@/pages/forgot-password";
+import ResetPasswordPage from "@/pages/reset-password";
+import ChangePasswordPage from "@/pages/change-password";
+import SetupPage from "@/pages/setup";
 import Dashboard from "@/pages/dashboard";
 import ClientsPage from "@/pages/clients";
 import EventsPage from "@/pages/events";
@@ -99,7 +104,23 @@ function AppContent() {
   const [isPlayerRouteWithId] = useRoute("/player/:screenId");
   const [isPlayerRouteBase] = useRoute("/player");
   const isPlayerRoute = isPlayerRouteWithId || isPlayerRouteBase;
+
+  const [isLoginRoute] = useRoute("/login");
+  const [isForgotRoute] = useRoute("/forgot-password");
+  const [isResetRoute] = useRoute("/reset-password/:token");
+  const [isSetupRoute] = useRoute("/setup");
+  const isPublicAuthRoute = isLoginRoute || isForgotRoute || isResetRoute || isSetupRoute;
+
   const { user, isLoading } = useAuth();
+
+  const { data: setupStatus } = useQuery<{ needsSetup: boolean }>({
+    queryKey: ["/api/auth/setup-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/auth/setup-status");
+      return res.json();
+    },
+    staleTime: 1000 * 60 * 5,
+  });
 
   if (isPlayerRoute) {
     return <PlayerRoute />;
@@ -116,8 +137,32 @@ function AppContent() {
     );
   }
 
+  if (setupStatus?.needsSetup && !user) {
+    if (isSetupRoute) return <SetupPage />;
+    return <Redirect to="/setup" />;
+  }
+
+  if (isPublicAuthRoute && !user) {
+    if (isLoginRoute) return <LoginPage />;
+    if (isForgotRoute) return <ForgotPasswordPage />;
+    if (isResetRoute) return <ResetPasswordPage />;
+    if (isSetupRoute) return <SetupPage />;
+  }
+
   if (!user) {
-    return <LandingPage />;
+    return (
+      <Switch>
+        <Route path="/login" component={LoginPage} />
+        <Route path="/forgot-password" component={ForgotPasswordPage} />
+        <Route path="/reset-password/:token" component={ResetPasswordPage} />
+        <Route path="/setup" component={SetupPage} />
+        <Route>{() => <LoginPage />}</Route>
+      </Switch>
+    );
+  }
+
+  if (user.mustChangePassword) {
+    return <ChangePasswordPage />;
   }
 
   return <AuthenticatedLayout />;

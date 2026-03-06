@@ -91,7 +91,7 @@ export default function LandingPage() {
 
             <div className="flex items-center gap-3">
               <ThemeToggle />
-              <a href="/api/login">
+              <a href="/login">
                 <Button data-testid="button-login">
                   Sign In
                   <ArrowRight className="ml-2 h-4 w-4" />
@@ -126,7 +126,7 @@ export default function LandingPage() {
               </div>
 
               <div className="flex flex-col sm:flex-row gap-4">
-                <a href="/api/login">
+                <a href="/login">
                   <Button size="lg" className="w-full sm:w-auto" data-testid="button-get-started">
                     Get Started
                     <ArrowRight className="ml-2 h-4 w-4" />
@@ -284,7 +284,7 @@ export default function LandingPage() {
             Start managing your displays with a platform built for
             reliability and scale.
           </p>
-          <a href="/api/login">
+          <a href="/login">
             <Button size="lg" data-testid="button-cta-start">
               Get Started Now
               <ArrowRight className="ml-2 h-4 w-4" />

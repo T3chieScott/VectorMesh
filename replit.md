@@ -60,17 +60,39 @@ The server entry point is `server/index.ts`, with routes registered in `server/r
 Core entities include: Clients, Events, Brand Packs, Display Profiles, Screen Groups, Screens, Media Assets, Layout Templates, Programmes, Schedule Blocks, Playlists, Live Overrides, and Player Heartbeats.
 
 ### Authentication & Authorization
-- Replit Auth integration using OpenID Connect
-- Session storage in PostgreSQL `sessions` table
-- User data stored in `users` table with `role` column ("admin" | "site_user")
-- Protected routes use `isAuthenticated` middleware
+- **Custom email/password authentication** (bcryptjs, 12-round hashing)
+- Session storage in PostgreSQL `sessions` table via `connect-pg-simple`
+- Session middleware in `server/auth.ts`, auth API routes in `server/routes.ts`
+- User data stored in `users` table with `passwordHash`, `mustChangePassword`, `isActive` columns
+- `role` column: "admin" | "site_user"
+- Protected routes use `isAuthenticated` middleware (checks session userId, loads `req.dbUser`)
+- **Auth API endpoints**:
+  - `POST /api/auth/login` — email/password login
+  - `POST /api/auth/logout` — destroy session
+  - `GET /api/auth/user` — current user
+  - `POST /api/auth/change-password` — user changes own password
+  - `POST /api/auth/forgot-password` — sends reset email
+  - `POST /api/auth/reset-password` — reset via token
+  - `GET /api/auth/setup-status` — check if initial setup needed
+  - `POST /api/auth/setup` — first-run admin account creation
+- **Email service** (`server/email.ts`): Nodemailer SMTP with console fallback for dev
+- **Password reset tokens**: `password_reset_tokens` table with 1-hour expiry
+- **Forced password change**: `mustChangePassword` flag redirects to change-password page
+- **Account deactivation**: `isActive` flag prevents login without deleting user
 - **RBAC (Role-Based Access Control)**: Two-tier system
   - **Admin**: Full platform access, can manage users, create/delete sites, see all data
   - **Site User**: Scoped to assigned sites only via `user_sites` join table (userId → clientId)
 - Middleware: `requireAdmin` (403 if not admin), `loadUserContext` (sets `req.dbUser` and `req.allowedClientIds`)
 - Access chain: resources → eventId → event.clientId → user's allowed clientIds
 - Admin user management UI at `/admin/users` (admin-only sidebar item)
-- Admin API: `GET/PATCH /api/admin/users`, `POST/DELETE /api/admin/users/:id/sites`
+- **Admin user management API**:
+  - `GET /api/admin/users` — list all users with sites
+  - `POST /api/admin/users` — create user (sends welcome email)
+  - `PATCH /api/admin/users/:id` — update user details
+  - `POST /api/admin/users/:id/reset-password` — admin resets password
+  - `POST /api/admin/users/:id/force-change-password` — flag must-change
+  - `POST/DELETE /api/admin/users/:id/sites` — manage site assignments
+  - `DELETE /api/admin/users/:id` — delete user
 
 ### Key Design Patterns
 - **Shared Schema**: Types defined once in `shared/` and used by both frontend and backend
@@ -85,9 +107,11 @@ Core entities include: Clients, Events, Brand Packs, Display Profiles, Screen Gr
 - Drizzle ORM for queries and schema management
 
 ### Authentication
-- Replit Auth (OpenID Connect provider)
+- Custom email/password authentication via `server/auth.ts`
 - `SESSION_SECRET` environment variable required
 - Session persistence via `connect-pg-simple`
+- Password hashing: bcryptjs (12 rounds)
+- Email sending: Nodemailer via `server/email.ts`
 
 ### Object Storage
 - Replit Object Storage (Google Cloud Storage compatible)
@@ -105,5 +129,12 @@ Core entities include: Clients, Events, Brand Packs, Display Profiles, Screen Gr
 ### Required Environment Variables
 - `DATABASE_URL` - PostgreSQL connection string
 - `SESSION_SECRET` - Secret for session encryption
-- `ISSUER_URL` - OpenID Connect issuer (defaults to Replit)
 - `REPL_ID` - Replit environment identifier
+
+### Optional Environment Variables (Email)
+- `SMTP_HOST` - SMTP server hostname
+- `SMTP_PORT` - SMTP port (default 587)
+- `SMTP_USER` - SMTP username
+- `SMTP_PASS` - SMTP password
+- `SMTP_FROM` - Sender email address
+- `APP_URL` - Application URL for email links (defaults to Replit dev URL)
