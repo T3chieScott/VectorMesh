@@ -5,9 +5,10 @@ import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Users, Shield, Building2, Plus, X, UserCog, Trash2 } from "lucide-react";
@@ -20,6 +21,8 @@ function UserCard({
   user,
   allClients,
   currentUserId,
+  selected,
+  onSelectToggle,
   onRoleChange,
   onAssignSite,
   onRemoveSite,
@@ -30,6 +33,8 @@ function UserCard({
   user: UserWithSites;
   allClients: Client[];
   currentUserId: string;
+  selected: boolean;
+  onSelectToggle: (userId: string) => void;
   onRoleChange: (userId: string, role: string) => void;
   onAssignSite: (userId: string) => void;
   onRemoveSite: (userId: string, clientId: string) => void;
@@ -40,10 +45,19 @@ function UserCard({
   const isSelf = user.id === currentUserId;
 
   return (
-    <Card data-testid={`card-user-${user.id}`}>
+    <Card data-testid={`card-user-${user.id}`} className={selected ? "ring-2 ring-destructive/50" : ""}>
       <CardContent className="p-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
+            {!isSelf && (
+              <Checkbox
+                checked={selected}
+                onCheckedChange={() => onSelectToggle(user.id)}
+                data-testid={`checkbox-select-user-${user.id}`}
+                className="shrink-0"
+              />
+            )}
+            {isSelf && <div className="w-4" />}
             {user.profileImageUrl ? (
               <img
                 src={user.profileImageUrl}
@@ -179,6 +193,8 @@ export default function AdminUsersPage() {
   const [assignDialogUserId, setAssignDialogUserId] = useState<string | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [activeTab, setActiveTab] = useState("all");
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
+  const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
 
   const { data: usersData, isLoading: usersLoading } = useQuery<UserWithSites[]>({
     queryKey: ["/api/admin/users"],
@@ -187,6 +203,28 @@ export default function AdminUsersPage() {
   const { data: allClients } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
   });
+
+  const toggleUserSelection = (userId: string) => {
+    setSelectedUserIds(prev => {
+      const next = new Set(prev);
+      if (next.has(userId)) {
+        next.delete(userId);
+      } else {
+        next.add(userId);
+      }
+      return next;
+    });
+  };
+
+  const selectableUsers = usersData?.filter(u => u.id !== currentUser?.id) || [];
+
+  const selectAll = () => {
+    setSelectedUserIds(new Set(selectableUsers.map(u => u.id)));
+  };
+
+  const deselectAll = () => {
+    setSelectedUserIds(new Set());
+  };
 
   const updateRoleMutation = useMutation({
     mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
@@ -212,6 +250,29 @@ export default function AdminUsersPage() {
     },
     onError: () => {
       toast({ title: "Failed to delete user", variant: "destructive" });
+    },
+  });
+
+  const batchDeleteMutation = useMutation({
+    mutationFn: async (userIds: string[]) => {
+      const results = await Promise.allSettled(
+        userIds.map(id => apiRequest("DELETE", `/api/admin/users/${id}`))
+      );
+      const failed = results.filter(r => r.status === "rejected").length;
+      return { total: userIds.length, failed };
+    },
+    onSuccess: ({ total, failed }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      setSelectedUserIds(new Set());
+      setShowBatchDeleteConfirm(false);
+      if (failed === 0) {
+        toast({ title: `${total} user${total > 1 ? "s" : ""} deleted` });
+      } else {
+        toast({ title: `${total - failed} deleted, ${failed} failed`, variant: "destructive" });
+      }
+    },
+    onError: () => {
+      toast({ title: "Failed to delete users", variant: "destructive" });
     },
   });
 
@@ -271,12 +332,22 @@ export default function AdminUsersPage() {
     }
   }
 
+  const selectedCount = selectedUserIds.size;
+  const allSelected = selectableUsers.length > 0 && selectedCount === selectableUsers.length;
+
+  const selectedNames = usersData
+    ?.filter(u => selectedUserIds.has(u.id))
+    .map(u => `${u.firstName} ${u.lastName}`.trim() || u.email)
+    || [];
+
   const renderUserCard = (user: UserWithSites) => (
     <UserCard
       key={user.id}
       user={user}
       allClients={allClients || []}
       currentUserId={currentUser?.id || ""}
+      selected={selectedUserIds.has(user.id)}
+      onSelectToggle={toggleUserSelection}
       onRoleChange={(userId, role) => updateRoleMutation.mutate({ userId, role })}
       onAssignSite={(userId) => setAssignDialogUserId(userId)}
       onRemoveSite={(userId, clientId) => removeSiteMutation.mutate({ userId, clientId })}
@@ -288,10 +359,37 @@ export default function AdminUsersPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold" data-testid="text-admin-users-title">User Management</h1>
-        <p className="text-muted-foreground">Manage user roles and site access</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold" data-testid="text-admin-users-title">User Management</h1>
+          <p className="text-muted-foreground">Manage user roles and site access</p>
+        </div>
       </div>
+
+      {selectedCount > 0 && (
+        <div className="flex items-center gap-3 p-3 rounded-lg bg-destructive/10 border border-destructive/20" data-testid="batch-action-bar">
+          <Checkbox
+            checked={allSelected}
+            onCheckedChange={() => allSelected ? deselectAll() : selectAll()}
+            data-testid="checkbox-select-all"
+          />
+          <span className="text-sm font-medium">{selectedCount} user{selectedCount > 1 ? "s" : ""} selected</span>
+          <div className="flex-1" />
+          <Button variant="ghost" size="sm" onClick={deselectAll} data-testid="button-deselect-all">
+            Clear
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setShowBatchDeleteConfirm(true)}
+            disabled={batchDeleteMutation.isPending}
+            data-testid="button-batch-delete"
+          >
+            <Trash2 className="h-3.5 w-3.5 mr-1" />
+            {batchDeleteMutation.isPending ? "Deleting..." : `Delete ${selectedCount}`}
+          </Button>
+        </div>
+      )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList data-testid="tabs-user-view">
@@ -398,6 +496,33 @@ export default function AdminUsersPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={showBatchDeleteConfirm} onOpenChange={setShowBatchDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selectedCount} User{selectedCount > 1 ? "s" : ""}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete the following user{selectedCount > 1 ? "s" : ""}? This will remove their accounts and all site assignments. This action cannot be undone.
+              <ul className="mt-2 space-y-1 list-disc list-inside text-foreground">
+                {selectedNames.map((name, i) => (
+                  <li key={i}>{name}</li>
+                ))}
+              </ul>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-batch-delete">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => batchDeleteMutation.mutate(Array.from(selectedUserIds))}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={batchDeleteMutation.isPending}
+              data-testid="button-confirm-batch-delete"
+            >
+              {batchDeleteMutation.isPending ? "Deleting..." : `Delete ${selectedCount}`}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
