@@ -156,15 +156,10 @@ export function AppSidebar() {
     <Sidebar className="border-r-0">
       <SidebarHeader className="border-b border-sidebar-border p-4">
         <Link href="/" className="flex items-center gap-3" data-testid="link-logo">
-          <img src="/vectormesh-app-icon.png" alt="VectorMesh" className="h-9 w-9 rounded-md" />
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold">
-              <span className="text-[#1a3a5c] dark:text-[#7eb8e0]">Vector</span><span className="text-[#0ea5e9]">Mesh</span>
-            </span>
-            <span className="text-xs text-sidebar-foreground/60">
-              Display Management
-            </span>
-          </div>
+          <img src="/vectormesh-app-icon.png" alt="VectorMesh" className="h-8 w-8 rounded-md" />
+          <span className="text-base font-semibold leading-none">
+            <span className="text-[#1a3a5c] dark:text-[#7eb8e0]">Vector</span><span className="text-[#0ea5e9]">Mesh</span>
+          </span>
         </Link>
       </SidebarHeader>
 
