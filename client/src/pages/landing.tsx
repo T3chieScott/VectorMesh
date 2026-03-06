@@ -69,7 +69,7 @@ export default function LandingPage() {
           <div className="flex h-16 items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <img src="/vectormesh-app-icon.png" alt="VectorMesh" className="h-9 w-9 rounded-md" />
-              <span className="text-lg font-semibold">VectorMesh</span>
+              <span className="text-lg font-semibold"><span className="text-[#1a3a5c] dark:text-[#7eb8e0]">Vector</span><span className="text-[#0ea5e9]">Mesh</span></span>
             </div>
 
             <div className="hidden md:flex items-center gap-8">
@@ -299,7 +299,7 @@ export default function LandingPage() {
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
               <img src="/vectormesh-app-icon.png" alt="VectorMesh" className="h-7 w-7 rounded-md" />
-              <span className="text-sm font-medium">VectorMesh</span>
+              <span className="text-sm font-medium"><span className="text-[#1a3a5c] dark:text-[#7eb8e0]">Vector</span><span className="text-[#0ea5e9]">Mesh</span></span>
             </div>
             <p className="text-sm text-muted-foreground">
               Display Management for Conference & Exhibition Centres
