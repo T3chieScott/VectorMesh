@@ -10,7 +10,6 @@ import {
   Shield,
   Clock,
   ArrowRight,
-  Tv2,
   Play,
   Settings,
 } from "lucide-react";
@@ -69,10 +68,8 @@ export default function LandingPage() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary">
-                <Tv2 className="h-5 w-5 text-primary-foreground" />
-              </div>
-              <span className="text-lg font-semibold">SignageHub</span>
+              <img src="/vectormesh-app-icon.png" alt="VectorMesh" className="h-9 w-9 rounded-md" />
+              <span className="text-lg font-semibold">VectorMesh</span>
             </div>
 
             <div className="hidden md:flex items-center gap-8">
@@ -115,14 +112,14 @@ export default function LandingPage() {
               <div className="space-y-4">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-sm font-medium">
                   <Zap className="h-3.5 w-3.5" />
-                  Enterprise Digital Signage
+                  Enterprise Display Management
                 </div>
                 <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight">
                   Control Every Screen,{" "}
                   <span className="text-primary">Everywhere</span>
                 </h1>
                 <p className="text-lg text-muted-foreground max-w-lg">
-                  A powerful onsite digital signage platform for conference and
+                  A powerful onsite display management platform for conference and
                   exhibition centres. Manage screens, schedule content, and
                   deliver stunning visual experiences.
                 </p>
@@ -173,7 +170,7 @@ export default function LandingPage() {
                           <div className="w-3 h-3 rounded-full bg-green-500/80" />
                         </div>
                         <div className="flex-1 text-center text-xs text-white/40">
-                          SignageHub Dashboard
+                          VectorMesh Dashboard
                         </div>
                       </div>
                       {/* Mock Content */}
@@ -248,7 +245,7 @@ export default function LandingPage() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="text-center space-y-4 mb-16">
             <h2 className="text-3xl sm:text-4xl font-bold">
-              Everything You Need for Digital Signage
+              Everything You Need for Display Management
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
               Built for conference and exhibition centres with enterprise-grade
@@ -284,7 +281,7 @@ export default function LandingPage() {
             Ready to Transform Your Venue?
           </h2>
           <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto">
-            Start managing your digital signage with a platform built for
+            Start managing your displays with a platform built for
             reliability and scale.
           </p>
           <a href="/api/login">
@@ -301,13 +298,11 @@ export default function LandingPage() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary">
-                <Tv2 className="h-4 w-4 text-primary-foreground" />
-              </div>
-              <span className="text-sm font-medium">SignageHub</span>
+              <img src="/vectormesh-app-icon.png" alt="VectorMesh" className="h-7 w-7 rounded-md" />
+              <span className="text-sm font-medium">VectorMesh</span>
             </div>
             <p className="text-sm text-muted-foreground">
-              Digital Signage System for Conference & Exhibition Centres
+              Display Management for Conference & Exhibition Centres
             </p>
           </div>
         </div>

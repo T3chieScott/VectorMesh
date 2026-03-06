@@ -532,7 +532,7 @@ export default function MediaPage() {
             </h3>
             <p className="text-sm text-muted-foreground mb-4 max-w-sm">
               {media.length === 0
-                ? "Upload images, videos, or GIFs to use in your digital signage content."
+                ? "Upload images, videos, or GIFs to use in your display content."
                 : "Try adjusting your search or filters."}
             </p>
             {media.length === 0 && (

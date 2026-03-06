@@ -89,7 +89,7 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
 function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
   const animationDuration = speed || 20;
   const animationType = animation || "scroll-left";
-  const displayContent = resolvePlayerVariables(content || "Breaking News: Welcome to Digital Signage • Latest updates coming soon • Stay tuned for announcements •");
+  const displayContent = resolvePlayerVariables(content || "Breaking News: Welcome to VectorMesh • Latest updates coming soon • Stay tuned for announcements •");
   const textSize = fontSize || 24;
   
   // Split content for animations that show items one at a time

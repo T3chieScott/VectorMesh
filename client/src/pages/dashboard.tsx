@@ -325,7 +325,7 @@ export default function Dashboard() {
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-dashboard-title">Dashboard</h1>
           <p className="text-muted-foreground">
-            Overview of your digital signage system
+            Overview of your display management system
           </p>
         </div>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">

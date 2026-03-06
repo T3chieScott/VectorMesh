@@ -1228,7 +1228,7 @@ export async function registerRoutes(
       const parser = new Parser({
         timeout: 10000,
         headers: {
-          "User-Agent": "Digital Signage RSS Reader/1.0",
+          "User-Agent": "VectorMesh RSS Reader/1.0",
         },
       });
 

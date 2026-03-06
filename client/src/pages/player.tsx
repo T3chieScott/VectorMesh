@@ -89,7 +89,7 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
         </div>
         <h1 className="text-2xl font-bold mb-2">Pair This Display</h1>
         <p className="text-white/60 mb-8 text-sm">
-          Enter the pairing code shown on the Screens page in Signage Hub
+          Enter the pairing code shown on the Screens page in VectorMesh
         </p>
         <input
           data-testid="pairing-code-input"
@@ -115,7 +115,7 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
           {loading ? "Pairing..." : "Connect Display"}
         </button>
         <p className="text-white/30 text-xs mt-6">
-          This display will be securely linked to your Signage Hub account
+          This display will be securely linked to your VectorMesh account
         </p>
       </div>
     </div>
@@ -303,7 +303,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
             </svg>
           </div>
           <p className="text-xl font-semibold mb-2">Connection Lost</p>
-          <p className="text-white/60 text-sm">Attempting to reconnect to Signage Hub...</p>
+          <p className="text-white/60 text-sm">Attempting to reconnect to VectorMesh...</p>
           <p className="text-white/40 text-xs mt-4">Screen: {screenId}</p>
         </div>
       </div>
@@ -315,7 +315,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       <div className="fixed inset-0 bg-black flex items-center justify-center">
         <div className="text-center text-white">
           <div className="w-12 h-12 mx-auto mb-4 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
-          <p className="text-lg">Connecting to Signage Hub...</p>
+          <p className="text-lg">Connecting to VectorMesh...</p>
           <p className="text-white/40 text-xs mt-2">Screen: {screenId}</p>
         </div>
       </div>
@@ -332,7 +332,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
           <p className="text-xl font-semibold mb-2">No Content Assigned</p>
           <p className="text-white/50 text-sm">{content.screen.name}</p>
           <p className="text-white/30 text-xs mt-4">
-            Assign a layout or programme to this screen in the Signage Hub
+            Assign a layout or programme to this screen in VectorMesh
           </p>
         </div>
       </div>

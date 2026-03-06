@@ -156,15 +156,13 @@ export function AppSidebar() {
     <Sidebar className="border-r-0">
       <SidebarHeader className="border-b border-sidebar-border p-4">
         <Link href="/" className="flex items-center gap-3" data-testid="link-logo">
-          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary">
-            <Tv2 className="h-5 w-5 text-primary-foreground" />
-          </div>
+          <img src="/vectormesh-app-icon.png" alt="VectorMesh" className="h-9 w-9 rounded-md" />
           <div className="flex flex-col">
             <span className="text-sm font-semibold text-sidebar-foreground">
-              SignageHub
+              VectorMesh
             </span>
             <span className="text-xs text-sidebar-foreground/60">
-              Digital Signage
+              Display Management
             </span>
           </div>
         </Link>
