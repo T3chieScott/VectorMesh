@@ -498,19 +498,21 @@ export default function AdminUsersPage() {
       </Dialog>
 
       <AlertDialog open={showBatchDeleteConfirm} onOpenChange={setShowBatchDeleteConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
+        <AlertDialogContent className="max-h-[85vh] flex flex-col">
+          <AlertDialogHeader className="shrink-0">
             <AlertDialogTitle>Delete {selectedCount} User{selectedCount > 1 ? "s" : ""}</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete the following user{selectedCount > 1 ? "s" : ""}? This will remove their accounts and all site assignments. This action cannot be undone.
-              <ul className="mt-2 space-y-1 list-disc list-inside text-foreground">
-                {selectedNames.map((name, i) => (
-                  <li key={i}>{name}</li>
-                ))}
-              </ul>
+            <AlertDialogDescription asChild>
+              <div>
+                <p>Are you sure you want to delete the following user{selectedCount > 1 ? "s" : ""}? This will remove their accounts and all site assignments. This action cannot be undone.</p>
+                <ul className="mt-2 space-y-1 list-disc list-inside text-foreground max-h-[40vh] overflow-y-auto border rounded-md p-3">
+                  {selectedNames.map((name, i) => (
+                    <li key={i}>{name}</li>
+                  ))}
+                </ul>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
+          <AlertDialogFooter className="shrink-0">
             <AlertDialogCancel data-testid="button-cancel-batch-delete">Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => batchDeleteMutation.mutate(Array.from(selectedUserIds))}
