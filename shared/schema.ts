@@ -585,6 +585,33 @@ export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: tru
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;
 
+// ============ ALERT SETTINGS ============
+
+export const alertSettings = pgTable("alert_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  alertType: text("alert_type").notNull().unique(),
+  enabled: boolean("enabled").notNull().default(false),
+  recipients: text("recipients").array().notNull().default(sql`'{}'::text[]`),
+  cooldownMinutes: integer("cooldown_minutes").notNull().default(15),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAlertSettingSchema = createInsertSchema(alertSettings).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertAlertSetting = z.infer<typeof insertAlertSettingSchema>;
+export type AlertSetting = typeof alertSettings.$inferSelect;
+
+export const alertHistory = pgTable("alert_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  alertType: text("alert_type").notNull(),
+  entityId: varchar("entity_id"),
+  recipients: text("recipients").array().notNull().default(sql`'{}'::text[]`),
+  payload: jsonb("payload"),
+  sentAt: timestamp("sent_at").defaultNow(),
+});
+
+export type AlertHistory = typeof alertHistory.$inferSelect;
+
 // ============ WEATHER CACHE ============
 
 export const weatherCache = pgTable("weather_cache", {

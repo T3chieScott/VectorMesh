@@ -18,6 +18,8 @@ import {
   liveOverrides,
   playerHeartbeats,
   auditLogs,
+  alertSettings,
+  alertHistory,
   type Client,
   type InsertClient,
   type Event,
@@ -50,6 +52,8 @@ import {
   type InsertAuditLog,
   type PlaylistItem,
   type InsertPlaylistItem,
+  type AlertSetting,
+  type AlertHistory,
 } from "@shared/schema";
 import { users, userSites, passwordResetTokens, type User, type UpsertUser, type UserSite, type PasswordResetToken } from "@shared/models/auth";
 
@@ -117,7 +121,7 @@ export interface IStorage {
   getScreenByPairingCode(code: string): Promise<Screen | undefined>;
   getScreenByDeviceToken(token: string): Promise<Screen | undefined>;
   unpairScreen(id: string, newPairingCode: string): Promise<Screen | undefined>;
-  markStaleScreensOffline(staleThresholdMs: number): Promise<number>;
+  markStaleScreensOffline(staleThresholdMs: number): Promise<Screen[]>;
   createScreen(data: InsertScreen): Promise<Screen>;
   updateScreen(id: string, data: Partial<InsertScreen>): Promise<Screen | undefined>;
   deleteScreen(id: string): Promise<boolean>;
@@ -185,6 +189,16 @@ export interface IStorage {
   createAuditLog(data: InsertAuditLog): Promise<AuditLog>;
   getAuditLogs(options: { userId?: string; entityType?: string; action?: string; dateFrom?: Date; dateTo?: Date; limit?: number; offset?: number }): Promise<{ logs: AuditLog[]; total: number }>;
   getAuditLogStats(): Promise<{ loginsToday: number; activeUsersWeek: number; changesThisWeek: number; totalLogs: number }>;
+
+  // Alert Settings
+  getAlertSettings(): Promise<AlertSetting[]>;
+  getAlertSetting(alertType: string): Promise<AlertSetting | undefined>;
+  upsertAlertSetting(alertType: string, data: { enabled: boolean; recipients: string[]; cooldownMinutes: number }): Promise<AlertSetting>;
+  createAlertHistoryEntry(data: { alertType: string; entityId: string; recipients: string[]; payload?: any }): Promise<AlertHistory>;
+  getRecentAlertHistory(alertType: string, entityId: string, withinMinutes: number): Promise<AlertHistory[]>;
+
+  // Per-client stats
+  getStatsByClient(): Promise<{ clientId: string; clientName: string; screensOnline: number; screensTotal: number; activeEvents: number; mediaCount: number; activeOverrides: number }[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -472,7 +486,7 @@ export class DatabaseStorage implements IStorage {
     return screen;
   }
 
-  async markStaleScreensOffline(staleThresholdMs: number): Promise<number> {
+  async markStaleScreensOffline(staleThresholdMs: number): Promise<Screen[]> {
     const cutoff = new Date(Date.now() - staleThresholdMs);
     const result = await db
       .update(screens)
@@ -484,7 +498,7 @@ export class DatabaseStorage implements IStorage {
         )
       )
       .returning();
-    return result.length;
+    return result;
   }
 
   async createScreen(data: InsertScreen): Promise<Screen> {
@@ -789,6 +803,68 @@ export class DatabaseStorage implements IStorage {
       changesThisWeek: changesWeekResult?.count || 0,
       totalLogs: totalResult?.count || 0,
     };
+  }
+
+  async getAlertSettings(): Promise<AlertSetting[]> {
+    return db.select().from(alertSettings);
+  }
+
+  async getAlertSetting(alertType: string): Promise<AlertSetting | undefined> {
+    const [setting] = await db.select().from(alertSettings).where(eq(alertSettings.alertType, alertType));
+    return setting;
+  }
+
+  async upsertAlertSetting(alertType: string, data: { enabled: boolean; recipients: string[]; cooldownMinutes: number }): Promise<AlertSetting> {
+    const existing = await this.getAlertSetting(alertType);
+    if (existing) {
+      const [updated] = await db.update(alertSettings).set({ ...data, updatedAt: new Date() } as any).where(eq(alertSettings.alertType, alertType)).returning();
+      return updated;
+    }
+    const [created] = await db.insert(alertSettings).values({ alertType, ...data }).returning();
+    return created;
+  }
+
+  async createAlertHistoryEntry(data: { alertType: string; entityId: string; recipients: string[]; payload?: any }): Promise<AlertHistory> {
+    const [entry] = await db.insert(alertHistory).values(data).returning();
+    return entry;
+  }
+
+  async getRecentAlertHistory(alertType: string, entityId: string, withinMinutes: number): Promise<AlertHistory[]> {
+    const cutoff = new Date(Date.now() - withinMinutes * 60 * 1000);
+    return db.select().from(alertHistory).where(
+      and(
+        eq(alertHistory.alertType, alertType),
+        eq(alertHistory.entityId, entityId),
+        gte(alertHistory.sentAt, cutoff)
+      )
+    );
+  }
+
+  async getStatsByClient(): Promise<{ clientId: string; clientName: string; screensOnline: number; screensTotal: number; activeEvents: number; mediaCount: number; activeOverrides: number }[]> {
+    const allClients = await db.select().from(clients);
+    const allEvents = await db.select().from(events);
+    const allScreens = await db.select().from(screens);
+    const allMedia = await db.select().from(mediaAssets);
+    const allOverrides = await db.select().from(liveOverrides);
+    const now = new Date();
+
+    return allClients.map(client => {
+      const clientEvents = allEvents.filter(e => e.clientId === client.id);
+      const clientEventIds = clientEvents.map(e => e.id);
+      const clientScreens = allScreens.filter(s => s.currentEventId && clientEventIds.includes(s.currentEventId));
+      const clientMedia = allMedia.filter(m => m.eventId && clientEventIds.includes(m.eventId));
+      const clientOverrides = allOverrides.filter(o => o.eventId && clientEventIds.includes(o.eventId) && o.isActive && new Date(o.endTime) > now);
+
+      return {
+        clientId: client.id,
+        clientName: client.name || "Unnamed",
+        screensOnline: clientScreens.filter(s => s.isOnline).length,
+        screensTotal: clientScreens.length,
+        activeEvents: clientEvents.filter(e => e.isActive).length,
+        mediaCount: clientMedia.length,
+        activeOverrides: clientOverrides.length,
+      };
+    });
   }
 }
 

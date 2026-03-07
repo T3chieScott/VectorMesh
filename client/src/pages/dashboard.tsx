@@ -492,6 +492,83 @@ function AdminStatsCard({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
+interface ClientStat {
+  clientId: string;
+  clientName: string;
+  screensOnline: number;
+  screensTotal: number;
+  activeEvents: number;
+  mediaCount: number;
+  activeOverrides: number;
+}
+
+function ClientStatsCard({ isAdmin }: { isAdmin: boolean }) {
+  const { data: clientStats, isLoading } = useQuery<ClientStat[]>({
+    queryKey: ["/api/admin/stats/by-client"],
+    enabled: isAdmin,
+    refetchInterval: 60000,
+  });
+
+  if (!isAdmin) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base font-semibold">Stats by Site</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-3">
+            {[...Array(3)].map((_, i) => (
+              <Skeleton key={i} className="h-16" />
+            ))}
+          </div>
+        ) : !clientStats?.length ? (
+          <p className="text-sm text-muted-foreground text-center py-4">No sites configured</p>
+        ) : (
+          <div className="space-y-3">
+            {clientStats.map((stat) => (
+              <div
+                key={stat.clientId}
+                className="p-3 rounded-lg border"
+                data-testid={`client-stat-${stat.clientId}`}
+              >
+                <p className="text-sm font-medium mb-2" data-testid={`text-client-name-${stat.clientId}`}>{stat.clientName}</p>
+                <div className="grid grid-cols-4 gap-2 text-center">
+                  <div>
+                    <div className="text-lg font-bold" data-testid={`text-client-screens-${stat.clientId}`}>
+                      {stat.screensOnline}/{stat.screensTotal}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">Screens</div>
+                  </div>
+                  <div>
+                    <div className="text-lg font-bold" data-testid={`text-client-events-${stat.clientId}`}>
+                      {stat.activeEvents}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">Events</div>
+                  </div>
+                  <div>
+                    <div className="text-lg font-bold" data-testid={`text-client-media-${stat.clientId}`}>
+                      {stat.mediaCount}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">Media</div>
+                  </div>
+                  <div>
+                    <div className="text-lg font-bold" data-testid={`text-client-overrides-${stat.clientId}`}>
+                      {stat.activeOverrides}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">Overrides</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const { data: clients = [], isLoading: clientsLoading } = useQuery<Client[]>({
@@ -596,12 +673,15 @@ export default function Dashboard() {
 
       {/* Admin Stats Row */}
       {user?.role === "admin" && (
-        <div className="grid gap-6 lg:grid-cols-3">
-          <div className="lg:col-span-2">
-            <RecentActivityCard isAdmin={true} />
+        <>
+          <div className="grid gap-6 lg:grid-cols-3">
+            <div className="lg:col-span-2">
+              <RecentActivityCard isAdmin={true} />
+            </div>
+            <AdminStatsCard isAdmin={true} />
           </div>
-          <AdminStatsCard isAdmin={true} />
-        </div>
+          <ClientStatsCard isAdmin={true} />
+        </>
       )}
 
       {/* Main Content Grid */}

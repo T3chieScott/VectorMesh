@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -44,6 +46,9 @@ import {
   Pencil,
   Trash2,
   MoreHorizontal,
+  X,
+  Send,
+  Loader2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -471,6 +476,219 @@ function CreateProfileDialog() {
   );
 }
 
+interface AlertSettingData {
+  id: string;
+  alertType: string;
+  enabled: boolean;
+  recipients: string[];
+  cooldownMinutes: number;
+}
+
+function AlertSettingsCard() {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const [newEmail, setNewEmail] = useState("");
+
+  const { data: settings = [], isLoading } = useQuery<AlertSettingData[]>({
+    queryKey: ["/api/admin/alert-settings"],
+    enabled: user?.role === "admin",
+  });
+
+  const screenOfflineSetting = settings.find(s => s.alertType === "screen_offline") || {
+    alertType: "screen_offline",
+    enabled: false,
+    recipients: [] as string[],
+    cooldownMinutes: 15,
+  };
+
+  const updateMutation = useMutation({
+    mutationFn: async (data: { enabled: boolean; recipients: string[]; cooldownMinutes: number }) => {
+      const res = await apiRequest("PUT", "/api/admin/alert-settings/screen_offline", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/alert-settings"] });
+    },
+    onError: () => {
+      toast({ title: "Failed to update alert settings", variant: "destructive" });
+    },
+  });
+
+  const testMutation = useMutation({
+    mutationFn: async (recipients: string[]) => {
+      const res = await apiRequest("POST", "/api/admin/alert-settings/test", { recipients });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Test alert sent", description: "Check the recipient inboxes (or server console in dev mode)." });
+    },
+    onError: () => {
+      toast({ title: "Failed to send test alert", variant: "destructive" });
+    },
+  });
+
+  const handleToggle = (enabled: boolean) => {
+    updateMutation.mutate({
+      enabled,
+      recipients: screenOfflineSetting.recipients,
+      cooldownMinutes: screenOfflineSetting.cooldownMinutes,
+    });
+  };
+
+  const handleAddEmail = () => {
+    const email = newEmail.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      toast({ title: "Please enter a valid email address", variant: "destructive" });
+      return;
+    }
+    if (screenOfflineSetting.recipients.includes(email)) {
+      toast({ title: "Email already added", variant: "destructive" });
+      return;
+    }
+    const newRecipients = [...screenOfflineSetting.recipients, email];
+    updateMutation.mutate({
+      enabled: screenOfflineSetting.enabled,
+      recipients: newRecipients,
+      cooldownMinutes: screenOfflineSetting.cooldownMinutes,
+    });
+    setNewEmail("");
+  };
+
+  const handleRemoveEmail = (email: string) => {
+    const newRecipients = screenOfflineSetting.recipients.filter(r => r !== email);
+    updateMutation.mutate({
+      enabled: screenOfflineSetting.enabled,
+      recipients: newRecipients,
+      cooldownMinutes: screenOfflineSetting.cooldownMinutes,
+    });
+  };
+
+  const handleCooldownChange = (minutes: string) => {
+    const mins = parseInt(minutes) || 15;
+    updateMutation.mutate({
+      enabled: screenOfflineSetting.enabled,
+      recipients: screenOfflineSetting.recipients,
+      cooldownMinutes: mins,
+    });
+  };
+
+  if (user?.role !== "admin") return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base font-semibold flex items-center gap-2">
+          <Bell className="h-4 w-4" />
+          Alert Settings
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between" data-testid="toggle-screen-offline-alert">
+              <div>
+                <Label className="text-sm font-medium">Screen Offline Alerts</Label>
+                <p className="text-xs text-muted-foreground">Email when a screen goes offline</p>
+              </div>
+              <Switch
+                checked={screenOfflineSetting.enabled}
+                onCheckedChange={handleToggle}
+                disabled={updateMutation.isPending}
+                data-testid="switch-screen-offline-enabled"
+              />
+            </div>
+
+            <Separator />
+
+            <div className="space-y-2">
+              <Label className="text-sm">Recipients</Label>
+              <div className="flex gap-2">
+                <Input
+                  type="email"
+                  placeholder="email@example.com"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddEmail(); } }}
+                  className="flex-1"
+                  data-testid="input-alert-email"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={handleAddEmail}
+                  disabled={updateMutation.isPending}
+                  data-testid="button-add-alert-email"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              {screenOfflineSetting.recipients.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic">No recipients added</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {screenOfflineSetting.recipients.map((email) => (
+                    <Badge key={email} variant="secondary" className="flex items-center gap-1 pr-1" data-testid={`badge-alert-email-${email}`}>
+                      {email}
+                      <button
+                        onClick={() => handleRemoveEmail(email)}
+                        className="ml-0.5 rounded-full p-0.5 hover:bg-destructive/20"
+                        data-testid={`button-remove-alert-email-${email}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <Separator />
+
+            <div className="space-y-2">
+              <Label className="text-sm">Cooldown (minutes)</Label>
+              <p className="text-xs text-muted-foreground">Minimum time between repeat alerts for the same screen</p>
+              <Input
+                type="number"
+                min={1}
+                max={1440}
+                value={screenOfflineSetting.cooldownMinutes}
+                onChange={(e) => handleCooldownChange(e.target.value)}
+                className="w-24"
+                data-testid="input-alert-cooldown"
+              />
+            </div>
+
+            {screenOfflineSetting.recipients.length > 0 && (
+              <>
+                <Separator />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => testMutation.mutate(screenOfflineSetting.recipients)}
+                  disabled={testMutation.isPending}
+                  data-testid="button-send-test-alert"
+                >
+                  {testMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4 mr-2" />
+                  )}
+                  Send Test Alert
+                </Button>
+              </>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   const { user, logout } = useAuth();
   const { data: profiles = [] } = useQuery<DisplayProfile[]>({
@@ -574,19 +792,7 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base font-semibold flex items-center gap-2">
-                <Bell className="h-4 w-4" />
-                Notifications
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                Notification settings coming soon
-              </p>
-            </CardContent>
-          </Card>
+          <AlertSettingsCard />
         </div>
       </div>
     </div>

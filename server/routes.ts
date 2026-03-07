@@ -9,7 +9,7 @@ import { getSignedUploadUrl, getPublicUrl, objectStorageService } from "./object
 import { setupAuth, isAuthenticated } from "./auth";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { find as findTimezone } from "geo-tz";
-import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail } from "./email";
+import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendTestAlert } from "./email";
 
 const requireAuth = isAuthenticated;
 
@@ -272,7 +272,30 @@ export async function registerRoutes(
   const STALE_THRESHOLD_MS = 60000;
   setInterval(async () => {
     try {
-      await storage.markStaleScreensOffline(STALE_THRESHOLD_MS);
+      const offlineScreens = await storage.markStaleScreensOffline(STALE_THRESHOLD_MS);
+      if (offlineScreens.length > 0) {
+        const alertSetting = await storage.getAlertSetting("screen_offline");
+        if (alertSetting?.enabled && alertSetting.recipients.length > 0) {
+          for (const screen of offlineScreens) {
+            const recentAlerts = await storage.getRecentAlertHistory("screen_offline", screen.id, alertSetting.cooldownMinutes);
+            if (recentAlerts.length === 0) {
+              try {
+                const sent = await sendScreenOfflineAlert(alertSetting.recipients, screen.name, screen.location, screen.lastSeen ? new Date(screen.lastSeen) : null);
+                if (sent) {
+                  storage.createAlertHistoryEntry({
+                    alertType: "screen_offline",
+                    entityId: screen.id,
+                    recipients: alertSetting.recipients,
+                    payload: { screenName: screen.name, location: screen.location },
+                  }).catch(() => {});
+                }
+              } catch (emailErr) {
+                console.error("Failed to send screen offline alert:", emailErr);
+              }
+            }
+          }
+        }
+      }
     } catch (err) {
       console.error("Error in offline sweep:", err);
     }
@@ -1881,6 +1904,67 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching admin stats:", error);
       res.status(500).json({ error: "Failed to fetch admin stats" });
+    }
+  });
+
+  // ============ PER-CLIENT STATS ============
+  app.get("/api/admin/stats/by-client", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const stats = await storage.getStatsByClient();
+      res.json(stats);
+    } catch (error) {
+      console.error("Error fetching per-client stats:", error);
+      res.status(500).json({ error: "Failed to fetch per-client stats" });
+    }
+  });
+
+  // ============ ALERT SETTINGS ============
+  app.get("/api/admin/alert-settings", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const settings = await storage.getAlertSettings();
+      res.json(settings);
+    } catch (error) {
+      console.error("Error fetching alert settings:", error);
+      res.status(500).json({ error: "Failed to fetch alert settings" });
+    }
+  });
+
+  app.put("/api/admin/alert-settings/:alertType", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { alertType } = req.params;
+      const { enabled, recipients, cooldownMinutes } = req.body;
+
+      if (!Array.isArray(recipients) || !recipients.every((r: any) => typeof r === "string" && r.includes("@"))) {
+        return res.status(400).json({ error: "Recipients must be an array of valid email addresses" });
+      }
+
+      const cooldown = typeof cooldownMinutes === "number" && cooldownMinutes > 0 ? Math.floor(cooldownMinutes) : 15;
+
+      const setting = await storage.upsertAlertSetting(alertType, {
+        enabled: !!enabled,
+        recipients: recipients.map((r: string) => r.trim().toLowerCase()),
+        cooldownMinutes: cooldown,
+      });
+
+      logAudit(req, "update", "alert_setting", alertType, { enabled, recipients: recipients.length, cooldownMinutes });
+      res.json(setting);
+    } catch (error) {
+      console.error("Error updating alert setting:", error);
+      res.status(500).json({ error: "Failed to update alert setting" });
+    }
+  });
+
+  app.post("/api/admin/alert-settings/test", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { recipients } = req.body;
+      if (!Array.isArray(recipients) || recipients.length === 0) {
+        return res.status(400).json({ error: "At least one recipient email is required" });
+      }
+      const sent = await sendTestAlert(recipients);
+      res.json({ ok: sent });
+    } catch (error) {
+      console.error("Error sending test alert:", error);
+      res.status(500).json({ error: "Failed to send test alert" });
     }
   });
 

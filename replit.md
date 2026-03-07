@@ -104,7 +104,17 @@ Core entities include: Clients, Events, Brand Packs, Display Profiles, Screen Gr
     - `GET /api/admin/audit-logs` — paginated list with filters (entityType, action, limit, offset)
     - `GET /api/admin/stats` — aggregate stats (loginsToday, activeUsersWeek, changesThisWeek, totalLogs, entity counts)
   - **Activity Log page** (`/admin/activity`): colour-coded action badges, relative timestamps, entity type/action filters, pagination
-  - **Dashboard admin section**: Recent Activity card (last 8 entries) and User & Activity Stats card (total users, active this week, logins today, changes this week)
+  - **Dashboard admin section**: Recent Activity card (last 8 entries), User & Activity Stats card (total users, active this week, logins today, changes this week), and Stats by Site card (per-client screen/event/media/override counts)
+  - **Per-client stats API**: `GET /api/admin/stats/by-client` returns per-site breakdowns (screens online/total, active events, media count, active overrides)
+- **Email alerts**: Configurable screen offline alerts via Settings page
+  - `alert_settings` table: alertType, enabled, recipients (text array), cooldownMinutes
+  - `alert_history` table: tracks sent alerts for cooldown logic
+  - **Alert API endpoints** (admin-only):
+    - `GET /api/admin/alert-settings` — list all alert settings
+    - `PUT /api/admin/alert-settings/:alertType` — create/update alert setting
+    - `POST /api/admin/alert-settings/test` — send a test alert to recipients
+  - **Screen offline alert flow**: 30-second background sweep detects offline screens → checks alert_settings → respects cooldown → sends email via `sendScreenOfflineAlert()` to all recipients
+  - **Settings UI**: Alert Settings card in Settings page with toggle, email recipient management (add/remove badges), cooldown configuration, and test alert button
 
 ### Key Design Patterns
 - **Shared Schema**: Types defined once in `shared/` and used by both frontend and backend
