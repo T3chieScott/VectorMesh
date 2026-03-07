@@ -18,6 +18,7 @@ Key capabilities include:
 - Event-specific color palettes for consistent branding.
 - Integration of signage icons with text labels for directional and informational purposes.
 - Global site context switcher for filtering UI content by client.
+- **Screen groups with membership management**: Groups auto-inherit site from the current site context. Screens can be added/removed from groups via a management dialog, constrained to same-site screens only. Member counts displayed on group cards.
 - Secure device pairing for display nodes using unique tokens.
 - **Programme scheduling**: Full block editor with time rules (start/end times, date ranges), recurring schedules (day-of-week selectors), target screen/group selection, layout assignment, and priority. Blocks display time and target info in the programme list.
 - Real-time player simulator with auto-refresh for content testing. Auto-resolves the active layout for a selected screen using the same priority as the real player (live override → scheduled programme → fallback layout), with a source badge showing why a layout is active.

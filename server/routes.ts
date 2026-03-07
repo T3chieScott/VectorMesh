@@ -597,7 +597,7 @@ export async function registerRoutes(
   // ============ SCREEN GROUPS ============
   app.get("/api/screen-groups", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const groups = await storage.getScreenGroups();
+      const groups = await storage.getScreenGroupsWithMemberCounts();
       const allowed = getAllowedClientIds(req);
       let filtered = groups;
       if (allowed) {
@@ -664,6 +664,77 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deleting screen group:", error);
       res.status(500).json({ error: "Failed to delete screen group" });
+    }
+  });
+
+  // Screen Group Memberships
+  app.get("/api/screen-groups/:id/members", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const group = await storage.getScreenGroup(req.params.id);
+      if (!group) {
+        return res.status(404).json({ error: "Screen group not found" });
+      }
+      if (group.clientId && !canAccessClient(req, group.clientId)) {
+        return res.status(403).json({ error: "Access denied to this group's site" });
+      }
+      const members = await storage.getGroupMembers(req.params.id);
+      res.json(members);
+    } catch (error) {
+      console.error("Error fetching group members:", error);
+      res.status(500).json({ error: "Failed to fetch group members" });
+    }
+  });
+
+  app.post("/api/screen-groups/:id/members", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const { screenId } = req.body;
+      if (!screenId) {
+        return res.status(400).json({ error: "screenId is required" });
+      }
+      const group = await storage.getScreenGroup(req.params.id);
+      if (!group) {
+        return res.status(404).json({ error: "Screen group not found" });
+      }
+      if (group.clientId && !canAccessClient(req, group.clientId)) {
+        return res.status(403).json({ error: "Access denied to this group's site" });
+      }
+      const screen = await storage.getScreen(screenId);
+      if (!screen) {
+        return res.status(404).json({ error: "Screen not found" });
+      }
+      if (group.clientId && screen.clientId && group.clientId !== screen.clientId) {
+        return res.status(400).json({ error: "Screen must belong to the same site as the group" });
+      }
+      await storage.addScreenToGroup(req.params.id, screenId);
+      logAudit(req, "create", "screen_group_membership", req.params.id, { screenId, screenName: screen.name, groupName: group.name });
+      res.status(201).json({ success: true });
+    } catch (error: any) {
+      if (error.code === "23505") {
+        return res.status(409).json({ error: "Screen is already in this group" });
+      }
+      console.error("Error adding screen to group:", error);
+      res.status(500).json({ error: "Failed to add screen to group" });
+    }
+  });
+
+  app.delete("/api/screen-groups/:id/members/:screenId", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const group = await storage.getScreenGroup(req.params.id);
+      if (!group) {
+        return res.status(404).json({ error: "Screen group not found" });
+      }
+      if (group.clientId && !canAccessClient(req, group.clientId)) {
+        return res.status(403).json({ error: "Access denied to this group's site" });
+      }
+      const removed = await storage.removeScreenFromGroup(req.params.id, req.params.screenId);
+      if (!removed) {
+        return res.status(404).json({ error: "Membership not found" });
+      }
+      logAudit(req, "delete", "screen_group_membership", req.params.id, { screenId: req.params.screenId });
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error removing screen from group:", error);
+      res.status(500).json({ error: "Failed to remove screen from group" });
     }
   });
 

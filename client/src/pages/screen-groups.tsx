@@ -31,28 +31,181 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useSiteContext, useSiteFilteredQuery } from "@/hooks/use-site-context";
-import { Plus, MoreHorizontal, Pencil, Trash2, Tv2, Monitor } from "lucide-react";
-import type { ScreenGroup, Client } from "@shared/schema";
+import { Plus, MoreHorizontal, Pencil, Trash2, Tv2, Monitor, Users, X, UserPlus } from "lucide-react";
+import type { ScreenGroup, Screen, Client } from "@shared/schema";
 
 const groupFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().optional(),
-  clientId: z.string().nullable().optional(),
 });
 
 type GroupFormValues = z.infer<typeof groupFormSchema>;
 
-function GroupCard({ group, clients }: { group: ScreenGroup; clients: Client[] }) {
+type ScreenGroupWithCount = ScreenGroup & { memberCount?: number };
+
+function ManageMembersDialog({
+  group,
+  clients,
+  open,
+  onOpenChange,
+}: {
+  group: ScreenGroup;
+  clients: Client[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const client = clients.find((c) => c.id === group.clientId);
+
+  const { data: members = [], isLoading: membersLoading } = useQuery<Screen[]>({
+    queryKey: ["/api/screen-groups", group.id, "members"],
+    enabled: open,
+  });
+
+  const { data: siteScreens = [] } = useQuery<Screen[]>({
+    queryKey: ["/api/screens", group.clientId],
+    queryFn: async () => {
+      if (!group.clientId) return [];
+      const res = await fetch(`/api/screens?clientId=${group.clientId}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch screens");
+      return res.json();
+    },
+    enabled: open && !!group.clientId,
+  });
+
+  const memberIds = new Set(members.map((m) => m.id));
+  const availableScreens = siteScreens.filter((s) => !memberIds.has(s.id));
+
+  const addMutation = useMutation({
+    mutationFn: (screenId: string) =>
+      apiRequest("POST", `/api/screen-groups/${group.id}/members`, { screenId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screen-groups", group.id, "members"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/screen-groups"] });
+      toast({ title: "Screen added to group" });
+    },
+    onError: () => {
+      toast({ title: "Failed to add screen", variant: "destructive" });
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (screenId: string) =>
+      apiRequest("DELETE", `/api/screen-groups/${group.id}/members/${screenId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screen-groups", group.id, "members"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/screen-groups"] });
+      toast({ title: "Screen removed from group" });
+    },
+    onError: () => {
+      toast({ title: "Failed to remove screen", variant: "destructive" });
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Manage Screens — {group.name}</DialogTitle>
+        </DialogHeader>
+        {!group.clientId ? (
+          <p className="text-sm text-muted-foreground py-4">
+            This group has no site assigned. Groups need a site before screens can be added.
+          </p>
+        ) : (
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm text-muted-foreground mb-1">
+                Site: <span className="font-medium text-foreground">{client?.name}</span>
+              </p>
+            </div>
+            <div>
+              <h4 className="text-sm font-medium mb-2">Current Members ({members.length})</h4>
+              {membersLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-8 w-full" />
+                  <Skeleton className="h-8 w-full" />
+                </div>
+              ) : members.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-2">No screens in this group yet.</p>
+              ) : (
+                <div className="space-y-1 max-h-48 overflow-y-auto">
+                  {members.map((screen) => (
+                    <div
+                      key={screen.id}
+                      className="flex items-center justify-between rounded-md border px-3 py-2"
+                      data-testid={`member-screen-${screen.id}`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Monitor className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">{screen.name}</span>
+                        {screen.location && (
+                          <span className="text-xs text-muted-foreground">({screen.location})</span>
+                        )}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => removeMutation.mutate(screen.id)}
+                        disabled={removeMutation.isPending}
+                        data-testid={`button-remove-screen-${screen.id}`}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {availableScreens.length > 0 && (
+              <div>
+                <h4 className="text-sm font-medium mb-2">Available Screens ({availableScreens.length})</h4>
+                <div className="space-y-1 max-h-48 overflow-y-auto">
+                  {availableScreens.map((screen) => (
+                    <div
+                      key={screen.id}
+                      className="flex items-center justify-between rounded-md border border-dashed px-3 py-2"
+                      data-testid={`available-screen-${screen.id}`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Monitor className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">{screen.name}</span>
+                        {screen.location && (
+                          <span className="text-xs text-muted-foreground">({screen.location})</span>
+                        )}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 gap-1"
+                        onClick={() => addMutation.mutate(screen.id)}
+                        disabled={addMutation.isPending}
+                        data-testid={`button-add-screen-${screen.id}`}
+                      >
+                        <UserPlus className="h-3.5 w-3.5" />
+                        Add
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {group.clientId && availableScreens.length === 0 && members.length > 0 && (
+              <p className="text-xs text-muted-foreground">All screens from this site are already in this group.</p>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function GroupCard({ group, clients }: { group: ScreenGroupWithCount; clients: Client[] }) {
   const [editOpen, setEditOpen] = useState(false);
+  const [membersOpen, setMembersOpen] = useState(false);
   const { toast } = useToast();
 
   const client = clients.find((c) => c.id === group.clientId);
@@ -62,16 +215,12 @@ function GroupCard({ group, clients }: { group: ScreenGroup; clients: Client[] }
     defaultValues: {
       name: group.name,
       description: group.description || "",
-      clientId: group.clientId || "",
     },
   });
 
   const updateMutation = useMutation({
     mutationFn: (data: GroupFormValues) =>
-      apiRequest("PATCH", `/api/screen-groups/${group.id}`, {
-        ...data,
-        clientId: data.clientId || null,
-      }),
+      apiRequest("PATCH", `/api/screen-groups/${group.id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screen-groups"] });
       setEditOpen(false);
@@ -92,6 +241,8 @@ function GroupCard({ group, clients }: { group: ScreenGroup; clients: Client[] }
       toast({ title: "Failed to delete group", variant: "destructive" });
     },
   });
+
+  const memberCount = group.memberCount ?? 0;
 
   return (
     <Card className="hover-elevate transition-all">
@@ -120,6 +271,10 @@ function GroupCard({ group, clients }: { group: ScreenGroup; clients: Client[] }
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setMembersOpen(true)}>
+              <Users className="mr-2 h-4 w-4" />
+              Manage Screens
+            </DropdownMenuItem>
             <Dialog open={editOpen} onOpenChange={setEditOpen}>
               <DialogTrigger asChild>
                 <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
@@ -164,34 +319,12 @@ function GroupCard({ group, clients }: { group: ScreenGroup; clients: Client[] }
                         </FormItem>
                       )}
                     />
-                    <FormField
-                      control={form.control}
-                      name="clientId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Site</FormLabel>
-                          <Select
-                            onValueChange={(val) => field.onChange(val === "__none__" ? null : val)}
-                            value={field.value || "__none__"}
-                          >
-                            <FormControl>
-                              <SelectTrigger data-testid="select-edit-group-client">
-                                <SelectValue placeholder="No site assigned" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="__none__">No site assigned</SelectItem>
-                              {clients.map((c) => (
-                                <SelectItem key={c.id} value={c.id}>
-                                  {c.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    {client && (
+                      <div>
+                        <p className="text-sm font-medium mb-1">Site</p>
+                        <p className="text-sm text-muted-foreground">{client.name}</p>
+                      </div>
+                    )}
                     <div className="flex justify-end gap-2">
                       <Button
                         type="button"
@@ -225,24 +358,31 @@ function GroupCard({ group, clients }: { group: ScreenGroup; clients: Client[] }
       <CardContent className="pt-0">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Monitor className="h-4 w-4" />
-          <span>0 screens</span>
+          <span data-testid={`text-group-member-count-${group.id}`}>
+            {memberCount} {memberCount === 1 ? "screen" : "screens"}
+          </span>
         </div>
       </CardContent>
+      <ManageMembersDialog
+        group={group}
+        clients={clients}
+        open={membersOpen}
+        onOpenChange={setMembersOpen}
+      />
     </Card>
   );
 }
 
-function CreateGroupDialog({ clients }: { clients: Client[] }) {
+function CreateGroupDialog() {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const { selectedClientId } = useSiteContext();
+  const { selectedClientId, selectedClient } = useSiteContext();
 
   const form = useForm<GroupFormValues>({
     resolver: zodResolver(groupFormSchema),
     defaultValues: {
       name: "",
       description: "",
-      clientId: selectedClientId || "",
     },
   });
 
@@ -250,7 +390,7 @@ function CreateGroupDialog({ clients }: { clients: Client[] }) {
     mutationFn: (data: GroupFormValues) =>
       apiRequest("POST", "/api/screen-groups", {
         ...data,
-        clientId: data.clientId || null,
+        clientId: selectedClientId || null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screen-groups"] });
@@ -314,34 +454,17 @@ function CreateGroupDialog({ clients }: { clients: Client[] }) {
                 </FormItem>
               )}
             />
-            <FormField
-              control={form.control}
-              name="clientId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Site</FormLabel>
-                  <Select
-                    onValueChange={(val) => field.onChange(val === "__none__" ? null : val)}
-                    value={field.value || "__none__"}
-                  >
-                    <FormControl>
-                      <SelectTrigger data-testid="select-group-client">
-                        <SelectValue placeholder="No site assigned" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="__none__">No site assigned</SelectItem>
-                      {clients.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {selectedClient && (
+              <div>
+                <p className="text-sm font-medium mb-1">Site</p>
+                <p className="text-sm text-muted-foreground">{selectedClient.name}</p>
+              </div>
+            )}
+            {!selectedClientId && (
+              <p className="text-sm text-amber-600">
+                No site selected. Select a site from the sidebar to assign this group.
+              </p>
+            )}
             <div className="flex justify-end gap-2">
               <Button
                 type="button"
@@ -366,7 +489,7 @@ function CreateGroupDialog({ clients }: { clients: Client[] }) {
 }
 
 export default function ScreenGroupsPage() {
-  const groupsQueryConfig = useSiteFilteredQuery<ScreenGroup[]>("/api/screen-groups");
+  const groupsQueryConfig = useSiteFilteredQuery<ScreenGroupWithCount[]>("/api/screen-groups");
   const { data: groups = [], isLoading } = useQuery(groupsQueryConfig);
 
   const { data: clients = [] } = useQuery<Client[]>({
@@ -375,7 +498,6 @@ export default function ScreenGroupsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-groups-title">Screen Groups</h1>
@@ -383,10 +505,9 @@ export default function ScreenGroupsPage() {
             Organise screens for bulk content targeting
           </p>
         </div>
-        <CreateGroupDialog clients={clients} />
+        <CreateGroupDialog />
       </div>
 
-      {/* Content */}
       {isLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[...Array(6)].map((_, i) => (
@@ -415,7 +536,7 @@ export default function ScreenGroupsPage() {
               Create groups to organise screens by location, function, or
               content type for easier targeting.
             </p>
-            <CreateGroupDialog clients={clients} />
+            <CreateGroupDialog />
           </CardContent>
         </Card>
       ) : (

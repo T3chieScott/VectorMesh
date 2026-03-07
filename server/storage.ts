@@ -113,10 +113,16 @@ export interface IStorage {
 
   // Screen Groups
   getScreenGroups(): Promise<ScreenGroup[]>;
+  getScreenGroupsWithMemberCounts(): Promise<(ScreenGroup & { memberCount: number })[]>;
   getScreenGroup(id: string): Promise<ScreenGroup | undefined>;
   createScreenGroup(data: InsertScreenGroup): Promise<ScreenGroup>;
   updateScreenGroup(id: string, data: Partial<InsertScreenGroup>): Promise<ScreenGroup | undefined>;
   deleteScreenGroup(id: string): Promise<boolean>;
+
+  // Screen Group Memberships
+  getGroupMembers(groupId: string): Promise<Screen[]>;
+  addScreenToGroup(groupId: string, screenId: string): Promise<void>;
+  removeScreenFromGroup(groupId: string, screenId: string): Promise<boolean>;
 
   // Screens
   getScreens(): Promise<Screen[]>;
@@ -438,6 +444,23 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(screenGroups).orderBy(desc(screenGroups.createdAt));
   }
 
+  async getScreenGroupsWithMemberCounts(): Promise<(ScreenGroup & { memberCount: number })[]> {
+    const groups = await db
+      .select({
+        id: screenGroups.id,
+        clientId: screenGroups.clientId,
+        name: screenGroups.name,
+        description: screenGroups.description,
+        createdAt: screenGroups.createdAt,
+        memberCount: count(screenGroupMemberships.id),
+      })
+      .from(screenGroups)
+      .leftJoin(screenGroupMemberships, eq(screenGroups.id, screenGroupMemberships.groupId))
+      .groupBy(screenGroups.id)
+      .orderBy(desc(screenGroups.createdAt));
+    return groups.map(g => ({ ...g, memberCount: Number(g.memberCount) }));
+  }
+
   async getScreenGroup(id: string): Promise<ScreenGroup | undefined> {
     const [group] = await db.select().from(screenGroups).where(eq(screenGroups.id, id));
     return group;
@@ -459,6 +482,33 @@ export class DatabaseStorage implements IStorage {
 
   async deleteScreenGroup(id: string): Promise<boolean> {
     const result = await db.delete(screenGroups).where(eq(screenGroups.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Screen Group Memberships
+  async getGroupMembers(groupId: string): Promise<Screen[]> {
+    const memberships = await db
+      .select({ screen: screens })
+      .from(screenGroupMemberships)
+      .innerJoin(screens, eq(screenGroupMemberships.screenId, screens.id))
+      .where(eq(screenGroupMemberships.groupId, groupId))
+      .orderBy(screens.name);
+    return memberships.map(m => m.screen);
+  }
+
+  async addScreenToGroup(groupId: string, screenId: string): Promise<void> {
+    await db.insert(screenGroupMemberships).values({ groupId, screenId });
+  }
+
+  async removeScreenFromGroup(groupId: string, screenId: string): Promise<boolean> {
+    const result = await db
+      .delete(screenGroupMemberships)
+      .where(
+        and(
+          eq(screenGroupMemberships.groupId, groupId),
+          eq(screenGroupMemberships.screenId, screenId)
+        )
+      );
     return (result.rowCount ?? 0) > 0;
   }
 
