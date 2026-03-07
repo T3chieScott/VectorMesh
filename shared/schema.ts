@@ -13,7 +13,7 @@ export const screenTypeEnum = pgEnum("screen_type", ["standard", "led_wall"]);
 export const orientationEnum = pgEnum("orientation", ["landscape", "portrait"]);
 export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "gif"]);
 export const programmeStatusEnum = pgEnum("programme_status", ["draft", "published"]);
-export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown", "shape", "schedule"]);
+export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown", "shape", "schedule", "media_player"]);
 export const scaleModeEnum = pgEnum("scale_mode", ["contain", "cover"]);
 
 // ============ CLIENTS ============
@@ -245,7 +245,7 @@ export type LayoutTemplate = typeof layoutTemplates.$inferSelect;
 export interface LayoutZone {
   id: string;
   name: string;
-  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown" | "shape" | "schedule";
+  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown" | "shape" | "schedule" | "media_player";
   x: number;
   y: number;
   width: number;
@@ -391,6 +391,15 @@ export interface LayoutZone {
   shapeIconTextPosition?: "left" | "right" | "top" | "bottom" | "center";  // Position of text relative to icon
   shapeIconTextSize?: number;          // Font size of icon text in px (default 14)
   shapeIconTextColor?: string;         // Color of icon text (hex, default matches stroke)
+  // Media Player zone configuration
+  mediaPlayerItems?: Array<{ id: string; mediaAssetId: string; duration?: number }>;
+  mediaPlayerTransition?: "fade" | "slide-left" | "slide-right" | "none";
+  mediaPlayerTransitionDuration?: number;
+  mediaPlayerLoop?: boolean;
+  mediaPlayerFitMode?: "contain" | "cover";
+  mediaPlayerAutoPlay?: boolean;
+  mediaPlayerMuted?: boolean;
+  mediaPlayerShuffle?: boolean;
   // Schedule widget configuration
   scheduleViewMode?: "hourly" | "daily" | "agenda";
   scheduleEntries?: Array<{

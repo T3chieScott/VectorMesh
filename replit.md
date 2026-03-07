@@ -2,32 +2,25 @@
 
 ## Overview
 
-VectorMesh is an onsite display management platform for conference and exhibition centres. The system manages content display across multiple screen types including meeting-room screens, indoor public displays, and external LED walls. It supports multi-client branding, scheduled programming, live overrides, and real-time diagnostics for Raspberry Pi display nodes.
+VectorMesh is an onsite display management platform designed for conference and exhibition centers. Its primary purpose is to manage content display across diverse screen types, including meeting-room screens, indoor public displays, and large external LED walls. The platform offers multi-client branding capabilities, scheduled content programming, live override functionalities for urgent announcements, and real-time diagnostics for Raspberry Pi-based display nodes. It aims to provide a robust and flexible solution for dynamic digital signage in complex event environments.
 
-Key capabilities:
-- Manage up to 50+ screens with mixed sizes and aspect ratios
-- Support for images, videos, GIFs, and HTML widgets with direct site ownership (`clientId` on `media_assets`)
-- **Video thumbnails**: Automatic thumbnail generation for video uploads using ffmpeg (extracts frame at 1s, scaled to 640px max width). Thumbnails stored in object storage at `/objects/thumbnails/`. Admin API endpoint `POST /api/media/:id/generate-thumbnail` for existing videos. Thumbnail served via `GET /api/media/:id/thumbnail`.
-- **Media site ownership**: Each media asset belongs to a site (client) via `clientId`. Uploads require a site selection. Admins can share assets to other sites via `media_shares` join table. Shared assets appear in target site's media library with "Shared" badge. Site picker dialog appears if admin is on "All Sites" during upload.
-- Zone-based layouts with tickers, clocks, logos, QR codes, countdown timers, schedules, and media regions
-- **QR code zones**: Support for URL, WiFi, vCard content types with transparent backgrounds and customizable labels (position, size, color)
-- **Countdown timer zones**: Real-time countdown to target date/time with customizable title (with independent size control), completion message, unit visibility (days/hours/minutes/seconds), custom labels, separator styles, leading zeros toggle, number/label colors, size presets (small/medium/large/xlarge), font family (mono/sans/serif/display), unit gap control, timezone selection, and compact mode
-- **Layout aspect ratio support**: Presets (16:9, 9:16, 4:3, 1:1) plus custom ratios for portrait displays, LED walls, and specialty screens
-- **Room schedule zones**: Hourly timeline, daily, and agenda view modes with configurable time slots, entries, and 12h/24h formatting
-- **Dynamic player variables**: Placeholder tokens ({{screen_name}}, {{room_name}}, {{event_name}}, {{date}}, {{time}}, {{day}}) for reusable layouts resolved at display time
-- **Event colour palettes**: Per-event brand colour palettes integrated into all zone colour pickers via swatches
-- **Signage icons**: 29 curated signage icons (arrows incl. diagonal, toilets, fire exit, restaurant, WiFi, parking, etc.) as overlays on shape zones, with optional text labels (left/right/top/bottom/center positioning, configurable size and color)
-- **Collapsible layout panel**: Layout list auto-hides when editing, with back button navigation
-- **Global site context switcher**: Sidebar dropdown to filter the entire UI by site. Admins can switch between sites or view "All Sites". Multi-site users (account managers) see their assigned sites. Single-site users have their site auto-selected. All content pages (media, layouts, screens, events, playlists, programmes, overrides, dashboard, diagnostics, simulator, schedule) respect the selected site via `?clientId=` query parameter filtering. Selection persists in localStorage.
-- Client/event separation with brand packs
-- Timeline scheduling with programme blocks
-- Live override mode for temporary takeovers
-- Player health monitoring and fallback behavior
-- Player Simulator for testing content layouts before deployment
-- **Raspberry Pi Player**: Standalone player page at `/player` that renders content fullscreen in kiosk mode, with 7-second auto-refresh polling (change detection), programme/schedule-aware content resolution, live override support, and offline fallback screens
-- **Secure device pairing**: Player pages are locked behind device-specific tokens. On first visit, displays show a pairing code input screen. After successful pairing, a secure 64-character hex token is generated and stored in localStorage. All player API endpoints (`/api/player/*`) require the `x-device-token` header or `?token=` query parameter. Invalid/missing tokens return 401/403. Admin API strips `deviceToken` from screen responses.
-- **Simulator auto-refresh**: Simulator polls for layout/media/override changes every 7 seconds with TanStack Query structural sharing (only re-renders on actual data changes)
-- **Pi setup script**: `pi-player/setup.sh` configures Raspberry Pi for kiosk mode with Chromium, autostart service, and management scripts. Pairing is done through the on-screen interface. Config stored in `~/.vectormesh/`.
+Key capabilities include:
+- Management of over 50 screens with varied sizes and aspect ratios.
+- Support for various media types: images, videos, GIFs, and HTML widgets, with client-specific ownership.
+- Automatic video thumbnail generation and serving.
+- Zone-based layouts featuring tickers, clocks, logos, QR codes, countdown timers, schedules, media players, and media regions.
+- Advanced media player zones with playlist management, transition effects, and playback controls.
+- Customizable QR code zones supporting URL, WiFi, and vCard content.
+- Dynamic countdown timers with extensive customization options.
+- Flexible layout aspect ratio support for diverse display hardware.
+- Room schedule zones with multiple viewing modes.
+- Dynamic player variables for personalized content display.
+- Event-specific color palettes for consistent branding.
+- Integration of signage icons with text labels for directional and informational purposes.
+- Global site context switcher for filtering UI content by client.
+- Secure device pairing for display nodes using unique tokens.
+- Real-time player simulator with auto-refresh for content testing.
+- Raspberry Pi setup script for kiosk mode configuration.
 
 ## User Preferences
 
@@ -36,134 +29,48 @@ Preferred communication style: Simple, everyday language.
 ## System Architecture
 
 ### Frontend Architecture
-- **Framework**: React 18 with TypeScript
-- **Routing**: Wouter (lightweight client-side routing)
-- **State Management**: TanStack React Query for server state
-- **UI Components**: shadcn/ui built on Radix UI primitives
-- **Styling**: Tailwind CSS with CSS variables for theming
-- **Build Tool**: Vite with HMR support
-- **File Uploads**: Uppy with AWS S3-compatible presigned URL uploads
-
-The frontend follows a page-based structure under `client/src/pages/` with shared components in `client/src/components/`. Authentication state is managed via the `useAuth` hook connecting to Replit Auth.
+The frontend is built with React 18 and TypeScript, utilizing Wouter for client-side routing and TanStack React Query for server state management. UI components are developed using shadcn/ui, based on Radix UI primitives, and styled with Tailwind CSS, leveraging CSS variables for theming. Vite serves as the build tool, supporting Hot Module Replacement (HMR). File uploads are handled by Uppy, integrated with AWS S3-compatible presigned URL uploads. The architecture follows a page-based structure for organization, with shared components centralized.
 
 ### Backend Architecture
-- **Runtime**: Node.js with Express
-- **Language**: TypeScript compiled with tsx/esbuild
-- **API Pattern**: RESTful JSON API under `/api/*` routes
-- **Authentication**: Replit Auth with OpenID Connect, session-based with PostgreSQL session store
-- **File Storage**: Google Cloud Storage via Replit Object Storage integration
-
-The server entry point is `server/index.ts`, with routes registered in `server/routes.ts` and business logic in `server/storage.ts`.
+The backend is a Node.js application using Express, written in TypeScript and compiled with tsx/esbuild. It exposes a RESTful JSON API. Authentication is managed via Replit Auth using OpenID Connect and session-based authentication with a PostgreSQL session store. File storage is integrated with Google Cloud Storage via Replit Object Storage. The server's entry point manages routes and business logic.
 
 ### Data Storage
-- **Database**: PostgreSQL via Drizzle ORM
-- **Schema Location**: `shared/schema.ts` (shared between client and server)
-- **Migrations**: Drizzle Kit with `drizzle-kit push` for schema sync
-
-Core entities include: Clients, Events, Brand Packs, Display Profiles, Screen Groups, Screens, Media Assets, Layout Templates, Programmes, Schedule Blocks, Playlists, Live Overrides, and Player Heartbeats.
+PostgreSQL is the chosen database, accessed via Drizzle ORM. The database schema is defined once in `shared/schema.ts` for both client and server use, and migrations are managed with Drizzle Kit. Core entities include Clients, Events, Media Assets, Layouts, Screens, Programmes, and Player Heartbeats.
 
 ### Authentication & Authorization
-- **Custom email/password authentication** (bcryptjs, 12-round hashing)
-- Session storage in PostgreSQL `sessions` table via `connect-pg-simple`
-- Session middleware in `server/auth.ts`, auth API routes in `server/routes.ts`
-- User data stored in `users` table with `passwordHash`, `mustChangePassword`, `isActive` columns
-- `role` column: "admin" | "account_manager" | "site_user"
-- Protected routes use `isAuthenticated` middleware (checks session userId, loads `req.dbUser`)
-- **Auth API endpoints**:
-  - `POST /api/auth/login` — email/password login
-  - `POST /api/auth/logout` — destroy session
-  - `GET /api/auth/user` — current user
-  - `POST /api/auth/change-password` — user changes own password
-  - `POST /api/auth/forgot-password` — sends reset email
-  - `POST /api/auth/reset-password` — reset via token
-  - `GET /api/auth/setup-status` — check if initial setup needed
-  - `POST /api/auth/setup` — first-run admin account creation
-- **Email service** (`server/email.ts`): Nodemailer SMTP with console fallback for dev
-- **Password reset tokens**: `password_reset_tokens` table with 1-hour expiry
-- **Forced password change**: `mustChangePassword` flag redirects to change-password page
-- **Account deactivation**: `isActive` flag prevents login without deleting user
-- **Last login tracking**: `lastLoginAt` column updated on successful login, displayed on admin user cards
-- **RBAC (Role-Based Access Control)**: Three-tier system
-  - **Admin**: Full platform access, can manage all users, create/delete sites, see all data
-  - **Account Manager**: Assigned to one or more sites via `user_sites`. Can create/edit/delete site_users for their assigned sites, configure alerts, view activity logs. Cannot create admins or other account_managers. Cannot create/delete clients (sites).
-  - **Site User**: Scoped to assigned sites only via `user_sites` join table (userId → clientId). Content management only, no user management.
-- Middleware: `requireAdmin` (403 if not admin), `requireAdminOrAccountManager` (allows admin or account_manager), `loadUserContext` (sets `req.dbUser` and `req.allowedClientIds`)
-- Helpers: `isAccountManager(req)`, `canManageUser(req, targetUserId)` — checks target is a site_user within requester's allowed sites
-- Access chain: resources → eventId → event.clientId → user's allowed clientIds
-- Admin user management UI at `/admin/users` (admin and account_manager sidebar item)
-- Activity log UI at `/admin/activity` (admin and account_manager sidebar item)
-- **Admin user management API**:
-  - `GET /api/admin/users` — list all users with sites
-  - `POST /api/admin/users` — create user (sends welcome email)
-  - `PATCH /api/admin/users/:id` — update user details
-  - `POST /api/admin/users/:id/reset-password` — admin resets password
-  - `POST /api/admin/users/:id/force-change-password` — flag must-change
-  - `POST/DELETE /api/admin/users/:id/sites` — manage site assignments
-  - `DELETE /api/admin/users/:id` — delete user
-- **Audit logging**: `audit_logs` table records all mutating actions across the platform
-  - `logAudit(req, action, entityType, entityId?, payload?)` helper in `server/routes.ts` (fire-and-forget, non-blocking)
-  - Covers: auth events, CRUD on clients/events/screens/media/layouts/programmes/playlists/overrides, admin user management
-  - Actions: create, update, delete, login, logout, change_password, reset_password, admin_reset_password, force_change_password, assign_site, remove_site, publish, regenerate_pairing, unpair
-  - Storage methods: `createAuditLog()`, `getAuditLogs(options)`, `getAuditLogStats()`
-  - **Audit log API endpoints** (admin and account_manager):
-    - `GET /api/admin/audit-logs` — paginated list with filters (entityType, action, limit, offset)
-    - `GET /api/admin/stats` — aggregate stats (loginsToday, activeUsersWeek, changesThisWeek, totalLogs, entity counts)
-  - **Activity Log page** (`/admin/activity`): colour-coded action badges, relative timestamps, entity type/action filters, pagination
-  - **Dashboard admin section**: Recent Activity card (last 8 entries), User & Activity Stats card (total users, active this week, logins today, changes this week), and Stats by Site card (per-client screen/event/media/override counts)
-  - **Per-client stats API**: `GET /api/admin/stats/by-client` returns per-site breakdowns (screens online/total, active events, media count, active overrides)
-- **Email alerts**: Configurable screen offline/online alerts, scoped per client (site)
-  - `alert_settings` table: alertType, clientId, enabled, recipients (text array), cooldownMinutes
-  - `alert_history` table: tracks sent alerts for cooldown logic
-  - **Per-site scoping**: Each client/site has its own alert configuration; site users can configure alerts for their assigned sites, admins for all sites
-  - **Alert API endpoints** (authenticated, site-scoped):
-    - `GET /api/alert-settings` — list alert settings (filtered to user's allowed sites)
-    - `PUT /api/alert-settings/:alertType` — create/update alert setting (requires clientId, access-checked)
-    - `POST /api/alert-settings/test` — send a test alert to recipients
-  - **Screen offline alert flow**: 30-second background sweep detects offline screens → resolves screen's client via currentEventId → event → clientId → checks that client's alert_settings → respects cooldown → sends email via `sendScreenOfflineAlert()` to that site's recipients
-  - **Screen back online alert**: When an offline screen sends a heartbeat, `sendScreenOnlineAlert()` notifies the relevant site's recipients and alert history for that screen is cleared (resetting cooldown so future offline events trigger fresh alerts)
-  - **Settings UI**: Alert Settings card in Settings page with site selector (dropdown if multiple sites), toggle, email recipient management (add/remove badges), cooldown configuration, and test alert button
+The system implements custom email/password authentication with bcryptjs for password hashing and PostgreSQL for session storage. It features a robust Role-Based Access Control (RBAC) system with three tiers: Admin, Account Manager, and Site User, each with specific permissions and data visibility. Authentication APIs handle login, logout, user information retrieval, password management, and initial setup. An extensive audit logging system tracks all mutating actions and authentication events, storing them in an `audit_logs` table for accountability and analytics. Email alerts are configurable for screen status changes (offline/online), scoped per client, with recipient management and cooldown mechanisms.
 
 ### Key Design Patterns
-- **Shared Schema**: Types defined once in `shared/` and used by both frontend and backend
-- **Insert Schemas**: Zod schemas generated from Drizzle for validation
-- **API Client**: Centralized fetch wrapper in `client/src/lib/queryClient.ts`
-- **Component Library**: shadcn/ui components in `client/src/components/ui/`
+- **Shared Schema**: Ensures type consistency across frontend and backend.
+- **Insert Schemas**: Zod schemas derived from Drizzle for data validation.
+- **API Client**: Centralized fetch wrapper for API interactions.
+- **Component Library**: Reusable UI components based on shadcn/ui.
 
 ## External Dependencies
 
 ### Database
-- PostgreSQL (required, connection via `DATABASE_URL` environment variable)
-- Drizzle ORM for queries and schema management
+- **PostgreSQL**: Primary database for all application data.
+- **Drizzle ORM**: Used for database interactions and schema management.
 
 ### Authentication
-- Custom email/password authentication via `server/auth.ts`
-- `SESSION_SECRET` environment variable required
-- Session persistence via `connect-pg-simple`
-- Password hashing: bcryptjs (12 rounds)
-- Email sending: Nodemailer via `server/email.ts`
+- **bcryptjs**: For secure password hashing.
+- **Nodemailer**: For sending emails, including password reset and alert notifications.
 
 ### Object Storage
-- Replit Object Storage (Google Cloud Storage compatible)
-- Presigned URL uploads via `/api/uploads/request-url`
-- Sidecar endpoint at `http://127.0.0.1:1106` for credentials
+- **Replit Object Storage**: Google Cloud Storage compatible for media asset storage.
 
 ### Frontend Libraries
-- Radix UI for accessible primitives
-- Uppy for file upload handling
-- date-fns for date manipulation
-- react-day-picker for calendar components
-- embla-carousel for carousels
-- recharts for charts (if needed)
+- **Radix UI**: Provides accessible and unstyled UI primitives.
+- **Uppy**: Robust JavaScript uploader for handling file uploads.
+- **date-fns**: For efficient date manipulation.
+- **react-day-picker**: For calendar and date selection components.
+- **embla-carousel**: For creating flexible and touch-friendly carousels.
 
 ### Required Environment Variables
-- `DATABASE_URL` - PostgreSQL connection string
-- `SESSION_SECRET` - Secret for session encryption
-- `REPL_ID` - Replit environment identifier
+- `DATABASE_URL`: Connection string for PostgreSQL.
+- `SESSION_SECRET`: Secret key for session encryption.
+- `REPL_ID`: Identifier for the Replit environment.
 
 ### Optional Environment Variables (Email)
-- `SMTP_HOST` - SMTP server hostname
-- `SMTP_PORT` - SMTP port (default 587)
-- `SMTP_USER` - SMTP username
-- `SMTP_PASS` - SMTP password
-- `SMTP_FROM` - Sender email address
-- `APP_URL` - Application URL for email links (defaults to Replit dev URL)
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`: SMTP server configuration for email sending.
+- `APP_URL`: Base URL for application links in emails.

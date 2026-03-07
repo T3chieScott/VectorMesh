@@ -23,6 +23,7 @@ import {
   Timer,
   Shapes,
   Calendar,
+  PlayCircle,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
@@ -84,6 +85,7 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   countdown: Timer,
   shape: Shapes,
   schedule: Calendar,
+  media_player: PlayCircle,
 };
 
 function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
@@ -2110,6 +2112,287 @@ function ShapeWidget({
   );
 }
 
+function MediaPlayerWidget({
+  items = [],
+  transition = "fade",
+  transitionDuration = 800,
+  loop = true,
+  fitMode = "contain",
+  autoPlay = true,
+  muted = true,
+  shuffle = false,
+  providedMedia,
+  mediaBaseUrl,
+  deviceToken,
+}: {
+  items?: Array<{ id: string; mediaAssetId: string; duration?: number }>;
+  transition?: "fade" | "slide-left" | "slide-right" | "none";
+  transitionDuration?: number;
+  loop?: boolean;
+  fitMode?: "contain" | "cover";
+  autoPlay?: boolean;
+  muted?: boolean;
+  shuffle?: boolean;
+  providedMedia?: MediaAsset[];
+  mediaBaseUrl?: string;
+  deviceToken?: string;
+}) {
+  const hasProvidedMedia = providedMedia && providedMedia.length > 0;
+  const { data: fetchedMedia = [], isLoading: isMediaLoading } = useQuery<MediaAsset[]>({
+    queryKey: ["/api/media"],
+    enabled: !hasProvidedMedia,
+  });
+  const allMedia = hasProvidedMedia ? providedMedia : fetchedMedia;
+
+  const baseUrl = mediaBaseUrl || "/api/media";
+  const getUrl = useCallback((mediaAssetId: string) => {
+    if (!mediaAssetId) return "";
+    const url = `${baseUrl}/${mediaAssetId}/file`;
+    return deviceToken ? `${url}?token=${deviceToken}` : url;
+  }, [baseUrl, deviceToken]);
+
+  const getMediaType = useCallback((mediaAssetId: string): "image" | "video" | "gif" => {
+    const asset = allMedia.find(m => m.id === mediaAssetId);
+    return asset?.mediaType || "image";
+  }, [allMedia]);
+
+  const playOrder = useRef<Array<{ id: string; mediaAssetId: string; duration?: number }>>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [layerA, setLayerA] = useState<string>("");
+  const [layerB, setLayerB] = useState<string>("");
+  const [layerAType, setLayerAType] = useState<"image" | "video" | "gif">("image");
+  const [layerBType, setLayerBType] = useState<"image" | "video" | "gif">("image");
+  const [activeLayer, setActiveLayer] = useState<"a" | "b">("a");
+  const [crossfading, setCrossfading] = useState(false);
+  const [stopped, setStopped] = useState(false);
+  const currentIndexRef = useRef(0);
+  const activeLayerRef = useRef<"a" | "b">("a");
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
+  const itemsKey = JSON.stringify(items);
+  useEffect(() => {
+    const parsed = JSON.parse(itemsKey) as typeof items;
+    const order = shuffle && parsed.length > 0
+      ? [...parsed].sort(() => Math.random() - 0.5)
+      : [...parsed];
+    playOrder.current = order;
+    currentIndexRef.current = 0;
+    setCurrentIndex(0);
+    setStopped(false);
+    if (order.length > 0) {
+      setLayerA(order[0].mediaAssetId);
+      setLayerAType(getMediaType(order[0].mediaAssetId));
+      if (order.length > 1) {
+        setLayerB(order[1].mediaAssetId);
+        setLayerBType(getMediaType(order[1].mediaAssetId));
+      } else {
+        setLayerB(order[0].mediaAssetId);
+        setLayerBType(getMediaType(order[0].mediaAssetId));
+      }
+      setActiveLayer("a");
+      activeLayerRef.current = "a";
+      setCrossfading(false);
+    }
+  }, [itemsKey, shuffle, getMediaType]);
+
+  const advanceToNext = useCallback(() => {
+    if (!isMountedRef.current) return;
+    const order = playOrder.current;
+    if (order.length <= 1) return;
+
+    const nextIdx = (currentIndexRef.current + 1) % order.length;
+
+    if (nextIdx === 0 && !loop) {
+      setStopped(true);
+      return;
+    }
+
+    const current = activeLayerRef.current;
+    const next = current === "a" ? "b" : "a";
+
+    if (next === "a") {
+      setLayerA(order[nextIdx].mediaAssetId);
+      setLayerAType(getMediaType(order[nextIdx].mediaAssetId));
+    } else {
+      setLayerB(order[nextIdx].mediaAssetId);
+      setLayerBType(getMediaType(order[nextIdx].mediaAssetId));
+    }
+
+    if (transition === "none") {
+      currentIndexRef.current = nextIdx;
+      setCurrentIndex(nextIdx);
+      setActiveLayer(next);
+      activeLayerRef.current = next;
+      return;
+    }
+
+    setCrossfading(true);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!isMountedRef.current) return;
+        setActiveLayer(next);
+        activeLayerRef.current = next;
+
+        transitionTimerRef.current = setTimeout(() => {
+          if (!isMountedRef.current) return;
+          currentIndexRef.current = nextIdx;
+          setCurrentIndex(nextIdx);
+          setCrossfading(false);
+        }, transitionDuration + 50);
+      });
+    });
+  }, [loop, transition, transitionDuration, getMediaType]);
+
+  useEffect(() => {
+    if (!autoPlay || stopped) return;
+    const order = playOrder.current;
+    if (order.length === 0) return;
+
+    const currentItem = order[currentIndexRef.current];
+    if (!currentItem) return;
+
+    const mediaType = getMediaType(currentItem.mediaAssetId);
+    const isVideo = mediaType === "video";
+
+    if (isVideo) return;
+
+    const displayDuration = (currentItem.duration || 10) * 1000;
+    timerRef.current = setTimeout(() => {
+      advanceToNext();
+    }, displayDuration);
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
+    };
+  }, [autoPlay, stopped, currentIndex, advanceToNext, getMediaType]);
+
+  const handleVideoEnded = useCallback(() => {
+    if (!autoPlay || stopped) return;
+    advanceToNext();
+  }, [autoPlay, stopped, advanceToNext]);
+
+  if (items.length === 0) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-muted/30">
+        <div className="text-center">
+          <PlayCircle className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">No media in playlist</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isMediaLoading) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-muted/30">
+        <div className="text-center">
+          <PlayCircle className="h-8 w-8 mx-auto mb-2 text-muted-foreground animate-pulse" />
+          <p className="text-sm text-muted-foreground">Loading media...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const urlA = getUrl(layerA);
+  const urlB = getUrl(layerB);
+
+  if (!urlA && !urlB) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-muted/30">
+        <div className="text-center">
+          <PlayCircle className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">Media not found</p>
+        </div>
+      </div>
+    );
+  }
+
+  const aIsActive = activeLayer === "a";
+
+  const getLayerStyle = (isActive: boolean): React.CSSProperties => {
+    const base: React.CSSProperties = {
+      position: "absolute",
+      inset: 0,
+      zIndex: isActive ? 2 : 1,
+      transition: crossfading ? `opacity ${transitionDuration}ms ease-in-out, transform ${transitionDuration}ms ease-in-out` : "none",
+      opacity: isActive ? 1 : 0,
+    };
+
+    if (transition === "none" || transition === "fade") {
+      return base;
+    }
+
+    if (!isActive && !crossfading) {
+      return { ...base, opacity: 0 };
+    }
+
+    const slideOffset = "100%";
+    const slideTransforms: Record<string, string> = {
+      "slide-left": `translateX(${slideOffset})`,
+      "slide-right": `translateX(-${slideOffset})`,
+    };
+
+    if (slideTransforms[transition]) {
+      return {
+        ...base,
+        transform: isActive ? "translate(0)" : slideTransforms[transition],
+        opacity: isActive ? 1 : 0,
+      };
+    }
+
+    return base;
+  };
+
+  const renderLayer = (mediaAssetId: string, mediaType: "image" | "video" | "gif", isActive: boolean) => {
+    const url = getUrl(mediaAssetId);
+    if (!url) return null;
+
+    if (mediaType === "video") {
+      return (
+        <video
+          key={`${mediaAssetId}-${isActive ? "active" : "inactive"}`}
+          src={url}
+          className="h-full w-full"
+          style={{ objectFit: fitMode, border: "none" }}
+          autoPlay={isActive && autoPlay}
+          muted={muted}
+          playsInline
+          onEnded={isActive ? handleVideoEnded : undefined}
+        />
+      );
+    }
+
+    return (
+      <img
+        key={mediaAssetId}
+        src={url}
+        alt=""
+        className="h-full w-full"
+        style={{ objectFit: fitMode, border: "none" }}
+      />
+    );
+  };
+
+  return (
+    <div className="h-full w-full relative overflow-hidden" data-testid="media-player-widget" data-player-index={currentIndex} data-player-active={activeLayer}>
+      <div style={getLayerStyle(aIsActive)}>
+        {renderLayer(layerA, layerAType, aIsActive)}
+      </div>
+      <div style={getLayerStyle(!aIsActive)}>
+        {renderLayer(layerB, layerBType, !aIsActive)}
+      </div>
+    </div>
+  );
+}
+
 export interface ZoneRendererProps {
   zone: LayoutZone;
   media?: MediaAsset[];
@@ -2311,6 +2594,22 @@ export function ZoneRenderer({
             iconTextPosition={zone.shapeIconTextPosition}
             iconTextSize={zone.shapeIconTextSize}
             iconTextColor={zone.shapeIconTextColor}
+          />
+        );
+      case "media_player":
+        return (
+          <MediaPlayerWidget
+            items={zone.mediaPlayerItems}
+            transition={zone.mediaPlayerTransition}
+            transitionDuration={zone.mediaPlayerTransitionDuration}
+            loop={zone.mediaPlayerLoop}
+            fitMode={zone.mediaPlayerFitMode}
+            autoPlay={zone.mediaPlayerAutoPlay}
+            muted={zone.mediaPlayerMuted}
+            shuffle={zone.mediaPlayerShuffle}
+            providedMedia={media}
+            mediaBaseUrl={mediaBaseUrl}
+            deviceToken={deviceToken}
           />
         );
       default:

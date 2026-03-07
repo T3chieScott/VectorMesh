@@ -358,6 +358,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   countdown: Timer,
   shape: Shapes,
   schedule: Calendar,
+  media_player: Monitor,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -375,11 +376,12 @@ const zoneTypeLabels: Record<string, string> = {
   countdown: "Countdown Timer",
   shape: "Shape (lines/circles/etc.)",
   schedule: "Room Schedule",
+  media_player: "Media Player (playlist)",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(1).max(100),
@@ -519,6 +521,18 @@ const zoneFormSchema = z.object({
   shapeIconTextPosition: z.enum(["left", "right", "top", "bottom", "center"]).optional(),
   shapeIconTextSize: z.number().min(8).max(200).optional(),
   shapeIconTextColor: z.string().optional(),
+  mediaPlayerItems: z.array(z.object({
+    id: z.string(),
+    mediaAssetId: z.string(),
+    duration: z.number().optional(),
+  })).optional(),
+  mediaPlayerTransition: z.enum(["fade", "slide-left", "slide-right", "none"]).optional(),
+  mediaPlayerTransitionDuration: z.number().min(100).max(3000).optional(),
+  mediaPlayerLoop: z.boolean().optional(),
+  mediaPlayerFitMode: z.enum(["contain", "cover"]).optional(),
+  mediaPlayerAutoPlay: z.boolean().optional(),
+  mediaPlayerMuted: z.boolean().optional(),
+  mediaPlayerShuffle: z.boolean().optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
     id: z.string(),
@@ -720,6 +734,203 @@ function MontageMediaPicker({
           })}
         </div>
       </ScrollArea>
+    </div>
+  );
+}
+
+function MediaPlayerItemsPicker({
+  items,
+  onItemsChange,
+}: {
+  items: Array<{ id: string; mediaAssetId: string; duration?: number }>;
+  onItemsChange: (items: Array<{ id: string; mediaAssetId: string; duration?: number }>) => void;
+}) {
+  const mediaQuery = useSiteFilteredQuery<MediaAsset[]>("/api/media");
+  const { data: mediaAssets, isLoading } = useQuery<MediaAsset[]>({
+    ...mediaQuery,
+  });
+
+  const allAssets = mediaAssets || [];
+  const [showLibrary, setShowLibrary] = useState(false);
+
+  const getAsset = (mediaAssetId: string) => allAssets.find((a) => a.id === mediaAssetId);
+
+  const addItem = (assetId: string) => {
+    const newItem = {
+      id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      mediaAssetId: assetId,
+      duration: 10,
+    };
+    onItemsChange([...items, newItem]);
+  };
+
+  const removeItem = (itemId: string) => {
+    onItemsChange(items.filter((i) => i.id !== itemId));
+  };
+
+  const moveUp = (index: number) => {
+    if (index <= 0) return;
+    const newItems = [...items];
+    [newItems[index - 1], newItems[index]] = [newItems[index], newItems[index - 1]];
+    onItemsChange(newItems);
+  };
+
+  const moveDown = (index: number) => {
+    if (index >= items.length - 1) return;
+    const newItems = [...items];
+    [newItems[index], newItems[index + 1]] = [newItems[index + 1], newItems[index]];
+    onItemsChange(newItems);
+  };
+
+  const updateDuration = (itemId: string, duration: number) => {
+    onItemsChange(items.map((i) => (i.id === itemId ? { ...i, duration } : i)));
+  };
+
+  if (isLoading) {
+    return <div className="text-sm text-muted-foreground">Loading media...</div>;
+  }
+
+  if (allAssets.length === 0) {
+    return (
+      <div className="p-4 border border-dashed rounded-lg text-center text-muted-foreground">
+        <Monitor className="h-8 w-8 mx-auto mb-2 opacity-50" />
+        <p className="text-sm">No media in library</p>
+        <p className="text-xs mt-1">Upload images or videos first</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {items.length > 0 && (
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">Playlist ({items.length} items)</Label>
+          <div className="space-y-1">
+            {items.map((item, index) => {
+              const asset = getAsset(item.mediaAssetId);
+              const isVideo = asset?.mediaType === "video";
+              return (
+                <div
+                  key={item.id}
+                  className="flex items-center gap-2 p-2 border rounded-md bg-muted/30"
+                  data-testid={`media-player-item-${index}`}
+                >
+                  <span className="text-xs text-muted-foreground font-medium w-5 text-center">{index + 1}</span>
+                  <div className="w-10 h-10 rounded-md overflow-hidden border flex-shrink-0">
+                    {asset ? (
+                      <img
+                        src={`/api/media/${asset.id}/file`}
+                        alt={asset.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-muted flex items-center justify-center">
+                        <AlertTriangle className="h-3 w-3 text-muted-foreground" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm truncate">{asset?.name || "Unknown"}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {isVideo ? "Video" : asset?.mediaType === "gif" ? "GIF" : "Image"}
+                    </p>
+                  </div>
+                  {isVideo ? (
+                    <Badge variant="secondary" className="text-xs flex-shrink-0">Plays to end</Badge>
+                  ) : (
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={120}
+                        value={item.duration || 10}
+                        onChange={(e) => updateDuration(item.id, parseInt(e.target.value) || 10)}
+                        className="w-16 text-center"
+                        data-testid={`input-media-player-duration-${index}`}
+                      />
+                      <span className="text-xs text-muted-foreground">s</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => moveUp(index)}
+                      disabled={index === 0}
+                      data-testid={`button-media-player-move-up-${index}`}
+                    >
+                      <ChevronUp className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => moveDown(index)}
+                      disabled={index === items.length - 1}
+                      data-testid={`button-media-player-move-down-${index}`}
+                    >
+                      <ChevronDown className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeItem(item.id)}
+                      data-testid={`button-media-player-remove-${index}`}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => setShowLibrary(!showLibrary)}
+        data-testid="button-add-media-player-item"
+      >
+        <Plus className="h-3 w-3 mr-1" /> Add Media
+      </Button>
+
+      {showLibrary && (
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">Media Library</Label>
+          <ScrollArea className="h-40 border rounded-md p-2">
+            <div className="grid grid-cols-4 gap-2">
+              {allAssets.map((asset) => {
+                const isVideo = asset.mediaType === "video";
+                return (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    onClick={() => addItem(asset.id)}
+                    className="relative aspect-square rounded-md overflow-hidden border-2 border-transparent hover:border-muted-foreground/50 transition-all"
+                    data-testid={`media-player-library-${asset.id}`}
+                  >
+                    <img
+                      src={`/api/media/${asset.id}/file`}
+                      alt={asset.name}
+                      className="w-full h-full object-cover"
+                    />
+                    {isVideo && (
+                      <div className="absolute bottom-1 right-1">
+                        <Badge variant="secondary" className="text-[9px] px-1 py-0">VID</Badge>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </ScrollArea>
+        </div>
+      )}
     </div>
   );
 }
@@ -962,6 +1173,14 @@ function ZoneEditorDialog({
       shapeIconTextPosition: "right",
       shapeIconTextSize: 14,
       shapeIconTextColor: "",
+      mediaPlayerItems: [],
+      mediaPlayerTransition: "fade",
+      mediaPlayerTransitionDuration: 800,
+      mediaPlayerLoop: true,
+      mediaPlayerFitMode: "contain",
+      mediaPlayerAutoPlay: true,
+      mediaPlayerMuted: true,
+      mediaPlayerShuffle: false,
       scheduleViewMode: "hourly",
       scheduleEntries: [],
       scheduleShowCurrentTime: true,
@@ -1108,6 +1327,14 @@ function ZoneEditorDialog({
           shapeIconTextPosition: zone.shapeIconTextPosition || "right",
           shapeIconTextSize: zone.shapeIconTextSize ?? 14,
           shapeIconTextColor: zone.shapeIconTextColor || "",
+          mediaPlayerItems: zone.mediaPlayerItems || [],
+          mediaPlayerTransition: zone.mediaPlayerTransition || "fade",
+          mediaPlayerTransitionDuration: zone.mediaPlayerTransitionDuration ?? 800,
+          mediaPlayerLoop: zone.mediaPlayerLoop ?? true,
+          mediaPlayerFitMode: zone.mediaPlayerFitMode || "contain",
+          mediaPlayerAutoPlay: zone.mediaPlayerAutoPlay ?? true,
+          mediaPlayerMuted: zone.mediaPlayerMuted ?? true,
+          mediaPlayerShuffle: zone.mediaPlayerShuffle ?? false,
           scheduleViewMode: zone.scheduleViewMode || "hourly",
           scheduleEntries: zone.scheduleEntries || [],
           scheduleShowCurrentTime: zone.scheduleShowCurrentTime ?? true,
@@ -1245,6 +1472,14 @@ function ZoneEditorDialog({
           shapeIconTextPosition: "right",
           shapeIconTextSize: 14,
           shapeIconTextColor: "",
+          mediaPlayerItems: [],
+          mediaPlayerTransition: "fade",
+          mediaPlayerTransitionDuration: 800,
+          mediaPlayerLoop: true,
+          mediaPlayerFitMode: "contain",
+          mediaPlayerAutoPlay: true,
+          mediaPlayerMuted: true,
+          mediaPlayerShuffle: false,
           scheduleViewMode: "hourly",
           scheduleEntries: [],
           scheduleShowCurrentTime: true,
@@ -4788,6 +5023,194 @@ function ZoneEditorDialog({
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {form.watch("type") === "media_player" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg" data-testid="media-player-config-section">
+                <h4 className="font-medium flex items-center gap-2">
+                  <Monitor className="h-4 w-4" />
+                  Media Player Configuration
+                </h4>
+
+                <FormField
+                  control={form.control}
+                  name="mediaPlayerItems"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Playlist Items</FormLabel>
+                      <FormControl>
+                        <MediaPlayerItemsPicker
+                          items={field.value || []}
+                          onItemsChange={field.onChange}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Add images and videos to build a playlist. Images use per-item duration, videos play to completion.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="mediaPlayerTransition"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Transition</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          value={field.value || "fade"}
+                        >
+                          <FormControl>
+                            <SelectTrigger data-testid="select-media-player-transition">
+                              <SelectValue placeholder="Select transition" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="fade">Fade</SelectItem>
+                            <SelectItem value="slide-left">Slide Left</SelectItem>
+                            <SelectItem value="slide-right">Slide Right</SelectItem>
+                            <SelectItem value="none">None (instant)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="mediaPlayerTransitionDuration"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Transition Duration (ms)</FormLabel>
+                        <FormControl>
+                          <div className="space-y-2">
+                            <Slider
+                              value={[field.value || 800]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={100}
+                              max={3000}
+                              step={100}
+                              data-testid="slider-media-player-transition-duration"
+                            />
+                            <span className="text-sm text-muted-foreground">{field.value || 800}ms</span>
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name="mediaPlayerFitMode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Media Fit Mode</FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value || "contain"}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-media-player-fit-mode">
+                            <SelectValue placeholder="Select fit mode" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="contain">Fit (show entire media)</SelectItem>
+                          <SelectItem value="cover">Fill (crop to fit)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        Contain shows full media, Cover fills the zone (may crop)
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="flex flex-wrap gap-4">
+                  <FormField
+                    control={form.control}
+                    name="mediaPlayerLoop"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2">
+                        <FormControl>
+                          <input
+                            type="checkbox"
+                            checked={field.value ?? true}
+                            onChange={field.onChange}
+                            className="h-4 w-4 rounded border-gray-300"
+                            data-testid="checkbox-media-player-loop"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Loop playlist</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="mediaPlayerAutoPlay"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2">
+                        <FormControl>
+                          <input
+                            type="checkbox"
+                            checked={field.value ?? true}
+                            onChange={field.onChange}
+                            className="h-4 w-4 rounded border-gray-300"
+                            data-testid="checkbox-media-player-autoplay"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Auto-play</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="mediaPlayerMuted"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2">
+                        <FormControl>
+                          <input
+                            type="checkbox"
+                            checked={field.value ?? true}
+                            onChange={field.onChange}
+                            className="h-4 w-4 rounded border-gray-300"
+                            data-testid="checkbox-media-player-muted"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Mute videos</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="mediaPlayerShuffle"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2">
+                        <FormControl>
+                          <input
+                            type="checkbox"
+                            checked={field.value ?? false}
+                            onChange={field.onChange}
+                            className="h-4 w-4 rounded border-gray-300"
+                            data-testid="checkbox-media-player-shuffle"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Shuffle order</FormLabel>
+                      </FormItem>
+                    )}
+                  />
                 </div>
               </div>
             )}
