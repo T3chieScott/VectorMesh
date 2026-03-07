@@ -114,6 +114,7 @@ Core entities include: Clients, Events, Brand Packs, Display Profiles, Screen Gr
     - `PUT /api/admin/alert-settings/:alertType` — create/update alert setting
     - `POST /api/admin/alert-settings/test` — send a test alert to recipients
   - **Screen offline alert flow**: 30-second background sweep detects offline screens → checks alert_settings → respects cooldown → sends email via `sendScreenOfflineAlert()` to all recipients
+  - **Screen back online alert**: When an offline screen sends a heartbeat, `sendScreenOnlineAlert()` notifies recipients and alert history for that screen is cleared (resetting cooldown so future offline events trigger fresh alerts)
   - **Settings UI**: Alert Settings card in Settings page with toggle, email recipient management (add/remove badges), cooldown configuration, and test alert button
 
 ### Key Design Patterns

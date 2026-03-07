@@ -196,6 +196,7 @@ export interface IStorage {
   upsertAlertSetting(alertType: string, data: { enabled: boolean; recipients: string[]; cooldownMinutes: number }): Promise<AlertSetting>;
   createAlertHistoryEntry(data: { alertType: string; entityId: string; recipients: string[]; payload?: any }): Promise<AlertHistory>;
   getRecentAlertHistory(alertType: string, entityId: string, withinMinutes: number): Promise<AlertHistory[]>;
+  deleteAlertHistory(alertType: string, entityId: string): Promise<void>;
 
   // Per-client stats
   getStatsByClient(): Promise<{ clientId: string; clientName: string; screensOnline: number; screensTotal: number; activeEvents: number; mediaCount: number; activeOverrides: number }[]>;
@@ -836,6 +837,15 @@ export class DatabaseStorage implements IStorage {
         eq(alertHistory.alertType, alertType),
         eq(alertHistory.entityId, entityId),
         gte(alertHistory.sentAt, cutoff)
+      )
+    );
+  }
+
+  async deleteAlertHistory(alertType: string, entityId: string): Promise<void> {
+    await db.delete(alertHistory).where(
+      and(
+        eq(alertHistory.alertType, alertType),
+        eq(alertHistory.entityId, entityId)
       )
     );
   }

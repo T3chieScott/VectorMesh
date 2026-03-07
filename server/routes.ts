@@ -9,7 +9,7 @@ import { getSignedUploadUrl, getPublicUrl, objectStorageService } from "./object
 import { setupAuth, isAuthenticated } from "./auth";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { find as findTimezone } from "geo-tz";
-import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendTestAlert } from "./email";
+import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert } from "./email";
 
 const requireAuth = isAuthenticated;
 
@@ -1348,7 +1348,31 @@ export async function registerRoutes(
     try {
       const data = insertPlayerHeartbeatSchema.parse(req.body);
       await storage.createPlayerHeartbeat(data);
+
+      const screen = await storage.getScreen(data.screenId);
+      const wasOffline = screen && !screen.isOnline;
+
       await storage.updateScreen(data.screenId, { isOnline: true, lastSeen: new Date() });
+
+      if (wasOffline && screen) {
+        storage.deleteAlertHistory("screen_offline", screen.id).catch((err) =>
+          console.error("Failed to clear alert history:", err)
+        );
+        try {
+          const alertSetting = await storage.getAlertSetting("screen_offline");
+          if (alertSetting?.enabled && alertSetting.recipients.length > 0) {
+            sendScreenOnlineAlert(
+              alertSetting.recipients,
+              screen.name,
+              screen.location,
+              screen.lastSeen ? new Date(screen.lastSeen) : null
+            ).catch((err) => console.error("Failed to send screen online alert:", err));
+          }
+        } catch (alertErr) {
+          console.error("Failed to process screen online alert:", alertErr);
+        }
+      }
+
       res.json({ success: true });
     } catch (error) {
       if (error instanceof z.ZodError) {
