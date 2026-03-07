@@ -2,21 +2,32 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useSiteContext } from "@/hooks/use-site-context";
+import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -36,8 +47,10 @@ import {
   Clock,
   Maximize,
   Minimize2,
+  Share2,
+  Building2,
 } from "lucide-react";
-import type { MediaAsset } from "@shared/schema";
+import type { MediaAsset, MediaShare, Client } from "@shared/schema";
 
 function formatFileSize(bytes: number | null | undefined): string {
   if (!bytes) return "Unknown";
@@ -57,15 +70,178 @@ function getMediaUrl(asset: MediaAsset): string {
   return `/api/media/${asset.id}/file`;
 }
 
+function ShareDialog({
+  asset,
+  clients,
+  open,
+  onOpenChange,
+}: {
+  asset: MediaAsset;
+  clients: Client[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const { data: shares = [] } = useQuery<MediaShare[]>({
+    queryKey: ["/api/media", asset.id, "shares"],
+    queryFn: async () => {
+      const res = await fetch(`/api/media/${asset.id}/shares`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch shares");
+      return res.json();
+    },
+    enabled: open,
+  });
+
+  const sharedClientIds = new Set(shares.map(s => s.clientId));
+  const otherClients = clients.filter(c => c.id !== asset.clientId);
+
+  const shareMutation = useMutation({
+    mutationFn: (clientId: string) =>
+      apiRequest("POST", `/api/media/${asset.id}/share`, { clientId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/media", asset.id, "shares"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/media"] });
+      toast({ title: "Media shared successfully" });
+    },
+    onError: () => {
+      toast({ title: "Failed to share media", variant: "destructive" });
+    },
+  });
+
+  const unshareMutation = useMutation({
+    mutationFn: (clientId: string) =>
+      apiRequest("DELETE", `/api/media/${asset.id}/share/${clientId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/media", asset.id, "shares"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/media"] });
+      toast({ title: "Share removed" });
+    },
+    onError: () => {
+      toast({ title: "Failed to remove share", variant: "destructive" });
+    },
+  });
+
+  const handleToggle = (clientId: string, isShared: boolean) => {
+    if (isShared) {
+      unshareMutation.mutate(clientId);
+    } else {
+      shareMutation.mutate(clientId);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Share to Sites</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Select which sites should have access to "{asset.name}"
+        </p>
+        {otherClients.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-4">No other sites available to share with.</p>
+        ) : (
+          <div className="space-y-3 py-2">
+            {otherClients.map(client => {
+              const isShared = sharedClientIds.has(client.id);
+              return (
+                <label
+                  key={client.id}
+                  className="flex items-center gap-3 p-2 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors"
+                  data-testid={`share-toggle-${client.id}`}
+                >
+                  <Checkbox
+                    checked={isShared}
+                    onCheckedChange={() => handleToggle(client.id, isShared)}
+                  />
+                  <div className="flex items-center gap-2">
+                    <Building2 className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">{client.name}</span>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-close-share">
+            Done
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SitePickerDialog({
+  clients,
+  open,
+  onOpenChange,
+  onSelect,
+}: {
+  clients: Client[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSelect: (clientId: string) => void;
+}) {
+  const [selected, setSelected] = useState<string>("");
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Select Site for Upload</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Choose which site this media should belong to.
+        </p>
+        <Select value={selected} onValueChange={setSelected}>
+          <SelectTrigger data-testid="select-upload-site">
+            <SelectValue placeholder="Select a site..." />
+          </SelectTrigger>
+          <SelectContent>
+            {clients.map(c => (
+              <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button
+            disabled={!selected}
+            onClick={() => {
+              onSelect(selected);
+              onOpenChange(false);
+            }}
+            data-testid="button-confirm-upload-site"
+          >
+            Continue Upload
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function MediaCard({
   asset,
   viewMode,
+  clients,
+  isAdmin,
+  selectedClientId,
 }: {
   asset: MediaAsset;
   viewMode: "grid" | "list";
+  clients: Client[];
+  isAdmin: boolean;
+  selectedClientId: string | null;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const { toast } = useToast();
+
+  const ownerClient = clients.find(c => c.id === asset.clientId);
+  const isSharedAsset = selectedClientId && asset.clientId !== selectedClientId;
 
   const deleteMutation = useMutation({
     mutationFn: () => apiRequest("DELETE", `/api/media/${asset.id}`),
@@ -114,6 +290,81 @@ function MediaCard({
     }
   };
 
+  const dropdownItems = (
+    <>
+      <DropdownMenuItem asChild>
+        <a href={getMediaUrl(asset)} download={asset.name}>
+          <Download className="mr-2 h-4 w-4" />
+          Download
+        </a>
+      </DropdownMenuItem>
+      {!isSharedAsset && (
+        <DropdownMenuItem
+          onSelect={() => toggleDisplayModeMutation.mutate()}
+          data-testid={`button-toggle-display-${asset.id}`}
+        >
+          {asset.displayMode === "cover" ? (
+            <>
+              <Minimize2 className="mr-2 h-4 w-4" />
+              Switch to Fit
+            </>
+          ) : (
+            <>
+              <Maximize className="mr-2 h-4 w-4" />
+              Switch to Fill
+            </>
+          )}
+        </DropdownMenuItem>
+      )}
+      {isAdmin && !isSharedAsset && (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => setShareOpen(true)} data-testid={`button-share-media-${asset.id}`}>
+            <Share2 className="mr-2 h-4 w-4" />
+            Share to Sites
+          </DropdownMenuItem>
+        </>
+      )}
+      {!isSharedAsset && (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="text-destructive focus:text-destructive"
+            onSelect={() => deleteMutation.mutate()}
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            Delete
+          </DropdownMenuItem>
+        </>
+      )}
+    </>
+  );
+
+  const previewDialog = (
+    <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+      <DialogContent className="max-w-4xl">
+        <DialogHeader>
+          <DialogTitle>{asset.name}</DialogTitle>
+        </DialogHeader>
+        <div className="flex items-center justify-center bg-muted/50 rounded-lg p-4">
+          {asset.mediaType === "video" ? (
+            <video
+              src={getMediaUrl(asset)}
+              controls
+              className="max-h-[60vh] rounded-lg"
+            />
+          ) : (
+            <img
+              src={getMediaUrl(asset)}
+              alt={asset.name}
+              className="max-h-[60vh] rounded-lg object-contain"
+            />
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+
   if (viewMode === "list") {
     return (
       <>
@@ -133,9 +384,23 @@ function MediaCard({
               )}
             </div>
             <div>
-              <p className="font-medium" data-testid={`text-media-name-${asset.id}`}>{asset.name}</p>
+              <div className="flex items-center gap-2">
+                <p className="font-medium" data-testid={`text-media-name-${asset.id}`}>{asset.name}</p>
+                {isSharedAsset && (
+                  <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-600 border-amber-200">
+                    <Share2 className="h-3 w-3 mr-1" />
+                    Shared
+                  </Badge>
+                )}
+              </div>
               <div className="flex items-center gap-3 text-sm text-muted-foreground">
                 <span>{formatFileSize(asset.fileSize)}</span>
+                {ownerClient && (
+                  <span className="flex items-center gap-1">
+                    <Building2 className="h-3 w-3" />
+                    {ownerClient.name}
+                  </span>
+                )}
                 {asset.width && asset.height && (
                   <span>
                     {asset.width}x{asset.height}
@@ -172,62 +437,13 @@ function MediaCard({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem asChild>
-                  <a href={getMediaUrl(asset)} download={asset.name}>
-                    <Download className="mr-2 h-4 w-4" />
-                    Download
-                  </a>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onSelect={() => toggleDisplayModeMutation.mutate()}
-                  data-testid={`button-toggle-display-${asset.id}`}
-                >
-                  {asset.displayMode === "cover" ? (
-                    <>
-                      <Minimize2 className="mr-2 h-4 w-4" />
-                      Switch to Fit
-                    </>
-                  ) : (
-                    <>
-                      <Maximize className="mr-2 h-4 w-4" />
-                      Switch to Fill
-                    </>
-                  )}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="text-destructive focus:text-destructive"
-                  onSelect={() => deleteMutation.mutate()}
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Delete
-                </DropdownMenuItem>
+                {dropdownItems}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </div>
-
-        <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-          <DialogContent className="max-w-4xl">
-            <DialogHeader>
-              <DialogTitle>{asset.name}</DialogTitle>
-            </DialogHeader>
-            <div className="flex items-center justify-center bg-muted/50 rounded-lg p-4">
-              {asset.mediaType === "video" ? (
-                <video
-                  src={getMediaUrl(asset)}
-                  controls
-                  className="max-h-[60vh] rounded-lg"
-                />
-              ) : (
-                <img
-                  src={getMediaUrl(asset)}
-                  alt={asset.name}
-                  className="max-h-[60vh] rounded-lg object-contain"
-                />
-              )}
-            </div>
-          </DialogContent>
-        </Dialog>
+        {previewDialog}
+        {isAdmin && <ShareDialog asset={asset} clients={clients} open={shareOpen} onOpenChange={setShareOpen} />}
       </>
     );
   }
@@ -255,6 +471,15 @@ function MediaCard({
               {formatDuration(asset.duration)}
             </Badge>
           )}
+          {isSharedAsset && (
+            <Badge
+              variant="secondary"
+              className="absolute top-2 left-2 bg-amber-500/90 text-white text-xs"
+            >
+              <Share2 className="h-3 w-3 mr-1" />
+              Shared
+            </Badge>
+          )}
           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
             <Button
               size="sm"
@@ -272,9 +497,16 @@ function MediaCard({
               <p className="font-medium text-sm truncate" data-testid={`text-media-name-${asset.id}`}>
                 {asset.name}
               </p>
-              <p className="text-xs text-muted-foreground">
-                {formatFileSize(asset.fileSize)}
-              </p>
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <span>{formatFileSize(asset.fileSize)}</span>
+                {ownerClient && !selectedClientId && (
+                  <>
+                    <span className="mx-1">·</span>
+                    <Building2 className="h-3 w-3" />
+                    <span className="truncate">{ownerClient.name}</span>
+                  </>
+                )}
+              </div>
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -283,35 +515,7 @@ function MediaCard({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem asChild>
-                  <a href={getMediaUrl(asset)} download={asset.name}>
-                    <Download className="mr-2 h-4 w-4" />
-                    Download
-                  </a>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onSelect={() => toggleDisplayModeMutation.mutate()}
-                  data-testid={`button-toggle-display-${asset.id}`}
-                >
-                  {asset.displayMode === "cover" ? (
-                    <>
-                      <Minimize2 className="mr-2 h-4 w-4" />
-                      Switch to Fit
-                    </>
-                  ) : (
-                    <>
-                      <Maximize className="mr-2 h-4 w-4" />
-                      Switch to Fill
-                    </>
-                  )}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="text-destructive focus:text-destructive"
-                  onSelect={() => deleteMutation.mutate()}
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Delete
-                </DropdownMenuItem>
+                {dropdownItems}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -320,29 +524,8 @@ function MediaCard({
           </Badge>
         </CardContent>
       </Card>
-
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>{asset.name}</DialogTitle>
-          </DialogHeader>
-          <div className="flex items-center justify-center bg-muted/50 rounded-lg p-4">
-            {asset.mediaType === "video" ? (
-              <video
-                src={getMediaUrl(asset)}
-                controls
-                className="max-h-[60vh] rounded-lg"
-              />
-            ) : (
-              <img
-                src={getMediaUrl(asset)}
-                alt={asset.name}
-                className="max-h-[60vh] rounded-lg object-contain"
-              />
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+      {previewDialog}
+      {isAdmin && <ShareDialog asset={asset} clients={clients} open={shareOpen} onOpenChange={setShareOpen} />}
     </>
   );
 }
@@ -351,8 +534,16 @@ export default function MediaPage() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
+  const [sitePickerOpen, setSitePickerOpen] = useState(false);
+  const [pendingUploadResult, setPendingUploadResult] = useState<any>(null);
   const { toast } = useToast();
   const { selectedClientId, buildQueryString } = useSiteContext();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+
+  const { data: clients = [] } = useQuery<Client[]>({
+    queryKey: ["/api/clients"],
+  });
 
   const { data: media = [], isLoading } = useQuery<MediaAsset[]>({
     queryKey: ["/api/media", selectedClientId],
@@ -373,7 +564,13 @@ export default function MediaPage() {
     return matchesSearch && matchesType;
   });
 
-  const handleUploadComplete = async (result: any) => {
+  const resolveUploadClientId = (): string | null => {
+    if (selectedClientId) return selectedClientId;
+    if (clients.length === 1) return clients[0].id;
+    return null;
+  };
+
+  const saveMediaRecords = async (result: any, clientId: string) => {
     if (result.successful?.length > 0) {
       for (const file of result.successful) {
         const uploadURL = file.response?.body?.uploadURL || file.uploadURL;
@@ -389,6 +586,7 @@ export default function MediaPage() {
                 : "image",
               mimeType: file.type,
               fileSize: file.size,
+              clientId,
             });
           } catch (e) {
             console.error("Failed to save media record:", e);
@@ -397,6 +595,23 @@ export default function MediaPage() {
       }
       queryClient.invalidateQueries({ queryKey: ["/api/media"] });
       toast({ title: "Media uploaded successfully" });
+    }
+  };
+
+  const handleUploadComplete = async (result: any) => {
+    const clientId = resolveUploadClientId();
+    if (clientId) {
+      await saveMediaRecords(result, clientId);
+    } else {
+      setPendingUploadResult(result);
+      setSitePickerOpen(true);
+    }
+  };
+
+  const handleSiteSelected = async (clientId: string) => {
+    if (pendingUploadResult) {
+      await saveMediaRecords(pendingUploadResult, clientId);
+      setPendingUploadResult(null);
     }
   };
 
@@ -420,7 +635,6 @@ export default function MediaPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-media-title">Media Library</h1>
@@ -439,7 +653,6 @@ export default function MediaPage() {
         </ObjectUploader>
       </div>
 
-      {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -508,7 +721,6 @@ export default function MediaPage() {
         </div>
       </div>
 
-      {/* Content */}
       {isLoading ? (
         <div
           className={
@@ -565,10 +777,24 @@ export default function MediaPage() {
           }
         >
           {filteredMedia.map((asset) => (
-            <MediaCard key={asset.id} asset={asset} viewMode={viewMode} />
+            <MediaCard
+              key={asset.id}
+              asset={asset}
+              viewMode={viewMode}
+              clients={clients}
+              isAdmin={isAdmin}
+              selectedClientId={selectedClientId}
+            />
           ))}
         </div>
       )}
+
+      <SitePickerDialog
+        clients={clients}
+        open={sitePickerOpen}
+        onOpenChange={setSitePickerOpen}
+        onSelect={handleSiteSelected}
+      />
     </div>
   );
 }

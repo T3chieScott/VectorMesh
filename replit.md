@@ -6,7 +6,8 @@ VectorMesh is an onsite display management platform for conference and exhibitio
 
 Key capabilities:
 - Manage up to 50+ screens with mixed sizes and aspect ratios
-- Support for images, videos, GIFs, and HTML widgets
+- Support for images, videos, GIFs, and HTML widgets with direct site ownership (`clientId` on `media_assets`)
+- **Media site ownership**: Each media asset belongs to a site (client) via `clientId`. Uploads require a site selection. Admins can share assets to other sites via `media_shares` join table. Shared assets appear in target site's media library with "Shared" badge. Site picker dialog appears if admin is on "All Sites" during upload.
 - Zone-based layouts with tickers, clocks, logos, QR codes, countdown timers, schedules, and media regions
 - **QR code zones**: Support for URL, WiFi, vCard content types with transparent backgrounds and customizable labels (position, size, color)
 - **Countdown timer zones**: Real-time countdown to target date/time with customizable title (with independent size control), completion message, unit visibility (days/hours/minutes/seconds), custom labels, separator styles, leading zeros toggle, number/label colors, size presets (small/medium/large/xlarge), font family (mono/sans/serif/display), unit gap control, timezone selection, and compact mode

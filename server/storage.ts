@@ -9,6 +9,7 @@ import {
   screens,
   screenGroupMemberships,
   mediaAssets,
+  mediaShares,
   layoutTemplates,
   programmes,
   programmeVersions,
@@ -34,6 +35,8 @@ import {
   type InsertScreen,
   type MediaAsset,
   type InsertMediaAsset,
+  type MediaShare,
+  type InsertMediaShare,
   type LayoutTemplate,
   type InsertLayoutTemplate,
   type Programme,
@@ -132,6 +135,12 @@ export interface IStorage {
   createMediaAsset(data: InsertMediaAsset): Promise<MediaAsset>;
   updateMediaAsset(id: string, data: Partial<InsertMediaAsset>): Promise<MediaAsset | undefined>;
   deleteMediaAsset(id: string): Promise<boolean>;
+
+  // Media Shares
+  getMediaSharesForAsset(mediaAssetId: string): Promise<MediaShare[]>;
+  getMediaSharesForClient(clientId: string): Promise<MediaShare[]>;
+  createMediaShare(data: InsertMediaShare): Promise<MediaShare>;
+  deleteMediaShare(mediaAssetId: string, clientId: string): Promise<boolean>;
 
   // Layout Templates
   getLayoutTemplates(): Promise<LayoutTemplate[]>;
@@ -548,6 +557,27 @@ export class DatabaseStorage implements IStorage {
 
   async deleteMediaAsset(id: string): Promise<boolean> {
     const result = await db.delete(mediaAssets).where(eq(mediaAssets.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Media Shares
+  async getMediaSharesForAsset(mediaAssetId: string): Promise<MediaShare[]> {
+    return db.select().from(mediaShares).where(eq(mediaShares.mediaAssetId, mediaAssetId));
+  }
+
+  async getMediaSharesForClient(clientId: string): Promise<MediaShare[]> {
+    return db.select().from(mediaShares).where(eq(mediaShares.clientId, clientId));
+  }
+
+  async createMediaShare(data: InsertMediaShare): Promise<MediaShare> {
+    const [share] = await db.insert(mediaShares).values(data).returning();
+    return share;
+  }
+
+  async deleteMediaShare(mediaAssetId: string, clientId: string): Promise<boolean> {
+    const result = await db.delete(mediaShares).where(
+      and(eq(mediaShares.mediaAssetId, mediaAssetId), eq(mediaShares.clientId, clientId))
+    );
     return (result.rowCount ?? 0) > 0;
   }
 

@@ -172,6 +172,7 @@ export const screenGroupMembershipsRelations = relations(screenGroupMemberships,
 
 export const mediaAssets = pgTable("media_assets", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").references(() => clients.id, { onDelete: "cascade" }),
   eventId: varchar("event_id").references(() => events.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   originalPath: text("original_path").notNull(),
@@ -188,13 +189,33 @@ export const mediaAssets = pgTable("media_assets", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const mediaAssetsRelations = relations(mediaAssets, ({ one }) => ({
+export const mediaAssetsRelations = relations(mediaAssets, ({ one, many }) => ({
+  client: one(clients, { fields: [mediaAssets.clientId], references: [clients.id] }),
   event: one(events, { fields: [mediaAssets.eventId], references: [events.id] }),
+  shares: many(mediaShares),
 }));
 
 export const insertMediaAssetSchema = createInsertSchema(mediaAssets).omit({ id: true, createdAt: true });
 export type InsertMediaAsset = z.infer<typeof insertMediaAssetSchema>;
 export type MediaAsset = typeof mediaAssets.$inferSelect;
+
+// ============ MEDIA SHARES ============
+
+export const mediaShares = pgTable("media_shares", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  mediaAssetId: varchar("media_asset_id").notNull().references(() => mediaAssets.id, { onDelete: "cascade" }),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  sharedAt: timestamp("shared_at").defaultNow(),
+});
+
+export const mediaSharesRelations = relations(mediaShares, ({ one }) => ({
+  mediaAsset: one(mediaAssets, { fields: [mediaShares.mediaAssetId], references: [mediaAssets.id] }),
+  client: one(clients, { fields: [mediaShares.clientId], references: [clients.id] }),
+}));
+
+export const insertMediaShareSchema = createInsertSchema(mediaShares).omit({ id: true, sharedAt: true });
+export type InsertMediaShare = z.infer<typeof insertMediaShareSchema>;
+export type MediaShare = typeof mediaShares.$inferSelect;
 
 // ============ LAYOUT TEMPLATES ============
 

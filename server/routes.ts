@@ -821,19 +821,29 @@ export async function registerRoutes(
     try {
       const assets = await storage.getMediaAssets();
       const allowed = getAllowedClientIds(req);
-      const allEventsForMedia = await storage.getEvents();
-      let filtered = assets;
-      if (allowed) {
-        const allowedEventIds = new Set(allEventsForMedia.filter(e => allowed.includes(e.clientId)).map(e => e.id));
-        filtered = assets.filter(a => !a.eventId || allowedEventIds.has(a.eventId));
-      }
       const clientId = req.query.clientId as string | undefined;
+
       if (clientId) {
         if (!canAccessClient(req, clientId)) {
           return res.status(403).json({ error: "Access denied to requested site" });
         }
-        const clientEventIds = new Set(allEventsForMedia.filter(e => e.clientId === clientId).map(e => e.id));
-        filtered = filtered.filter(a => !a.eventId || clientEventIds.has(a.eventId));
+        const sharedToSite = await storage.getMediaSharesForClient(clientId);
+        const sharedAssetIds = new Set(sharedToSite.map(s => s.mediaAssetId));
+        const filtered = assets.filter(a => a.clientId === clientId || sharedAssetIds.has(a.id));
+        return res.json(filtered);
+      }
+
+      let filtered = assets;
+      if (allowed) {
+        const allowedSet = new Set(allowed);
+        const allSharedAssetIds = new Set<string>();
+        for (const cid of allowed) {
+          const shares = await storage.getMediaSharesForClient(cid);
+          shares.forEach(s => allSharedAssetIds.add(s.mediaAssetId));
+        }
+        filtered = assets.filter(a =>
+          (a.clientId && allowedSet.has(a.clientId)) || allSharedAssetIds.has(a.id)
+        );
       }
       res.json(filtered);
     } catch (error) {
@@ -845,14 +855,20 @@ export async function registerRoutes(
   app.post("/api/media", requireAuth, loadUserContext, async (req, res) => {
     try {
       const data = insertMediaAssetSchema.parse(req.body);
+      if (!data.clientId) {
+        return res.status(400).json({ error: "clientId is required" });
+      }
+      if (!canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
+      }
       if (data.eventId) {
         const event = await storage.getEvent(data.eventId);
-        if (event && !canAccessClient(req, event.clientId)) {
-          return res.status(403).json({ error: "Access denied" });
+        if (event && event.clientId !== data.clientId) {
+          return res.status(400).json({ error: "Event does not belong to the specified site" });
         }
       }
       const asset = await storage.createMediaAsset(data);
-      logAudit(req, "create", "media", asset.id, { name: asset.name });
+      logAudit(req, "create", "media", asset.id, { name: asset.name, clientId: data.clientId });
       res.status(201).json(asset);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -863,8 +879,15 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/media/:id", requireAuth, async (req, res) => {
+  app.delete("/api/media/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
+      const asset = await storage.getMediaAsset(req.params.id);
+      if (!asset) {
+        return res.status(404).json({ error: "Media asset not found" });
+      }
+      if (asset.clientId && !canAccessClient(req, asset.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const deleted = await storage.deleteMediaAsset(req.params.id);
       if (!deleted) {
         return res.status(404).json({ error: "Media asset not found" });
@@ -874,6 +897,65 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deleting media asset:", error);
       res.status(500).json({ error: "Failed to delete media asset" });
+    }
+  });
+
+  // Media sharing (admin only)
+  app.get("/api/media/:id/shares", requireAdmin, async (req, res) => {
+    try {
+      const asset = await storage.getMediaAsset(req.params.id);
+      if (!asset) {
+        return res.status(404).json({ error: "Media asset not found" });
+      }
+      const shares = await storage.getMediaSharesForAsset(req.params.id);
+      res.json(shares);
+    } catch (error) {
+      console.error("Error fetching media shares:", error);
+      res.status(500).json({ error: "Failed to fetch media shares" });
+    }
+  });
+
+  app.post("/api/media/:id/share", requireAdmin, async (req, res) => {
+    try {
+      const asset = await storage.getMediaAsset(req.params.id);
+      if (!asset) {
+        return res.status(404).json({ error: "Media asset not found" });
+      }
+      const { clientId } = req.body;
+      if (!clientId) {
+        return res.status(400).json({ error: "clientId is required" });
+      }
+      const targetClient = await storage.getClient(clientId);
+      if (!targetClient) {
+        return res.status(404).json({ error: "Target site not found" });
+      }
+      if (asset.clientId === clientId) {
+        return res.status(400).json({ error: "Cannot share media to its owning site" });
+      }
+      const existingShares = await storage.getMediaSharesForAsset(req.params.id);
+      if (existingShares.some(s => s.clientId === clientId)) {
+        return res.status(400).json({ error: "Media is already shared to this site" });
+      }
+      const share = await storage.createMediaShare({ mediaAssetId: req.params.id, clientId });
+      logAudit(req, "create", "media_share", share.id, { mediaAssetId: req.params.id, clientId });
+      res.status(201).json(share);
+    } catch (error) {
+      console.error("Error sharing media:", error);
+      res.status(500).json({ error: "Failed to share media" });
+    }
+  });
+
+  app.delete("/api/media/:id/share/:clientId", requireAdmin, async (req, res) => {
+    try {
+      const deleted = await storage.deleteMediaShare(req.params.id, req.params.clientId);
+      if (!deleted) {
+        return res.status(404).json({ error: "Share not found" });
+      }
+      logAudit(req, "delete", "media_share", req.params.id, { clientId: req.params.clientId });
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error unsharing media:", error);
+      res.status(500).json({ error: "Failed to unshare media" });
     }
   });
 
