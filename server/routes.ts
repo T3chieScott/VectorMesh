@@ -682,7 +682,7 @@ export async function registerRoutes(
         }
         const clientEvents = (await storage.getEvents()).filter(e => e.clientId === clientId);
         const clientEventIds = new Set(clientEvents.map(e => e.id));
-        filtered = filtered.filter(s => s.currentEventId && clientEventIds.has(s.currentEventId));
+        filtered = filtered.filter(s => !s.currentEventId || clientEventIds.has(s.currentEventId));
       }
       res.json(filtered.map(({ deviceToken, ...s }) => s));
     } catch (error) {
@@ -833,7 +833,7 @@ export async function registerRoutes(
           return res.status(403).json({ error: "Access denied to requested site" });
         }
         const clientEventIds = new Set(allEventsForMedia.filter(e => e.clientId === clientId).map(e => e.id));
-        filtered = filtered.filter(a => a.eventId && clientEventIds.has(a.eventId));
+        filtered = filtered.filter(a => !a.eventId || clientEventIds.has(a.eventId));
       }
       res.json(filtered);
     } catch (error) {
@@ -946,7 +946,7 @@ export async function registerRoutes(
           return res.status(403).json({ error: "Access denied to requested site" });
         }
         const clientEventIds = new Set(allEventsForLayouts.filter(e => e.clientId === clientId).map(e => e.id));
-        filtered = filtered.filter(l => l.eventId && clientEventIds.has(l.eventId));
+        filtered = filtered.filter(l => !l.eventId || clientEventIds.has(l.eventId));
       }
       res.json(filtered);
     } catch (error) {
@@ -1131,7 +1131,7 @@ export async function registerRoutes(
           return res.status(403).json({ error: "Access denied to requested site" });
         }
         const clientEventIds = new Set(allEventsForPlaylists.filter(e => e.clientId === clientId).map(e => e.id));
-        filtered = filtered.filter(p => p.eventId && clientEventIds.has(p.eventId));
+        filtered = filtered.filter(p => !p.eventId || clientEventIds.has(p.eventId));
       }
       res.json(filtered);
     } catch (error) {
@@ -1314,7 +1314,7 @@ export async function registerRoutes(
           return res.status(403).json({ error: "Access denied to requested site" });
         }
         const clientEventIds = new Set(allEventsForOverrides.filter(e => e.clientId === clientId).map(e => e.id));
-        filtered = filtered.filter(o => o.eventId && clientEventIds.has(o.eventId));
+        filtered = filtered.filter(o => !o.eventId || clientEventIds.has(o.eventId));
       }
       res.json(filtered);
     } catch (error) {

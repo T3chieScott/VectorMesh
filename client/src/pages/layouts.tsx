@@ -6972,7 +6972,7 @@ export default function LayoutsPage() {
   });
 
   const selectedLayout = layouts.find(l => l.id === selectedLayoutId);
-  const savedZones = (selectedLayout?.zones as LayoutZone[]) || [];
+  const savedZones = useMemo(() => (selectedLayout?.zones as LayoutZone[]) || [], [selectedLayout?.zones]);
   
   // Draft state for non-destructive editing
   const [draftZones, setDraftZones] = useState<LayoutZone[]>(savedZones);
