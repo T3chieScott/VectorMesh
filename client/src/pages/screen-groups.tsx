@@ -299,7 +299,7 @@ export default function ScreenGroupsPage() {
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-groups-title">Screen Groups</h1>
           <p className="text-muted-foreground">
-            Organize screens for bulk content targeting
+            Organise screens for bulk content targeting
           </p>
         </div>
         <CreateGroupDialog />
@@ -331,7 +331,7 @@ export default function ScreenGroupsPage() {
             <Tv2 className="h-12 w-12 text-muted-foreground/50 mb-4" />
             <h3 className="text-lg font-semibold mb-2">No screen groups yet</h3>
             <p className="text-sm text-muted-foreground mb-4 max-w-sm">
-              Create groups to organize screens by location, function, or
+              Create groups to organise screens by location, function, or
               content type for easier targeting.
             </p>
             <CreateGroupDialog />

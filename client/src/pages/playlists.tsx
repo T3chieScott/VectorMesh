@@ -688,7 +688,7 @@ export default function PlaylistsPage() {
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-playlists-title">Playlists</h1>
           <p className="text-muted-foreground">
-            Organize media into rotating content collections
+            Organise media into rotating content collections
           </p>
         </div>
         <CreatePlaylistDialog events={events} />
@@ -720,7 +720,7 @@ export default function PlaylistsPage() {
             <FolderOpen className="h-12 w-12 text-muted-foreground/50 mb-4" />
             <h3 className="text-lg font-semibold mb-2">No playlists yet</h3>
             <p className="text-sm text-muted-foreground mb-4 max-w-sm">
-              Create playlists to organize media for rotating content in your
+              Create playlists to organise media for rotating content in your
               layout zones.
             </p>
             <CreatePlaylistDialog events={events} />

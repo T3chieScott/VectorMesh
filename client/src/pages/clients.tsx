@@ -294,7 +294,7 @@ export default function ClientsPage() {
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-clients-title">Clients</h1>
           <p className="text-muted-foreground">
-            Manage organizations that hire your venue
+            Manage the sites and venues where you deploy displays
           </p>
         </div>
         <CreateClientDialog />
@@ -327,7 +327,7 @@ export default function ClientsPage() {
             <h3 className="text-lg font-semibold mb-2">No clients yet</h3>
             <p className="text-sm text-muted-foreground mb-4 max-w-sm">
               Get started by adding your first client. Clients represent
-              organizations that hire your venue for events.
+              the sites and venues where you manage displays and events.
             </p>
             <CreateClientDialog />
           </CardContent>

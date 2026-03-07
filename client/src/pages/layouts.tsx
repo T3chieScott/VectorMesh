@@ -3389,7 +3389,7 @@ function ZoneEditorDialog({
                       name="qrVcardOrg"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Organization</FormLabel>
+                          <FormLabel>Organisation</FormLabel>
                           <FormControl>
                             <Input
                               placeholder="Company Name"
