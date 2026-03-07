@@ -599,17 +599,17 @@ export async function registerRoutes(
     try {
       const groups = await storage.getScreenGroups();
       const allowed = getAllowedClientIds(req);
-      if (!allowed) return res.json(groups);
-      const allowedEvents = (await storage.getEvents()).filter(e => allowed.includes(e.clientId));
-      const allowedEventIds = new Set(allowedEvents.map(e => e.id));
-      const screens = await storage.getScreens();
-      const allowedScreenIds = new Set(
-        screens.filter(s => !s.currentEventId || allowedEventIds.has(s.currentEventId)).map(s => s.id)
-      );
-      const filtered = groups.filter(g => {
-        const memberIds = (g.screenIds as string[]) || [];
-        return memberIds.length === 0 || memberIds.some(id => allowedScreenIds.has(id));
-      });
+      let filtered = groups;
+      if (allowed) {
+        filtered = groups.filter(g => !g.clientId || allowed.includes(g.clientId));
+      }
+      const clientId = req.query.clientId as string | undefined;
+      if (clientId) {
+        if (!canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        filtered = filtered.filter(g => g.clientId === clientId);
+      }
       res.json(filtered);
     } catch (error) {
       console.error("Error fetching screen groups:", error);
@@ -617,11 +617,14 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/screen-groups", requireAuth, async (req, res) => {
+  app.post("/api/screen-groups", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const data = insertScreenGroupSchema.parse(req.body);
+      const data = insertScreenGroupSchema.parse({ ...req.body, clientId: req.body.clientId || null });
+      if (data.clientId && !canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
+      }
       const group = await storage.createScreenGroup(data);
-      logAudit(req, "create", "screen_group", group.id, { name: group.name });
+      logAudit(req, "create", "screen_group", group.id, { name: group.name, clientId: group.clientId });
       res.status(201).json(group);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -672,18 +675,14 @@ export async function registerRoutes(
       const allowed = getAllowedClientIds(req);
       let filtered = screens;
       if (allowed) {
-        const allowedEvents = (await storage.getEvents()).filter(e => allowed.includes(e.clientId));
-        const allowedEventIds = new Set(allowedEvents.map(e => e.id));
-        filtered = screens.filter(s => !s.currentEventId || allowedEventIds.has(s.currentEventId));
+        filtered = screens.filter(s => !s.clientId || allowed.includes(s.clientId));
       }
       const clientId = req.query.clientId as string | undefined;
       if (clientId) {
         if (!canAccessClient(req, clientId)) {
           return res.status(403).json({ error: "Access denied to requested site" });
         }
-        const clientEvents = (await storage.getEvents()).filter(e => e.clientId === clientId);
-        const clientEventIds = new Set(clientEvents.map(e => e.id));
-        filtered = filtered.filter(s => !s.currentEventId || clientEventIds.has(s.currentEventId));
+        filtered = filtered.filter(s => s.clientId === clientId);
       }
       res.json(filtered.map(({ deviceToken, ...s }) => s));
     } catch (error) {
@@ -698,12 +697,8 @@ export async function registerRoutes(
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
-      const allowed = getAllowedClientIds(req);
-      if (allowed && screen.currentEventId) {
-        const event = await storage.getEvent(screen.currentEventId);
-        if (event && !allowed.includes(event.clientId)) {
-          return res.status(403).json({ error: "Access denied" });
-        }
+      if (screen.clientId && !canAccessClient(req, screen.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
       }
       const { deviceToken, ...safeScreen } = screen;
       res.json(safeScreen);
@@ -717,18 +712,16 @@ export async function registerRoutes(
     try {
       const body = {
         ...req.body,
+        clientId: req.body.clientId || null,
         displayProfileId: req.body.displayProfileId || null,
         currentEventId: req.body.currentEventId || null,
       };
       const data = insertScreenSchema.parse(body);
-      if (data.currentEventId) {
-        const event = await storage.getEvent(data.currentEventId);
-        if (event && !canAccessClient(req, event.clientId)) {
-          return res.status(403).json({ error: "Access denied" });
-        }
+      if (data.clientId && !canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
       }
       const screen = await storage.createScreen(data);
-      logAudit(req, "create", "screen", screen.id, { name: screen.name });
+      logAudit(req, "create", "screen", screen.id, { name: screen.name, clientId: screen.clientId });
       res.status(201).json(screen);
     } catch (error) {
       if (error instanceof z.ZodError) {

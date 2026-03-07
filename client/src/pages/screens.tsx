@@ -55,11 +55,13 @@ import {
   Zap,
   Unlink,
 } from "lucide-react";
-import type { Screen, DisplayProfile, LiveOverride, Event, LayoutTemplate } from "@shared/schema";
+import { useSiteContext } from "@/hooks/use-site-context";
+import type { Screen, DisplayProfile, LiveOverride, Event, LayoutTemplate, Client } from "@shared/schema";
 
 const screenFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   location: z.string().optional(),
+  clientId: z.string().nullable().optional(),
   displayProfileId: z.string().optional(),
   currentEventId: z.string().nullable().optional(),
   fallbackLayoutId: z.string().nullable().optional(),
@@ -76,12 +78,14 @@ function ScreenCard({
   profiles,
   events,
   layouts,
+  clients,
   activeOverride,
 }: {
   screen: Screen;
   profiles: DisplayProfile[];
   events: Event[];
   layouts: LayoutTemplate[];
+  clients: Client[];
   activeOverride: LiveOverride | null;
 }) {
   const [editOpen, setEditOpen] = useState(false);
@@ -122,11 +126,14 @@ function ScreenCard({
     },
   });
 
+  const client = clients.find((c) => c.id === screen.clientId);
+
   const form = useForm<ScreenFormValues>({
     resolver: zodResolver(screenFormSchema),
     defaultValues: {
       name: screen.name,
       location: screen.location || "",
+      clientId: screen.clientId || "",
       displayProfileId: screen.displayProfileId || "",
       currentEventId: screen.currentEventId || "",
       fallbackLayoutId: screen.fallbackLayoutId || "",
@@ -137,6 +144,7 @@ function ScreenCard({
     mutationFn: (data: ScreenFormValues) =>
       apiRequest("PATCH", `/api/screens/${screen.id}`, {
         ...data,
+        clientId: data.clientId || null,
         currentEventId: data.currentEventId || null,
         fallbackLayoutId: data.fallbackLayoutId || null,
       }),
@@ -237,10 +245,16 @@ function ScreenCard({
                 <Badge variant="secondary">Unpaired</Badge>
               )}
             </div>
-            {screen.location && (
+            {(screen.location || client) && (
               <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                <MapPin className="h-3 w-3" />
-                <span>{screen.location}</span>
+                {client && <span>{client.name}</span>}
+                {client && screen.location && <span>·</span>}
+                {screen.location && (
+                  <>
+                    <MapPin className="h-3 w-3" />
+                    <span>{screen.location}</span>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -292,6 +306,34 @@ function ScreenCard({
                           <FormControl>
                             <Input {...field} data-testid="input-edit-screen-location" />
                           </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="clientId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Site</FormLabel>
+                          <Select
+                            onValueChange={(val) => field.onChange(val === "__none__" ? null : val)}
+                            value={field.value || "__none__"}
+                          >
+                            <FormControl>
+                              <SelectTrigger data-testid="select-edit-screen-client">
+                                <SelectValue placeholder="No site assigned" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="__none__">No site assigned</SelectItem>
+                              {clients.map((c) => (
+                                <SelectItem key={c.id} value={c.id}>
+                                  {c.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -491,15 +533,17 @@ function ScreenCard({
   );
 }
 
-function CreateScreenDialog({ profiles, events }: { profiles: DisplayProfile[]; events: Event[] }) {
+function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayProfile[]; events: Event[]; clients: Client[] }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
+  const { selectedClientId } = useSiteContext();
 
   const form = useForm<ScreenFormValues>({
     resolver: zodResolver(screenFormSchema),
     defaultValues: {
       name: "",
       location: "",
+      clientId: selectedClientId || "",
       displayProfileId: "",
       currentEventId: "",
     },
@@ -509,6 +553,7 @@ function CreateScreenDialog({ profiles, events }: { profiles: DisplayProfile[]; 
     mutationFn: (data: ScreenFormValues) =>
       apiRequest("POST", "/api/screens", {
         ...data,
+        clientId: data.clientId || null,
         currentEventId: data.currentEventId || null,
         pairingCode: generatePairingCode(),
       }),
@@ -570,6 +615,34 @@ function CreateScreenDialog({ profiles, events }: { profiles: DisplayProfile[]; 
                       data-testid="input-screen-location"
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="clientId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Site</FormLabel>
+                  <Select
+                    onValueChange={(val) => field.onChange(val === "__none__" ? null : val)}
+                    value={field.value || "__none__"}
+                  >
+                    <FormControl>
+                      <SelectTrigger data-testid="select-screen-client">
+                        <SelectValue placeholder="No site assigned" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="__none__">No site assigned</SelectItem>
+                      {clients.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )}
@@ -659,6 +732,10 @@ export default function ScreensPage() {
     queryKey: ["/api/display-profiles"],
   });
 
+  const { data: clients = [] } = useQuery<Client[]>({
+    queryKey: ["/api/clients"],
+  });
+
   const eventsQueryConfig = useSiteFilteredQuery<Event[]>("/api/events");
   const { data: events = [] } = useQuery(eventsQueryConfig);
 
@@ -697,7 +774,7 @@ export default function ScreensPage() {
             Manage display screens and their configurations
           </p>
         </div>
-        <CreateScreenDialog profiles={profiles} events={events} />
+        <CreateScreenDialog profiles={profiles} events={events} clients={clients} />
       </div>
 
       {/* Stats */}
@@ -744,7 +821,7 @@ export default function ScreensPage() {
               Get started by adding your first screen. You'll receive a pairing
               code to connect the physical display.
             </p>
-            <CreateScreenDialog profiles={profiles} events={events} />
+            <CreateScreenDialog profiles={profiles} events={events} clients={clients} />
           </CardContent>
         </Card>
       ) : (
@@ -756,6 +833,7 @@ export default function ScreensPage() {
               profiles={profiles}
               events={events}
               layouts={layouts}
+              clients={clients}
               activeOverride={getActiveOverrideForScreen(screen.id)}
             />
           ))}

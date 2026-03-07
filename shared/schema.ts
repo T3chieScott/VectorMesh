@@ -114,6 +114,7 @@ export type DisplayProfile = typeof displayProfiles.$inferSelect;
 
 export const screenGroups = pgTable("screen_groups", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").references(() => clients.id),
   name: text("name").notNull(),
   description: text("description"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -127,6 +128,7 @@ export type ScreenGroup = typeof screenGroups.$inferSelect;
 
 export const screens = pgTable("screens", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").references(() => clients.id),
   name: text("name").notNull(),
   location: text("location"),
   displayProfileId: varchar("display_profile_id").references(() => displayProfiles.id),
@@ -144,6 +146,7 @@ export const screens = pgTable("screens", {
 });
 
 export const screensRelations = relations(screens, ({ one, many }) => ({
+  client: one(clients, { fields: [screens.clientId], references: [clients.id] }),
   displayProfile: one(displayProfiles, { fields: [screens.displayProfileId], references: [displayProfiles.id] }),
   currentEvent: one(events, { fields: [screens.currentEventId], references: [events.id] }),
   fallbackLayout: one(layoutTemplates, { fields: [screens.fallbackLayoutId], references: [layoutTemplates.id] }),

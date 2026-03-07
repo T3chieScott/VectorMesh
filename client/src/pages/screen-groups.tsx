@@ -31,32 +31,47 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { useSiteContext, useSiteFilteredQuery } from "@/hooks/use-site-context";
 import { Plus, MoreHorizontal, Pencil, Trash2, Tv2, Monitor } from "lucide-react";
-import type { ScreenGroup } from "@shared/schema";
+import type { ScreenGroup, Client } from "@shared/schema";
 
 const groupFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().optional(),
+  clientId: z.string().nullable().optional(),
 });
 
 type GroupFormValues = z.infer<typeof groupFormSchema>;
 
-function GroupCard({ group }: { group: ScreenGroup }) {
+function GroupCard({ group, clients }: { group: ScreenGroup; clients: Client[] }) {
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
+
+  const client = clients.find((c) => c.id === group.clientId);
 
   const form = useForm<GroupFormValues>({
     resolver: zodResolver(groupFormSchema),
     defaultValues: {
       name: group.name,
       description: group.description || "",
+      clientId: group.clientId || "",
     },
   });
 
   const updateMutation = useMutation({
     mutationFn: (data: GroupFormValues) =>
-      apiRequest("PATCH", `/api/screen-groups/${group.id}`, data),
+      apiRequest("PATCH", `/api/screen-groups/${group.id}`, {
+        ...data,
+        clientId: data.clientId || null,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screen-groups"] });
       setEditOpen(false);
@@ -89,9 +104,11 @@ function GroupCard({ group }: { group: ScreenGroup }) {
             <CardTitle className="text-base" data-testid={`text-group-name-${group.id}`}>
               {group.name}
             </CardTitle>
-            {group.description && (
+            {(group.description || client) && (
               <p className="text-sm text-muted-foreground line-clamp-1">
-                {group.description}
+                {client && <span>{client.name}</span>}
+                {client && group.description && <span> · </span>}
+                {group.description && <span>{group.description}</span>}
               </p>
             )}
           </div>
@@ -147,6 +164,34 @@ function GroupCard({ group }: { group: ScreenGroup }) {
                         </FormItem>
                       )}
                     />
+                    <FormField
+                      control={form.control}
+                      name="clientId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Site</FormLabel>
+                          <Select
+                            onValueChange={(val) => field.onChange(val === "__none__" ? null : val)}
+                            value={field.value || "__none__"}
+                          >
+                            <FormControl>
+                              <SelectTrigger data-testid="select-edit-group-client">
+                                <SelectValue placeholder="No site assigned" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="__none__">No site assigned</SelectItem>
+                              {clients.map((c) => (
+                                <SelectItem key={c.id} value={c.id}>
+                                  {c.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
                     <div className="flex justify-end gap-2">
                       <Button
                         type="button"
@@ -187,21 +232,26 @@ function GroupCard({ group }: { group: ScreenGroup }) {
   );
 }
 
-function CreateGroupDialog() {
+function CreateGroupDialog({ clients }: { clients: Client[] }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
+  const { selectedClientId } = useSiteContext();
 
   const form = useForm<GroupFormValues>({
     resolver: zodResolver(groupFormSchema),
     defaultValues: {
       name: "",
       description: "",
+      clientId: selectedClientId || "",
     },
   });
 
   const createMutation = useMutation({
     mutationFn: (data: GroupFormValues) =>
-      apiRequest("POST", "/api/screen-groups", data),
+      apiRequest("POST", "/api/screen-groups", {
+        ...data,
+        clientId: data.clientId || null,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screen-groups"] });
       setOpen(false);
@@ -264,6 +314,34 @@ function CreateGroupDialog() {
                 </FormItem>
               )}
             />
+            <FormField
+              control={form.control}
+              name="clientId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Site</FormLabel>
+                  <Select
+                    onValueChange={(val) => field.onChange(val === "__none__" ? null : val)}
+                    value={field.value || "__none__"}
+                  >
+                    <FormControl>
+                      <SelectTrigger data-testid="select-group-client">
+                        <SelectValue placeholder="No site assigned" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="__none__">No site assigned</SelectItem>
+                      {clients.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <div className="flex justify-end gap-2">
               <Button
                 type="button"
@@ -288,8 +366,11 @@ function CreateGroupDialog() {
 }
 
 export default function ScreenGroupsPage() {
-  const { data: groups = [], isLoading } = useQuery<ScreenGroup[]>({
-    queryKey: ["/api/screen-groups"],
+  const groupsQueryConfig = useSiteFilteredQuery<ScreenGroup[]>("/api/screen-groups");
+  const { data: groups = [], isLoading } = useQuery(groupsQueryConfig);
+
+  const { data: clients = [] } = useQuery<Client[]>({
+    queryKey: ["/api/clients"],
   });
 
   return (
@@ -302,7 +383,7 @@ export default function ScreenGroupsPage() {
             Organise screens for bulk content targeting
           </p>
         </div>
-        <CreateGroupDialog />
+        <CreateGroupDialog clients={clients} />
       </div>
 
       {/* Content */}
@@ -334,13 +415,13 @@ export default function ScreenGroupsPage() {
               Create groups to organise screens by location, function, or
               content type for easier targeting.
             </p>
-            <CreateGroupDialog />
+            <CreateGroupDialog clients={clients} />
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {groups.map((group) => (
-            <GroupCard key={group.id} group={group} />
+            <GroupCard key={group.id} group={group} clients={clients} />
           ))}
         </div>
       )}
