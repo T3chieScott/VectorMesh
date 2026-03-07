@@ -19,6 +19,7 @@ Key capabilities include:
 - Integration of signage icons with text labels for directional and informational purposes.
 - Global site context switcher for filtering UI content by client.
 - Secure device pairing for display nodes using unique tokens.
+- **Programme scheduling**: Full block editor with time rules (start/end times, date ranges), recurring schedules (day-of-week selectors), target screen/group selection, layout assignment, and priority. Blocks display time and target info in the programme list.
 - Real-time player simulator with auto-refresh for content testing.
 - Raspberry Pi setup script for kiosk mode configuration.
 

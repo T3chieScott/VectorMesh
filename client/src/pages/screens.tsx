@@ -663,7 +663,7 @@ export default function ScreensPage() {
   const { data: events = [] } = useQuery(eventsQueryConfig);
 
   const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
-    queryKey: ["/api/layout-templates"],
+    queryKey: ["/api/layouts"],
   });
 
   const liveOverridesQueryConfig = useSiteFilteredQuery<LiveOverride[]>("/api/live-overrides");

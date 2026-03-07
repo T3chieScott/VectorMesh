@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,16 +11,21 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { Calendar as CalendarPicker } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -53,6 +58,7 @@ import {
   Trash2,
   PlayCircle,
   Calendar,
+  CalendarIcon,
   CheckCircle2,
   FileEdit,
   Upload,
@@ -61,8 +67,9 @@ import {
   ChevronUp,
   Layers,
   Clock,
+  Monitor,
 } from "lucide-react";
-import type { Programme, Event, ProgrammeVersion, ScheduleBlock, LayoutTemplate, Playlist } from "@shared/schema";
+import type { Programme, Event, ProgrammeVersion, ScheduleBlock, LayoutTemplate, Playlist, Screen, ScreenGroup, TimeRule, ScheduleTarget } from "@shared/schema";
 
 const programmeFormSchema = z.object({
   eventId: z.string().min(1, "Event is required"),
@@ -72,10 +79,35 @@ const programmeFormSchema = z.object({
 
 type ProgrammeFormValues = z.infer<typeof programmeFormSchema>;
 
+const DAYS_OF_WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
 const blockFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  priority: z.number().min(0).optional(),
+  priority: z.number().min(0).max(100).optional(),
   layoutTemplateId: z.string().optional(),
+  startTime: z.string().min(1, "Start time is required"),
+  endTime: z.string().min(1, "End time is required"),
+  startDate: z.date().optional(),
+  endDate: z.date().optional(),
+  isRecurring: z.boolean().default(false),
+  daysOfWeek: z.array(z.number()).optional(),
+  targetType: z.enum(["all", "screen", "group"]).default("all"),
+  targetId: z.string().optional(),
+}).superRefine((data, ctx) => {
+  if (data.isRecurring && (!data.daysOfWeek || data.daysOfWeek.length === 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Select at least one day when recurring is enabled",
+      path: ["daysOfWeek"],
+    });
+  }
+  if (data.targetType !== "all" && (!data.targetId || data.targetId === "none")) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Select a ${data.targetType === "screen" ? "screen" : "group"}`,
+      path: ["targetId"],
+    });
+  }
 });
 
 type BlockFormValues = z.infer<typeof blockFormSchema>;
@@ -84,17 +116,24 @@ function BlockEditorDialog({
   versionId,
   block,
   layouts,
+  screens,
+  screenGroups,
   open,
   onOpenChange,
 }: {
   versionId: string;
   block?: ScheduleBlock;
   layouts: LayoutTemplate[];
+  screens: Screen[];
+  screenGroups: ScreenGroup[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const { toast } = useToast();
   const isEditing = !!block;
+
+  const existingTimeRule = ((block?.timeRules as TimeRule[]) || [])[0];
+  const existingTarget = ((block?.targets as ScheduleTarget[]) || [])[0];
 
   const form = useForm<BlockFormValues>({
     resolver: zodResolver(blockFormSchema),
@@ -102,33 +141,59 @@ function BlockEditorDialog({
       name: "",
       priority: 0,
       layoutTemplateId: "",
+      startTime: "09:00",
+      endTime: "17:00",
+      startDate: undefined,
+      endDate: undefined,
+      isRecurring: false,
+      daysOfWeek: [],
+      targetType: "all",
+      targetId: "",
     },
   });
 
-  // Reset form when block changes (for edit vs add mode)
   useEffect(() => {
     if (open) {
-      if (block) {
-        form.reset({
-          name: block.name,
-          priority: block.priority ?? 0,
-          layoutTemplateId: block.layoutTemplateId || "",
-        });
-      } else {
-        form.reset({
-          name: "",
-          priority: 0,
-          layoutTemplateId: "",
-        });
-      }
+      form.reset({
+        name: block?.name || "",
+        priority: block?.priority ?? 0,
+        layoutTemplateId: block?.layoutTemplateId || "",
+        startTime: existingTimeRule?.startTime || "09:00",
+        endTime: existingTimeRule?.endTime || "17:00",
+        startDate: existingTimeRule?.startDate ? parseISO(existingTimeRule.startDate) : undefined,
+        endDate: existingTimeRule?.endDate ? parseISO(existingTimeRule.endDate) : undefined,
+        isRecurring: (existingTimeRule?.daysOfWeek?.length || 0) > 0,
+        daysOfWeek: existingTimeRule?.daysOfWeek || [],
+        targetType: existingTarget ? existingTarget.type : "all",
+        targetId: existingTarget?.id || "",
+      });
     }
-  }, [open, block, form]);
+  }, [open, block]);
+
+  const isRecurring = form.watch("isRecurring");
+  const targetType = form.watch("targetType");
 
   const saveMutation = useMutation({
     mutationFn: (data: BlockFormValues) => {
+      const timeRules: TimeRule[] = [{
+        startDate: data.startDate ? format(data.startDate, "yyyy-MM-dd") : undefined,
+        endDate: data.endDate ? format(data.endDate, "yyyy-MM-dd") : undefined,
+        startTime: data.startTime,
+        endTime: data.endTime,
+        daysOfWeek: data.isRecurring ? data.daysOfWeek : undefined,
+      }];
+
+      const targets: ScheduleTarget[] = data.targetType !== "all" && data.targetId
+        ? [{ type: data.targetType, id: data.targetId }]
+        : [];
+
       const payload = {
-        ...data,
+        name: data.name,
+        priority: data.priority,
         layoutTemplateId: data.layoutTemplateId === "none" || !data.layoutTemplateId ? null : data.layoutTemplateId,
+        timeRules,
+        targets,
+        zoneSources: [],
       };
       if (isEditing) {
         return apiRequest("PATCH", `/api/schedule-blocks/${block.id}`, payload);
@@ -148,54 +213,214 @@ function BlockEditorDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEditing ? "Edit Schedule Block" : "Add Schedule Block"}</DialogTitle>
         </DialogHeader>
         <Form {...form}>
           <form
             onSubmit={form.handleSubmit((data) => saveMutation.mutate(data))}
-            className="space-y-4"
+            className="space-y-6"
           >
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Block Name</FormLabel>
+                    <FormControl>
+                      <Input placeholder="e.g., Morning Session" {...field} data-testid="input-block-name" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="priority"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Priority (0–100)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        {...field}
+                        onChange={(e) => field.onChange(Number(e.target.value))}
+                        data-testid="input-block-priority"
+                      />
+                    </FormControl>
+                    <FormDescription>Higher priority wins conflicts</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="startTime"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Start Time</FormLabel>
+                    <FormControl>
+                      <Input type="time" {...field} data-testid="input-block-start-time" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="endTime"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>End Time</FormLabel>
+                    <FormControl>
+                      <Input type="time" {...field} data-testid="input-block-end-time" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="startDate"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col">
+                    <FormLabel>Start Date (optional)</FormLabel>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <FormControl>
+                          <Button
+                            variant="outline"
+                            className="justify-start text-left font-normal"
+                            data-testid="button-block-start-date"
+                          >
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {field.value ? format(field.value, "PPP") : "Pick a date"}
+                          </Button>
+                        </FormControl>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <CalendarPicker
+                          mode="single"
+                          selected={field.value}
+                          onSelect={field.onChange}
+                          initialFocus
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="endDate"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col">
+                    <FormLabel>End Date (optional)</FormLabel>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <FormControl>
+                          <Button
+                            variant="outline"
+                            className="justify-start text-left font-normal"
+                            data-testid="button-block-end-date"
+                          >
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {field.value ? format(field.value, "PPP") : "Pick a date"}
+                          </Button>
+                        </FormControl>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <CalendarPicker
+                          mode="single"
+                          selected={field.value}
+                          onSelect={field.onChange}
+                          initialFocus
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
             <FormField
               control={form.control}
-              name="name"
+              name="isRecurring"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Block Name</FormLabel>
+                <FormItem className="flex items-center justify-between rounded-lg border p-3">
+                  <div>
+                    <FormLabel>Recurring Schedule</FormLabel>
+                    <FormDescription>Repeat on specific days of the week</FormDescription>
+                  </div>
                   <FormControl>
-                    <Input placeholder="e.g., Morning Session" {...field} data-testid="input-block-name" />
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                      data-testid="switch-block-recurring"
+                    />
                   </FormControl>
-                  <FormMessage />
                 </FormItem>
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="priority"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Priority (higher = more important)</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="number"
-                      {...field}
-                      onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
-                      data-testid="input-block-priority"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {isRecurring && (
+              <FormField
+                control={form.control}
+                name="daysOfWeek"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Days of Week</FormLabel>
+                    <div className="flex gap-2 flex-wrap">
+                      {DAYS_OF_WEEK.map((day, index) => {
+                        const isSelected = field.value?.includes(index);
+                        return (
+                          <Button
+                            key={day}
+                            type="button"
+                            variant={isSelected ? "default" : "outline"}
+                            size="icon"
+                            className="w-10 h-10 rounded-full"
+                            data-testid={`toggle-day-${day.toLowerCase()}`}
+                            onClick={() => {
+                              if (isSelected) {
+                                field.onChange(field.value?.filter((d: number) => d !== index) || []);
+                              } else {
+                                field.onChange([...(field.value || []), index].sort());
+                              }
+                            }}
+                          >
+                            <span className="text-sm font-medium">{day.charAt(0)}</span>
+                          </Button>
+                        );
+                      })}
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
             <FormField
               control={form.control}
               name="layoutTemplateId"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Layout Template (optional)</FormLabel>
+                  <FormLabel>Layout Template</FormLabel>
                   <Select onValueChange={field.onChange} value={field.value || "none"}>
                     <FormControl>
                       <SelectTrigger data-testid="select-block-layout">
@@ -216,14 +441,72 @@ function BlockEditorDialog({
               )}
             />
 
-            <div className="flex justify-end gap-2">
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="targetType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Target</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-block-target-type">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="all">All Screens</SelectItem>
+                        <SelectItem value="screen">Specific Screen</SelectItem>
+                        <SelectItem value="group">Screen Group</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {targetType !== "all" && (
+                <FormField
+                  control={form.control}
+                  name="targetId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{targetType === "screen" ? "Screen" : "Group"}</FormLabel>
+                      <Select value={field.value || "none"} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-block-target-id">
+                            <SelectValue placeholder={`Select ${targetType}`} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {targetType === "screen"
+                            ? screens.map((screen) => (
+                                <SelectItem key={screen.id} value={screen.id}>
+                                  {screen.name}
+                                </SelectItem>
+                              ))
+                            : screenGroups.map((group) => (
+                                <SelectItem key={group.id} value={group.id}>
+                                  {group.name}
+                                </SelectItem>
+                              ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+            </div>
+
+            <DialogFooter className="gap-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
               <Button type="submit" disabled={saveMutation.isPending} data-testid="button-save-block">
                 {saveMutation.isPending ? "Saving..." : isEditing ? "Update" : "Add"}
               </Button>
-            </div>
+            </DialogFooter>
           </form>
         </Form>
       </DialogContent>
@@ -234,14 +517,26 @@ function BlockEditorDialog({
 function ScheduleBlockRow({
   block,
   layout,
+  screens,
+  screenGroups,
   onEdit,
   onDelete,
 }: {
   block: ScheduleBlock;
   layout?: LayoutTemplate;
+  screens: Screen[];
+  screenGroups: ScreenGroup[];
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const timeRule = ((block.timeRules as TimeRule[]) || [])[0];
+  const target = ((block.targets as ScheduleTarget[]) || [])[0];
+  const targetLabel = target
+    ? target.type === "screen"
+      ? screens.find(s => s.id === target.id)?.name || "Unknown screen"
+      : screenGroups.find(g => g.id === target.id)?.name || "Unknown group"
+    : "All screens";
+
   return (
     <div className="flex items-center justify-between gap-3 p-2 rounded-md bg-muted/50">
       <div className="flex items-center gap-3">
@@ -250,9 +545,19 @@ function ScheduleBlockRow({
         </div>
         <div>
           <p className="text-sm font-medium" data-testid={`text-block-name-${block.id}`}>{block.name}</p>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span>Priority: {block.priority}</span>
-            {layout && <span>Layout: {layout.name}</span>}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+            {timeRule?.startTime && timeRule?.endTime && (
+              <span className="flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                {timeRule.startTime}–{timeRule.endTime}
+              </span>
+            )}
+            <span className="flex items-center gap-1">
+              <Monitor className="h-3 w-3" />
+              {targetLabel}
+            </span>
+            <span>• P{block.priority}</span>
+            {layout && <span>• {layout.name}</span>}
           </div>
         </div>
       </div>
@@ -271,9 +576,13 @@ function ScheduleBlockRow({
 function ScheduleBlocksSection({
   version,
   layouts,
+  screens,
+  screenGroups,
 }: {
   version: ProgrammeVersion;
   layouts: LayoutTemplate[];
+  screens: Screen[];
+  screenGroups: ScreenGroup[];
 }) {
   const [blocksOpen, setBlocksOpen] = useState(false);
   const [blockDialogOpen, setBlockDialogOpen] = useState(false);
@@ -337,6 +646,8 @@ function ScheduleBlocksSection({
                     key={block.id}
                     block={block}
                     layout={block.layoutTemplateId ? layoutMap.get(block.layoutTemplateId) : undefined}
+                    screens={screens}
+                    screenGroups={screenGroups}
                     onEdit={() => handleEditBlock(block)}
                     onDelete={() => deleteMutation.mutate(block.id)}
                   />
@@ -361,6 +672,8 @@ function ScheduleBlocksSection({
         versionId={version.id}
         block={editingBlock}
         layouts={layouts}
+        screens={screens}
+        screenGroups={screenGroups}
         open={blockDialogOpen}
         onOpenChange={(open) => {
           setBlockDialogOpen(open);
@@ -376,11 +689,15 @@ function ProgrammeCard({
   event,
   versions,
   layouts,
+  screens,
+  screenGroups,
 }: {
   programme: Programme;
   event?: Event;
   versions: ProgrammeVersion[];
   layouts: LayoutTemplate[];
+  screens: Screen[];
+  screenGroups: ScreenGroup[];
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
@@ -603,6 +920,8 @@ function ProgrammeCard({
           <ScheduleBlocksSection
             version={draftVersion || publishedVersion!}
             layouts={layouts}
+            screens={screens}
+            screenGroups={screenGroups}
           />
         )}
       </CardContent>
@@ -750,6 +1069,14 @@ export default function ProgrammesPage() {
     queryKey: ["/api/layouts"],
   });
 
+  const { data: screens = [] } = useQuery<Screen[]>({
+    queryKey: ["/api/screens"],
+  });
+
+  const { data: screenGroups = [] } = useQuery<ScreenGroup[]>({
+    queryKey: ["/api/screen-groups"],
+  });
+
   const isLoading = programmesLoading || eventsLoading;
 
   const eventMap = new Map(events.map((e) => [e.id, e]));
@@ -809,6 +1136,8 @@ export default function ProgrammesPage() {
               event={eventMap.get(programme.eventId)}
               versions={versions}
               layouts={layouts}
+              screens={screens}
+              screenGroups={screenGroups}
             />
           ))}
         </div>
