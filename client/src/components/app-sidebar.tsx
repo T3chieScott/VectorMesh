@@ -133,6 +133,11 @@ const adminNavItems = [
     icon: Shield,
   },
   {
+    title: "Display Profiles",
+    url: "/admin/display-profiles",
+    icon: Monitor,
+  },
+  {
     title: "Activity Log",
     url: "/admin/activity",
     icon: FileText,

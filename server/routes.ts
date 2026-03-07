@@ -537,21 +537,36 @@ export async function registerRoutes(
   });
 
   // ============ DISPLAY PROFILES ============
-  app.get("/api/display-profiles", requireAuth, async (req, res) => {
+  app.get("/api/display-profiles", requireAuth, loadUserContext, async (req, res) => {
     try {
       const profiles = await storage.getDisplayProfiles();
-      res.json(profiles);
+      const allowed = getAllowedClientIds(req);
+      let filtered = profiles;
+      if (allowed) {
+        filtered = profiles.filter(p => !p.clientId || allowed.includes(p.clientId));
+      }
+      const clientId = req.query.clientId as string | undefined;
+      if (clientId) {
+        if (!canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        filtered = filtered.filter(p => p.clientId === clientId);
+      }
+      res.json(filtered);
     } catch (error) {
       console.error("Error fetching display profiles:", error);
       res.status(500).json({ error: "Failed to fetch display profiles" });
     }
   });
 
-  app.post("/api/display-profiles", requireAuth, async (req, res) => {
+  app.post("/api/display-profiles", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const data = insertDisplayProfileSchema.parse(req.body);
+      const data = insertDisplayProfileSchema.parse({ ...req.body, clientId: req.body.clientId || null });
+      if (data.clientId && !canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
+      }
       const profile = await storage.createDisplayProfile(data);
-      logAudit(req, "create", "display_profile", profile.id, { name: profile.name });
+      logAudit(req, "create", "display_profile", profile.id, { name: profile.name, clientId: profile.clientId });
       res.status(201).json(profile);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -562,14 +577,21 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/display-profiles/:id", requireAuth, async (req, res) => {
+  app.patch("/api/display-profiles/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const data = insertDisplayProfileSchema.partial().parse(req.body);
-      const profile = await storage.updateDisplayProfile(req.params.id, data);
-      if (!profile) {
+      const existing = await storage.getDisplayProfile(req.params.id);
+      if (!existing) {
         return res.status(404).json({ error: "Display profile not found" });
       }
-      logAudit(req, "update", "display_profile", profile.id, { name: profile.name });
+      if (existing.clientId && !canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied to this profile's site" });
+      }
+      const data = insertDisplayProfileSchema.partial().parse(req.body);
+      if (data.clientId && data.clientId !== existing.clientId && !canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to target site" });
+      }
+      const profile = await storage.updateDisplayProfile(req.params.id, data);
+      logAudit(req, "update", "display_profile", profile!.id, { name: profile!.name });
       res.json(profile);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -580,12 +602,16 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/display-profiles/:id", requireAuth, async (req, res) => {
+  app.delete("/api/display-profiles/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const deleted = await storage.deleteDisplayProfile(req.params.id);
-      if (!deleted) {
+      const existing = await storage.getDisplayProfile(req.params.id);
+      if (!existing) {
         return res.status(404).json({ error: "Display profile not found" });
       }
+      if (existing.clientId && !canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied to this profile's site" });
+      }
+      await storage.deleteDisplayProfile(req.params.id);
       logAudit(req, "delete", "display_profile", req.params.id);
       res.status(204).send();
     } catch (error) {

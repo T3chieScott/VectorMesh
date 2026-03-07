@@ -92,6 +92,7 @@ function ScreenCard({
   const { toast } = useToast();
 
   const profile = profiles.find((p) => p.id === screen.displayProfileId);
+  const siteProfiles = profiles.filter((p) => !p.clientId || p.clientId === screen.clientId);
 
   const quickOverrideMutation = useMutation({
     mutationFn: (duration: number) => {
@@ -354,7 +355,7 @@ function ScreenCard({
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              {profiles.map((p) => (
+                              {siteProfiles.map((p) => (
                                 <SelectItem key={p.id} value={p.id}>
                                   {p.name} ({p.width}x{p.height})
                                 </SelectItem>
@@ -549,6 +550,9 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
     },
   });
 
+  const watchedClientId = form.watch("clientId");
+  const siteProfiles = profiles.filter((p) => !p.clientId || p.clientId === watchedClientId);
+
   const createMutation = useMutation({
     mutationFn: (data: ScreenFormValues) =>
       apiRequest("POST", "/api/screens", {
@@ -660,7 +664,7 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {profiles.map((p) => (
+                      {siteProfiles.map((p) => (
                         <SelectItem key={p.id} value={p.id}>
                           {p.name} ({p.width}x{p.height})
                         </SelectItem>

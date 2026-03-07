@@ -32,6 +32,7 @@ import SimulatorPage from "@/pages/simulator";
 import SchedulePage from "@/pages/schedule";
 import SettingsPage from "@/pages/settings";
 import AdminUsersPage from "@/pages/admin-users";
+import AdminDisplayProfilesPage from "@/pages/admin-display-profiles";
 import ActivityLogPage from "@/pages/activity-log";
 import PlayerPage from "@/pages/player";
 
@@ -61,6 +62,7 @@ function AuthenticatedRouter() {
       <Route path="/schedule" component={SchedulePage} />
       <Route path="/settings" component={SettingsPage} />
       <Route path="/admin/users">{() => <AdminRoute component={AdminUsersPage} />}</Route>
+      <Route path="/admin/display-profiles">{() => <AdminRoute component={AdminDisplayProfilesPage} />}</Route>
       <Route path="/admin/activity">{() => <AdminRoute component={ActivityLogPage} />}</Route>
       <Route component={NotFound} />
     </Switch>

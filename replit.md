@@ -18,6 +18,7 @@ Key capabilities include:
 - Event-specific color palettes for consistent branding.
 - Integration of signage icons with text labels for directional and informational purposes.
 - Global site context switcher for filtering UI content by client.
+- **Site-specific display profiles**: Display profiles are scoped to a site (clientId) and managed from a dedicated Admin page (`/admin/display-profiles`). The Screens page profile dropdown is filtered to show only profiles from the same site.
 - **Screen groups with membership management**: Groups auto-inherit site from the current site context. Screens can be added/removed from groups via a management dialog, constrained to same-site screens only. Member counts displayed on group cards.
 - Secure device pairing for display nodes using unique tokens.
 - **Programme scheduling**: Full block editor with time rules (start/end times, date ranges), recurring schedules (day-of-week selectors), target screen/group selection, layout assignment, and priority. Blocks display time and target info in the programme list.

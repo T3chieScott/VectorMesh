@@ -96,6 +96,7 @@ export type BrandPack = typeof brandPacks.$inferSelect;
 
 export const displayProfiles = pgTable("display_profiles", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").references(() => clients.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   width: integer("width").notNull().default(1920),
   height: integer("height").notNull().default(1080),
