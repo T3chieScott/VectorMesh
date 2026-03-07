@@ -14,6 +14,7 @@ import {
   Tv2,
   FolderOpen,
   Shield,
+  FileText,
 } from "lucide-react";
 import {
   Sidebar,
@@ -118,6 +119,11 @@ const adminNavItems = [
     title: "User Management",
     url: "/admin/users",
     icon: Shield,
+  },
+  {
+    title: "Activity Log",
+    url: "/admin/activity",
+    icon: FileText,
   },
 ];
 

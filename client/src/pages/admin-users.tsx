@@ -14,7 +14,8 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Users, Shield, Building2, Plus, X, UserCog, Trash2, UserPlus, Pencil, KeyRound, ShieldAlert, CircleCheck, CircleX } from "lucide-react";
+import { Users, Shield, Building2, Plus, X, UserCog, Trash2, UserPlus, Pencil, KeyRound, ShieldAlert, CircleCheck, CircleX, Clock } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
 import type { Client } from "@shared/schema";
 import type { User, UserSite } from "@shared/models/auth";
 
@@ -106,6 +107,12 @@ function UserCard({
               </div>
               <p className="text-sm text-muted-foreground" data-testid={`text-email-${user.id}`}>
                 {user.email}
+              </p>
+              <p className="text-xs text-muted-foreground/70 flex items-center gap-1 mt-0.5" data-testid={`text-last-login-${user.id}`}>
+                <Clock className="h-3 w-3" />
+                {user.lastLoginAt
+                  ? `Last login ${formatDistanceToNow(new Date(user.lastLoginAt), { addSuffix: true })}`
+                  : "Never logged in"}
               </p>
             </div>
           </div>

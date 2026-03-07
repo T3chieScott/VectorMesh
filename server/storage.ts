@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, desc, gte, lte, lt, inArray } from "drizzle-orm";
+import { eq, and, desc, gte, lte, lt, inArray, sql, count } from "drizzle-orm";
 import {
   clients,
   events,
@@ -183,6 +183,8 @@ export interface IStorage {
 
   // Audit Logs
   createAuditLog(data: InsertAuditLog): Promise<AuditLog>;
+  getAuditLogs(options: { userId?: string; entityType?: string; action?: string; dateFrom?: Date; dateTo?: Date; limit?: number; offset?: number }): Promise<{ logs: AuditLog[]; total: number }>;
+  getAuditLogStats(): Promise<{ loginsToday: number; activeUsersWeek: number; changesThisWeek: number; totalLogs: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -750,6 +752,43 @@ export class DatabaseStorage implements IStorage {
   async createAuditLog(data: InsertAuditLog): Promise<AuditLog> {
     const [log] = await db.insert(auditLogs).values(data).returning();
     return log;
+  }
+
+  async getAuditLogs(options: { userId?: string; entityType?: string; action?: string; dateFrom?: Date; dateTo?: Date; limit?: number; offset?: number }): Promise<{ logs: AuditLog[]; total: number }> {
+    const conditions = [];
+    if (options.userId) conditions.push(eq(auditLogs.userId, options.userId));
+    if (options.entityType) conditions.push(eq(auditLogs.entityType, options.entityType));
+    if (options.action) conditions.push(eq(auditLogs.action, options.action));
+    if (options.dateFrom) conditions.push(gte(auditLogs.timestamp, options.dateFrom));
+    if (options.dateTo) conditions.push(lte(auditLogs.timestamp, options.dateTo));
+
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
+    const limit = options.limit || 50;
+    const offset = options.offset || 0;
+
+    const [totalResult] = await db.select({ count: count() }).from(auditLogs).where(where);
+    const logs = await db.select().from(auditLogs).where(where).orderBy(desc(auditLogs.timestamp)).limit(limit).offset(offset);
+
+    return { logs, total: totalResult?.count || 0 };
+  }
+
+  async getAuditLogStats(): Promise<{ loginsToday: number; activeUsersWeek: number; changesThisWeek: number; totalLogs: number }> {
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const [totalResult] = await db.select({ count: count() }).from(auditLogs);
+    const [loginsTodayResult] = await db.select({ count: count() }).from(auditLogs).where(and(eq(auditLogs.action, "login"), gte(auditLogs.timestamp, startOfDay)));
+    const [changesWeekResult] = await db.select({ count: count() }).from(auditLogs).where(gte(auditLogs.timestamp, weekAgo));
+
+    const activeUsersResult = await db.select({ count: count() }).from(users).where(gte(users.lastLoginAt, weekAgo));
+
+    return {
+      loginsToday: loginsTodayResult?.count || 0,
+      activeUsersWeek: activeUsersResult[0]?.count || 0,
+      changesThisWeek: changesWeekResult?.count || 0,
+      totalLogs: totalResult?.count || 0,
+    };
   }
 }
 

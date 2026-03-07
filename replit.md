@@ -79,12 +79,14 @@ Core entities include: Clients, Events, Brand Packs, Display Profiles, Screen Gr
 - **Password reset tokens**: `password_reset_tokens` table with 1-hour expiry
 - **Forced password change**: `mustChangePassword` flag redirects to change-password page
 - **Account deactivation**: `isActive` flag prevents login without deleting user
+- **Last login tracking**: `lastLoginAt` column updated on successful login, displayed on admin user cards
 - **RBAC (Role-Based Access Control)**: Two-tier system
   - **Admin**: Full platform access, can manage users, create/delete sites, see all data
   - **Site User**: Scoped to assigned sites only via `user_sites` join table (userId → clientId)
 - Middleware: `requireAdmin` (403 if not admin), `loadUserContext` (sets `req.dbUser` and `req.allowedClientIds`)
 - Access chain: resources → eventId → event.clientId → user's allowed clientIds
 - Admin user management UI at `/admin/users` (admin-only sidebar item)
+- Activity log UI at `/admin/activity` (admin-only sidebar item)
 - **Admin user management API**:
   - `GET /api/admin/users` — list all users with sites
   - `POST /api/admin/users` — create user (sends welcome email)
@@ -93,6 +95,16 @@ Core entities include: Clients, Events, Brand Packs, Display Profiles, Screen Gr
   - `POST /api/admin/users/:id/force-change-password` — flag must-change
   - `POST/DELETE /api/admin/users/:id/sites` — manage site assignments
   - `DELETE /api/admin/users/:id` — delete user
+- **Audit logging**: `audit_logs` table records all mutating actions across the platform
+  - `logAudit(req, action, entityType, entityId?, payload?)` helper in `server/routes.ts` (fire-and-forget, non-blocking)
+  - Covers: auth events, CRUD on clients/events/screens/media/layouts/programmes/playlists/overrides, admin user management
+  - Actions: create, update, delete, login, logout, change_password, reset_password, admin_reset_password, force_change_password, assign_site, remove_site, publish, regenerate_pairing, unpair
+  - Storage methods: `createAuditLog()`, `getAuditLogs(options)`, `getAuditLogStats()`
+  - **Audit log API endpoints** (admin-only):
+    - `GET /api/admin/audit-logs` — paginated list with filters (entityType, action, limit, offset)
+    - `GET /api/admin/stats` — aggregate stats (loginsToday, activeUsersWeek, changesThisWeek, totalLogs, entity counts)
+  - **Activity Log page** (`/admin/activity`): colour-coded action badges, relative timestamps, entity type/action filters, pagination
+  - **Dashboard admin section**: Recent Activity card (last 8 entries) and User & Activity Stats card (total users, active this week, logins today, changes this week)
 
 ### Key Design Patterns
 - **Shared Schema**: Types defined once in `shared/` and used by both frontend and backend

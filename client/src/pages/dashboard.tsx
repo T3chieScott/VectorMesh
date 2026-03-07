@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAuth } from "@/hooks/use-auth";
 import {
   Monitor,
   Users,
@@ -17,7 +18,16 @@ import {
   AlertCircle,
   Clock,
   XCircle,
+  FileText,
+  LogIn,
+  Plus,
+  Pencil,
+  Trash2,
+  Key,
+  Shield,
+  LogOut,
 } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
 import type { Client, Event, Screen, MediaAsset, Programme, LiveOverride } from "@shared/schema";
 
 interface HealthData {
@@ -283,7 +293,207 @@ function SystemHealthCard({ health, isLoading }: { health?: HealthData; isLoadin
   );
 }
 
+interface AdminStats {
+  loginsToday: number;
+  activeUsersWeek: number;
+  changesThisWeek: number;
+  totalLogs: number;
+  totalUsers: number;
+  activeUsers: number;
+  totalClients: number;
+  totalScreens: number;
+  onlineScreens: number;
+  totalMedia: number;
+  activeOverrides: number;
+}
+
+interface AuditLogEntry {
+  id: string;
+  userId: string | null;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  payload: any;
+  timestamp: string;
+  user: { firstName: string | null; lastName: string | null; email: string | null } | null;
+}
+
+const ACTION_ICONS: Record<string, { icon: typeof Plus; colour: string }> = {
+  create: { icon: Plus, colour: "text-green-600" },
+  update: { icon: Pencil, colour: "text-blue-600" },
+  delete: { icon: Trash2, colour: "text-red-600" },
+  login: { icon: LogIn, colour: "text-purple-600" },
+  logout: { icon: LogOut, colour: "text-purple-600" },
+  change_password: { icon: Key, colour: "text-amber-600" },
+  reset_password: { icon: Key, colour: "text-amber-600" },
+  admin_reset_password: { icon: Key, colour: "text-amber-600" },
+  force_change_password: { icon: Shield, colour: "text-amber-600" },
+  publish: { icon: Plus, colour: "text-green-600" },
+  assign_site: { icon: Plus, colour: "text-blue-600" },
+  remove_site: { icon: Trash2, colour: "text-red-600" },
+};
+
+const ENTITY_LABELS: Record<string, string> = {
+  auth: "authentication",
+  client: "client",
+  event: "event",
+  screen: "screen",
+  screen_group: "screen group",
+  display_profile: "display profile",
+  media: "media",
+  layout: "layout",
+  programme: "programme",
+  playlist: "playlist",
+  live_override: "live override",
+  user: "user",
+};
+
+function getAuditDescription(entry: AuditLogEntry): string {
+  const userName = entry.user
+    ? [entry.user.firstName, entry.user.lastName].filter(Boolean).join(" ").trim() || entry.user.email || "Unknown"
+    : "Unknown";
+  const entityName = entry.payload?.name || entry.payload?.email || "";
+  const entityLabel = ENTITY_LABELS[entry.entityType] || entry.entityType;
+
+  if (entry.action === "login") return `${userName} logged in`;
+  if (entry.action === "logout") return `${userName} logged out`;
+  if (entry.action === "change_password") return `${userName} changed password`;
+
+  const actionLabels: Record<string, string> = {
+    create: "created", update: "updated", delete: "deleted",
+    publish: "published", unpair: "unpaired",
+    admin_reset_password: "reset password for",
+    force_change_password: "forced password change for",
+    assign_site: "assigned site to",
+    remove_site: "removed site from",
+    regenerate_pairing: "regenerated pairing for",
+    reset_password: "reset password",
+  };
+  const verb = actionLabels[entry.action] || entry.action;
+  const nameStr = entityName ? ` '${entityName}'` : "";
+  return `${userName} ${verb} ${entityLabel}${nameStr}`;
+}
+
+function RecentActivityCard({ isAdmin }: { isAdmin: boolean }) {
+  const { data, isLoading } = useQuery<{ logs: AuditLogEntry[]; total: number }>({
+    queryKey: ["/api/admin/audit-logs?limit=8"],
+    enabled: isAdmin,
+    refetchInterval: 30000,
+  });
+
+  if (!isAdmin) return null;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-2">
+        <CardTitle className="text-base font-semibold">Recent Activity</CardTitle>
+        <Link href="/admin/activity">
+          <Button variant="ghost" size="sm" data-testid="button-view-activity">
+            View All
+            <ArrowRight className="ml-1 h-3 w-3" />
+          </Button>
+        </Link>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-3">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <Skeleton className="h-6 w-6 rounded-full shrink-0" />
+                <div className="flex-1 space-y-1">
+                  <Skeleton className="h-3 w-3/4" />
+                  <Skeleton className="h-2 w-1/4" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : !data?.logs.length ? (
+          <div className="text-center py-6 text-muted-foreground">
+            <FileText className="h-6 w-6 mx-auto mb-2 opacity-50" />
+            <p className="text-xs">No activity recorded yet</p>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {data.logs.map((entry) => {
+              const config = ACTION_ICONS[entry.action] || { icon: FileText, colour: "text-muted-foreground" };
+              const Icon = config.icon;
+              return (
+                <div key={entry.id} className="flex items-center gap-3 py-1.5" data-testid={`recent-activity-${entry.id}`}>
+                  <Icon className={`h-3.5 w-3.5 shrink-0 ${config.colour}`} />
+                  <p className="text-xs flex-1 min-w-0 truncate">{getAuditDescription(entry)}</p>
+                  <span className="text-[10px] text-muted-foreground shrink-0">
+                    {formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AdminStatsCard({ isAdmin }: { isAdmin: boolean }) {
+  const { data: stats, isLoading } = useQuery<AdminStats>({
+    queryKey: ["/api/admin/stats"],
+    enabled: isAdmin,
+    refetchInterval: 60000,
+  });
+
+  if (!isAdmin) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base font-semibold">User & Activity Stats</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-3">
+            {[...Array(4)].map((_, i) => (
+              <Skeleton key={i} className="h-6" />
+            ))}
+          </div>
+        ) : stats ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between" data-testid="stat-total-users">
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4 text-primary" />
+                <span className="text-sm">Total Users</span>
+              </div>
+              <span className="text-sm font-semibold" data-testid="text-total-users-value">{stats.totalUsers}</span>
+            </div>
+            <div className="flex items-center justify-between" data-testid="stat-active-this-week">
+              <div className="flex items-center gap-2">
+                <Activity className="h-4 w-4 text-green-500" />
+                <span className="text-sm">Active This Week</span>
+              </div>
+              <span className="text-sm font-semibold" data-testid="text-active-week-value">{stats.activeUsersWeek}</span>
+            </div>
+            <div className="flex items-center justify-between" data-testid="stat-logins-today">
+              <div className="flex items-center gap-2">
+                <LogIn className="h-4 w-4 text-purple-500" />
+                <span className="text-sm">Logins Today</span>
+              </div>
+              <span className="text-sm font-semibold" data-testid="text-logins-today-value">{stats.loginsToday}</span>
+            </div>
+            <div className="flex items-center justify-between" data-testid="stat-changes-this-week">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-blue-500" />
+                <span className="text-sm">Changes This Week</span>
+              </div>
+              <span className="text-sm font-semibold" data-testid="text-changes-week-value">{stats.changesThisWeek}</span>
+            </div>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Dashboard() {
+  const { user } = useAuth();
   const { data: clients = [], isLoading: clientsLoading } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
   });
@@ -383,6 +593,16 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      {/* Admin Stats Row */}
+      {user?.role === "admin" && (
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="lg:col-span-2">
+            <RecentActivityCard isAdmin={true} />
+          </div>
+          <AdminStatsCard isAdmin={true} />
+        </div>
+      )}
 
       {/* Main Content Grid */}
       <div className="grid gap-6 lg:grid-cols-3">

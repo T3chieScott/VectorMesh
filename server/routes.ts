@@ -69,6 +69,14 @@ async function validateDeviceToken(req: Request, res: Response, next: NextFuncti
   next();
 }
 
+function logAudit(req: Request, action: string, entityType: string, entityId?: string, payload?: any) {
+  const userId = (req as any).dbUser?.id || (req.session as any)?.userId;
+  if (!userId) return;
+  storage.createAuditLog({ userId, action, entityType, entityId: entityId || null, payload: payload || null }).catch(err => {
+    console.error("Audit log error:", err);
+  });
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -92,6 +100,7 @@ export async function registerRoutes(
       if (!valid) {
         return res.status(401).json({ error: "Invalid email or password" });
       }
+      await storage.updateUser(user.id, { lastLoginAt: new Date() });
       const { passwordHash, ...safeUser } = user;
       req.session.regenerate((err) => {
         if (err) {
@@ -104,6 +113,7 @@ export async function registerRoutes(
             console.error("Session save error:", err);
             return res.status(500).json({ error: "Login failed" });
           }
+          storage.createAuditLog({ userId: user.id, action: "login", entityType: "auth", entityId: user.id, payload: { email: user.email } }).catch(() => {});
           res.json({ ...safeUser });
         });
       });
@@ -114,9 +124,13 @@ export async function registerRoutes(
   });
 
   app.post("/api/auth/logout", (req, res) => {
+    const userId = (req.session as any)?.userId;
     req.session.destroy((err) => {
       if (err) {
         return res.status(500).json({ error: "Logout failed" });
+      }
+      if (userId) {
+        storage.createAuditLog({ userId, action: "logout", entityType: "auth", entityId: userId, payload: null }).catch(() => {});
       }
       res.clearCookie("connect.sid");
       res.json({ ok: true });
@@ -145,6 +159,7 @@ export async function registerRoutes(
       const hash = await bcrypt.hash(newPassword, 12);
       await storage.setUserPassword(user.id, hash);
       await storage.updateUser(user.id, { mustChangePassword: false });
+      logAudit(req, "change_password", "auth", user.id);
       if (user.email) {
         await sendPasswordChangedEmail(user.email, user.firstName || "User");
       }
@@ -195,6 +210,7 @@ export async function registerRoutes(
       await storage.setUserPassword(resetToken.userId, hash);
       await storage.updateUser(resetToken.userId, { mustChangePassword: false });
       await storage.markPasswordResetTokenUsed(resetToken.id);
+      storage.createAuditLog({ userId: resetToken.userId, action: "reset_password", entityType: "auth", entityId: resetToken.userId, payload: null }).catch(() => {});
       const user = await storage.getUser(resetToken.userId);
       if (user?.email) {
         await sendPasswordChangedEmail(user.email, user.firstName || "User");
@@ -323,6 +339,7 @@ export async function registerRoutes(
       }
       const data = insertClientSchema.parse(req.body);
       const client = await storage.createClient(data);
+      logAudit(req, "create", "client", client.id, { name: client.name });
       res.status(201).json(client);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -343,6 +360,7 @@ export async function registerRoutes(
       if (!client) {
         return res.status(404).json({ error: "Client not found" });
       }
+      logAudit(req, "update", "client", client.id, { name: client.name });
       res.json(client);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -358,10 +376,12 @@ export async function registerRoutes(
       if (!isAdmin(req)) {
         return res.status(403).json({ error: "Admin access required to delete sites" });
       }
+      const clientToDelete = await storage.getClient(req.params.id);
       const deleted = await storage.deleteClient(req.params.id);
       if (!deleted) {
         return res.status(404).json({ error: "Client not found" });
       }
+      logAudit(req, "delete", "client", req.params.id, { name: clientToDelete?.name });
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting client:", error);
@@ -410,6 +430,7 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Access denied" });
       }
       const event = await storage.createEvent(data);
+      logAudit(req, "create", "event", event.id, { name: event.name });
       res.status(201).json(event);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -435,6 +456,7 @@ export async function registerRoutes(
       if (!event) {
         return res.status(404).json({ error: "Event not found" });
       }
+      logAudit(req, "update", "event", event.id, { name: event.name });
       res.json(event);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -454,6 +476,7 @@ export async function registerRoutes(
       if (!deleted) {
         return res.status(404).json({ error: "Event not found" });
       }
+      logAudit(req, "delete", "event", req.params.id, { name: existing.name });
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting event:", error);
@@ -476,6 +499,7 @@ export async function registerRoutes(
     try {
       const data = insertDisplayProfileSchema.parse(req.body);
       const profile = await storage.createDisplayProfile(data);
+      logAudit(req, "create", "display_profile", profile.id, { name: profile.name });
       res.status(201).json(profile);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -493,6 +517,7 @@ export async function registerRoutes(
       if (!profile) {
         return res.status(404).json({ error: "Display profile not found" });
       }
+      logAudit(req, "update", "display_profile", profile.id, { name: profile.name });
       res.json(profile);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -509,6 +534,7 @@ export async function registerRoutes(
       if (!deleted) {
         return res.status(404).json({ error: "Display profile not found" });
       }
+      logAudit(req, "delete", "display_profile", req.params.id);
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting display profile:", error);
@@ -543,6 +569,7 @@ export async function registerRoutes(
     try {
       const data = insertScreenGroupSchema.parse(req.body);
       const group = await storage.createScreenGroup(data);
+      logAudit(req, "create", "screen_group", group.id, { name: group.name });
       res.status(201).json(group);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -560,6 +587,7 @@ export async function registerRoutes(
       if (!group) {
         return res.status(404).json({ error: "Screen group not found" });
       }
+      logAudit(req, "update", "screen_group", group.id, { name: group.name });
       res.json(group);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -576,6 +604,7 @@ export async function registerRoutes(
       if (!deleted) {
         return res.status(404).json({ error: "Screen group not found" });
       }
+      logAudit(req, "delete", "screen_group", req.params.id);
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting screen group:", error);
@@ -638,6 +667,7 @@ export async function registerRoutes(
         }
       }
       const screen = await storage.createScreen(data);
+      logAudit(req, "create", "screen", screen.id, { name: screen.name });
       res.status(201).json(screen);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -660,6 +690,7 @@ export async function registerRoutes(
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
+      logAudit(req, "update", "screen", screen.id, { name: screen.name });
       res.json(screen);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -677,6 +708,7 @@ export async function registerRoutes(
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
+      logAudit(req, "regenerate_pairing", "screen", screen.id, { name: screen.name });
       res.json(screen);
     } catch (error) {
       console.error("Error regenerating pairing code:", error);
@@ -691,6 +723,7 @@ export async function registerRoutes(
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
+      logAudit(req, "unpair", "screen", screen.id, { name: screen.name });
       const { deviceToken, ...safeScreen } = screen;
       res.json(safeScreen);
     } catch (error) {
@@ -705,6 +738,7 @@ export async function registerRoutes(
       if (!deleted) {
         return res.status(404).json({ error: "Screen not found" });
       }
+      logAudit(req, "delete", "screen", req.params.id);
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting screen:", error);
@@ -747,6 +781,7 @@ export async function registerRoutes(
         }
       }
       const asset = await storage.createMediaAsset(data);
+      logAudit(req, "create", "media", asset.id, { name: asset.name });
       res.status(201).json(asset);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -763,6 +798,7 @@ export async function registerRoutes(
       if (!deleted) {
         return res.status(404).json({ error: "Media asset not found" });
       }
+      logAudit(req, "delete", "media", req.params.id);
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting media asset:", error);
@@ -776,6 +812,7 @@ export async function registerRoutes(
       if (!updated) {
         return res.status(404).json({ error: "Media asset not found" });
       }
+      logAudit(req, "update", "media", updated.id, { name: updated.name });
       res.json(updated);
     } catch (error) {
       console.error("Error updating media asset:", error);
@@ -846,6 +883,7 @@ export async function registerRoutes(
         }
       }
       const layout = await storage.createLayoutTemplate(data);
+      logAudit(req, "create", "layout", layout.id, { name: layout.name });
       res.status(201).json(layout);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -863,6 +901,7 @@ export async function registerRoutes(
       if (!layout) {
         return res.status(404).json({ error: "Layout not found" });
       }
+      logAudit(req, "update", "layout", layout.id, { name: layout.name });
       res.json(layout);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -879,6 +918,7 @@ export async function registerRoutes(
       if (!deleted) {
         return res.status(404).json({ error: "Layout not found" });
       }
+      logAudit(req, "delete", "layout", req.params.id);
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting layout:", error);
@@ -910,6 +950,7 @@ export async function registerRoutes(
       }
       const programme = await storage.createProgramme(data);
       await storage.createProgrammeVersion({ programmeId: programme.id, versionNumber: 1, status: "draft" });
+      logAudit(req, "create", "programme", programme.id, { name: programme.name });
       res.status(201).json(programme);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -927,6 +968,7 @@ export async function registerRoutes(
       if (!programme) {
         return res.status(404).json({ error: "Programme not found" });
       }
+      logAudit(req, "update", "programme", programme.id, { name: programme.name });
       res.json(programme);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -946,7 +988,7 @@ export async function registerRoutes(
       if (draftVersion) {
         await storage.updateProgrammeVersion(draftVersion.id, { status: "published", publishedAt: new Date() });
       }
-      
+      logAudit(req, "publish", "programme", req.params.id);
       res.json({ success: true });
     } catch (error) {
       console.error("Error publishing programme:", error);
@@ -960,6 +1002,7 @@ export async function registerRoutes(
       if (!deleted) {
         return res.status(404).json({ error: "Programme not found" });
       }
+      logAudit(req, "delete", "programme", req.params.id);
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting programme:", error);
@@ -1003,6 +1046,7 @@ export async function registerRoutes(
         }
       }
       const playlist = await storage.createPlaylist(data);
+      logAudit(req, "create", "playlist", playlist.id, { name: playlist.name });
       res.status(201).json(playlist);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -1020,6 +1064,7 @@ export async function registerRoutes(
       if (!playlist) {
         return res.status(404).json({ error: "Playlist not found" });
       }
+      logAudit(req, "update", "playlist", playlist.id, { name: playlist.name });
       res.json(playlist);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -1036,6 +1081,7 @@ export async function registerRoutes(
       if (!deleted) {
         return res.status(404).json({ error: "Playlist not found" });
       }
+      logAudit(req, "delete", "playlist", req.params.id);
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting playlist:", error);
@@ -1177,6 +1223,7 @@ export async function registerRoutes(
         }
       }
       const override = await storage.createLiveOverride(data);
+      logAudit(req, "create", "live_override", override.id, { name: override.name });
       res.status(201).json(override);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -1199,6 +1246,7 @@ export async function registerRoutes(
       if (!override) {
         return res.status(404).json({ error: "Live override not found" });
       }
+      logAudit(req, "update", "live_override", override.id, { name: override.name });
       res.json(override);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -1215,6 +1263,7 @@ export async function registerRoutes(
       if (!deleted) {
         return res.status(404).json({ error: "Live override not found" });
       }
+      logAudit(req, "delete", "live_override", req.params.id);
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting live override:", error);
@@ -1644,6 +1693,7 @@ export async function registerRoutes(
         isActive: true,
       });
       await sendWelcomeEmail(user.email!, firstName || "User", password);
+      logAudit(req, "create", "user", user.id, { email: user.email, role: user.role });
       const { passwordHash, ...safeUser } = user;
       res.status(201).json(safeUser);
     } catch (error) {
@@ -1679,6 +1729,7 @@ export async function registerRoutes(
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
+      logAudit(req, "update", "user", user.id, { email: user.email, changes: Object.keys(updateData) });
       const { passwordHash, ...safeUser } = user;
       res.json(safeUser);
     } catch (error) {
@@ -1700,6 +1751,7 @@ export async function registerRoutes(
       if (user.email) {
         await sendAdminPasswordResetEmail(user.email, user.firstName || "User", tempPassword);
       }
+      logAudit(req, "admin_reset_password", "user", user.id, { email: user.email });
       res.json({ ok: true, temporaryPassword: tempPassword });
     } catch (error) {
       console.error("Error resetting password:", error);
@@ -1713,6 +1765,7 @@ export async function registerRoutes(
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
+      logAudit(req, "force_change_password", "user", user.id, { email: user.email });
       res.json({ ok: true });
     } catch (error) {
       console.error("Error forcing password change:", error);
@@ -1731,6 +1784,7 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Client/site not found" });
       }
       const userSite = await storage.addUserToSite(req.params.id, clientId);
+      logAudit(req, "assign_site", "user", req.params.id, { clientId, clientName: client.name });
       res.status(201).json(userSite);
     } catch (error) {
       console.error("Error assigning user to site:", error);
@@ -1744,10 +1798,12 @@ export async function registerRoutes(
       if (adminUser.id === req.params.id) {
         return res.status(400).json({ error: "You cannot delete your own account" });
       }
+      const userToDelete = await storage.getUser(req.params.id);
       const deleted = await storage.deleteUser(req.params.id);
       if (!deleted) {
         return res.status(404).json({ error: "User not found" });
       }
+      logAudit(req, "delete", "user", req.params.id, { email: userToDelete?.email });
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting user:", error);
@@ -1761,10 +1817,70 @@ export async function registerRoutes(
       if (!removed) {
         return res.status(404).json({ error: "Assignment not found" });
       }
+      logAudit(req, "remove_site", "user", req.params.id, { clientId: req.params.clientId });
       res.status(204).send();
     } catch (error) {
       console.error("Error removing user from site:", error);
       res.status(500).json({ error: "Failed to remove user from site" });
+    }
+  });
+
+  // ============ ADMIN: AUDIT LOGS & STATS ============
+  app.get("/api/admin/audit-logs", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const options: any = {};
+      if (req.query.userId) options.userId = req.query.userId as string;
+      if (req.query.entityType) options.entityType = req.query.entityType as string;
+      if (req.query.action) options.action = req.query.action as string;
+      if (req.query.dateFrom) options.dateFrom = new Date(req.query.dateFrom as string);
+      if (req.query.dateTo) options.dateTo = new Date(req.query.dateTo as string);
+      if (req.query.limit) options.limit = parseInt(req.query.limit as string);
+      if (req.query.offset) options.offset = parseInt(req.query.offset as string);
+
+      const result = await storage.getAuditLogs(options);
+
+      const allUsers = await storage.getAllUsers();
+      const userMap = new Map(allUsers.map(u => [u.id, { firstName: u.firstName, lastName: u.lastName, email: u.email }]));
+
+      const logsWithUsers = result.logs.map(log => ({
+        ...log,
+        user: log.userId ? userMap.get(log.userId) || null : null,
+      }));
+
+      res.json({ logs: logsWithUsers, total: result.total });
+    } catch (error) {
+      console.error("Error fetching audit logs:", error);
+      res.status(500).json({ error: "Failed to fetch audit logs" });
+    }
+  });
+
+  app.get("/api/admin/stats", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const [auditStats, allUsers, clients, screens, mediaAssets, overrides] = await Promise.all([
+        storage.getAuditLogStats(),
+        storage.getAllUsers(),
+        storage.getClients(),
+        storage.getScreens(),
+        storage.getMediaAssets(),
+        storage.getLiveOverrides(),
+      ]);
+
+      const now = new Date();
+      const activeOverrides = overrides.filter(o => o.isActive && new Date(o.endTime) > now).length;
+
+      res.json({
+        ...auditStats,
+        totalUsers: allUsers.length,
+        activeUsers: allUsers.filter(u => u.isActive).length,
+        totalClients: clients.length,
+        totalScreens: screens.length,
+        onlineScreens: screens.filter(s => s.isOnline).length,
+        totalMedia: mediaAssets.length,
+        activeOverrides,
+      });
+    } catch (error) {
+      console.error("Error fetching admin stats:", error);
+      res.status(500).json({ error: "Failed to fetch admin stats" });
     }
   });
 
