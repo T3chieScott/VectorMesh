@@ -589,7 +589,8 @@ export type AuditLog = typeof auditLogs.$inferSelect;
 
 export const alertSettings = pgTable("alert_settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  alertType: text("alert_type").notNull().unique(),
+  alertType: text("alert_type").notNull(),
+  clientId: varchar("client_id"),
   enabled: boolean("enabled").notNull().default(false),
   recipients: text("recipients").array().notNull().default(sql`'{}'::text[]`),
   cooldownMinutes: integer("cooldown_minutes").notNull().default(15),

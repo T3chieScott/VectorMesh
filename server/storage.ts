@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, desc, gte, lte, lt, inArray, sql, count } from "drizzle-orm";
+import { eq, and, desc, gte, lte, lt, inArray, isNotNull, sql, count } from "drizzle-orm";
 import {
   clients,
   events,
@@ -191,9 +191,10 @@ export interface IStorage {
   getAuditLogStats(): Promise<{ loginsToday: number; activeUsersWeek: number; changesThisWeek: number; totalLogs: number }>;
 
   // Alert Settings
-  getAlertSettings(): Promise<AlertSetting[]>;
-  getAlertSetting(alertType: string): Promise<AlertSetting | undefined>;
-  upsertAlertSetting(alertType: string, data: { enabled: boolean; recipients: string[]; cooldownMinutes: number }): Promise<AlertSetting>;
+  getAlertSettings(clientIds?: string[] | null): Promise<AlertSetting[]>;
+  getAlertSetting(alertType: string, clientId: string): Promise<AlertSetting | undefined>;
+  upsertAlertSetting(alertType: string, clientId: string, data: { enabled: boolean; recipients: string[]; cooldownMinutes: number }): Promise<AlertSetting>;
+  getAlertSettingsForType(alertType: string): Promise<AlertSetting[]>;
   createAlertHistoryEntry(data: { alertType: string; entityId: string; recipients: string[]; payload?: any }): Promise<AlertHistory>;
   getRecentAlertHistory(alertType: string, entityId: string, withinMinutes: number): Promise<AlertHistory[]>;
   deleteAlertHistory(alertType: string, entityId: string): Promise<void>;
@@ -806,23 +807,47 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getAlertSettings(): Promise<AlertSetting[]> {
-    return db.select().from(alertSettings);
+  async getAlertSettings(clientIds?: string[] | null): Promise<AlertSetting[]> {
+    if (clientIds === null || clientIds === undefined) {
+      return db.select().from(alertSettings).where(isNotNull(alertSettings.clientId));
+    }
+    if (clientIds.length === 0) return [];
+    return db.select().from(alertSettings).where(
+      inArray(alertSettings.clientId, clientIds)
+    );
   }
 
-  async getAlertSetting(alertType: string): Promise<AlertSetting | undefined> {
-    const [setting] = await db.select().from(alertSettings).where(eq(alertSettings.alertType, alertType));
+  async getAlertSetting(alertType: string, clientId: string): Promise<AlertSetting | undefined> {
+    const [setting] = await db.select().from(alertSettings).where(
+      and(
+        eq(alertSettings.alertType, alertType),
+        eq(alertSettings.clientId, clientId)
+      )
+    );
     return setting;
   }
 
-  async upsertAlertSetting(alertType: string, data: { enabled: boolean; recipients: string[]; cooldownMinutes: number }): Promise<AlertSetting> {
-    const existing = await this.getAlertSetting(alertType);
+  async upsertAlertSetting(alertType: string, clientId: string, data: { enabled: boolean; recipients: string[]; cooldownMinutes: number }): Promise<AlertSetting> {
+    const existing = await this.getAlertSetting(alertType, clientId);
     if (existing) {
-      const [updated] = await db.update(alertSettings).set({ ...data, updatedAt: new Date() } as any).where(eq(alertSettings.alertType, alertType)).returning();
+      const [updated] = await db.update(alertSettings)
+        .set({ ...data, updatedAt: new Date() } as any)
+        .where(and(eq(alertSettings.alertType, alertType), eq(alertSettings.clientId, clientId)))
+        .returning();
       return updated;
     }
-    const [created] = await db.insert(alertSettings).values({ alertType, ...data }).returning();
+    const [created] = await db.insert(alertSettings).values({ alertType, clientId, ...data }).returning();
     return created;
+  }
+
+  async getAlertSettingsForType(alertType: string): Promise<AlertSetting[]> {
+    return db.select().from(alertSettings).where(
+      and(
+        eq(alertSettings.alertType, alertType),
+        eq(alertSettings.enabled, true),
+        isNotNull(alertSettings.clientId)
+      )
+    );
   }
 
   async createAlertHistoryEntry(data: { alertType: string; entityId: string; recipients: string[]; payload?: any }): Promise<AlertHistory> {

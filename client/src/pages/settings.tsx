@@ -479,35 +479,50 @@ function CreateProfileDialog() {
 interface AlertSettingData {
   id: string;
   alertType: string;
+  clientId: string | null;
   enabled: boolean;
   recipients: string[];
   cooldownMinutes: number;
 }
 
+interface ClientData {
+  id: string;
+  name: string;
+}
+
 function AlertSettingsCard() {
   const { toast } = useToast();
   const { user } = useAuth();
+  const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [newEmail, setNewEmail] = useState("");
 
-  const { data: settings = [], isLoading } = useQuery<AlertSettingData[]>({
-    queryKey: ["/api/admin/alert-settings"],
-    enabled: user?.role === "admin",
+  const { data: clients = [] } = useQuery<ClientData[]>({
+    queryKey: ["/api/clients"],
   });
 
-  const screenOfflineSetting = settings.find(s => s.alertType === "screen_offline") || {
+  const { data: settings = [], isLoading } = useQuery<AlertSettingData[]>({
+    queryKey: ["/api/alert-settings"],
+  });
+
+  const effectiveClientId = selectedClientId || (clients.length > 0 ? clients[0].id : "");
+
+  const screenOfflineSetting = settings.find(
+    s => s.alertType === "screen_offline" && s.clientId === effectiveClientId
+  ) || {
     alertType: "screen_offline",
+    clientId: effectiveClientId,
     enabled: false,
     recipients: [] as string[],
     cooldownMinutes: 15,
   };
 
   const updateMutation = useMutation({
-    mutationFn: async (data: { enabled: boolean; recipients: string[]; cooldownMinutes: number }) => {
-      const res = await apiRequest("PUT", "/api/admin/alert-settings/screen_offline", data);
+    mutationFn: async (data: { clientId: string; enabled: boolean; recipients: string[]; cooldownMinutes: number }) => {
+      const res = await apiRequest("PUT", "/api/alert-settings/screen_offline", data);
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/alert-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/alert-settings"] });
     },
     onError: () => {
       toast({ title: "Failed to update alert settings", variant: "destructive" });
@@ -516,7 +531,7 @@ function AlertSettingsCard() {
 
   const testMutation = useMutation({
     mutationFn: async (recipients: string[]) => {
-      const res = await apiRequest("POST", "/api/admin/alert-settings/test", { recipients });
+      const res = await apiRequest("POST", "/api/alert-settings/test", { recipients });
       return res.json();
     },
     onSuccess: () => {
@@ -529,6 +544,7 @@ function AlertSettingsCard() {
 
   const handleToggle = (enabled: boolean) => {
     updateMutation.mutate({
+      clientId: effectiveClientId,
       enabled,
       recipients: screenOfflineSetting.recipients,
       cooldownMinutes: screenOfflineSetting.cooldownMinutes,
@@ -547,6 +563,7 @@ function AlertSettingsCard() {
     }
     const newRecipients = [...screenOfflineSetting.recipients, email];
     updateMutation.mutate({
+      clientId: effectiveClientId,
       enabled: screenOfflineSetting.enabled,
       recipients: newRecipients,
       cooldownMinutes: screenOfflineSetting.cooldownMinutes,
@@ -557,6 +574,7 @@ function AlertSettingsCard() {
   const handleRemoveEmail = (email: string) => {
     const newRecipients = screenOfflineSetting.recipients.filter(r => r !== email);
     updateMutation.mutate({
+      clientId: effectiveClientId,
       enabled: screenOfflineSetting.enabled,
       recipients: newRecipients,
       cooldownMinutes: screenOfflineSetting.cooldownMinutes,
@@ -566,13 +584,16 @@ function AlertSettingsCard() {
   const handleCooldownChange = (minutes: string) => {
     const mins = parseInt(minutes) || 15;
     updateMutation.mutate({
+      clientId: effectiveClientId,
       enabled: screenOfflineSetting.enabled,
       recipients: screenOfflineSetting.recipients,
       cooldownMinutes: mins,
     });
   };
 
-  if (user?.role !== "admin") return null;
+  if (clients.length === 0) return null;
+
+  const selectedClientName = clients.find(c => c.id === effectiveClientId)?.name || "";
 
   return (
     <Card>
@@ -589,6 +610,31 @@ function AlertSettingsCard() {
           </div>
         ) : (
           <>
+            {clients.length > 1 && (
+              <>
+                <div className="space-y-1.5">
+                  <Label className="text-sm">Site</Label>
+                  <Select value={effectiveClientId} onValueChange={setSelectedClientId}>
+                    <SelectTrigger data-testid="select-alert-site">
+                      <SelectValue placeholder="Select a site" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {clients.map((c) => (
+                        <SelectItem key={c.id} value={c.id} data-testid={`select-alert-site-${c.id}`}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Separator />
+              </>
+            )}
+
+            {clients.length === 1 && (
+              <p className="text-xs text-muted-foreground">Configuring alerts for <span className="font-medium text-foreground">{selectedClientName}</span></p>
+            )}
+
             <div className="flex items-center justify-between" data-testid="toggle-screen-offline-alert">
               <div>
                 <Label className="text-sm font-medium">Screen Offline Alerts</Label>

@@ -274,9 +274,18 @@ export async function registerRoutes(
     try {
       const offlineScreens = await storage.markStaleScreensOffline(STALE_THRESHOLD_MS);
       if (offlineScreens.length > 0) {
-        const alertSetting = await storage.getAlertSetting("screen_offline");
-        if (alertSetting?.enabled && alertSetting.recipients.length > 0) {
+        const enabledAlertSettings = await storage.getAlertSettingsForType("screen_offline");
+        if (enabledAlertSettings.length > 0) {
+          const allEvents = await storage.getEvents();
+          const eventClientMap = new Map(allEvents.map(e => [e.id, e.clientId]));
+
           for (const screen of offlineScreens) {
+            const screenClientId = screen.currentEventId ? eventClientMap.get(screen.currentEventId) : null;
+            if (!screenClientId) continue;
+
+            const alertSetting = enabledAlertSettings.find(s => s.clientId === screenClientId);
+            if (!alertSetting || alertSetting.recipients.length === 0) continue;
+
             const recentAlerts = await storage.getRecentAlertHistory("screen_offline", screen.id, alertSetting.cooldownMinutes);
             if (recentAlerts.length === 0) {
               try {
@@ -1359,14 +1368,19 @@ export async function registerRoutes(
           console.error("Failed to clear alert history:", err)
         );
         try {
-          const alertSetting = await storage.getAlertSetting("screen_offline");
-          if (alertSetting?.enabled && alertSetting.recipients.length > 0) {
-            sendScreenOnlineAlert(
-              alertSetting.recipients,
-              screen.name,
-              screen.location,
-              screen.lastSeen ? new Date(screen.lastSeen) : null
-            ).catch((err) => console.error("Failed to send screen online alert:", err));
+          if (screen.currentEventId) {
+            const event = await storage.getEvent(screen.currentEventId);
+            if (event?.clientId) {
+              const alertSetting = await storage.getAlertSetting("screen_offline", event.clientId);
+              if (alertSetting?.enabled && alertSetting.recipients.length > 0) {
+                sendScreenOnlineAlert(
+                  alertSetting.recipients,
+                  screen.name,
+                  screen.location,
+                  screen.lastSeen ? new Date(screen.lastSeen) : null
+                ).catch((err) => console.error("Failed to send screen online alert:", err));
+              }
+            }
           }
         } catch (alertErr) {
           console.error("Failed to process screen online alert:", alertErr);
@@ -1943,9 +1957,10 @@ export async function registerRoutes(
   });
 
   // ============ ALERT SETTINGS ============
-  app.get("/api/admin/alert-settings", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/alert-settings", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const settings = await storage.getAlertSettings();
+      const allowed = getAllowedClientIds(req);
+      const settings = await storage.getAlertSettings(allowed);
       res.json(settings);
     } catch (error) {
       console.error("Error fetching alert settings:", error);
@@ -1953,10 +1968,18 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/admin/alert-settings/:alertType", requireAuth, requireAdmin, async (req, res) => {
+  app.put("/api/alert-settings/:alertType", requireAuth, loadUserContext, async (req, res) => {
     try {
       const { alertType } = req.params;
-      const { enabled, recipients, cooldownMinutes } = req.body;
+      const { clientId, enabled, recipients, cooldownMinutes } = req.body;
+
+      if (!clientId || typeof clientId !== "string") {
+        return res.status(400).json({ error: "clientId is required" });
+      }
+
+      if (!canAccessClient(req, clientId)) {
+        return res.status(403).json({ error: "Access denied to this site" });
+      }
 
       if (!Array.isArray(recipients) || !recipients.every((r: any) => typeof r === "string" && r.includes("@"))) {
         return res.status(400).json({ error: "Recipients must be an array of valid email addresses" });
@@ -1964,13 +1987,13 @@ export async function registerRoutes(
 
       const cooldown = typeof cooldownMinutes === "number" && cooldownMinutes > 0 ? Math.floor(cooldownMinutes) : 15;
 
-      const setting = await storage.upsertAlertSetting(alertType, {
+      const setting = await storage.upsertAlertSetting(alertType, clientId, {
         enabled: !!enabled,
         recipients: recipients.map((r: string) => r.trim().toLowerCase()),
         cooldownMinutes: cooldown,
       });
 
-      logAudit(req, "update", "alert_setting", alertType, { enabled, recipients: recipients.length, cooldownMinutes });
+      logAudit(req, "update", "alert_setting", alertType, { clientId, enabled, recipients: recipients.length, cooldownMinutes });
       res.json(setting);
     } catch (error) {
       console.error("Error updating alert setting:", error);
@@ -1978,7 +2001,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/admin/alert-settings/test", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/alert-settings/test", requireAuth, async (req, res) => {
     try {
       const { recipients } = req.body;
       if (!Array.isArray(recipients) || recipients.length === 0) {

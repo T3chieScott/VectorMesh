@@ -106,16 +106,17 @@ Core entities include: Clients, Events, Brand Packs, Display Profiles, Screen Gr
   - **Activity Log page** (`/admin/activity`): colour-coded action badges, relative timestamps, entity type/action filters, pagination
   - **Dashboard admin section**: Recent Activity card (last 8 entries), User & Activity Stats card (total users, active this week, logins today, changes this week), and Stats by Site card (per-client screen/event/media/override counts)
   - **Per-client stats API**: `GET /api/admin/stats/by-client` returns per-site breakdowns (screens online/total, active events, media count, active overrides)
-- **Email alerts**: Configurable screen offline alerts via Settings page
-  - `alert_settings` table: alertType, enabled, recipients (text array), cooldownMinutes
+- **Email alerts**: Configurable screen offline/online alerts, scoped per client (site)
+  - `alert_settings` table: alertType, clientId, enabled, recipients (text array), cooldownMinutes
   - `alert_history` table: tracks sent alerts for cooldown logic
-  - **Alert API endpoints** (admin-only):
-    - `GET /api/admin/alert-settings` — list all alert settings
-    - `PUT /api/admin/alert-settings/:alertType` — create/update alert setting
-    - `POST /api/admin/alert-settings/test` — send a test alert to recipients
-  - **Screen offline alert flow**: 30-second background sweep detects offline screens → checks alert_settings → respects cooldown → sends email via `sendScreenOfflineAlert()` to all recipients
-  - **Screen back online alert**: When an offline screen sends a heartbeat, `sendScreenOnlineAlert()` notifies recipients and alert history for that screen is cleared (resetting cooldown so future offline events trigger fresh alerts)
-  - **Settings UI**: Alert Settings card in Settings page with toggle, email recipient management (add/remove badges), cooldown configuration, and test alert button
+  - **Per-site scoping**: Each client/site has its own alert configuration; site users can configure alerts for their assigned sites, admins for all sites
+  - **Alert API endpoints** (authenticated, site-scoped):
+    - `GET /api/alert-settings` — list alert settings (filtered to user's allowed sites)
+    - `PUT /api/alert-settings/:alertType` — create/update alert setting (requires clientId, access-checked)
+    - `POST /api/alert-settings/test` — send a test alert to recipients
+  - **Screen offline alert flow**: 30-second background sweep detects offline screens → resolves screen's client via currentEventId → event → clientId → checks that client's alert_settings → respects cooldown → sends email via `sendScreenOfflineAlert()` to that site's recipients
+  - **Screen back online alert**: When an offline screen sends a heartbeat, `sendScreenOnlineAlert()` notifies the relevant site's recipients and alert history for that screen is cleared (resetting cooldown so future offline events trigger fresh alerts)
+  - **Settings UI**: Alert Settings card in Settings page with site selector (dropdown if multiple sites), toggle, email recipient management (add/remove badges), cooldown configuration, and test alert button
 
 ### Key Design Patterns
 - **Shared Schema**: Types defined once in `shared/` and used by both frontend and backend
