@@ -1703,12 +1703,13 @@ export async function registerRoutes(
               const [sh, sm] = rule.startTime.split(":").map(Number);
               const [eh, em] = rule.endTime.split(":").map(Number);
               const startMins = sh * 60 + sm;
-              let endMins = eh * 60 + em;
+              const endMins = eh * 60 + em;
               const nowMins = now.getHours() * 60 + now.getMinutes();
               if (endMins <= startMins) {
-                endMins = 24 * 60;
+                if (nowMins < startMins && nowMins > endMins) return false;
+              } else {
+                if (nowMins < startMins || nowMins > endMins) return false;
               }
-              if (nowMins < startMins || nowMins > endMins) return false;
             } else {
               if (rule.startTime) {
                 const [h, m] = rule.startTime.split(":").map(Number);
@@ -1763,6 +1764,118 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching player content:", error);
       res.status(500).json({ error: "Failed to fetch player content" });
+    }
+  });
+
+  // ============ SIMULATOR CONTENT ============
+  app.get("/api/simulator/:screenId/content", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const screen = await storage.getScreen(req.params.screenId);
+      if (!screen) {
+        return res.status(404).json({ error: "Screen not found" });
+      }
+
+      if (screen.clientId && !canAccessClient(req, screen.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const now = new Date();
+      let layout: any = null;
+      let layoutSource: string = "none";
+      let layoutSourceDetail: string | null = null;
+
+      const overrides = await storage.getLiveOverrides();
+      const activeOverride = overrides.find(o => {
+        if (!o.isActive || new Date(o.startTime) > now || new Date(o.endTime) < now) return false;
+        if (!o.targets || (o.targets as any[]).length === 0) return true;
+        return (o.targets as any[]).some((t: any) =>
+          (t.type === "screen" && t.id === screen.id)
+        );
+      });
+
+      if (activeOverride && activeOverride.layoutTemplateId) {
+        layout = await storage.getLayoutTemplate(activeOverride.layoutTemplateId);
+        layoutSource = "live_override";
+        layoutSourceDetail = activeOverride.message || "Live Override";
+      }
+
+      if (!layout && screen.currentEventId) {
+        const [programmes, allVersions] = await Promise.all([
+          storage.getProgrammes(),
+          storage.getProgrammeVersions(),
+        ]);
+        const eventProgrammes = programmes.filter(p => p.eventId === screen.currentEventId);
+        const publishedVersions = allVersions.filter(v =>
+          v.status === "published" && eventProgrammes.some(p => p.id === v.programmeId)
+        );
+
+        const allBlocks = await Promise.all(
+          publishedVersions.map(v => storage.getScheduleBlocks(v.id))
+        );
+        const flatBlocks = allBlocks.flat().sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+        for (const block of flatBlocks) {
+          const targets = block.targets as any[] || [];
+          const targetMatch = targets.length === 0 || targets.some((t: any) =>
+            t.type === "screen" && t.id === screen.id
+          );
+          if (!targetMatch) continue;
+
+          const timeRules = block.timeRules as any[] || [];
+          const timeMatch = timeRules.length === 0 || timeRules.some((rule: any) => {
+            if (rule.startDate && new Date(rule.startDate) > now) return false;
+            if (rule.endDate && new Date(rule.endDate) < now) return false;
+            if (rule.daysOfWeek && rule.daysOfWeek.length > 0) {
+              if (!rule.daysOfWeek.includes(now.getDay())) return false;
+            }
+            if (rule.startTime && rule.endTime) {
+              const [sh, sm] = rule.startTime.split(":").map(Number);
+              const [eh, em] = rule.endTime.split(":").map(Number);
+              const startMins = sh * 60 + sm;
+              const endMins = eh * 60 + em;
+              const nowMins = now.getHours() * 60 + now.getMinutes();
+              if (endMins <= startMins) {
+                if (nowMins < startMins && nowMins > endMins) return false;
+              } else {
+                if (nowMins < startMins || nowMins > endMins) return false;
+              }
+            } else {
+              if (rule.startTime) {
+                const [h, m] = rule.startTime.split(":").map(Number);
+                if (now.getHours() < h || (now.getHours() === h && now.getMinutes() < m)) return false;
+              }
+              if (rule.endTime) {
+                const [h, m] = rule.endTime.split(":").map(Number);
+                if (now.getHours() > h || (now.getHours() === h && now.getMinutes() > m)) return false;
+              }
+            }
+            return true;
+          });
+
+          if (timeMatch && block.layoutTemplateId) {
+            layout = await storage.getLayoutTemplate(block.layoutTemplateId);
+            layoutSource = "scheduled";
+            layoutSourceDetail = block.name;
+            break;
+          }
+        }
+      }
+
+      if (!layout && screen.fallbackLayoutId) {
+        layout = await storage.getLayoutTemplate(screen.fallbackLayoutId);
+        layoutSource = "fallback";
+        layoutSourceDetail = "Fallback Layout";
+      }
+
+      res.json({
+        layoutId: layout?.id || null,
+        layoutSource,
+        layoutSourceDetail,
+        timestamp: now.toISOString(),
+      });
+    } catch (error) {
+      console.error("Error fetching simulator content:", error);
+      res.status(500).json({ error: "Failed to fetch simulator content" });
     }
   });
 

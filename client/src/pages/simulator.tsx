@@ -271,9 +271,15 @@ function PlayerDisplay({
   );
 }
 
+interface ResolvedContent {
+  layoutId: string | null;
+  layoutSource: "none" | "live_override" | "scheduled" | "fallback";
+  layoutSourceDetail: string | null;
+}
+
 export default function SimulatorPage() {
   const [selectedScreenId, setSelectedScreenId] = useState<string>("none");
-  const [selectedLayoutId, setSelectedLayoutId] = useState<string>("none");
+  const [selectedLayoutId, setSelectedLayoutId] = useState<string>("auto");
   const [mediaIndex, setMediaIndex] = useState(0);
   const [zoneMediaIndices, setZoneMediaIndices] = useState<Record<string, number>>({});
   const [zonePlaylistAssignments, setZonePlaylistAssignments] = useState<Record<string, string>>({});
@@ -314,6 +320,17 @@ export default function SimulatorPage() {
 
   const { data: playlists = [] } = useQuery<Playlist[]>(playlistsQ);
 
+  const { data: resolvedContent } = useQuery<ResolvedContent>({
+    queryKey: ["/api/simulator", selectedScreenId, "content"],
+    queryFn: async () => {
+      const res = await fetch(`/api/simulator/${selectedScreenId}/content`);
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+    enabled: selectedScreenId !== "none",
+    refetchInterval: 7000,
+  });
+
   // Get playlist items for assigned playlists
   const assignedPlaylistIds = Object.values(zonePlaylistAssignments).filter(id => id && id !== "none");
   const { data: playlistItemsMap = {} } = useQuery<Record<string, PlaylistItem[]>>({
@@ -339,9 +356,19 @@ export default function SimulatorPage() {
     ? profiles.find((p) => p.id === selectedScreen.displayProfileId)
     : profiles[0];
 
-  // Layout: either directly selected, or from screen's assignment
-  const selectedLayout = selectedLayoutId !== "none"
-    ? layouts.find((l) => l.id === selectedLayoutId)
+  const isAutoMode = selectedLayoutId === "auto";
+  const effectiveLayoutId = isAutoMode
+    ? resolvedContent?.layoutId || null
+    : selectedLayoutId !== "none" ? selectedLayoutId : null;
+  const selectedLayout = effectiveLayoutId
+    ? layouts.find((l) => l.id === effectiveLayoutId) || null
+    : null;
+
+  const layoutSourceLabel = isAutoMode && resolvedContent
+    ? resolvedContent.layoutSource === "live_override" ? "Live Override"
+      : resolvedContent.layoutSource === "scheduled" ? `Scheduled: ${resolvedContent.layoutSourceDetail || "Block"}`
+      : resolvedContent.layoutSource === "fallback" ? "Fallback Layout"
+      : "No Layout Resolved"
     : null;
 
   // Check for active live override for selected screen
@@ -500,6 +527,7 @@ export default function SimulatorPage() {
                   <SelectValue placeholder="Select a layout" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="auto">Auto (from screen)</SelectItem>
                   <SelectItem value="none">No layout</SelectItem>
                   {layouts.map((layout) => (
                     <SelectItem key={layout.id} value={layout.id}>
@@ -508,6 +536,20 @@ export default function SimulatorPage() {
                   ))}
                 </SelectContent>
               </Select>
+              {isAutoMode && selectedScreenId !== "none" && layoutSourceLabel && (
+                <div className="flex items-center gap-2">
+                  <Badge
+                    variant={resolvedContent?.layoutSource === "live_override" ? "destructive" : "secondary"}
+                    className="text-xs"
+                    data-testid="badge-layout-source"
+                  >
+                    {layoutSourceLabel}
+                  </Badge>
+                </div>
+              )}
+              {isAutoMode && selectedScreenId === "none" && (
+                <p className="text-xs text-muted-foreground">Select a screen to auto-resolve its layout</p>
+              )}
             </div>
 
             {/* Playback Controls */}
@@ -573,12 +615,18 @@ export default function SimulatorPage() {
                 </Badge>
               </div>
               {selectedLayout && (
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Zones</span>
-                  <span className="font-medium">
-                    {((selectedLayout.zones as LayoutZone[])?.length || 0)}
-                  </span>
-                </div>
+                <>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Layout</span>
+                    <span className="font-medium truncate max-w-[140px]" data-testid="text-active-layout-name">{selectedLayout.name}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Zones</span>
+                    <span className="font-medium">
+                      {((selectedLayout.zones as LayoutZone[])?.length || 0)}
+                    </span>
+                  </div>
+                </>
               )}
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Media</span>
