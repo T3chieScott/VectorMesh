@@ -16,6 +16,47 @@ interface PlayerContentData {
 
 const TOKEN_KEY = "signage_device_token";
 const SCREEN_KEY = "signage_screen_id";
+const CONTENT_CACHE_KEY = "vectormesh_player_cache";
+
+function getCachedContent(screenId: string): PlayerContentData | null {
+  try {
+    const raw = localStorage.getItem(`${CONTENT_CACHE_KEY}_${screenId}`);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
+
+function setCachedContent(screenId: string, data: PlayerContentData) {
+  try {
+    localStorage.setItem(`${CONTENT_CACHE_KEY}_${screenId}`, JSON.stringify(data));
+  } catch {}
+}
+
+function registerServiceWorker() {
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker
+      .register("/player-sw.js")
+      .catch(() => {});
+  }
+}
+
+function sendSwMessage(message: object) {
+  if (navigator.serviceWorker?.controller) {
+    navigator.serviceWorker.controller.postMessage(message);
+  } else if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.ready.then((reg) => {
+      reg.active?.postMessage(message);
+    });
+  }
+}
+
+function precacheMediaUrls(urls: string[]) {
+  sendSwMessage({ type: "PRECACHE_MEDIA", urls });
+}
+
+function cleanupMediaCache(keepUrls: string[]) {
+  sendSwMessage({ type: "CLEANUP_MEDIA", keepUrls });
+}
 
 function getStoredAuth(): { token: string; screenId: string } | null {
   const token = localStorage.getItem(TOKEN_KEY);
@@ -30,8 +71,12 @@ function storeAuth(token: string, screenId: string) {
 }
 
 function clearAuth() {
+  const screenId = localStorage.getItem(SCREEN_KEY);
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(SCREEN_KEY);
+  if (screenId) {
+    localStorage.removeItem(`${CONTENT_CACHE_KEY}_${screenId}`);
+  }
 }
 
 function playerFetch(url: string, token: string, options?: RequestInit): Promise<Response> {
@@ -123,9 +168,10 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
 }
 
 function PlayerContent({ screenId, token }: { screenId: string; token: string }) {
-  const [content, setContent] = useState<PlayerContentData | null>(null);
+  const [content, setContent] = useState<PlayerContentData | null>(() => getCachedContent(screenId));
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [lastUpdate, setLastUpdate] = useState<string>("");
   const [zoneMediaIndices, setZoneMediaIndices] = useState<Record<string, number>>({});
   const [weatherTimezone, setWeatherTimezone] = useState<string | undefined>(undefined);
@@ -134,6 +180,46 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const previousMediaUrlsRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    const goOffline = () => setIsOffline(true);
+    const goOnline = () => setIsOffline(false);
+    window.addEventListener("offline", goOffline);
+    window.addEventListener("online", goOnline);
+    return () => {
+      window.removeEventListener("offline", goOffline);
+      window.removeEventListener("online", goOnline);
+    };
+  }, []);
+
+  const collectMediaUrls = useCallback((data: PlayerContentData): string[] => {
+    const urls: string[] = [];
+    const zones = (data.layout?.zones as LayoutZone[]) || [];
+    const addMediaUrl = (id: string) => {
+      if (id) urls.push(`/api/player/media/${id}/file?token=${token}`);
+    };
+
+    for (const zone of zones) {
+      if (zone.mediaId) addMediaUrl(zone.mediaId);
+      if (zone.montageMediaIds) {
+        for (const id of zone.montageMediaIds) addMediaUrl(id);
+      }
+      if (zone.mediaPlayerItems) {
+        for (const item of zone.mediaPlayerItems) {
+          if (item.mediaId) addMediaUrl(item.mediaId);
+        }
+      }
+    }
+
+    for (const items of Object.values(data.playlistItems || {})) {
+      for (const item of items) {
+        if (item.mediaId) addMediaUrl(item.mediaId);
+      }
+    }
+
+    return [...new Set(urls)];
+  }, [token]);
 
   const fetchContent = useCallback(async () => {
     try {
@@ -160,15 +246,24 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       if (newHash !== contentHashRef.current) {
         contentHashRef.current = newHash;
         setContent(data);
+        setCachedContent(screenId, data);
         setLastUpdate(new Date().toISOString());
+
+        const mediaUrls = collectMediaUrls(data);
+        precacheMediaUrls(mediaUrls);
+        if (previousMediaUrlsRef.current.length > 0) {
+          cleanupMediaCache(mediaUrls);
+        }
+        previousMediaUrlsRef.current = mediaUrls;
       }
       setIsConnected(true);
+      setIsOffline(false);
       setError(null);
     } catch (err: any) {
       setIsConnected(false);
       setError(err.message || "Connection lost");
     }
-  }, [screenId, token]);
+  }, [screenId, token, collectMediaUrls]);
 
   useEffect(() => {
     fetchContent();
@@ -305,6 +400,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
           <p className="text-xl font-semibold mb-2">Connection Lost</p>
           <p className="text-white/60 text-sm">Attempting to reconnect to VectorMesh...</p>
           <p className="text-white/40 text-xs mt-4">Screen: {screenId}</p>
+          <p className="text-white/30 text-xs mt-2">No cached content available</p>
         </div>
       </div>
     );
@@ -397,9 +493,9 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       </div>
 
       {!isConnected && content && (
-        <div className="fixed bottom-4 right-4 bg-yellow-600/90 text-white px-3 py-1.5 rounded-full text-xs flex items-center gap-2 z-50">
+        <div className="fixed bottom-4 right-4 bg-yellow-600/90 text-white px-3 py-1.5 rounded-full text-xs flex items-center gap-2 z-50" data-testid="badge-offline">
           <div className="w-2 h-2 rounded-full bg-yellow-300 animate-pulse" />
-          Reconnecting...
+          {isOffline ? "Offline — using cached content" : "Reconnecting..."}
         </div>
       )}
     </div>
@@ -409,6 +505,10 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
 export default function PlayerPage({ screenId }: { screenId: string }) {
   const [auth, setAuth] = useState<{ token: string; screenId: string } | null>(null);
   const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    registerServiceWorker();
+  }, []);
 
   useEffect(() => {
     const stored = getStoredAuth();

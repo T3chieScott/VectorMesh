@@ -22,6 +22,7 @@ Key capabilities include:
 - **Programme scheduling**: Full block editor with time rules (start/end times, date ranges), recurring schedules (day-of-week selectors), target screen/group selection, layout assignment, and priority. Blocks display time and target info in the programme list.
 - Real-time player simulator with auto-refresh for content testing. Auto-resolves the active layout for a selected screen using the same priority as the real player (live override → scheduled programme → fallback layout), with a source badge showing why a layout is active.
 - Raspberry Pi setup script for kiosk mode configuration.
+- **Offline player capability**: Service Worker (`client/public/player-sw.js`) caches layout data and media assets so display nodes continue running autonomously if the internet connection drops. Layout JSON is also cached in localStorage as a fallback. An "Offline" badge appears on the player when running from cache. Media assets are pre-cached in the background when a layout is loaded, and stale assets are cleaned up when the layout changes.
 
 ## User Preferences
 
