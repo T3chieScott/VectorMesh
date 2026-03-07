@@ -47,6 +47,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
+import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import {
   Plus,
   MoreHorizontal,
@@ -573,8 +574,9 @@ function MontageMediaPicker({
   selectedIds: string[];
   onSelectionChange: (ids: string[]) => void;
 }) {
+  const mediaQuery = useSiteFilteredQuery<MediaAsset[]>("/api/media");
   const { data: mediaAssets, isLoading } = useQuery<MediaAsset[]>({
-    queryKey: ["/api/media"],
+    ...mediaQuery,
   });
 
   // Filter to only show images
@@ -740,14 +742,17 @@ function ZoneEditorDialog({
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
 
+  const mediaQuery = useSiteFilteredQuery<MediaAsset[]>("/api/media");
+  const eventsQuery = useSiteFilteredQuery<Event[]>("/api/events");
+
   // Fetch media assets for selection
   const { data: mediaAssets } = useQuery<MediaAsset[]>({
-    queryKey: ["/api/media"],
+    ...mediaQuery,
   });
 
   // Fetch event palette for colour pickers
   const { data: events } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
+    ...eventsQuery,
   });
   const eventPalette = useMemo(() => {
     if (!layout.eventId) return [];
@@ -5065,9 +5070,10 @@ function InteractiveLayoutPreview({
   selectedZoneIds?: Set<string>;
   onSelectedZoneIdsChange?: (ids: Set<string>) => void;
 }) {
+  const mediaQuery = useSiteFilteredQuery<MediaAsset[]>("/api/media");
   // Fetch media assets for zone rendering
   const { data: allMediaAssets } = useQuery<MediaAsset[]>({
-    queryKey: ["/api/media"],
+    ...mediaQuery,
   });
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -6954,12 +6960,15 @@ export default function LayoutsPage() {
   const [selectedLayoutId, setSelectedLayoutId] = useState<string | null>(null);
   const { toast } = useToast();
   
+  const layoutsQuery = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
+  const eventsQuery = useSiteFilteredQuery<Event[]>("/api/events");
+
   const { data: layouts = [], isLoading: layoutsLoading } = useQuery<LayoutTemplate[]>({
-    queryKey: ["/api/layouts"],
+    ...layoutsQuery,
   });
 
   const { data: events = [] } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
+    ...eventsQuery,
   });
 
   const selectedLayout = layouts.find(l => l.id === selectedLayoutId);

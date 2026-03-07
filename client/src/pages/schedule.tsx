@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import {
   format,
   startOfWeek,
@@ -860,13 +861,19 @@ export default function SchedulePage() {
   const [droppedItem, setDroppedItem] = useState<{ type: string; id: string; name: string } | null>(null);
   const { toast } = useToast();
   
-  const { data: programmes = [] } = useQuery<Programme[]>({ queryKey: ["/api/programmes"] });
+  const programmesQ = useSiteFilteredQuery<Programme[]>("/api/programmes");
+  const layoutsQ = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
+  const screensQ = useSiteFilteredQuery<Screen[]>("/api/screens");
+  const playlistsQ = useSiteFilteredQuery<Playlist[]>("/api/playlists");
+  const mediaQ = useSiteFilteredQuery<MediaAsset[]>("/api/media");
+
+  const { data: programmes = [] } = useQuery<Programme[]>(programmesQ);
   const { data: allVersions = [] } = useQuery<ProgrammeVersion[]>({ queryKey: ["/api/programme-versions"] });
-  const { data: layouts = [] } = useQuery<LayoutTemplate[]>({ queryKey: ["/api/layouts"] });
-  const { data: screens = [] } = useQuery<Screen[]>({ queryKey: ["/api/screens"] });
+  const { data: layouts = [] } = useQuery<LayoutTemplate[]>(layoutsQ);
+  const { data: screens = [] } = useQuery<Screen[]>(screensQ);
   const { data: screenGroups = [] } = useQuery<ScreenGroup[]>({ queryKey: ["/api/screen-groups"] });
-  const { data: playlists = [] } = useQuery<Playlist[]>({ queryKey: ["/api/playlists"] });
-  const { data: media = [] } = useQuery<MediaAsset[]>({ queryKey: ["/api/media"] });
+  const { data: playlists = [] } = useQuery<Playlist[]>(playlistsQ);
+  const { data: media = [] } = useQuery<MediaAsset[]>(mediaQ);
   
   // Show all versions (both draft and published) for scheduling
   const activeVersions = allVersions;

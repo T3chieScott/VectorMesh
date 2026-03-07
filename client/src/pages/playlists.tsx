@@ -44,6 +44,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
+import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import { Plus, MoreHorizontal, Pencil, Trash2, FolderOpen, Image, Calendar, ChevronDown, ChevronUp, ListVideo, Clock } from "lucide-react";
 import type { Playlist, Event, MediaAsset, PlaylistItem } from "@shared/schema";
 
@@ -354,8 +355,9 @@ function PlaylistCard({ playlist, event, mediaAssets }: { playlist: Playlist; ev
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
 
+  const eventsQuery = useSiteFilteredQuery<Event[]>("/api/events");
   const { data: events = [] } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
+    ...eventsQuery,
   });
 
   const form = useForm<PlaylistFormValues>({
@@ -667,16 +669,19 @@ function CreatePlaylistDialog({ events }: { events: Event[] }) {
 }
 
 export default function PlaylistsPage() {
+  const playlistsQuery = useSiteFilteredQuery<Playlist[]>("/api/playlists");
   const { data: playlists = [], isLoading: playlistsLoading } = useQuery<Playlist[]>({
-    queryKey: ["/api/playlists"],
+    ...playlistsQuery,
   });
 
+  const eventsQuery = useSiteFilteredQuery<Event[]>("/api/events");
   const { data: events = [] } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
+    ...eventsQuery,
   });
 
+  const mediaQuery = useSiteFilteredQuery<MediaAsset[]>("/api/media");
   const { data: mediaAssets = [] } = useQuery<MediaAsset[]>({
-    queryKey: ["/api/media"],
+    ...mediaQuery,
   });
 
   const eventMap = new Map(events.map((e) => [e.id, e]));

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
+import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import {
   Monitor,
   Users,
@@ -571,29 +572,25 @@ function ClientStatsCard({ isAdmin }: { isAdmin: boolean }) {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const eventsQ = useSiteFilteredQuery<Event[]>("/api/events");
+  const screensQ = useSiteFilteredQuery<Screen[]>("/api/screens");
+  const mediaQ = useSiteFilteredQuery<MediaAsset[]>("/api/media");
+  const programmesQ = useSiteFilteredQuery<Programme[]>("/api/programmes");
+  const overridesQ = useSiteFilteredQuery<LiveOverride[]>("/api/live-overrides");
+
   const { data: clients = [], isLoading: clientsLoading } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
   });
 
-  const { data: events = [], isLoading: eventsLoading } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
-  });
+  const { data: events = [], isLoading: eventsLoading } = useQuery<Event[]>(eventsQ);
 
-  const { data: screens = [], isLoading: screensLoading } = useQuery<Screen[]>({
-    queryKey: ["/api/screens"],
-  });
+  const { data: screens = [], isLoading: screensLoading } = useQuery<Screen[]>(screensQ);
 
-  const { data: media = [], isLoading: mediaLoading } = useQuery<MediaAsset[]>({
-    queryKey: ["/api/media"],
-  });
+  const { data: media = [], isLoading: mediaLoading } = useQuery<MediaAsset[]>(mediaQ);
 
-  const { data: programmes = [], isLoading: programmesLoading } = useQuery<Programme[]>({
-    queryKey: ["/api/programmes"],
-  });
+  const { data: programmes = [], isLoading: programmesLoading } = useQuery<Programme[]>(programmesQ);
 
-  const { data: overrides = [], isLoading: overridesLoading } = useQuery<LiveOverride[]>({
-    queryKey: ["/api/live-overrides"],
-  });
+  const { data: overrides = [], isLoading: overridesLoading } = useQuery<LiveOverride[]>(overridesQ);
 
   const { data: health, isLoading: healthLoading } = useQuery<HealthData>({
     queryKey: ["/api/health"],

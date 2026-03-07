@@ -15,6 +15,10 @@ import {
   FolderOpen,
   Shield,
   FileText,
+  Building2,
+  ChevronsUpDown,
+  Check,
+  Globe,
 } from "lucide-react";
 import {
   Sidebar,
@@ -28,9 +32,17 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/use-auth";
+import { useSiteContext } from "@/hooks/use-site-context";
 
 const mainNavItems = [
   {
@@ -127,6 +139,73 @@ const adminNavItems = [
   },
 ];
 
+function SiteSelector() {
+  const { selectedClientId, setSelectedClientId, clients, selectedClient, hasSingleSite, isLoading } = useSiteContext();
+  const { user } = useAuth();
+
+  if (isLoading || clients.length === 0) return null;
+
+  if (hasSingleSite) {
+    return (
+      <div className="flex items-center gap-2 px-1 py-1.5" data-testid="site-selector-single">
+        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/10">
+          <Building2 className="h-4 w-4 text-primary" />
+        </div>
+        <span className="text-sm font-medium truncate">{clients[0].name}</span>
+      </div>
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          className="flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left hover:bg-sidebar-accent transition-colors"
+          data-testid="site-selector-trigger"
+        >
+          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 shrink-0">
+            {selectedClient ? (
+              <Building2 className="h-4 w-4 text-primary" />
+            ) : (
+              <Globe className="h-4 w-4 text-primary" />
+            )}
+          </div>
+          <span className="text-sm font-medium truncate flex-1">
+            {selectedClient ? selectedClient.name : "All Sites"}
+          </span>
+          <ChevronsUpDown className="h-4 w-4 text-muted-foreground shrink-0" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-[--radix-dropdown-menu-trigger-width]">
+        {user?.role === "admin" && (
+          <>
+            <DropdownMenuItem
+              onClick={() => setSelectedClientId(null)}
+              data-testid="site-selector-all"
+            >
+              <Globe className="h-4 w-4 mr-2" />
+              <span className="flex-1">All Sites</span>
+              {!selectedClientId && <Check className="h-4 w-4 ml-2" />}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
+        {clients.map((client) => (
+          <DropdownMenuItem
+            key={client.id}
+            onClick={() => setSelectedClientId(client.id)}
+            data-testid={`site-selector-item-${client.id}`}
+          >
+            <Building2 className="h-4 w-4 mr-2" />
+            <span className="flex-1 truncate">{client.name}</span>
+            {selectedClientId === client.id && <Check className="h-4 w-4 ml-2" />}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function AppSidebar() {
   const [location] = useLocation();
   const { user } = useAuth();
@@ -170,13 +249,14 @@ export function AppSidebar() {
 
   return (
     <Sidebar className="border-r-0">
-      <SidebarHeader className="border-b border-sidebar-border p-4">
+      <SidebarHeader className="border-b border-sidebar-border p-4 space-y-3">
         <Link href="/" className="flex items-center gap-3" data-testid="link-logo">
           <img src="/vectormesh-app-icon.png" alt="VectorMesh" className="h-8 w-8 rounded-md" />
           <span className="text-base font-semibold leading-none">
             <span className="text-[#1a3a5c] dark:text-[#7eb8e0]">Vector</span><span className="text-[#0ea5e9]">Mesh</span>
           </span>
         </Link>
+        <SiteSelector />
       </SidebarHeader>
 
       <SidebarContent className="custom-scrollbar">

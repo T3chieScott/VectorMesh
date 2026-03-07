@@ -60,6 +60,7 @@ import {
   Palette,
   X,
 } from "lucide-react";
+import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import type { Client, Event } from "@shared/schema";
 
 const eventFormSchema = z.object({
@@ -682,8 +683,9 @@ function CreateEventDialog({ clients }: { clients: Client[] }) {
 }
 
 export default function EventsPage() {
-  const { data: events = [], isLoading: eventsLoading } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
+  const eventsQueryConfig = useSiteFilteredQuery<Event[]>("/api/events");
+  const { data: events = [], isLoading: eventsLoading } = useQuery({
+    ...eventsQueryConfig,
   });
 
   const { data: clients = [], isLoading: clientsLoading } = useQuery<Client[]>({

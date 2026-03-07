@@ -45,6 +45,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
+import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import {
   Plus,
   MoreHorizontal,
@@ -384,9 +385,8 @@ function ProgrammeCard({
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
 
-  const { data: events = [] } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
-  });
+  const eventsQ = useSiteFilteredQuery<Event[]>("/api/events");
+  const { data: events = [] } = useQuery({ ...eventsQ });
 
   const programmeVersions = versions.filter((v) => v.programmeId === programme.id);
   const publishedVersion = programmeVersions.find((v) => v.status === "published");
@@ -736,13 +736,11 @@ function CreateProgrammeDialog({ events }: { events: Event[] }) {
 }
 
 export default function ProgrammesPage() {
-  const { data: programmes = [], isLoading: programmesLoading } = useQuery<Programme[]>({
-    queryKey: ["/api/programmes"],
-  });
+  const programmesQ = useSiteFilteredQuery<Programme[]>("/api/programmes");
+  const { data: programmes = [], isLoading: programmesLoading } = useQuery({ ...programmesQ });
 
-  const { data: events = [], isLoading: eventsLoading } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
-  });
+  const eventsQ = useSiteFilteredQuery<Event[]>("/api/events");
+  const { data: events = [], isLoading: eventsLoading } = useQuery({ ...eventsQ });
 
   const { data: versions = [] } = useQuery<ProgrammeVersion[]>({
     queryKey: ["/api/programme-versions"],

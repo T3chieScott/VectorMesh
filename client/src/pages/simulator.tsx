@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -284,32 +285,34 @@ export default function SimulatorPage() {
     isFullscreen: false,
   });
 
-  const { data: screens = [], isLoading: screensLoading } = useQuery<Screen[]>({
-    queryKey: ["/api/screens"],
-  });
+  const screensQ = useSiteFilteredQuery<Screen[]>("/api/screens");
+  const layoutsQ = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
+  const mediaQ = useSiteFilteredQuery<MediaAsset[]>("/api/media");
+  const overridesQ = useSiteFilteredQuery<LiveOverride[]>("/api/live-overrides");
+  const playlistsQ = useSiteFilteredQuery<Playlist[]>("/api/playlists");
+
+  const { data: screens = [], isLoading: screensLoading } = useQuery<Screen[]>(screensQ);
 
   const { data: profiles = [] } = useQuery<DisplayProfile[]>({
     queryKey: ["/api/display-profiles"],
   });
 
   const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
-    queryKey: ["/api/layouts"],
+    ...layoutsQ,
     refetchInterval: 7000,
   });
 
   const { data: media = [] } = useQuery<MediaAsset[]>({
-    queryKey: ["/api/media"],
+    ...mediaQ,
     refetchInterval: 7000,
   });
 
   const { data: liveOverrides = [] } = useQuery<LiveOverride[]>({
-    queryKey: ["/api/live-overrides"],
+    ...overridesQ,
     refetchInterval: 7000,
   });
 
-  const { data: playlists = [] } = useQuery<Playlist[]>({
-    queryKey: ["/api/playlists"],
-  });
+  const { data: playlists = [] } = useQuery<Playlist[]>(playlistsQ);
 
   // Get playlist items for assigned playlists
   const assignedPlaylistIds = Object.values(zonePlaylistAssignments).filter(id => id && id !== "none");

@@ -5,6 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { format, addMinutes, addHours } from "date-fns";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -562,13 +563,17 @@ function CreateOverrideDialog({
 }
 
 export default function LiveOverridePage() {
+  const overridesQ = useSiteFilteredQuery<LiveOverride[]>("/api/live-overrides");
+  const screensQ = useSiteFilteredQuery<Screen[]>("/api/screens");
+  const layoutsQ = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
+
   const { data: overrides = [], isLoading: overridesLoading } = useQuery<LiveOverride[]>({
-    queryKey: ["/api/live-overrides"],
+    ...overridesQ,
     refetchInterval: 10000,
   });
 
   const { data: screens = [] } = useQuery<Screen[]>({
-    queryKey: ["/api/screens"],
+    ...screensQ,
   });
 
   const { data: groups = [] } = useQuery<ScreenGroup[]>({
@@ -576,7 +581,7 @@ export default function LiveOverridePage() {
   });
 
   const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
-    queryKey: ["/api/layouts"],
+    ...layoutsQ,
   });
 
   const activeOverrides = overrides.filter(

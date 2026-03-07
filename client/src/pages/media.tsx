@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useSiteContext } from "@/hooks/use-site-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -351,9 +352,16 @@ export default function MediaPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
   const { toast } = useToast();
+  const { selectedClientId, buildQueryString } = useSiteContext();
 
   const { data: media = [], isLoading } = useQuery<MediaAsset[]>({
-    queryKey: ["/api/media"],
+    queryKey: ["/api/media", selectedClientId],
+    queryFn: async () => {
+      const url = "/api/media" + (selectedClientId ? "?clientId=" + selectedClientId : "");
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch media");
+      return res.json();
+    },
   });
 
   const filteredMedia = media.filter((asset) => {

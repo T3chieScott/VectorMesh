@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -149,8 +150,9 @@ function ScreenStatusRow({ screen }: { screen: Screen }) {
 }
 
 export default function DiagnosticsPage() {
+  const screensQ = useSiteFilteredQuery<Screen[]>("/api/screens");
   const { data: screens = [], isLoading: screensLoading, refetch } = useQuery<Screen[]>({
-    queryKey: ["/api/screens"],
+    ...screensQ,
     refetchInterval: 10000,
   });
 

@@ -438,7 +438,14 @@ export async function registerRoutes(
     try {
       const allEvents = await storage.getEvents();
       const allowed = getAllowedClientIds(req);
-      const filtered = allowed ? allEvents.filter(e => allowed.includes(e.clientId)) : allEvents;
+      let filtered = allowed ? allEvents.filter(e => allowed.includes(e.clientId)) : allEvents;
+      const clientId = req.query.clientId as string | undefined;
+      if (clientId) {
+        if (!canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        filtered = filtered.filter(e => e.clientId === clientId);
+      }
       res.json(filtered);
     } catch (error) {
       console.error("Error fetching events:", error);
@@ -668,6 +675,15 @@ export async function registerRoutes(
         const allowedEventIds = new Set(allowedEvents.map(e => e.id));
         filtered = screens.filter(s => !s.currentEventId || allowedEventIds.has(s.currentEventId));
       }
+      const clientId = req.query.clientId as string | undefined;
+      if (clientId) {
+        if (!canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        const clientEvents = (await storage.getEvents()).filter(e => e.clientId === clientId);
+        const clientEventIds = new Set(clientEvents.map(e => e.id));
+        filtered = filtered.filter(s => s.currentEventId && clientEventIds.has(s.currentEventId));
+      }
       res.json(filtered.map(({ deviceToken, ...s }) => s));
     } catch (error) {
       console.error("Error fetching screens:", error);
@@ -805,10 +821,21 @@ export async function registerRoutes(
     try {
       const assets = await storage.getMediaAssets();
       const allowed = getAllowedClientIds(req);
-      if (!allowed) return res.json(assets);
-      const allowedEvents = (await storage.getEvents()).filter(e => allowed.includes(e.clientId));
-      const allowedEventIds = new Set(allowedEvents.map(e => e.id));
-      res.json(assets.filter(a => !a.eventId || allowedEventIds.has(a.eventId)));
+      const allEventsForMedia = await storage.getEvents();
+      let filtered = assets;
+      if (allowed) {
+        const allowedEventIds = new Set(allEventsForMedia.filter(e => allowed.includes(e.clientId)).map(e => e.id));
+        filtered = assets.filter(a => !a.eventId || allowedEventIds.has(a.eventId));
+      }
+      const clientId = req.query.clientId as string | undefined;
+      if (clientId) {
+        if (!canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        const clientEventIds = new Set(allEventsForMedia.filter(e => e.clientId === clientId).map(e => e.id));
+        filtered = filtered.filter(a => a.eventId && clientEventIds.has(a.eventId));
+      }
+      res.json(filtered);
     } catch (error) {
       console.error("Error fetching media assets:", error);
       res.status(500).json({ error: "Failed to fetch media assets" });
@@ -907,10 +934,21 @@ export async function registerRoutes(
     try {
       const layouts = await storage.getLayoutTemplates();
       const allowed = getAllowedClientIds(req);
-      if (!allowed) return res.json(layouts);
-      const allowedEvents = (await storage.getEvents()).filter(e => allowed.includes(e.clientId));
-      const allowedEventIds = new Set(allowedEvents.map(e => e.id));
-      res.json(layouts.filter(l => !l.eventId || allowedEventIds.has(l.eventId)));
+      const allEventsForLayouts = await storage.getEvents();
+      let filtered = layouts;
+      if (allowed) {
+        const allowedEventIds = new Set(allEventsForLayouts.filter(e => allowed.includes(e.clientId)).map(e => e.id));
+        filtered = layouts.filter(l => !l.eventId || allowedEventIds.has(l.eventId));
+      }
+      const clientId = req.query.clientId as string | undefined;
+      if (clientId) {
+        if (!canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        const clientEventIds = new Set(allEventsForLayouts.filter(e => e.clientId === clientId).map(e => e.id));
+        filtered = filtered.filter(l => l.eventId && clientEventIds.has(l.eventId));
+      }
+      res.json(filtered);
     } catch (error) {
       console.error("Error fetching layouts:", error);
       res.status(500).json({ error: "Failed to fetch layouts" });
@@ -975,10 +1013,21 @@ export async function registerRoutes(
     try {
       const programmes = await storage.getProgrammes();
       const allowed = getAllowedClientIds(req);
-      if (!allowed) return res.json(programmes);
-      const allowedEvents = (await storage.getEvents()).filter(e => allowed.includes(e.clientId));
-      const allowedEventIds = new Set(allowedEvents.map(e => e.id));
-      res.json(programmes.filter(p => allowedEventIds.has(p.eventId)));
+      const allEventsForProgrammes = await storage.getEvents();
+      let filtered = programmes;
+      if (allowed) {
+        const allowedEventIds = new Set(allEventsForProgrammes.filter(e => allowed.includes(e.clientId)).map(e => e.id));
+        filtered = programmes.filter(p => allowedEventIds.has(p.eventId));
+      }
+      const clientId = req.query.clientId as string | undefined;
+      if (clientId) {
+        if (!canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        const clientEventIds = new Set(allEventsForProgrammes.filter(e => e.clientId === clientId).map(e => e.id));
+        filtered = filtered.filter(p => clientEventIds.has(p.eventId));
+      }
+      res.json(filtered);
     } catch (error) {
       console.error("Error fetching programmes:", error);
       res.status(500).json({ error: "Failed to fetch programmes" });
@@ -1070,10 +1119,21 @@ export async function registerRoutes(
     try {
       const playlists = await storage.getPlaylists();
       const allowed = getAllowedClientIds(req);
-      if (!allowed) return res.json(playlists);
-      const allowedEvents = (await storage.getEvents()).filter(e => allowed.includes(e.clientId));
-      const allowedEventIds = new Set(allowedEvents.map(e => e.id));
-      res.json(playlists.filter(p => !p.eventId || allowedEventIds.has(p.eventId)));
+      const allEventsForPlaylists = await storage.getEvents();
+      let filtered = playlists;
+      if (allowed) {
+        const allowedEventIds = new Set(allEventsForPlaylists.filter(e => allowed.includes(e.clientId)).map(e => e.id));
+        filtered = playlists.filter(p => !p.eventId || allowedEventIds.has(p.eventId));
+      }
+      const clientId = req.query.clientId as string | undefined;
+      if (clientId) {
+        if (!canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        const clientEventIds = new Set(allEventsForPlaylists.filter(e => e.clientId === clientId).map(e => e.id));
+        filtered = filtered.filter(p => p.eventId && clientEventIds.has(p.eventId));
+      }
+      res.json(filtered);
     } catch (error) {
       console.error("Error fetching playlists:", error);
       res.status(500).json({ error: "Failed to fetch playlists" });
@@ -1242,10 +1302,21 @@ export async function registerRoutes(
     try {
       const overrides = await storage.getLiveOverrides();
       const allowed = getAllowedClientIds(req);
-      if (!allowed) return res.json(overrides);
-      const allowedEvents = (await storage.getEvents()).filter(e => allowed.includes(e.clientId));
-      const allowedEventIds = new Set(allowedEvents.map(e => e.id));
-      res.json(overrides.filter(o => !o.eventId || allowedEventIds.has(o.eventId)));
+      const allEventsForOverrides = await storage.getEvents();
+      let filtered = overrides;
+      if (allowed) {
+        const allowedEventIds = new Set(allEventsForOverrides.filter(e => allowed.includes(e.clientId)).map(e => e.id));
+        filtered = overrides.filter(o => !o.eventId || allowedEventIds.has(o.eventId));
+      }
+      const clientId = req.query.clientId as string | undefined;
+      if (clientId) {
+        if (!canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        const clientEventIds = new Set(allEventsForOverrides.filter(e => e.clientId === clientId).map(e => e.id));
+        filtered = filtered.filter(o => o.eventId && clientEventIds.has(o.eventId));
+      }
+      res.json(filtered);
     } catch (error) {
       console.error("Error fetching live overrides:", error);
       res.status(500).json({ error: "Failed to fetch live overrides" });

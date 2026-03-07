@@ -16,6 +16,7 @@ Key capabilities:
 - **Event colour palettes**: Per-event brand colour palettes integrated into all zone colour pickers via swatches
 - **Signage icons**: 29 curated signage icons (arrows incl. diagonal, toilets, fire exit, restaurant, WiFi, parking, etc.) as overlays on shape zones, with optional text labels (left/right/top/bottom/center positioning, configurable size and color)
 - **Collapsible layout panel**: Layout list auto-hides when editing, with back button navigation
+- **Global site context switcher**: Sidebar dropdown to filter the entire UI by site. Admins can switch between sites or view "All Sites". Multi-site users (account managers) see their assigned sites. Single-site users have their site auto-selected. All content pages (media, layouts, screens, events, playlists, programmes, overrides, dashboard, diagnostics, simulator, schedule) respect the selected site via `?clientId=` query parameter filtering. Selection persists in localStorage.
 - Client/event separation with brand packs
 - Timeline scheduling with programme blocks
 - Live override mode for temporary takeovers

@@ -40,6 +40,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
+import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import {
   Plus,
   MoreHorizontal,
@@ -649,10 +650,8 @@ function CreateScreenDialog({ profiles, events }: { profiles: DisplayProfile[]; 
 }
 
 export default function ScreensPage() {
-  const { data: screens = [], isLoading: screensLoading } = useQuery<Screen[]>({
-    queryKey: ["/api/screens"],
-    refetchInterval: 10000,
-  });
+  const screensQueryConfig = useSiteFilteredQuery<Screen[]>("/api/screens");
+  const { data: screens = [], isLoading: screensLoading } = useQuery({ ...screensQueryConfig, refetchInterval: 10000 });
 
   const { data: profiles = [], isLoading: profilesLoading } = useQuery<
     DisplayProfile[]
@@ -660,18 +659,15 @@ export default function ScreensPage() {
     queryKey: ["/api/display-profiles"],
   });
 
-  const { data: events = [] } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
-  });
+  const eventsQueryConfig = useSiteFilteredQuery<Event[]>("/api/events");
+  const { data: events = [] } = useQuery(eventsQueryConfig);
 
   const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
     queryKey: ["/api/layout-templates"],
   });
 
-  const { data: liveOverrides = [] } = useQuery<LiveOverride[]>({
-    queryKey: ["/api/live-overrides"],
-    refetchInterval: 10000,
-  });
+  const liveOverridesQueryConfig = useSiteFilteredQuery<LiveOverride[]>("/api/live-overrides");
+  const { data: liveOverrides = [] } = useQuery({ ...liveOverridesQueryConfig, refetchInterval: 10000 });
 
   const getActiveOverrideForScreen = (screenId: string): LiveOverride | null => {
     const now = new Date();

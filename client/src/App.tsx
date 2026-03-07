@@ -8,6 +8,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { useAuth } from "@/hooks/use-auth";
+import { SiteProvider } from "@/hooks/use-site-context";
 
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/landing";
@@ -73,20 +74,22 @@ function AuthenticatedLayout() {
   };
 
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
-      <div className="flex min-h-screen w-full">
-        <AppSidebar />
-        <div className="flex flex-col flex-1 min-w-0">
-          <header className="sticky top-0 z-40 flex h-14 items-center justify-between gap-4 border-b bg-background/80 backdrop-blur-lg px-4">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
-            <ThemeToggle />
-          </header>
-          <main className="flex-1 overflow-auto p-6">
-            <AuthenticatedRouter />
-          </main>
+    <SiteProvider>
+      <SidebarProvider style={style as React.CSSProperties}>
+        <div className="flex min-h-screen w-full">
+          <AppSidebar />
+          <div className="flex flex-col flex-1 min-w-0">
+            <header className="sticky top-0 z-40 flex h-14 items-center justify-between gap-4 border-b bg-background/80 backdrop-blur-lg px-4">
+              <SidebarTrigger data-testid="button-sidebar-toggle" />
+              <ThemeToggle />
+            </header>
+            <main className="flex-1 overflow-auto p-6">
+              <AuthenticatedRouter />
+            </main>
+          </div>
         </div>
-      </div>
-    </SidebarProvider>
+      </SidebarProvider>
+    </SiteProvider>
   );
 }
 
