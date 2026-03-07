@@ -21,6 +21,14 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+async function requireAdminOrAccountManager(req: Request, res: Response, next: NextFunction) {
+  const user = (req as any).dbUser;
+  if (!user || (user.role !== "admin" && user.role !== "account_manager")) {
+    return res.status(403).json({ error: "Admin or Account Manager access required" });
+  }
+  next();
+}
+
 async function loadUserContext(req: Request, res: Response, next: NextFunction) {
   const user = (req as any).dbUser;
   if (!user) return res.status(401).json({ error: "User not found" });
@@ -34,6 +42,10 @@ async function loadUserContext(req: Request, res: Response, next: NextFunction) 
 
 function isAdmin(req: Request): boolean {
   return (req as any).dbUser?.role === "admin";
+}
+
+function isAccountManager(req: Request): boolean {
+  return (req as any).dbUser?.role === "account_manager";
 }
 
 function getAllowedClientIds(req: Request): string[] | null {
@@ -1713,9 +1725,24 @@ export async function registerRoutes(
   });
 
   // ============ ADMIN: USER MANAGEMENT ============
-  app.get("/api/admin/users", requireAuth, requireAdmin, async (req, res) => {
+
+  async function canManageUser(req: Request, targetUserId: string): Promise<boolean> {
+    if (isAdmin(req)) return true;
+    if (!isAccountManager(req)) return false;
+    const targetUser = await storage.getUser(targetUserId);
+    if (!targetUser) return false;
+    if (targetUser.role === "admin" || targetUser.role === "account_manager") return false;
+    const allowed = getAllowedClientIds(req);
+    if (!allowed || allowed.length === 0) return false;
+    const targetSites = await storage.getUserClientIds(targetUserId);
+    if (targetSites.length === 0) return false;
+    return targetSites.some(s => allowed.includes(s));
+  }
+
+  app.get("/api/admin/users", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
       const allUsers = await storage.getAllUsers();
+      const allowed = getAllowedClientIds(req);
       const usersWithSites = await Promise.all(
         allUsers.map(async (u) => {
           const sites = await storage.getUserSites(u.id);
@@ -1723,6 +1750,14 @@ export async function registerRoutes(
           return { ...safeUser, sites };
         })
       );
+      if (allowed) {
+        const filtered = usersWithSites.filter(u =>
+          u.role === "admin" || u.role === "account_manager"
+            ? false
+            : u.sites.length > 0 && u.sites.some(s => allowed.includes(s.clientId))
+        );
+        return res.json(filtered);
+      }
       res.json(usersWithSites);
     } catch (error) {
       console.error("Error fetching users:", error);
@@ -1730,14 +1765,15 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/admin/users", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/admin/users", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
       const { email, firstName, lastName, role, password } = req.body;
       if (!email || !password || password.length < 8) {
         return res.status(400).json({ error: "Email and password (min 8 chars) required" });
       }
-      if (role && !["admin", "site_user"].includes(role)) {
-        return res.status(400).json({ error: "Invalid role" });
+      const validRoles = isAdmin(req) ? ["admin", "account_manager", "site_user"] : ["site_user"];
+      if (role && !validRoles.includes(role)) {
+        return res.status(400).json({ error: `Invalid role. Allowed: ${validRoles.join(", ")}` });
       }
       const existing = await storage.getUserByEmail(email.toLowerCase().trim());
       if (existing) {
@@ -1763,13 +1799,17 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.patch("/api/admin/users/:id", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
+      if (!(await canManageUser(req, req.params.id))) {
+        return res.status(403).json({ error: "You do not have permission to manage this user" });
+      }
       const { role, firstName, lastName, email, isActive } = req.body;
       const updateData: Record<string, any> = {};
       if (role !== undefined) {
-        if (!["admin", "site_user"].includes(role)) {
-          return res.status(400).json({ error: "Invalid role. Must be 'admin' or 'site_user'" });
+        const validRoles = isAdmin(req) ? ["admin", "account_manager", "site_user"] : ["site_user"];
+        if (!validRoles.includes(role)) {
+          return res.status(400).json({ error: `Invalid role. Allowed: ${validRoles.join(", ")}` });
         }
         updateData.role = role;
       }
@@ -1799,8 +1839,11 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/admin/users/:id/reset-password", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/admin/users/:id/reset-password", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
+      if (!(await canManageUser(req, req.params.id))) {
+        return res.status(403).json({ error: "You do not have permission to manage this user" });
+      }
       const user = await storage.getUser(req.params.id);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
@@ -1820,8 +1863,11 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/admin/users/:id/force-change-password", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/admin/users/:id/force-change-password", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
+      if (!(await canManageUser(req, req.params.id))) {
+        return res.status(403).json({ error: "You do not have permission to manage this user" });
+      }
       const user = await storage.updateUser(req.params.id, { mustChangePassword: true });
       if (!user) {
         return res.status(404).json({ error: "User not found" });
@@ -1834,11 +1880,17 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/admin/users/:id/sites", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/admin/users/:id/sites", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
       const { clientId } = req.body;
       if (!clientId) {
         return res.status(400).json({ error: "clientId is required" });
+      }
+      if (!canAccessClient(req, clientId)) {
+        return res.status(403).json({ error: "You do not have access to this site" });
+      }
+      if (!(await canManageUser(req, req.params.id))) {
+        return res.status(403).json({ error: "You do not have permission to manage this user" });
       }
       const client = await storage.getClient(clientId);
       if (!client) {
@@ -1853,11 +1905,14 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.delete("/api/admin/users/:id", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
-      const adminUser = (req as any).dbUser;
-      if (adminUser.id === req.params.id) {
+      const currentUser = (req as any).dbUser;
+      if (currentUser.id === req.params.id) {
         return res.status(400).json({ error: "You cannot delete your own account" });
+      }
+      if (!(await canManageUser(req, req.params.id))) {
+        return res.status(403).json({ error: "You do not have permission to manage this user" });
       }
       const userToDelete = await storage.getUser(req.params.id);
       const deleted = await storage.deleteUser(req.params.id);
@@ -1872,8 +1927,14 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/admin/users/:id/sites/:clientId", requireAuth, requireAdmin, async (req, res) => {
+  app.delete("/api/admin/users/:id/sites/:clientId", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
+      if (!canAccessClient(req, req.params.clientId)) {
+        return res.status(403).json({ error: "You do not have access to this site" });
+      }
+      if (!(await canManageUser(req, req.params.id))) {
+        return res.status(403).json({ error: "You do not have permission to manage this user" });
+      }
       const removed = await storage.removeUserFromSite(req.params.id, req.params.clientId);
       if (!removed) {
         return res.status(404).json({ error: "Assignment not found" });
@@ -1887,7 +1948,7 @@ export async function registerRoutes(
   });
 
   // ============ ADMIN: AUDIT LOGS & STATS ============
-  app.get("/api/admin/audit-logs", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/audit-logs", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
       const options: any = {};
       if (req.query.userId) options.userId = req.query.userId as string;
@@ -1915,24 +1976,37 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/admin/stats", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/stats", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
-      const [auditStats, allUsers, clients, screens, mediaAssets, overrides] = await Promise.all([
+      const allowed = getAllowedClientIds(req);
+      const [auditStats, allUsers, allClients, allScreens, allMedia, allOverrides, allEvents] = await Promise.all([
         storage.getAuditLogStats(),
         storage.getAllUsers(),
         storage.getClients(),
         storage.getScreens(),
         storage.getMediaAssets(),
         storage.getLiveOverrides(),
+        storage.getEvents(),
       ]);
+
+      const clients = allowed ? allClients.filter(c => allowed.includes(c.id)) : allClients;
+      const clientIds = new Set(clients.map(c => c.id));
+      const eventIds = new Set(allEvents.filter(e => clientIds.has(e.clientId)).map(e => e.id));
+      const screens = allScreens.filter(s => !allowed || (s.currentEventId && eventIds.has(s.currentEventId)));
+      const mediaAssets = allowed ? allMedia.filter(m => m.eventId && eventIds.has(m.eventId)) : allMedia;
+      const overrides = allowed ? allOverrides.filter(o => o.eventId && eventIds.has(o.eventId)) : allOverrides;
+      const users = allowed ? allUsers.filter(u => {
+        if (u.role === "admin") return false;
+        return true;
+      }) : allUsers;
 
       const now = new Date();
       const activeOverrides = overrides.filter(o => o.isActive && new Date(o.endTime) > now).length;
 
       res.json({
         ...auditStats,
-        totalUsers: allUsers.length,
-        activeUsers: allUsers.filter(u => u.isActive).length,
+        totalUsers: users.length,
+        activeUsers: users.filter(u => u.isActive).length,
         totalClients: clients.length,
         totalScreens: screens.length,
         onlineScreens: screens.filter(s => s.isOnline).length,
@@ -1946,10 +2020,12 @@ export async function registerRoutes(
   });
 
   // ============ PER-CLIENT STATS ============
-  app.get("/api/admin/stats/by-client", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/stats/by-client", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
       const stats = await storage.getStatsByClient();
-      res.json(stats);
+      const allowed = getAllowedClientIds(req);
+      const filtered = allowed ? stats.filter(s => allowed.includes(s.clientId)) : stats;
+      res.json(filtered);
     } catch (error) {
       console.error("Error fetching per-client stats:", error);
       res.status(500).json({ error: "Failed to fetch per-client stats" });

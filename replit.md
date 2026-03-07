@@ -64,7 +64,7 @@ Core entities include: Clients, Events, Brand Packs, Display Profiles, Screen Gr
 - Session storage in PostgreSQL `sessions` table via `connect-pg-simple`
 - Session middleware in `server/auth.ts`, auth API routes in `server/routes.ts`
 - User data stored in `users` table with `passwordHash`, `mustChangePassword`, `isActive` columns
-- `role` column: "admin" | "site_user"
+- `role` column: "admin" | "account_manager" | "site_user"
 - Protected routes use `isAuthenticated` middleware (checks session userId, loads `req.dbUser`)
 - **Auth API endpoints**:
   - `POST /api/auth/login` — email/password login
@@ -80,13 +80,15 @@ Core entities include: Clients, Events, Brand Packs, Display Profiles, Screen Gr
 - **Forced password change**: `mustChangePassword` flag redirects to change-password page
 - **Account deactivation**: `isActive` flag prevents login without deleting user
 - **Last login tracking**: `lastLoginAt` column updated on successful login, displayed on admin user cards
-- **RBAC (Role-Based Access Control)**: Two-tier system
-  - **Admin**: Full platform access, can manage users, create/delete sites, see all data
-  - **Site User**: Scoped to assigned sites only via `user_sites` join table (userId → clientId)
-- Middleware: `requireAdmin` (403 if not admin), `loadUserContext` (sets `req.dbUser` and `req.allowedClientIds`)
+- **RBAC (Role-Based Access Control)**: Three-tier system
+  - **Admin**: Full platform access, can manage all users, create/delete sites, see all data
+  - **Account Manager**: Assigned to one or more sites via `user_sites`. Can create/edit/delete site_users for their assigned sites, configure alerts, view activity logs. Cannot create admins or other account_managers. Cannot create/delete clients (sites).
+  - **Site User**: Scoped to assigned sites only via `user_sites` join table (userId → clientId). Content management only, no user management.
+- Middleware: `requireAdmin` (403 if not admin), `requireAdminOrAccountManager` (allows admin or account_manager), `loadUserContext` (sets `req.dbUser` and `req.allowedClientIds`)
+- Helpers: `isAccountManager(req)`, `canManageUser(req, targetUserId)` — checks target is a site_user within requester's allowed sites
 - Access chain: resources → eventId → event.clientId → user's allowed clientIds
-- Admin user management UI at `/admin/users` (admin-only sidebar item)
-- Activity log UI at `/admin/activity` (admin-only sidebar item)
+- Admin user management UI at `/admin/users` (admin and account_manager sidebar item)
+- Activity log UI at `/admin/activity` (admin and account_manager sidebar item)
 - **Admin user management API**:
   - `GET /api/admin/users` — list all users with sites
   - `POST /api/admin/users` — create user (sends welcome email)
@@ -100,7 +102,7 @@ Core entities include: Clients, Events, Brand Packs, Display Profiles, Screen Gr
   - Covers: auth events, CRUD on clients/events/screens/media/layouts/programmes/playlists/overrides, admin user management
   - Actions: create, update, delete, login, logout, change_password, reset_password, admin_reset_password, force_change_password, assign_site, remove_site, publish, regenerate_pairing, unpair
   - Storage methods: `createAuditLog()`, `getAuditLogs(options)`, `getAuditLogStats()`
-  - **Audit log API endpoints** (admin-only):
+  - **Audit log API endpoints** (admin and account_manager):
     - `GET /api/admin/audit-logs` — paginated list with filters (entityType, action, limit, offset)
     - `GET /api/admin/stats` — aggregate stats (loginsToday, activeUsersWeek, changesThisWeek, totalLogs, entity counts)
   - **Activity Log page** (`/admin/activity`): colour-coded action badges, relative timestamps, entity type/action filters, pagination

@@ -184,7 +184,7 @@ export function AppSidebar() {
         <NavGroup label="Content" items={contentNavItems} />
         <NavGroup label="Display" items={displayNavItems} />
         <NavGroup label="System" items={systemNavItems} />
-        {user?.role === "admin" && (
+        {(user?.role === "admin" || user?.role === "account_manager") && (
           <NavGroup label="Admin" items={adminNavItems} />
         )}
       </SidebarContent>
@@ -206,9 +206,9 @@ export function AppSidebar() {
                 {user.email || "No email"}
               </span>
             </div>
-            {user.role === "admin" && (
+            {(user.role === "admin" || user.role === "account_manager") && (
               <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 border-primary/30 text-primary shrink-0">
-                Admin
+                {user.role === "admin" ? "Admin" : "Account Manager"}
               </Badge>
             )}
           </div>

@@ -672,7 +672,7 @@ export default function Dashboard() {
       </div>
 
       {/* Admin Stats Row */}
-      {user?.role === "admin" && (
+      {(user?.role === "admin" || user?.role === "account_manager") && (
         <>
           <div className="grid gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">

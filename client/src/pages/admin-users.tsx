@@ -25,6 +25,7 @@ function UserCard({
   user,
   allClients,
   currentUserId,
+  currentUserRole,
   selected,
   onSelectToggle,
   onRoleChange,
@@ -40,6 +41,7 @@ function UserCard({
   user: UserWithSites;
   allClients: Client[];
   currentUserId: string;
+  currentUserRole: string;
   selected: boolean;
   onSelectToggle: (userId: string) => void;
   onRoleChange: (userId: string, role: string) => void;
@@ -121,18 +123,28 @@ function UserCard({
             <Select
               value={user.role}
               onValueChange={(role) => onRoleChange(user.id, role)}
-              disabled={isSelf}
+              disabled={isSelf || currentUserRole !== "admin"}
             >
-              <SelectTrigger className="w-[140px]" data-testid={`select-role-trigger-${user.id}`}>
+              <SelectTrigger className="w-[170px]" data-testid={`select-role-trigger-${user.id}`}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="admin">
-                  <div className="flex items-center gap-2">
-                    <Shield className="h-3.5 w-3.5" />
-                    Admin
-                  </div>
-                </SelectItem>
+                {currentUserRole === "admin" && (
+                  <SelectItem value="admin">
+                    <div className="flex items-center gap-2">
+                      <Shield className="h-3.5 w-3.5" />
+                      Admin
+                    </div>
+                  </SelectItem>
+                )}
+                {currentUserRole === "admin" && (
+                  <SelectItem value="account_manager">
+                    <div className="flex items-center gap-2">
+                      <Users className="h-3.5 w-3.5" />
+                      Account Manager
+                    </div>
+                  </SelectItem>
+                )}
                 <SelectItem value="site_user">
                   <div className="flex items-center gap-2">
                     <UserCog className="h-3.5 w-3.5" />
@@ -226,9 +238,11 @@ function UserCard({
           </div>
         )}
 
-        {user.role === "admin" && (
+        {(user.role === "admin" || user.role === "account_manager") && (
           <div className="mt-4 pt-4 border-t">
-            <p className="text-sm text-muted-foreground italic">Admins have access to all sites</p>
+            <p className="text-sm text-muted-foreground italic">
+              {user.role === "admin" ? "Admins have access to all sites" : "Account managers can manage users for their assigned sites"}
+            </p>
           </div>
         )}
       </CardContent>
@@ -236,7 +250,7 @@ function UserCard({
   );
 }
 
-function CreateUserDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+function CreateUserDialog({ open, onOpenChange, currentUserRole }: { open: boolean; onOpenChange: (open: boolean) => void; currentUserRole: string }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
@@ -304,7 +318,8 @@ function CreateUserDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="admin">Admin</SelectItem>
+                {currentUserRole === "admin" && <SelectItem value="admin">Admin</SelectItem>}
+                {currentUserRole === "admin" && <SelectItem value="account_manager">Account Manager</SelectItem>}
                 <SelectItem value="site_user">Site User</SelectItem>
               </SelectContent>
             </Select>
@@ -318,7 +333,7 @@ function CreateUserDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
   );
 }
 
-function EditUserDialog({ user, open, onOpenChange }: { user: UserWithSites | null; open: boolean; onOpenChange: (open: boolean) => void }) {
+function EditUserDialog({ user, open, onOpenChange, currentUserRole }: { user: UserWithSites | null; open: boolean; onOpenChange: (open: boolean) => void; currentUserRole: string }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [email, setEmail] = useState(user?.email || "");
@@ -379,7 +394,8 @@ function EditUserDialog({ user, open, onOpenChange }: { user: UserWithSites | nu
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="admin">Admin</SelectItem>
+                {currentUserRole === "admin" && <SelectItem value="admin">Admin</SelectItem>}
+                {currentUserRole === "admin" && <SelectItem value="account_manager">Account Manager</SelectItem>}
                 <SelectItem value="site_user">Site User</SelectItem>
               </SelectContent>
             </Select>
@@ -593,6 +609,7 @@ export default function AdminUsersPage() {
       user={user}
       allClients={allClients || []}
       currentUserId={currentUser?.id || ""}
+      currentUserRole={currentUser?.role || "site_user"}
       selected={selectedUserIds.has(user.id)}
       onSelectToggle={toggleUserSelection}
       onRoleChange={(userId, role) => updateRoleMutation.mutate({ userId, role })}
@@ -751,12 +768,13 @@ export default function AdminUsersPage() {
         </DialogContent>
       </Dialog>
 
-      <CreateUserDialog open={showCreateDialog} onOpenChange={setShowCreateDialog} />
+      <CreateUserDialog open={showCreateDialog} onOpenChange={setShowCreateDialog} currentUserRole={currentUser?.role || "site_user"} />
 
       <EditUserDialog
         user={editingUser}
         open={!!editingUser}
         onOpenChange={(open) => { if (!open) setEditingUser(null); }}
+        currentUserRole={currentUser?.role || "site_user"}
       />
 
       <AlertDialog open={showBatchDeleteConfirm} onOpenChange={setShowBatchDeleteConfirm}>

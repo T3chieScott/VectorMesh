@@ -36,7 +36,7 @@ import PlayerPage from "@/pages/player";
 
 function AdminRoute({ component: Component }: { component: () => JSX.Element }) {
   const { user } = useAuth();
-  if (user?.role !== "admin") {
+  if (user?.role !== "admin" && user?.role !== "account_manager") {
     return <Redirect to="/" />;
   }
   return <Component />;
