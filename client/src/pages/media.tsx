@@ -70,6 +70,13 @@ function getMediaUrl(asset: MediaAsset): string {
   return `/api/media/${asset.id}/file`;
 }
 
+function getMediaPreviewUrl(asset: MediaAsset): string {
+  if (asset.thumbnailPath) {
+    return `/api/media/${asset.id}/thumbnail`;
+  }
+  return `/api/media/${asset.id}/file`;
+}
+
 function ShareDialog({
   asset,
   clients,
@@ -375,7 +382,7 @@ function MediaCard({
             >
               {asset.thumbnailPath || asset.mediaType === "image" ? (
                 <img
-                  src={getMediaUrl(asset)}
+                  src={getMediaPreviewUrl(asset)}
                   alt={asset.name}
                   className="h-12 w-12 rounded-lg object-cover"
                 />
@@ -454,7 +461,7 @@ function MediaCard({
         <div className="relative aspect-video bg-muted">
           {asset.thumbnailPath || asset.mediaType === "image" ? (
             <img
-              src={getMediaUrl(asset)}
+              src={getMediaPreviewUrl(asset)}
               alt={asset.name}
               className="h-full w-full object-cover"
             />

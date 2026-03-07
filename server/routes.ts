@@ -6,6 +6,7 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, insertScheduleBlockSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
 import { getSignedUploadUrl, getPublicUrl, objectStorageService } from "./objectStorage";
+import { generateVideoThumbnail } from "./thumbnail";
 import { setupAuth, isAuthenticated } from "./auth";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { find as findTimezone } from "geo-tz";
@@ -870,6 +871,18 @@ export async function registerRoutes(
       const asset = await storage.createMediaAsset(data);
       logAudit(req, "create", "media", asset.id, { name: asset.name, clientId: data.clientId });
       res.status(201).json(asset);
+
+      if (data.mediaType === "video" && data.originalPath) {
+        try {
+          const privateDir = objectStorageService.getPrivateObjectDir();
+          const thumbnailUrl = await generateVideoThumbnail(data.originalPath, privateDir);
+          if (thumbnailUrl) {
+            await storage.updateMediaAsset(asset.id, { thumbnailPath: thumbnailUrl });
+          }
+        } catch (thumbErr) {
+          console.error("Background thumbnail generation failed:", thumbErr);
+        }
+      }
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
@@ -993,6 +1006,50 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error serving media file:", error);
       res.status(500).json({ error: "Failed to serve media file" });
+    }
+  });
+
+  app.get("/api/media/:id/thumbnail", requireAuth, async (req, res) => {
+    try {
+      const asset = await storage.getMediaAsset(req.params.id);
+      if (!asset || !asset.thumbnailPath) {
+        return res.status(404).json({ error: "Thumbnail not found" });
+      }
+
+      const normalizedPath = objectStorageService.normalizeObjectEntityPath(asset.thumbnailPath);
+      if (normalizedPath.startsWith("/objects/")) {
+        const file = await objectStorageService.getObjectEntityFile(normalizedPath);
+        await objectStorageService.downloadObject(file, res);
+      } else {
+        res.redirect(asset.thumbnailPath);
+      }
+    } catch (error) {
+      console.error("Error serving thumbnail:", error);
+      res.status(500).json({ error: "Failed to serve thumbnail" });
+    }
+  });
+
+  app.post("/api/media/:id/generate-thumbnail", requireAuth, loadUserContext, requireAdmin, async (req, res) => {
+    try {
+      const asset = await storage.getMediaAsset(req.params.id);
+      if (!asset) {
+        return res.status(404).json({ error: "Media asset not found" });
+      }
+      if (asset.mediaType !== "video") {
+        return res.status(400).json({ error: "Thumbnails can only be generated for video assets" });
+      }
+
+      const privateDir = objectStorageService.getPrivateObjectDir();
+      const thumbnailUrl = await generateVideoThumbnail(asset.originalPath, privateDir);
+      if (!thumbnailUrl) {
+        return res.status(500).json({ error: "Failed to generate thumbnail" });
+      }
+
+      await storage.updateMediaAsset(asset.id, { thumbnailPath: thumbnailUrl });
+      res.json({ thumbnailPath: thumbnailUrl });
+    } catch (error) {
+      console.error("Error generating thumbnail:", error);
+      res.status(500).json({ error: "Failed to generate thumbnail" });
     }
   });
 
