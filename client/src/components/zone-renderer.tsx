@@ -47,28 +47,9 @@ function resolvePlayerVariables(text: string): string {
   return resolved;
 }
 
-// Convert GCS URLs to local /objects/ path for serving through the sidecar
 function getMediaUrl(originalPath: string | undefined): string {
   if (!originalPath) return "";
-  
-  // If already a relative path, return as is
-  if (originalPath.startsWith("/objects/")) return originalPath;
-  
-  // Extract upload ID from GCS URL format:
-  // https://storage.googleapis.com/bucket-name/.private/uploads/uuid
-  // We need just the "uploads/uuid" part since PRIVATE_OBJECT_DIR already includes ".private"
-  const uploadsMatch = originalPath.match(/\/uploads\/([a-f0-9-]+)$/i);
-  if (uploadsMatch) {
-    return `/objects/uploads/${uploadsMatch[1]}`;
-  }
-  
-  // Fallback: try to extract anything after .private/
-  const privateMatch = originalPath.match(/\.private\/(.+)/);
-  if (privateMatch) {
-    return `/objects/${privateMatch[1]}`;
-  }
-  
-  // Return original if not a recognizable GCS URL
+  if (originalPath.startsWith("http")) return originalPath;
   return originalPath;
 }
 

@@ -657,3 +657,15 @@ export const weatherCache = pgTable("weather_cache", {
 });
 
 export type WeatherCache = typeof weatherCache.$inferSelect;
+
+// ============ SYSTEM SETTINGS ============
+
+export const systemSettings = pgTable("system_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertSystemSettingSchema = createInsertSchema(systemSettings);
+export type SystemSetting = typeof systemSettings.$inferSelect;
+export type InsertSystemSetting = z.infer<typeof insertSystemSettingSchema>;

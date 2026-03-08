@@ -580,12 +580,13 @@ export default function MediaPage() {
   const saveMediaRecords = async (result: any, clientId: string) => {
     if (result.successful?.length > 0) {
       for (const file of result.successful) {
-        const uploadURL = file.response?.body?.uploadURL || file.uploadURL;
-        if (uploadURL) {
+        const body = file.response?.body;
+        const filePath = body?.filePath;
+        if (filePath) {
           try {
             await apiRequest("POST", "/api/media", {
               name: file.name,
-              originalPath: uploadURL.split("?")[0],
+              originalPath: filePath,
               mediaType: file.type?.startsWith("video/")
                 ? "video"
                 : file.type === "image/gif"
@@ -622,24 +623,6 @@ export default function MediaPage() {
     }
   };
 
-  const handleGetUploadParameters = async (file: any) => {
-    const res = await fetch("/api/uploads/request-url", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: file.name,
-        size: file.size,
-        contentType: file.type,
-      }),
-    });
-    const { uploadURL } = await res.json();
-    return {
-      method: "PUT" as const,
-      url: uploadURL,
-      headers: { "Content-Type": file.type },
-    };
-  };
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -652,7 +635,7 @@ export default function MediaPage() {
         <ObjectUploader
           maxNumberOfFiles={10}
           maxFileSize={104857600}
-          onGetUploadParameters={handleGetUploadParameters}
+          clientId={resolveUploadClientId() || (clients.length > 0 ? clients[0].id : "")}
           onComplete={handleUploadComplete}
         >
           <Upload className="mr-2 h-4 w-4" />
@@ -766,7 +749,7 @@ export default function MediaPage() {
               <ObjectUploader
                 maxNumberOfFiles={10}
                 maxFileSize={104857600}
-                onGetUploadParameters={handleGetUploadParameters}
+                clientId={resolveUploadClientId() || (clients.length > 0 ? clients[0].id : "")}
                 onComplete={handleUploadComplete}
               >
                 <Upload className="mr-2 h-4 w-4" />

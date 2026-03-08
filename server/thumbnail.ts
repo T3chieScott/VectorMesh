@@ -3,38 +3,14 @@ import { promises as fs } from "fs";
 import { randomUUID } from "crypto";
 import path from "path";
 import os from "os";
-import { objectStorageClient } from "./replit_integrations/object_storage/objectStorage";
-import { objectStorageService } from "./objectStorage";
-
-function parseObjectPath(objPath: string): { bucketName: string; objectName: string } {
-  if (!objPath.startsWith("/")) objPath = `/${objPath}`;
-  const parts = objPath.split("/");
-  return { bucketName: parts[1], objectName: parts.slice(2).join("/") };
-}
-
-async function downloadVideoToFile(videoUrl: string, destPath: string): Promise<boolean> {
-  try {
-    const normalizedPath = objectStorageService.normalizeObjectEntityPath(videoUrl);
-    if (normalizedPath.startsWith("/objects/")) {
-      const file = await objectStorageService.getObjectEntityFile(normalizedPath);
-      const [contents] = await file.download();
-      await fs.writeFile(destPath, contents);
-      return true;
-    }
-    return false;
-  } catch (err) {
-    console.error("Failed to download video:", err);
-    return false;
-  }
-}
+import * as fileStorage from "./fileStorage";
 
 export async function generateVideoThumbnail(
-  videoUrl: string,
-  privateObjectDir: string,
+  videoStoragePath: string,
+  clientId: string,
 ): Promise<string | null> {
-  const normalizedCheck = objectStorageService.normalizeObjectEntityPath(videoUrl);
-  if (!normalizedCheck.startsWith("/objects/") && !videoUrl.startsWith("https://storage.googleapis.com/")) {
-    console.error("Thumbnail generation rejected: URL is not from object storage");
+  if (!videoStoragePath || videoStoragePath.startsWith("http")) {
+    console.error("Thumbnail generation rejected: not a local file path");
     return null;
   }
 
@@ -43,8 +19,8 @@ export async function generateVideoThumbnail(
   const thumbTmp = path.join(tmpDir, `thumb-${randomUUID()}.jpg`);
 
   try {
-    const downloaded = await downloadVideoToFile(videoUrl, videoTmp);
-    if (!downloaded) return null;
+    const absoluteVideoPath = await fileStorage.getAbsolutePath(videoStoragePath);
+    await fs.copyFile(absoluteVideoPath, videoTmp);
 
     await new Promise<void>((resolve, reject) => {
       exec(
@@ -60,20 +36,10 @@ export async function generateVideoThumbnail(
     const thumbExists = await fs.stat(thumbTmp).catch(() => null);
     if (!thumbExists) return null;
 
-    const thumbId = randomUUID();
-    let dir = privateObjectDir;
-    if (!dir.endsWith("/")) dir += "/";
-    const objectPath = `${dir}thumbnails/${thumbId}.jpg`;
-    const { bucketName, objectName } = parseObjectPath(objectPath);
-
-    const bucket = objectStorageClient.bucket(bucketName);
-    const file = bucket.file(objectName);
     const thumbData = await fs.readFile(thumbTmp);
-    await file.save(thumbData, { contentType: "image/jpeg" });
-
-    const storedUrl = `https://storage.googleapis.com/${bucketName}/${objectName}`;
-    const normalizedPath = objectStorageService.normalizeObjectEntityPath(storedUrl);
-    return normalizedPath.startsWith("/objects/") ? normalizedPath : storedUrl;
+    const thumbFilename = `${randomUUID()}.jpg`;
+    const thumbnailPath = await fileStorage.saveThumbnail(thumbData, thumbFilename, clientId);
+    return thumbnailPath;
   } catch (err) {
     console.error("Thumbnail generation failed:", err);
     return null;

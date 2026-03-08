@@ -982,33 +982,29 @@ function ZoneEditorDialog({
     return (event?.colorPalette as Array<{ name: string; color: string }>) || [];
   }, [layout.eventId, events]);
 
-  // Store upload URLs by file ID for reliable retrieval in complete handler
-  const uploadUrlMapRef = useRef<Map<string, string>>(new Map());
+  const layoutClientId = useMemo(() => {
+    if (!layout.eventId) return "";
+    const event = events?.find(e => e.id === layout.eventId);
+    return event?.clientId || "";
+  }, [layout.eventId, events]);
 
-  // Upload handlers
   const handleUploadComplete = async (result: any) => {
     if (result.successful?.length > 0) {
       const file = result.successful[0];
-      // Get URL from our map (most reliable) or fall back to Uppy's built-in properties
-      const uploadURL = uploadUrlMapRef.current.get(file.id) || 
-                        file.response?.body?.uploadURL || 
-                        file.uploadURL;
-      
-      // Clear the stored URL
-      uploadUrlMapRef.current.delete(file.id);
-      
-      if (!uploadURL) {
-        console.error("Upload URL not found for file:", file.id);
-        toast({ title: "Upload completed but file URL not found", variant: "destructive" });
+      const body = file.response?.body;
+      const filePath = body?.filePath;
+
+      if (!filePath) {
+        console.error("File path not found for file:", file.id);
+        toast({ title: "Upload completed but file path not found", variant: "destructive" });
         setIsUploading(false);
         return;
       }
-      
+
       try {
-        // Create media record - strip query params from URL to get storage path
         const response = await apiRequest("POST", "/api/media", {
           name: file.name,
-          originalPath: uploadURL.split("?")[0],
+          originalPath: filePath,
           mediaType: file.type?.startsWith("video/")
             ? "video"
             : file.type === "image/gif"
@@ -1018,8 +1014,7 @@ function ZoneEditorDialog({
           fileSize: file.size,
         });
         const newMedia = await response.json();
-        
-        // Auto-select the newly uploaded media
+
         form.setValue("mediaId", newMedia.id);
         queryClient.invalidateQueries({ queryKey: ["/api/media"] });
         toast({ title: "Image uploaded and selected" });
@@ -1029,29 +1024,6 @@ function ZoneEditorDialog({
       }
     }
     setIsUploading(false);
-  };
-
-  const handleGetUploadParameters = async (file: any) => {
-    setIsUploading(true);
-    const res = await fetch("/api/uploads/request-url", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: file.name,
-        size: file.size,
-        contentType: file.type,
-      }),
-    });
-    const { uploadURL } = await res.json();
-    
-    // Store the upload URL for reliable retrieval in complete handler
-    uploadUrlMapRef.current.set(file.id, uploadURL);
-    
-    return {
-      method: "PUT" as const,
-      url: uploadURL,
-      headers: { "Content-Type": file.type },
-    };
   };
 
   const form = useForm<ZoneFormValues>({
@@ -2014,7 +1986,7 @@ function ZoneEditorDialog({
                         <ObjectUploader
                           maxNumberOfFiles={1}
                           maxFileSize={104857600}
-                          onGetUploadParameters={handleGetUploadParameters}
+                          clientId={layoutClientId}
                           onComplete={handleUploadComplete}
                           onError={() => {
                             setIsUploading(false);

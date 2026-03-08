@@ -7,10 +7,10 @@ import bcrypt from "bcryptjs";
 import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
 import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, insertScheduleBlockSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
-import { getSignedUploadUrl, getPublicUrl, objectStorageService } from "./objectStorage";
 import { generateVideoThumbnail } from "./thumbnail";
 import { setupAuth, isAuthenticated } from "./auth";
-import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
+import multer from "multer";
+import * as fileStorage from "./fileStorage";
 import { find as findTimezone } from "geo-tz";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert } from "./email";
 
@@ -424,8 +424,7 @@ export async function registerRoutes(
     }
   });
 
-  // Setup object storage routes for serving uploaded files
-  registerObjectStorageRoutes(app);
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
   const STALE_THRESHOLD_MS = 60000;
   setInterval(async () => {
@@ -1109,10 +1108,9 @@ export async function registerRoutes(
 
       if (data.mediaType === "video" && data.originalPath) {
         try {
-          const privateDir = objectStorageService.getPrivateObjectDir();
-          const thumbnailUrl = await generateVideoThumbnail(data.originalPath, privateDir);
-          if (thumbnailUrl) {
-            await storage.updateMediaAsset(asset.id, { thumbnailPath: thumbnailUrl });
+          const thumbnailPath = await generateVideoThumbnail(data.originalPath, data.clientId);
+          if (thumbnailPath) {
+            await storage.updateMediaAsset(asset.id, { thumbnailPath });
           }
         } catch (thumbErr) {
           console.error("Background thumbnail generation failed:", thumbErr);
@@ -1229,14 +1227,10 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Media asset not found" });
       }
 
-      // Get the normalized path and serve the file
-      const normalizedPath = objectStorageService.normalizeObjectEntityPath(asset.originalPath);
-      if (normalizedPath.startsWith("/objects/")) {
-        const file = await objectStorageService.getObjectEntityFile(normalizedPath);
-        await objectStorageService.downloadObject(file, res);
-      } else {
-        // For external URLs, redirect
+      if (asset.originalPath.startsWith("http")) {
         res.redirect(asset.originalPath);
+      } else {
+        await fileStorage.streamFile(asset.originalPath, res);
       }
     } catch (error) {
       console.error("Error serving media file:", error);
@@ -1251,12 +1245,10 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Thumbnail not found" });
       }
 
-      const normalizedPath = objectStorageService.normalizeObjectEntityPath(asset.thumbnailPath);
-      if (normalizedPath.startsWith("/objects/")) {
-        const file = await objectStorageService.getObjectEntityFile(normalizedPath);
-        await objectStorageService.downloadObject(file, res);
-      } else {
+      if (asset.thumbnailPath.startsWith("http")) {
         res.redirect(asset.thumbnailPath);
+      } else {
+        await fileStorage.streamFile(asset.thumbnailPath, res);
       }
     } catch (error) {
       console.error("Error serving thumbnail:", error);
@@ -1274,32 +1266,49 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Thumbnails can only be generated for video assets" });
       }
 
-      const privateDir = objectStorageService.getPrivateObjectDir();
-      const thumbnailUrl = await generateVideoThumbnail(asset.originalPath, privateDir);
-      if (!thumbnailUrl) {
+      const thumbnailPath = await generateVideoThumbnail(asset.originalPath, asset.clientId);
+      if (!thumbnailPath) {
         return res.status(500).json({ error: "Failed to generate thumbnail" });
       }
 
-      await storage.updateMediaAsset(asset.id, { thumbnailPath: thumbnailUrl });
-      res.json({ thumbnailPath: thumbnailUrl });
+      await storage.updateMediaAsset(asset.id, { thumbnailPath });
+      res.json({ thumbnailPath });
     } catch (error) {
       console.error("Error generating thumbnail:", error);
       res.status(500).json({ error: "Failed to generate thumbnail" });
     }
   });
 
-  // ============ UPLOAD URL ============
-  app.post("/api/uploads/request-url", requireAuth, async (req, res) => {
+  // ============ FILE UPLOAD ============
+  app.post("/api/uploads", requireAuth, loadUserContext, upload.single("file"), async (req, res) => {
     try {
-      const { name, contentType } = req.body;
-      if (!name || !contentType) {
-        return res.status(400).json({ error: "name and contentType are required" });
+      if (!req.file) {
+        return res.status(400).json({ error: "No file provided" });
       }
-      const uploadURL = await getSignedUploadUrl(name, contentType);
-      res.json({ uploadURL });
+      const clientId = req.body.clientId;
+      if (!clientId) {
+        return res.status(400).json({ error: "clientId is required" });
+      }
+      if (!canAccessClient(req, clientId)) {
+        return res.status(403).json({ error: "Access denied to this client" });
+      }
+
+      const filePath = await fileStorage.saveFile(
+        req.file.buffer,
+        req.file.originalname,
+        req.file.mimetype,
+        clientId,
+      );
+
+      res.json({
+        filePath,
+        originalName: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+      });
     } catch (error) {
-      console.error("Error getting upload URL:", error);
-      res.status(500).json({ error: "Failed to get upload URL" });
+      console.error("Error uploading file:", error);
+      res.status(500).json({ error: "Failed to upload file" });
     }
   });
 
@@ -1762,7 +1771,6 @@ export async function registerRoutes(
 
   // ============ PLAYER API (for Raspberry Pi nodes) ============
 
-  // Secured media file endpoint for paired player devices
   app.get("/api/player/media/:id/file", validateDeviceToken, async (req, res) => {
     try {
       const asset = await storage.getMediaAsset(req.params.id);
@@ -1770,12 +1778,10 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Media asset not found" });
       }
 
-      const normalizedPath = objectStorageService.normalizeObjectEntityPath(asset.originalPath);
-      if (normalizedPath.startsWith("/objects/")) {
-        const file = await objectStorageService.getObjectEntityFile(normalizedPath);
-        await objectStorageService.downloadObject(file, res);
-      } else {
+      if (asset.originalPath.startsWith("http")) {
         res.redirect(asset.originalPath);
+      } else {
+        await fileStorage.streamFile(asset.originalPath, res);
       }
     } catch (error) {
       console.error("Error serving player media file:", error);
@@ -2584,6 +2590,45 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching per-client stats:", error);
       res.status(500).json({ error: "Failed to fetch per-client stats" });
+    }
+  });
+
+  // ============ SYSTEM SETTINGS ============
+  app.get("/api/system-settings", requireAuth, loadUserContext, requireAdmin, async (req, res) => {
+    try {
+      const settings = await storage.getAllSystemSettings();
+      res.json(settings);
+    } catch (error) {
+      console.error("Error fetching system settings:", error);
+      res.status(500).json({ error: "Failed to fetch system settings" });
+    }
+  });
+
+  app.get("/api/system-settings/:key", requireAuth, loadUserContext, requireAdmin, async (req, res) => {
+    try {
+      const setting = await storage.getSystemSetting(req.params.key);
+      if (!setting) {
+        return res.status(404).json({ error: "Setting not found" });
+      }
+      res.json(setting);
+    } catch (error) {
+      console.error("Error fetching system setting:", error);
+      res.status(500).json({ error: "Failed to fetch system setting" });
+    }
+  });
+
+  app.put("/api/system-settings/:key", requireAuth, loadUserContext, requireAdmin, async (req, res) => {
+    try {
+      const { value } = req.body;
+      if (typeof value !== "string" || !value.trim()) {
+        return res.status(400).json({ error: "value is required and must be a non-empty string" });
+      }
+      const setting = await storage.setSystemSetting(req.params.key, value.trim());
+      logAudit(req, "update", "system_setting", req.params.key, { value: value.trim() });
+      res.json(setting);
+    } catch (error) {
+      console.error("Error updating system setting:", error);
+      res.status(500).json({ error: "Failed to update system setting" });
     }
   });
 

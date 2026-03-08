@@ -25,6 +25,9 @@ import {
   X,
   Send,
   Loader2,
+  HardDrive,
+  Save,
+  FolderOpen,
 } from "lucide-react";
 
 
@@ -289,6 +292,149 @@ function AlertSettingsCard() {
   );
 }
 
+function StorageSettingsCard() {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const [editValue, setEditValue] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+
+  const isAdmin = user?.role === "admin";
+
+  const { data: setting, isLoading } = useQuery<{ key: string; value: string } | null>({
+    queryKey: ["/api/system-settings", "uploadRootDir"],
+    queryFn: async () => {
+      const res = await fetch("/api/system-settings/uploadRootDir", { credentials: "include" });
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error("Failed to fetch setting");
+      return res.json();
+    },
+    enabled: isAdmin,
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async (value: string) => {
+      const res = await apiRequest("PUT", "/api/system-settings/uploadRootDir", { value });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/system-settings", "uploadRootDir"] });
+      toast({ title: "Upload directory updated" });
+      setIsEditing(false);
+    },
+    onError: () => {
+      toast({ title: "Failed to update upload directory", variant: "destructive" });
+    },
+  });
+
+  const handleEdit = () => {
+    setEditValue(setting?.value || "./data/uploads");
+    setIsEditing(true);
+  };
+
+  const handleSave = () => {
+    if (!editValue.trim()) {
+      toast({ title: "Path cannot be empty", variant: "destructive" });
+      return;
+    }
+    updateMutation.mutate(editValue.trim());
+  };
+
+  if (!isAdmin) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base font-semibold flex items-center gap-2">
+          <HardDrive className="h-4 w-4" />
+          File Storage
+        </CardTitle>
+        <CardDescription>
+          Configure where uploaded media files are stored on the server
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <>
+            <div className="space-y-2">
+              <Label className="text-sm">Upload Root Directory</Label>
+              {isEditing ? (
+                <div className="flex gap-2">
+                  <Input
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    placeholder="./data/uploads"
+                    className="flex-1 font-mono text-sm"
+                    data-testid="input-upload-root-dir"
+                  />
+                  <Button
+                    size="sm"
+                    onClick={handleSave}
+                    disabled={updateMutation.isPending}
+                    data-testid="button-save-upload-dir"
+                  >
+                    {updateMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setIsEditing(false)}
+                    data-testid="button-cancel-upload-dir"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 px-3 py-2 bg-muted rounded-md text-sm font-mono" data-testid="text-upload-root-dir">
+                    {setting?.value || "./data/uploads"}
+                  </code>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleEdit}
+                    data-testid="button-edit-upload-dir"
+                  >
+                    Edit
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            <Separator />
+
+            <div className="space-y-2">
+              <Label className="text-sm flex items-center gap-1.5">
+                <FolderOpen className="h-3.5 w-3.5" />
+                Folder Structure
+              </Label>
+              <div className="bg-muted rounded-md p-3 text-xs font-mono text-muted-foreground space-y-0.5">
+                <p>{setting?.value || "./data/uploads"}/</p>
+                <p className="pl-4">├── site-name-1/</p>
+                <p className="pl-8">├── uploads/</p>
+                <p className="pl-8">└── thumbnails/</p>
+                <p className="pl-4">└── site-name-2/</p>
+                <p className="pl-8">├── uploads/</p>
+                <p className="pl-8">└── thumbnails/</p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Each site's files are stored in separate folders. Changing this path will not move existing files.
+              </p>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   const { user, logout } = useAuth();
 
@@ -361,6 +507,10 @@ export default function SettingsPage() {
           <AlertSettingsCard />
         </div>
       </div>
+
+      {user?.role === "admin" && (
+        <StorageSettingsCard />
+      )}
     </div>
   );
 }

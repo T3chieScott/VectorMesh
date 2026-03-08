@@ -57,6 +57,8 @@ import {
   type InsertPlaylistItem,
   type AlertSetting,
   type AlertHistory,
+  systemSettings,
+  type SystemSetting,
 } from "@shared/schema";
 import { users, userSites, passwordResetTokens, type User, type UpsertUser, type UserSite, type PasswordResetToken } from "@shared/models/auth";
 
@@ -216,6 +218,11 @@ export interface IStorage {
 
   // Per-client stats
   getStatsByClient(): Promise<{ clientId: string; clientName: string; screensOnline: number; screensTotal: number; activeEvents: number; mediaCount: number; activeOverrides: number }[]>;
+
+  // System Settings
+  getSystemSetting(key: string): Promise<SystemSetting | undefined>;
+  getAllSystemSettings(): Promise<SystemSetting[]>;
+  setSystemSetting(key: string, value: string): Promise<SystemSetting>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -980,6 +987,28 @@ export class DatabaseStorage implements IStorage {
         activeOverrides: clientOverrides.length,
       };
     });
+  }
+
+  // System Settings
+  async getSystemSetting(key: string): Promise<SystemSetting | undefined> {
+    const [setting] = await db.select().from(systemSettings).where(eq(systemSettings.key, key));
+    return setting;
+  }
+
+  async getAllSystemSettings(): Promise<SystemSetting[]> {
+    return db.select().from(systemSettings);
+  }
+
+  async setSystemSetting(key: string, value: string): Promise<SystemSetting> {
+    const [setting] = await db
+      .insert(systemSettings)
+      .values({ key, value, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: systemSettings.key,
+        set: { value, updatedAt: new Date() },
+      })
+      .returning();
+    return setting;
   }
 }
 
