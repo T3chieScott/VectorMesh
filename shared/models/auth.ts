@@ -20,6 +20,8 @@ export const users = pgTable("users", {
   role: varchar("role").default("site_user").notNull(),
   passwordHash: varchar("password_hash"),
   mustChangePassword: boolean("must_change_password").default(false).notNull(),
+  twoFactorSecret: varchar("two_factor_secret"),
+  twoFactorEnabled: boolean("two_factor_enabled").default(false).notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").defaultNow(),

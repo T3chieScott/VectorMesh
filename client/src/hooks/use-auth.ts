@@ -33,6 +33,18 @@ export function useAuth() {
       return res.json();
     },
     onSuccess: (data) => {
+      if (!data.requiresTwoFactor) {
+        queryClient.setQueryData(["/api/auth/user"], data);
+      }
+    },
+  });
+
+  const verifyTwoFactorMutation = useMutation({
+    mutationFn: async (code: string) => {
+      const res = await apiRequest("POST", "/api/auth/2fa/validate", { code });
+      return res.json();
+    },
+    onSuccess: (data) => {
       queryClient.setQueryData(["/api/auth/user"], data);
     },
   });
@@ -55,6 +67,8 @@ export function useAuth() {
     login: loginMutation.mutateAsync,
     loginError: loginMutation.error,
     isLoggingIn: loginMutation.isPending,
+    verifyTwoFactor: verifyTwoFactorMutation.mutateAsync,
+    isVerifyingTwoFactor: verifyTwoFactorMutation.isPending,
     logout: logoutMutation.mutate,
     isLoggingOut: logoutMutation.isPending,
   };

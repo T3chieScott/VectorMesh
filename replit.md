@@ -42,7 +42,7 @@ The backend is a Node.js application using Express, written in TypeScript and co
 PostgreSQL is the chosen database, accessed via Drizzle ORM. The database schema is defined once in `shared/schema.ts` for both client and server use, and migrations are managed with Drizzle Kit. Core entities include Clients, Events, Media Assets, Layouts, Screens, Programmes, and Player Heartbeats.
 
 ### Authentication & Authorization
-The system implements custom email/password authentication with bcryptjs for password hashing and PostgreSQL for session storage. It features a robust Role-Based Access Control (RBAC) system with three tiers: Admin, Account Manager, and Site User, each with specific permissions and data visibility. Authentication APIs handle login, logout, user information retrieval, password management, and initial setup. An extensive audit logging system tracks all mutating actions and authentication events, storing them in an `audit_logs` table for accountability and analytics. Email alerts are configurable for screen status changes (offline/online), scoped per client, with recipient management and cooldown mechanisms.
+The system implements custom email/password authentication with bcryptjs for password hashing and PostgreSQL for session storage. It features mandatory TOTP-based Two-Factor Authentication (2FA) using the `otpauth` library — every user must set up an authenticator app (Google Authenticator, Authy, etc.) on their first login. The login flow is two-phase: credentials first, then TOTP code verification. 2FA setup is enforced at user creation (not optional), and the initial admin setup also includes mandatory 2FA enrollment. The system uses a robust Role-Based Access Control (RBAC) system with three tiers: Admin, Account Manager, and Site User, each with specific permissions and data visibility. Authentication APIs handle login, logout, 2FA setup/validation, user information retrieval, password management, and initial setup. An extensive audit logging system tracks all mutating actions and authentication events, storing them in an `audit_logs` table for accountability and analytics. Email alerts are configurable for screen status changes (offline/online), scoped per client, with recipient management and cooldown mechanisms.
 
 ### Key Design Patterns
 - **Shared Schema**: Ensures type consistency across frontend and backend.
@@ -58,6 +58,8 @@ The system implements custom email/password authentication with bcryptjs for pas
 
 ### Authentication
 - **bcryptjs**: For secure password hashing.
+- **otpauth**: For TOTP-based two-factor authentication generation and verification.
+- **qrcode**: For generating QR code images for authenticator app enrollment.
 - **Nodemailer**: For sending emails, including password reset and alert notifications.
 
 ### Object Storage

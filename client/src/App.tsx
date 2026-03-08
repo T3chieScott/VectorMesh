@@ -16,6 +16,7 @@ import LoginPage from "@/pages/login";
 import ForgotPasswordPage from "@/pages/forgot-password";
 import ResetPasswordPage from "@/pages/reset-password";
 import ChangePasswordPage from "@/pages/change-password";
+import Setup2FAPage from "@/pages/setup-2fa";
 import SetupPage from "@/pages/setup";
 import Dashboard from "@/pages/dashboard";
 import ClientsPage from "@/pages/clients";
@@ -170,6 +171,10 @@ function AppContent() {
 
   if (user.mustChangePassword) {
     return <ChangePasswordPage />;
+  }
+
+  if (!user.twoFactorEnabled) {
+    return <Setup2FAPage />;
   }
 
   return <AuthenticatedLayout />;

@@ -4,6 +4,8 @@ import { storage } from "./storage";
 import { z } from "zod";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
+import * as OTPAuth from "otpauth";
+import QRCode from "qrcode";
 import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, insertScheduleBlockSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
 import { getSignedUploadUrl, getPublicUrl, objectStorageService } from "./objectStorage";
 import { generateVideoThumbnail } from "./thumbnail";
@@ -11,6 +13,36 @@ import { setupAuth, isAuthenticated } from "./auth";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { find as findTimezone } from "geo-tz";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert } from "./email";
+
+function generateTwoFactorSecret(email: string) {
+  const secret = new OTPAuth.Secret({ size: 20 });
+  const totp = new OTPAuth.TOTP({
+    issuer: "VectorMesh",
+    label: email,
+    algorithm: "SHA1",
+    digits: 6,
+    period: 30,
+    secret,
+  });
+  return { secret: secret.base32, uri: totp.toString() };
+}
+
+function verifyTwoFactorCode(secret: string, code: string): boolean {
+  const totp = new OTPAuth.TOTP({
+    issuer: "VectorMesh",
+    algorithm: "SHA1",
+    digits: 6,
+    period: 30,
+    secret: OTPAuth.Secret.fromBase32(secret),
+  });
+  const delta = totp.validate({ token: code, window: 1 });
+  return delta !== null;
+}
+
+function stripSensitiveFields(user: any) {
+  const { passwordHash, twoFactorSecret, ...safeUser } = user;
+  return safeUser;
+}
 
 const requireAuth = isAuthenticated;
 
@@ -113,8 +145,26 @@ export async function registerRoutes(
       if (!valid) {
         return res.status(401).json({ error: "Invalid email or password" });
       }
+
+      if (user.twoFactorEnabled) {
+        req.session.regenerate((err) => {
+          if (err) {
+            console.error("Session regeneration error:", err);
+            return res.status(500).json({ error: "Login failed" });
+          }
+          (req.session as any).pendingTwoFactorUserId = user.id;
+          req.session.save((err) => {
+            if (err) {
+              console.error("Session save error:", err);
+              return res.status(500).json({ error: "Login failed" });
+            }
+            res.json({ requiresTwoFactor: true });
+          });
+        });
+        return;
+      }
+
       await storage.updateUser(user.id, { lastLoginAt: new Date() });
-      const { passwordHash, ...safeUser } = user;
       req.session.regenerate((err) => {
         if (err) {
           console.error("Session regeneration error:", err);
@@ -127,7 +177,7 @@ export async function registerRoutes(
             return res.status(500).json({ error: "Login failed" });
           }
           storage.createAuditLog({ userId: user.id, action: "login", entityType: "auth", entityId: user.id, payload: { email: user.email } }).catch(() => {});
-          res.json({ ...safeUser });
+          res.json(stripSensitiveFields(user));
         });
       });
     } catch (error) {
@@ -152,8 +202,7 @@ export async function registerRoutes(
 
   app.get("/api/auth/user", requireAuth, async (req, res) => {
     const user = (req as any).dbUser;
-    const { passwordHash, ...safeUser } = user;
-    res.json(safeUser);
+    res.json(stripSensitiveFields(user));
   });
 
   app.post("/api/auth/change-password", requireAuth, async (req, res) => {
@@ -241,6 +290,89 @@ export async function registerRoutes(
     res.json({ needsSetup: !hasUsersWithPasswords, userCount: allUsers.length });
   });
 
+  app.post("/api/auth/2fa/setup", requireAuth, async (req, res) => {
+    try {
+      const user = (req as any).dbUser;
+      if (user.twoFactorEnabled) {
+        return res.status(400).json({ error: "2FA is already enabled" });
+      }
+      const { secret, uri } = generateTwoFactorSecret(user.email || user.id);
+      (req.session as any).pendingTwoFactorSecret = secret;
+      req.session.save(async (err) => {
+        if (err) {
+          return res.status(500).json({ error: "Failed to start 2FA setup" });
+        }
+        const qrCode = await QRCode.toDataURL(uri);
+        res.json({ qrCode, secret, uri });
+      });
+    } catch (error) {
+      console.error("2FA setup error:", error);
+      res.status(500).json({ error: "Failed to set up 2FA" });
+    }
+  });
+
+  app.post("/api/auth/2fa/confirm-setup", requireAuth, async (req, res) => {
+    try {
+      const user = (req as any).dbUser;
+      const { code } = req.body;
+      if (!code || code.length !== 6) {
+        return res.status(400).json({ error: "A 6-digit code is required" });
+      }
+      const pendingSecret = (req.session as any).pendingTwoFactorSecret;
+      if (!pendingSecret) {
+        return res.status(400).json({ error: "No pending 2FA setup. Please start setup again." });
+      }
+      if (!verifyTwoFactorCode(pendingSecret, code)) {
+        return res.status(400).json({ error: "Invalid code. Please try again." });
+      }
+      await storage.updateUser(user.id, {
+        twoFactorSecret: pendingSecret,
+        twoFactorEnabled: true,
+      });
+      delete (req.session as any).pendingTwoFactorSecret;
+      req.session.save(() => {});
+      logAudit(req, "enable_2fa", "auth", user.id);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("2FA confirm error:", error);
+      res.status(500).json({ error: "Failed to confirm 2FA setup" });
+    }
+  });
+
+  app.post("/api/auth/2fa/validate", async (req, res) => {
+    try {
+      const { code } = req.body;
+      const pendingUserId = (req.session as any)?.pendingTwoFactorUserId;
+      if (!pendingUserId) {
+        return res.status(401).json({ error: "No pending 2FA verification" });
+      }
+      if (!code || code.length !== 6) {
+        return res.status(400).json({ error: "A 6-digit code is required" });
+      }
+      const user = await storage.getUser(pendingUserId);
+      if (!user || !user.twoFactorSecret) {
+        return res.status(401).json({ error: "Invalid session" });
+      }
+      if (!verifyTwoFactorCode(user.twoFactorSecret, code)) {
+        return res.status(400).json({ error: "Invalid code. Please try again." });
+      }
+      await storage.updateUser(user.id, { lastLoginAt: new Date() });
+      delete (req.session as any).pendingTwoFactorUserId;
+      (req.session as any).userId = user.id;
+      req.session.save((err) => {
+        if (err) {
+          console.error("Session save error:", err);
+          return res.status(500).json({ error: "Login failed" });
+        }
+        storage.createAuditLog({ userId: user.id, action: "login", entityType: "auth", entityId: user.id, payload: { email: user.email, twoFactor: true } }).catch(() => {});
+        res.json(stripSensitiveFields(user));
+      });
+    } catch (error) {
+      console.error("2FA validate error:", error);
+      res.status(500).json({ error: "2FA validation failed" });
+    }
+  });
+
   app.post("/api/auth/setup", async (req, res) => {
     try {
       const allUsers = await storage.getAllUsers();
@@ -254,25 +386,38 @@ export async function registerRoutes(
       }
       const hash = await bcrypt.hash(password, 12);
       const existingUser = await storage.getUserByEmail(email.toLowerCase().trim());
+      let userId: string;
       if (existingUser) {
         await storage.setUserPassword(existingUser.id, hash);
         await storage.updateUser(existingUser.id, { role: "admin", mustChangePassword: false });
-        const { passwordHash, ...safeUser } = (await storage.getUser(existingUser.id))!;
-        (req.session as any).userId = existingUser.id;
-        return res.json(safeUser);
+        userId = existingUser.id;
+      } else {
+        const user = await storage.createUser({
+          email: email.toLowerCase().trim(),
+          firstName: firstName || "Admin",
+          lastName: lastName || "",
+          role: "admin",
+          passwordHash: hash,
+          mustChangePassword: false,
+          isActive: true,
+        });
+        userId = user.id;
       }
-      const user = await storage.createUser({
-        email: email.toLowerCase().trim(),
-        firstName: firstName || "Admin",
-        lastName: lastName || "",
-        role: "admin",
-        passwordHash: hash,
-        mustChangePassword: false,
-        isActive: true,
+      (req.session as any).userId = userId;
+      const updatedUser = await storage.getUser(userId);
+      const { secret, uri } = generateTwoFactorSecret(email.toLowerCase().trim());
+      (req.session as any).pendingTwoFactorSecret = secret;
+      req.session.save(async (err) => {
+        if (err) {
+          console.error("Session save error:", err);
+          return res.status(500).json({ error: "Setup failed" });
+        }
+        const qrCode = await QRCode.toDataURL(uri);
+        res.json({
+          ...stripSensitiveFields(updatedUser),
+          twoFactorSetup: { qrCode, secret, uri },
+        });
       });
-      (req.session as any).userId = user.id;
-      const { passwordHash, ...safeUser } = user;
-      res.json(safeUser);
     } catch (error) {
       console.error("Setup error:", error);
       res.status(500).json({ error: "Setup failed" });
@@ -2159,8 +2304,7 @@ export async function registerRoutes(
       const usersWithSites = await Promise.all(
         allUsers.map(async (u) => {
           const sites = await storage.getUserSites(u.id);
-          const { passwordHash, ...safeUser } = u;
-          return { ...safeUser, sites };
+          return { ...stripSensitiveFields(u), sites };
         })
       );
       if (allowed) {
@@ -2204,8 +2348,7 @@ export async function registerRoutes(
       });
       await sendWelcomeEmail(user.email!, firstName || "User", password);
       logAudit(req, "create", "user", user.id, { email: user.email, role: user.role });
-      const { passwordHash, ...safeUser } = user;
-      res.status(201).json(safeUser);
+      res.status(201).json(stripSensitiveFields(user));
     } catch (error) {
       console.error("Error creating user:", error);
       res.status(500).json({ error: "Failed to create user" });
@@ -2244,8 +2387,7 @@ export async function registerRoutes(
         return res.status(404).json({ error: "User not found" });
       }
       logAudit(req, "update", "user", user.id, { email: user.email, changes: Object.keys(updateData) });
-      const { passwordHash, ...safeUser } = user;
-      res.json(safeUser);
+      res.json(stripSensitiveFields(user));
     } catch (error) {
       console.error("Error updating user:", error);
       res.status(500).json({ error: "Failed to update user" });
