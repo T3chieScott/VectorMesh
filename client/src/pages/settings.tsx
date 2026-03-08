@@ -505,12 +505,12 @@ export default function SettingsPage() {
           </Card>
 
           <AlertSettingsCard />
+
+          {user?.role === "admin" && (
+            <StorageSettingsCard />
+          )}
         </div>
       </div>
-
-      {user?.role === "admin" && (
-        <StorageSettingsCard />
-      )}
     </div>
   );
 }
