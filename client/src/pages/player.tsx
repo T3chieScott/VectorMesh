@@ -93,10 +93,16 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [autoConnecting, setAutoConnecting] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return !!params.get("code");
+  });
+  const autoPairAttempted = useRef(false);
 
-  const handlePair = async () => {
-    if (code.length < 4) {
+  const handlePairWithCode = useCallback(async (pairingCode: string) => {
+    if (pairingCode.length < 4) {
       setError("Please enter a valid pairing code");
+      setAutoConnecting(false);
       return;
     }
     setLoading(true);
@@ -105,7 +111,7 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
       const res = await fetch("/api/player/pair", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pairingCode: code.toUpperCase().trim() }),
+        body: JSON.stringify({ pairingCode: pairingCode.toUpperCase().trim() }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
@@ -119,10 +125,37 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
       onPaired(data.screenId, data.deviceToken);
     } catch (err: any) {
       setError(err.message || "Failed to pair");
+      setAutoConnecting(false);
     } finally {
       setLoading(false);
     }
-  };
+  }, [onPaired]);
+
+  const handlePair = () => handlePairWithCode(code);
+
+  useEffect(() => {
+    if (autoPairAttempted.current) return;
+    autoPairAttempted.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const urlCode = params.get("code");
+    if (urlCode) {
+      const cleaned = urlCode.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+      setCode(cleaned);
+      handlePairWithCode(cleaned);
+    }
+  }, [handlePairWithCode]);
+
+  if (autoConnecting) {
+    return (
+      <div className="fixed inset-0 bg-black flex items-center justify-center" data-testid="auto-pairing-screen">
+        <div className="text-center text-white">
+          <div className="w-16 h-16 mx-auto mb-6 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
+          <h1 className="text-2xl font-bold mb-2">Connecting Display</h1>
+          <p className="text-white/60 text-sm">Pairing automatically...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black flex items-center justify-center" data-testid="pairing-screen">
