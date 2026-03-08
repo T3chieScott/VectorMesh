@@ -447,69 +447,64 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2 space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base font-semibold flex items-center gap-2">
-                <User className="h-4 w-4" />
-                Account
-              </CardTitle>
-              <CardDescription>
-                Your account information and preferences
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Name</p>
-                  <p className="font-medium">
-                    {user?.firstName ? `${user.firstName} ${user.lastName || ""}`.trim() : "Not set"}
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Email</p>
-                  <p className="font-medium">{user?.email || "Not set"}</p>
-                </div>
+      <div className="space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base font-semibold flex items-center gap-2">
+              <User className="h-4 w-4" />
+              Account
+            </CardTitle>
+            <CardDescription>
+              Your account information and preferences
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Name</p>
+                <p className="font-medium">
+                  {user?.firstName ? `${user.firstName} ${user.lastName || ""}`.trim() : "Not set"}
+                </p>
               </div>
-              <Separator />
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => window.location.href = "/change-password"} data-testid="button-change-password">Change Password</Button>
-                <Button variant="outline" onClick={() => logout()} data-testid="button-logout">Sign Out</Button>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Email</p>
+                <p className="font-medium">{user?.email || "Not set"}</p>
               </div>
-            </CardContent>
-          </Card>
-        </div>
+            </div>
+            <Separator />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => window.location.href = "/change-password"} data-testid="button-change-password">Change Password</Button>
+              <Button variant="outline" onClick={() => logout()} data-testid="button-logout">Sign Out</Button>
+            </div>
+          </CardContent>
+        </Card>
 
-        {/* Sidebar */}
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base font-semibold flex items-center gap-2">
-                <Shield className="h-4 w-4" />
-                Security
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm">Authentication</span>
-                <Badge className="bg-green-500/10 text-green-600">
-                  Enabled
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm">Role</span>
-                <Badge variant="secondary">Admin</Badge>
-              </div>
-            </CardContent>
-          </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base font-semibold flex items-center gap-2">
+              <Shield className="h-4 w-4" />
+              Security
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm">Authentication</span>
+              <Badge className="bg-green-500/10 text-green-600">
+                Enabled
+              </Badge>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm">Role</span>
+              <Badge variant="secondary">Admin</Badge>
+            </div>
+          </CardContent>
+        </Card>
 
-          <AlertSettingsCard />
+        <AlertSettingsCard />
 
-          {user?.role === "admin" && (
-            <StorageSettingsCard />
-          )}
-        </div>
+        {user?.role === "admin" && (
+          <StorageSettingsCard />
+        )}
       </div>
     </div>
   );

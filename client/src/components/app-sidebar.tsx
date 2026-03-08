@@ -97,27 +97,32 @@ const displayNavItems = [
     icon: PlayCircle,
   },
   {
-    title: "Live Override",
-    url: "/live-override",
-    icon: Zap,
-  },
-];
-
-const systemNavItems = [
-  {
     title: "Schedule Timeline",
     url: "/schedule",
     icon: CalendarClock,
   },
   {
-    title: "Diagnostics",
-    url: "/diagnostics",
-    icon: Activity,
+    title: "Live Override",
+    url: "/live-override",
+    icon: Zap,
   },
   {
     title: "Player Simulator",
     url: "/simulator",
     icon: Tv2,
+  },
+];
+
+const systemNavItems = [
+  {
+    title: "Display Profiles",
+    url: "/admin/display-profiles",
+    icon: Monitor,
+  },
+  {
+    title: "Diagnostics",
+    url: "/diagnostics",
+    icon: Activity,
   },
   {
     title: "Settings",
@@ -131,11 +136,6 @@ const adminNavItems = [
     title: "User Management",
     url: "/admin/users",
     icon: Shield,
-  },
-  {
-    title: "Display Profiles",
-    url: "/admin/display-profiles",
-    icon: Monitor,
   },
   {
     title: "Activity Log",

@@ -206,6 +206,7 @@ export interface IStorage {
   createAuditLog(data: InsertAuditLog): Promise<AuditLog>;
   getAuditLogs(options: { userId?: string; entityType?: string; action?: string; dateFrom?: Date; dateTo?: Date; limit?: number; offset?: number }): Promise<{ logs: AuditLog[]; total: number }>;
   getAuditLogStats(): Promise<{ loginsToday: number; activeUsersWeek: number; changesThisWeek: number; totalLogs: number }>;
+  clearAuditLogs(): Promise<void>;
 
   // Alert Settings
   getAlertSettings(clientIds?: string[] | null): Promise<AlertSetting[]>;
@@ -892,6 +893,10 @@ export class DatabaseStorage implements IStorage {
       changesThisWeek: changesWeekResult?.count || 0,
       totalLogs: totalResult?.count || 0,
     };
+  }
+
+  async clearAuditLogs(): Promise<void> {
+    await db.delete(auditLogs);
   }
 
   async getAlertSettings(clientIds?: string[] | null): Promise<AlertSetting[]> {

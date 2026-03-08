@@ -2537,6 +2537,23 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/admin/audit-logs", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      await storage.clearAuditLogs();
+      await storage.createAuditLog({
+        userId: req.user!.id,
+        action: "delete",
+        entityType: "audit_log",
+        entityId: null,
+        payload: { description: "Cleared all activity logs" },
+      });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error clearing audit logs:", error);
+      res.status(500).json({ error: "Failed to clear audit logs" });
+    }
+  });
+
   app.get("/api/admin/stats", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
       const allowed = getAllowedClientIds(req);

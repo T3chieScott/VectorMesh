@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +7,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import {
   FileText,
   ChevronLeft,
@@ -22,6 +33,8 @@ import {
   X,
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 interface AuditLogEntry {
   id: string;
@@ -121,6 +134,20 @@ export default function ActivityLogPage() {
   const [entityTypeFilter, setEntityTypeFilter] = useState<string>("all");
   const [actionFilter, setActionFilter] = useState<string>("all");
   const [showFilters, setShowFilters] = useState(false);
+  const { toast } = useToast();
+
+  const clearLogsMutation = useMutation({
+    mutationFn: () => apiRequest("DELETE", "/api/admin/audit-logs"),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === 'string' && (query.queryKey[0] as string).startsWith('/api/admin/audit-logs') });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/stats"] });
+      setPage(0);
+      toast({ title: "Activity log cleared", description: "All log entries have been removed." });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to clear activity log.", variant: "destructive" });
+    },
+  });
 
   const queryParams = new URLSearchParams();
   queryParams.set("limit", String(PAGE_SIZE));
@@ -150,20 +177,53 @@ export default function ActivityLogPage() {
             Review all system activity and changes{data ? ` — ${data.total.toLocaleString()} total entries` : ""}
           </p>
         </div>
-        <Button
-          variant={showFilters ? "secondary" : "outline"}
-          size="sm"
-          onClick={() => setShowFilters(!showFilters)}
-          data-testid="button-toggle-filters"
-        >
-          <Filter className="h-4 w-4 mr-2" />
-          Filters
-          {hasFilters && (
-            <Badge variant="secondary" className="ml-2 h-5 w-5 p-0 flex items-center justify-center text-xs">
-              !
-            </Badge>
-          )}
-        </Button>
+        <div className="flex items-center gap-2">
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={clearLogsMutation.isPending || !data?.total}
+                data-testid="button-clear-logs"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                {clearLogsMutation.isPending ? "Clearing..." : "Clear Log"}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Clear Activity Log</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will permanently delete all activity log entries. This action cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel data-testid="button-cancel-clear">Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => clearLogsMutation.mutate()}
+                  className="bg-destructive text-destructive-foreground"
+                  data-testid="button-confirm-clear"
+                >
+                  Clear All Entries
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          <Button
+            variant={showFilters ? "secondary" : "outline"}
+            size="sm"
+            onClick={() => setShowFilters(!showFilters)}
+            data-testid="button-toggle-filters"
+          >
+            <Filter className="h-4 w-4 mr-2" />
+            Filters
+            {hasFilters && (
+              <Badge variant="secondary" className="ml-2 h-5 w-5 p-0 flex items-center justify-center text-xs">
+                !
+              </Badge>
+            )}
+          </Button>
+        </div>
       </div>
 
       {showFilters && (
