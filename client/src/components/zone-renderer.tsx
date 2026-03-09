@@ -1330,13 +1330,16 @@ function MontageWidget({
   const [layerB, setLayerB] = useState<string>("");
   const [activeLayer, setActiveLayer] = useState<"a" | "b">("a");
   const [crossfading, setCrossfading] = useState(false);
-  const [kenBurnsState, setKenBurnsState] = useState({ scale: 1, x: 0, y: 0 });
+  const [kenBurnsA, setKenBurnsA] = useState({ scale: 1, x: 0, y: 0 });
+  const [kenBurnsB, setKenBurnsB] = useState({ scale: 1, x: 0, y: 0 });
   const [hasError, setHasError] = useState(false);
   const currentIndexRef = useRef(0);
   const displayOrderRef = useRef<string[]>([]);
   const activeLayerRef = useRef<"a" | "b">("a");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const kenBurnsStartTimerARef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const kenBurnsStartTimerBRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 
   const hasProvidedMedia = providedMedia && providedMedia.length > 0;
@@ -1387,6 +1390,21 @@ function MontageWidget({
     return { scale, x, y };
   }, [kenBurns, kenBurnsIntensity]);
 
+  const startKenBurnsForLayer = useCallback((layer: "a" | "b") => {
+    const setTarget = layer === "a" ? setKenBurnsA : setKenBurnsB;
+    const timerRef = layer === "a" ? kenBurnsStartTimerARef : kenBurnsStartTimerBRef;
+    if (!kenBurns) {
+      setTarget({ scale: 1, x: 0, y: 0 });
+      return;
+    }
+    setTarget({ scale: 1, x: 0, y: 0 });
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      if (!isMountedRef.current) return;
+      setTarget(generateKenBurnsParams());
+    }, 50);
+  }, [generateKenBurnsParams, kenBurns]);
+
   useEffect(() => {
     if (!autoPlay || displayOrder.length <= 1) return;
 
@@ -1403,12 +1421,13 @@ function MontageWidget({
         setLayerB(order[nextIdx]);
       }
 
+      startKenBurnsForLayer(next);
+
       if (transition === "none") {
         currentIndexRef.current = nextIdx;
         setCurrentIndex(nextIdx);
         setActiveLayer(next);
         activeLayerRef.current = next;
-        setKenBurnsState(generateKenBurnsParams());
         return;
       }
 
@@ -1424,7 +1443,6 @@ function MontageWidget({
             currentIndexRef.current = nextIdx;
             setCurrentIndex(nextIdx);
             setCrossfading(false);
-            setKenBurnsState(generateKenBurnsParams());
           }, transitionDuration + 50);
         });
       });
@@ -1433,12 +1451,14 @@ function MontageWidget({
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
+      if (kenBurnsStartTimerARef.current) clearTimeout(kenBurnsStartTimerARef.current);
+      if (kenBurnsStartTimerBRef.current) clearTimeout(kenBurnsStartTimerBRef.current);
     };
-  }, [autoPlay, displayOrder, duration, transitionDuration, currentIndex, generateKenBurnsParams, transition]);
+  }, [autoPlay, displayOrder, duration, transitionDuration, currentIndex, generateKenBurnsParams, transition, startKenBurnsForLayer]);
 
   useEffect(() => {
-    setKenBurnsState(generateKenBurnsParams());
-  }, [generateKenBurnsParams]);
+    startKenBurnsForLayer("a");
+  }, [startKenBurnsForLayer]);
 
   if (displayOrder.length === 0) {
     return (
@@ -1532,18 +1552,19 @@ function MontageWidget({
     return base;
   };
 
-  const getKenBurnsStyle = (): React.CSSProperties => {
+  const getKenBurnsStyle = (state: { scale: number; x: number; y: number }): React.CSSProperties => {
     if (!kenBurns) return {};
     return {
-      transform: `scale(${kenBurnsState.scale}) translate(${kenBurnsState.x}%, ${kenBurnsState.y}%)`,
+      transform: `scale(${state.scale}) translate(${state.x}%, ${state.y}%)`,
       transition: `transform ${duration}s ease-in-out`,
+      willChange: "transform",
     };
   };
 
   return (
     <div className="h-full w-full relative overflow-hidden" data-testid="montage-widget" data-montage-index={currentIndex} data-montage-active={activeLayer}>
       <div style={getLayerStyle(aIsActive, true)}>
-        <div className="h-full w-full" style={aIsActive ? getKenBurnsStyle() : {}}>
+        <div className="h-full w-full" style={getKenBurnsStyle(kenBurnsA)}>
           <img
             src={urlA}
             alt=""
@@ -1554,7 +1575,7 @@ function MontageWidget({
         </div>
       </div>
       <div style={getLayerStyle(!aIsActive, false)}>
-        <div className="h-full w-full" style={!aIsActive ? getKenBurnsStyle() : {}}>
+        <div className="h-full w-full" style={getKenBurnsStyle(kenBurnsB)}>
           <img
             src={urlB}
             alt=""
