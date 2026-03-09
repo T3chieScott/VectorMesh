@@ -957,6 +957,19 @@ export async function registerRoutes(
         displayProfileId: req.body.displayProfileId || null,
         currentEventId: req.body.currentEventId || null,
       };
+      if (body.canvasEnabled) {
+        if (!body.canvasWidth || body.canvasWidth < 1 || !body.canvasHeight || body.canvasHeight < 1) {
+          return res.status(400).json({ error: "Canvas width and height are required when canvas positioning is enabled" });
+        }
+        body.canvasX = body.canvasX ?? 0;
+        body.canvasY = body.canvasY ?? 0;
+      } else {
+        body.canvasEnabled = false;
+        body.canvasWidth = null;
+        body.canvasHeight = null;
+        body.canvasX = 0;
+        body.canvasY = 0;
+      }
       const data = insertScreenSchema.parse(body);
       if (data.clientId && !canAccessClient(req, data.clientId)) {
         return res.status(403).json({ error: "Access denied to requested site" });
@@ -980,6 +993,18 @@ export async function registerRoutes(
         displayProfileId: req.body.displayProfileId || null,
         currentEventId: req.body.currentEventId || null,
       };
+      if (body.canvasEnabled) {
+        if (!body.canvasWidth || body.canvasWidth < 1 || !body.canvasHeight || body.canvasHeight < 1) {
+          return res.status(400).json({ error: "Canvas width and height are required when canvas positioning is enabled" });
+        }
+        body.canvasX = body.canvasX ?? 0;
+        body.canvasY = body.canvasY ?? 0;
+      } else if (body.canvasEnabled === false) {
+        body.canvasWidth = null;
+        body.canvasHeight = null;
+        body.canvasX = 0;
+        body.canvasY = 0;
+      }
       const data = insertScreenSchema.partial().parse(body);
       const screen = await storage.updateScreen(req.params.id, data);
       if (!screen) {

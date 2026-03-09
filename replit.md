@@ -13,6 +13,7 @@ Key capabilities include:
 - Customizable QR code zones supporting URL, WiFi, and vCard content.
 - Dynamic countdown timers with extensive customization options.
 - Flexible layout aspect ratio support for diverse display hardware.
+- **Canvas positioning for video walls**: Screens can be positioned within a larger virtual canvas (e.g., placing a 348×1044 screen at coordinates (0,0) on a 1920×1080 canvas). Canvas positioning fields (`canvasEnabled`, `canvasWidth`, `canvasHeight`, `canvasX`, `canvasY`) are on the screens table with validation enforced both client-side and server-side.
 - Room schedule zones with multiple viewing modes.
 - Dynamic player variables for personalized content display.
 - Event-specific color palettes for consistent branding.

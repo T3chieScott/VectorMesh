@@ -41,6 +41,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { useSiteFilteredQuery } from "@/hooks/use-site-context";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import {
   Plus,
   MoreHorizontal,
@@ -54,6 +56,7 @@ import {
   Copy,
   Zap,
   Unlink,
+  Grid3X3,
 } from "lucide-react";
 import { useSiteContext } from "@/hooks/use-site-context";
 import type { Screen, DisplayProfile, LiveOverride, Event, LayoutTemplate, Client } from "@shared/schema";
@@ -65,9 +68,177 @@ const screenFormSchema = z.object({
   displayProfileId: z.string().optional(),
   currentEventId: z.string().nullable().optional(),
   fallbackLayoutId: z.string().nullable().optional(),
-});
+  canvasEnabled: z.boolean().default(false),
+  canvasWidth: z.number().min(1, "Canvas width is required").optional(),
+  canvasHeight: z.number().min(1, "Canvas height is required").optional(),
+  canvasX: z.number().min(0).default(0),
+  canvasY: z.number().min(0).default(0),
+}).refine(
+  (data) => !data.canvasEnabled || (data.canvasWidth != null && data.canvasWidth >= 1),
+  { message: "Canvas width is required when canvas positioning is enabled", path: ["canvasWidth"] }
+).refine(
+  (data) => !data.canvasEnabled || (data.canvasHeight != null && data.canvasHeight >= 1),
+  { message: "Canvas height is required when canvas positioning is enabled", path: ["canvasHeight"] }
+);
 
 type ScreenFormValues = z.infer<typeof screenFormSchema>;
+
+function CanvasPreview({
+  canvasWidth,
+  canvasHeight,
+  screenWidth,
+  screenHeight,
+  canvasX,
+  canvasY,
+}: {
+  canvasWidth: number;
+  canvasHeight: number;
+  screenWidth: number;
+  screenHeight: number;
+  canvasX: number;
+  canvasY: number;
+}) {
+  const previewMaxWidth = 280;
+  const previewMaxHeight = 160;
+  const scale = Math.min(previewMaxWidth / canvasWidth, previewMaxHeight / canvasHeight);
+  const pw = canvasWidth * scale;
+  const ph = canvasHeight * scale;
+  const sx = canvasX * scale;
+  const sy = canvasY * scale;
+  const sw = Math.min(screenWidth * scale, pw - sx);
+  const sh = Math.min(screenHeight * scale, ph - sy);
+
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <div
+        className="relative border-2 border-dashed border-muted-foreground/30 bg-muted/20 rounded"
+        style={{ width: pw, height: ph }}
+        data-testid="canvas-preview"
+      >
+        <div
+          className="absolute bg-primary/20 border-2 border-primary rounded-sm"
+          style={{ left: sx, top: sy, width: Math.max(sw, 2), height: Math.max(sh, 2) }}
+        />
+        <span className="absolute top-1 left-1.5 text-[10px] text-muted-foreground">
+          Canvas {canvasWidth}×{canvasHeight}
+        </span>
+      </div>
+      <span className="text-xs text-muted-foreground">
+        Screen {screenWidth}×{screenHeight} at ({canvasX}, {canvasY})
+      </span>
+    </div>
+  );
+}
+
+function CanvasFields({
+  form,
+  profiles,
+  prefix,
+}: {
+  form: any;
+  profiles: DisplayProfile[];
+  prefix: string;
+}) {
+  const canvasEnabled = form.watch("canvasEnabled");
+  const canvasWidth = form.watch("canvasWidth") || 1920;
+  const canvasHeight = form.watch("canvasHeight") || 1080;
+  const canvasX = form.watch("canvasX") || 0;
+  const canvasY = form.watch("canvasY") || 0;
+  const profileId = form.watch("displayProfileId");
+  const profile = profiles.find((p: DisplayProfile) => p.id === profileId);
+  const screenWidth = profile?.width || 1920;
+  const screenHeight = profile?.height || 1080;
+
+  return (
+    <div className="space-y-3 rounded-lg border p-3 bg-muted/30">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Grid3X3 className="h-4 w-4 text-muted-foreground" />
+          <Label htmlFor={`${prefix}-canvas-toggle`} className="text-sm font-medium">
+            Canvas Positioning
+          </Label>
+        </div>
+        <Switch
+          id={`${prefix}-canvas-toggle`}
+          checked={canvasEnabled}
+          onCheckedChange={(checked) => {
+            form.setValue("canvasEnabled", checked);
+            if (checked && !form.getValues("canvasWidth")) {
+              form.setValue("canvasWidth", 1920);
+              form.setValue("canvasHeight", 1080);
+              form.setValue("canvasX", 0);
+              form.setValue("canvasY", 0);
+            }
+          }}
+          data-testid={`${prefix}-canvas-toggle`}
+        />
+      </div>
+      {canvasEnabled && (
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Position this screen within a larger canvas (e.g., for video walls).
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Canvas Width (px)</Label>
+              <Input
+                type="number"
+                min={1}
+                placeholder="1920"
+                value={form.watch("canvasWidth") || ""}
+                onChange={(e) => form.setValue("canvasWidth", parseInt(e.target.value) || undefined)}
+                data-testid={`${prefix}-canvas-width`}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Canvas Height (px)</Label>
+              <Input
+                type="number"
+                min={1}
+                placeholder="1080"
+                value={form.watch("canvasHeight") || ""}
+                onChange={(e) => form.setValue("canvasHeight", parseInt(e.target.value) || undefined)}
+                data-testid={`${prefix}-canvas-height`}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">X Position (px)</Label>
+              <Input
+                type="number"
+                min={0}
+                placeholder="0"
+                value={form.watch("canvasX") ?? ""}
+                onChange={(e) => form.setValue("canvasX", parseInt(e.target.value) || 0)}
+                data-testid={`${prefix}-canvas-x`}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Y Position (px)</Label>
+              <Input
+                type="number"
+                min={0}
+                placeholder="0"
+                value={form.watch("canvasY") ?? ""}
+                onChange={(e) => form.setValue("canvasY", parseInt(e.target.value) || 0)}
+                data-testid={`${prefix}-canvas-y`}
+              />
+            </div>
+          </div>
+          {profile && (
+            <CanvasPreview
+              canvasWidth={canvasWidth}
+              canvasHeight={canvasHeight}
+              screenWidth={screenWidth}
+              screenHeight={screenHeight}
+              canvasX={canvasX}
+              canvasY={canvasY}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function generatePairingCode(): string {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -138,6 +309,11 @@ function ScreenCard({
       displayProfileId: screen.displayProfileId || "",
       currentEventId: screen.currentEventId || "",
       fallbackLayoutId: screen.fallbackLayoutId || "",
+      canvasEnabled: screen.canvasEnabled || false,
+      canvasWidth: screen.canvasWidth || undefined,
+      canvasHeight: screen.canvasHeight || undefined,
+      canvasX: screen.canvasX || 0,
+      canvasY: screen.canvasY || 0,
     },
   });
 
@@ -148,6 +324,11 @@ function ScreenCard({
         clientId: data.clientId || null,
         currentEventId: data.currentEventId || null,
         fallbackLayoutId: data.fallbackLayoutId || null,
+        canvasEnabled: data.canvasEnabled || false,
+        canvasWidth: data.canvasEnabled ? data.canvasWidth : null,
+        canvasHeight: data.canvasEnabled ? data.canvasHeight : null,
+        canvasX: data.canvasEnabled ? (data.canvasX || 0) : 0,
+        canvasY: data.canvasEnabled ? (data.canvasY || 0) : 0,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
@@ -422,6 +603,7 @@ function ScreenCard({
                         </FormItem>
                       )}
                     />
+                    <CanvasFields form={form} profiles={siteProfiles} prefix="edit" />
                     <div className="flex justify-end gap-2">
                       <Button
                         type="button"
@@ -501,6 +683,12 @@ function ScreenCard({
             {profile.width}x{profile.height} • {profile.orientation}
           </div>
         )}
+        {screen.canvasEnabled && screen.canvasWidth && screen.canvasHeight && (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Grid3X3 className="h-3 w-3" />
+            Position ({screen.canvasX || 0}, {screen.canvasY || 0}) on {screen.canvasWidth}×{screen.canvasHeight} canvas
+          </div>
+        )}
         {screen.currentEventId && (
           <div className="text-sm text-muted-foreground">
             Event: {events.find((e) => e.id === screen.currentEventId)?.name || "Unknown"}
@@ -547,6 +735,11 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
       clientId: selectedClientId || "",
       displayProfileId: "",
       currentEventId: "",
+      canvasEnabled: false,
+      canvasWidth: undefined,
+      canvasHeight: undefined,
+      canvasX: 0,
+      canvasY: 0,
     },
   });
 
@@ -560,6 +753,11 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
         clientId: data.clientId || null,
         currentEventId: data.currentEventId || null,
         pairingCode: generatePairingCode(),
+        canvasEnabled: data.canvasEnabled || false,
+        canvasWidth: data.canvasEnabled ? data.canvasWidth : null,
+        canvasHeight: data.canvasEnabled ? data.canvasHeight : null,
+        canvasX: data.canvasEnabled ? (data.canvasX || 0) : 0,
+        canvasY: data.canvasEnabled ? (data.canvasY || 0) : 0,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
@@ -703,6 +901,7 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
                 </FormItem>
               )}
             />
+            <CanvasFields form={form} profiles={siteProfiles} prefix="create" />
             <div className="flex justify-end gap-2">
               <Button
                 type="button"

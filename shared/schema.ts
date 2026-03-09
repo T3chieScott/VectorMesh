@@ -142,6 +142,11 @@ export const screens = pgTable("screens", {
   hardwareClass: text("hardware_class"),
   currentEventId: varchar("current_event_id").references(() => events.id),
   fallbackLayoutId: varchar("fallback_layout_id").references(() => layoutTemplates.id, { onDelete: "set null" }),
+  canvasEnabled: boolean("canvas_enabled").default(false),
+  canvasWidth: integer("canvas_width"),
+  canvasHeight: integer("canvas_height"),
+  canvasX: integer("canvas_x").default(0),
+  canvasY: integer("canvas_y").default(0),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
