@@ -395,8 +395,8 @@ const zoneFormSchema = z.object({
   type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
-  width: z.number().min(1).max(100),
-  height: z.number().min(1).max(100),
+  width: z.number().min(0.01).max(100),
+  height: z.number().min(0.01).max(100),
   zIndex: z.number().min(0).max(100),
   // Media zone configuration
   mediaId: z.string().optional(),
@@ -960,16 +960,13 @@ function ZonePositionFields({ form, layout }: { form: any; layout: LayoutTemplat
   const layoutPx = getLayoutPixelDimensions(layout);
 
   const pctToPixel = (pct: number, total: number) => Math.round((pct / 100) * total);
-  const pixelToPct = (px: number, total: number) => Math.max(0, Math.min(100, Math.round((px / total) * 100)));
-
-  const minWidthPx = Math.max(1, Math.ceil(layoutPx.width * 0.01));
-  const minHeightPx = Math.max(1, Math.ceil(layoutPx.height * 0.01));
+  const pixelToPct = (px: number, total: number) => Math.max(0, Math.min(100, parseFloat(((px / total) * 100).toFixed(4))));
 
   const fields = [
     { name: "x" as const, label: "X Position", total: layoutPx.width, min: 0, minPx: 0, testId: "zone-x" },
     { name: "y" as const, label: "Y Position", total: layoutPx.height, min: 0, minPx: 0, testId: "zone-y" },
-    { name: "width" as const, label: "Width", total: layoutPx.width, min: 1, minPx: minWidthPx, testId: "zone-width" },
-    { name: "height" as const, label: "Height", total: layoutPx.height, min: 1, minPx: minHeightPx, testId: "zone-height" },
+    { name: "width" as const, label: "Width", total: layoutPx.width, min: 0.01, minPx: 1, testId: "zone-width" },
+    { name: "height" as const, label: "Height", total: layoutPx.height, min: 0.01, minPx: 1, testId: "zone-height" },
   ];
 
   return (
@@ -996,97 +993,53 @@ function ZonePositionFields({ form, layout }: { form: any; layout: LayoutTemplat
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        {fields.slice(0, 2).map((f) => (
-          <FormField
-            key={f.name}
-            control={form.control}
-            name={f.name}
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{f.label} {usePixels ? "(px)" : "(%)"}</FormLabel>
-                <FormControl>
-                  {usePixels ? (
-                    <div className="space-y-1">
-                      <Input
-                        type="number"
-                        min={f.minPx}
-                        max={f.total}
-                        value={pctToPixel(field.value, f.total)}
-                        onChange={(e) => {
-                          const px = Math.max(f.minPx, parseInt(e.target.value) || 0);
-                          field.onChange(pixelToPct(px, f.total));
-                        }}
-                        data-testid={`input-${f.testId}-px`}
-                      />
-                      <span className="text-xs text-muted-foreground">{field.value}% of {f.total}px</span>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <Slider
-                        value={[field.value]}
-                        onValueChange={([val]) => field.onChange(val)}
-                        min={f.min}
-                        max={100}
-                        step={1}
-                        data-testid={`slider-${f.testId}`}
-                      />
-                      <span className="text-sm text-muted-foreground">{field.value}% ({pctToPixel(field.value, f.total)}px)</span>
-                    </div>
-                  )}
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        ))}
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        {fields.slice(2, 4).map((f) => (
-          <FormField
-            key={f.name}
-            control={form.control}
-            name={f.name}
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{f.label} {usePixels ? "(px)" : "(%)"}</FormLabel>
-                <FormControl>
-                  {usePixels ? (
-                    <div className="space-y-1">
-                      <Input
-                        type="number"
-                        min={f.minPx}
-                        max={f.total}
-                        value={pctToPixel(field.value, f.total)}
-                        onChange={(e) => {
-                          const px = Math.max(f.minPx, parseInt(e.target.value) || 0);
-                          field.onChange(pixelToPct(px, f.total));
-                        }}
-                        data-testid={`input-${f.testId}-px`}
-                      />
-                      <span className="text-xs text-muted-foreground">{field.value}% of {f.total}px</span>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <Slider
-                        value={[field.value]}
-                        onValueChange={([val]) => field.onChange(val)}
-                        min={f.min}
-                        max={100}
-                        step={1}
-                        data-testid={`slider-${f.testId}`}
-                      />
-                      <span className="text-sm text-muted-foreground">{field.value}% ({pctToPixel(field.value, f.total)}px)</span>
-                    </div>
-                  )}
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        ))}
-      </div>
+      {[fields.slice(0, 2), fields.slice(2, 4)].map((group, gi) => (
+        <div key={gi} className="grid grid-cols-2 gap-4">
+          {group.map((f) => (
+            <FormField
+              key={f.name}
+              control={form.control}
+              name={f.name}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{f.label} {usePixels ? "(px)" : "(%)"}</FormLabel>
+                  <FormControl>
+                    {usePixels ? (
+                      <div className="space-y-1">
+                        <Input
+                          type="number"
+                          min={f.minPx}
+                          max={f.total}
+                          value={pctToPixel(field.value, f.total)}
+                          onChange={(e) => {
+                            const px = Math.max(f.minPx, parseInt(e.target.value) || 0);
+                            field.onChange(pixelToPct(px, f.total));
+                          }}
+                          data-testid={`input-${f.testId}-px`}
+                        />
+                        <span className="text-xs text-muted-foreground">= {parseFloat(field.value.toFixed(2))}% of {f.total}px</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Slider
+                          value={[Math.round(field.value)]}
+                          onValueChange={([val]) => field.onChange(val)}
+                          min={f.min > 0 ? 1 : 0}
+                          max={100}
+                          step={1}
+                          data-testid={`slider-${f.testId}`}
+                        />
+                        <span className="text-sm text-muted-foreground">{parseFloat(field.value.toFixed(2))}% ({pctToPixel(field.value, f.total)}px)</span>
+                      </div>
+                    )}
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
