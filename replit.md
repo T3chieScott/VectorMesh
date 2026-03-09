@@ -8,7 +8,7 @@ Key capabilities include:
 - Management of over 50 screens with varied sizes and aspect ratios.
 - Support for various media types: images, videos, GIFs, and HTML widgets, with client-specific ownership.
 - Automatic video thumbnail generation and serving.
-- Zone-based layouts featuring tickers, clocks, logos, QR codes, countdown timers, schedules, media players, and media regions.
+- Zone-based layouts featuring tickers, clocks, logos, QR codes, countdown timers, schedules, media players, football league tables, and media regions.
 - Advanced media player zones with playlist management, transition effects, and playback controls.
 - Customizable QR code zones supporting URL, WiFi, and vCard content.
 - Dynamic countdown timers with extensive customization options.

@@ -13,6 +13,7 @@ import multer from "multer";
 import * as fileStorage from "./fileStorage";
 import { find as findTimezone } from "geo-tz";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert } from "./email";
+import { createPremierLeagueTableHandler } from "./premierLeague";
 
 function generateTwoFactorSecret(email: string) {
   const secret = new OTPAuth.Secret({ size: 20 });
@@ -2312,6 +2313,11 @@ export async function registerRoutes(
       res.status(500).json({ error: "Failed to geocode location" });
     }
   });
+
+  // ============ FOOTBALL DATA WIDGETS ============
+  const handlePremierLeagueTable = createPremierLeagueTableHandler();
+  app.get("/api/widgets/football/premier-league/table", requireAuth, handlePremierLeagueTable);
+  app.get("/api/player/widgets/football/premier-league/table", validateDeviceToken, handlePremierLeagueTable);
 
   // ============ ADMIN: USER MANAGEMENT ============
 

@@ -24,6 +24,7 @@ import {
   Shapes,
   Calendar,
   PlayCircle,
+  Trophy,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
@@ -61,6 +62,7 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   shape: Shapes,
   schedule: Calendar,
   media_player: PlayCircle,
+  football_table: Trophy,
 };
 
 function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
@@ -1589,6 +1591,162 @@ function MontageWidget({
   );
 }
 
+function FootballTableWidget({
+  league = "premier-league",
+  season = "auto",
+  refreshInterval = 300,
+  fontSize = 14,
+  showBadges = true,
+  compactMode = false,
+  deviceToken,
+}: {
+  league?: string;
+  season?: string;
+  refreshInterval?: number;
+  fontSize?: number;
+  showBadges?: boolean;
+  compactMode?: boolean;
+  deviceToken?: string;
+}) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchTable = async () => {
+      try {
+        setError(null);
+        const baseUrl = deviceToken
+          ? `/api/player/widgets/football/${league}/table`
+          : `/api/widgets/football/${league}/table`;
+        const params = season !== "auto" ? `?season=${season}` : "";
+        const url = deviceToken
+          ? `${baseUrl}${params}${params ? "&" : "?"}token=${deviceToken}`
+          : `${baseUrl}${params}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        setData(json);
+      } catch (err) {
+        setError("Failed to load standings");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchTable();
+    const interval = setInterval(fetchTable, refreshInterval * 1000);
+    return () => clearInterval(interval);
+  }, [league, season, refreshInterval, deviceToken]);
+
+  if (loading) {
+    return (
+      <div className="h-full w-full flex items-center justify-center" data-testid="football-table-loading">
+        <div className="text-center">
+          <div className="animate-pulse text-muted-foreground" style={{ fontSize: `${fontSize}px` }}>Loading standings...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !data?.table) {
+    return (
+      <div className="h-full w-full flex flex-col items-center justify-center text-center p-2" data-testid="football-table-error">
+        <p className="text-xs text-muted-foreground">{error || "No data"}</p>
+      </div>
+    );
+  }
+
+  const bandColors: Record<string, string> = {
+    "champions-league": "#1a73e8",
+    "europa-league": "#f57c00",
+    "conference-league": "#43a047",
+    "relegation": "#e53935",
+  };
+
+  const headerStyle: React.CSSProperties = {
+    fontSize: `${Math.max(10, fontSize * 0.75)}px`,
+    fontWeight: 700,
+    padding: compactMode ? "2px 3px" : "4px 6px",
+    textAlign: "center",
+    whiteSpace: "nowrap",
+    opacity: 0.6,
+  };
+
+  const cellStyle: React.CSSProperties = {
+    fontSize: `${fontSize}px`,
+    padding: compactMode ? "1px 3px" : "3px 6px",
+    textAlign: "center",
+    whiteSpace: "nowrap",
+  };
+
+  const badgeSize = compactMode ? Math.max(12, fontSize) : Math.max(16, fontSize * 1.2);
+
+  return (
+    <div className="h-full w-full overflow-auto" data-testid="football-table-widget">
+      <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "auto" }}>
+        <thead>
+          <tr style={{ borderBottom: "1px solid rgba(128,128,128,0.3)" }}>
+            <th style={{ ...headerStyle, textAlign: "center", width: "24px" }}>#</th>
+            {showBadges && <th style={{ ...headerStyle, width: `${badgeSize + 4}px` }}></th>}
+            <th style={{ ...headerStyle, textAlign: "left" }}>Team</th>
+            <th style={headerStyle}>P</th>
+            <th style={headerStyle}>W</th>
+            <th style={headerStyle}>D</th>
+            <th style={headerStyle}>L</th>
+            {!compactMode && <th style={headerStyle}>GF</th>}
+            {!compactMode && <th style={headerStyle}>GA</th>}
+            <th style={headerStyle}>GD</th>
+            <th style={{ ...headerStyle, fontWeight: 800 }}>Pts</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.table.map((row: any) => {
+            const bandColor = bandColors[row.qualification?.band] || "transparent";
+            return (
+              <tr
+                key={row.position}
+                style={{
+                  borderBottom: "1px solid rgba(128,128,128,0.15)",
+                  borderLeft: `3px solid ${bandColor}`,
+                }}
+                data-testid={`football-row-${row.position}`}
+              >
+                <td style={{ ...cellStyle, fontWeight: 600, opacity: 0.7, textAlign: "center" }}>{row.position}</td>
+                {showBadges && (
+                  <td style={{ ...cellStyle, padding: "2px" }}>
+                    {row.team.badge ? (
+                      <img
+                        src={row.team.badge}
+                        alt={row.team.abbr}
+                        style={{ width: `${badgeSize}px`, height: `${badgeSize}px`, objectFit: "contain" }}
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      />
+                    ) : (
+                      <div style={{ width: `${badgeSize}px`, height: `${badgeSize}px` }} />
+                    )}
+                  </td>
+                )}
+                <td style={{ ...cellStyle, textAlign: "left", fontWeight: 500 }}>
+                  {compactMode ? row.team.abbr : row.team.shortName}
+                </td>
+                <td style={cellStyle}>{row.played}</td>
+                <td style={cellStyle}>{row.won}</td>
+                <td style={cellStyle}>{row.drawn}</td>
+                <td style={cellStyle}>{row.lost}</td>
+                {!compactMode && <td style={cellStyle}>{row.goalsFor}</td>}
+                {!compactMode && <td style={cellStyle}>{row.goalsAgainst}</td>}
+                <td style={cellStyle}>{row.goalDifference > 0 ? `+${row.goalDifference}` : row.goalDifference}</td>
+                <td style={{ ...cellStyle, fontWeight: 700 }}>{row.points}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function QRCodeWidget({
   contentType = "url",
   content = "",
@@ -2612,6 +2770,18 @@ export function ZoneRenderer({
             shuffle={zone.mediaPlayerShuffle}
             providedMedia={media}
             mediaBaseUrl={mediaBaseUrl}
+            deviceToken={deviceToken}
+          />
+        );
+      case "football_table":
+        return (
+          <FootballTableWidget
+            league={zone.footballLeague}
+            season={zone.footballSeason}
+            refreshInterval={zone.footballRefreshInterval}
+            fontSize={zone.footballFontSize}
+            showBadges={zone.footballShowBadges}
+            compactMode={zone.footballCompactMode}
             deviceToken={deviceToken}
           />
         );

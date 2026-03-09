@@ -105,6 +105,7 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
+  Trophy,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -370,6 +371,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   shape: Shapes,
   schedule: Calendar,
   media_player: Monitor,
+  football_table: Trophy,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -388,11 +390,12 @@ const zoneTypeLabels: Record<string, string> = {
   shape: "Shape (lines/circles/etc.)",
   schedule: "Room Schedule",
   media_player: "Media Player (playlist)",
+  football_table: "Football Table",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(0.01).max(100),
@@ -544,6 +547,12 @@ const zoneFormSchema = z.object({
   mediaPlayerAutoPlay: z.boolean().optional(),
   mediaPlayerMuted: z.boolean().optional(),
   mediaPlayerShuffle: z.boolean().optional(),
+  footballLeague: z.enum(["premier-league"]).optional(),
+  footballSeason: z.string().optional(),
+  footballRefreshInterval: z.number().min(60).max(3600).optional(),
+  footballFontSize: z.number().min(8).max(48).optional(),
+  footballShowBadges: z.boolean().optional(),
+  footballCompactMode: z.boolean().optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
     id: z.string(),
@@ -1262,6 +1271,12 @@ function ZoneEditorDialog({
       mediaPlayerAutoPlay: true,
       mediaPlayerMuted: true,
       mediaPlayerShuffle: false,
+      footballLeague: "premier-league",
+      footballSeason: "auto",
+      footballRefreshInterval: 300,
+      footballFontSize: 14,
+      footballShowBadges: true,
+      footballCompactMode: false,
       scheduleViewMode: "hourly",
       scheduleEntries: [],
       scheduleShowCurrentTime: true,
@@ -1416,6 +1431,12 @@ function ZoneEditorDialog({
           mediaPlayerAutoPlay: zone.mediaPlayerAutoPlay ?? true,
           mediaPlayerMuted: zone.mediaPlayerMuted ?? true,
           mediaPlayerShuffle: zone.mediaPlayerShuffle ?? false,
+          footballLeague: zone.footballLeague || "premier-league",
+          footballSeason: zone.footballSeason || "auto",
+          footballRefreshInterval: zone.footballRefreshInterval ?? 300,
+          footballFontSize: zone.footballFontSize ?? 14,
+          footballShowBadges: zone.footballShowBadges ?? true,
+          footballCompactMode: zone.footballCompactMode ?? false,
           scheduleViewMode: zone.scheduleViewMode || "hourly",
           scheduleEntries: zone.scheduleEntries || [],
           scheduleShowCurrentTime: zone.scheduleShowCurrentTime ?? true,
@@ -1561,6 +1582,12 @@ function ZoneEditorDialog({
           mediaPlayerAutoPlay: true,
           mediaPlayerMuted: true,
           mediaPlayerShuffle: false,
+          footballLeague: "premier-league",
+          footballSeason: "auto",
+          footballRefreshInterval: 300,
+          footballFontSize: 14,
+          footballShowBadges: true,
+          footballCompactMode: false,
           scheduleViewMode: "hourly",
           scheduleEntries: [],
           scheduleShowCurrentTime: true,
@@ -5289,6 +5316,118 @@ function ZoneEditorDialog({
                           />
                         </FormControl>
                         <FormLabel className="!mt-0">Shuffle order</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </div>
+            )}
+
+            {form.watch("type") === "football_table" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg" data-testid="football-table-config-section">
+                <h4 className="font-medium flex items-center gap-2">
+                  <Trophy className="h-4 w-4" />
+                  Football Table Settings
+                </h4>
+
+                <FormField
+                  control={form.control}
+                  name="footballSeason"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Season</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="auto (current season)"
+                          value={field.value || "auto"}
+                          onChange={(e) => field.onChange(e.target.value || "auto")}
+                          data-testid="input-football-season"
+                        />
+                      </FormControl>
+                      <FormDescription>Enter a year (e.g. 2025) or "auto" for current season</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="footballFontSize"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Font Size ({field.value ?? 14}px)</FormLabel>
+                      <FormControl>
+                        <Slider
+                          value={[field.value ?? 14]}
+                          onValueChange={([val]) => field.onChange(val)}
+                          min={8}
+                          max={48}
+                          step={1}
+                          data-testid="slider-football-font-size"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="footballRefreshInterval"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Refresh Interval ({field.value ?? 300}s)</FormLabel>
+                      <FormControl>
+                        <Slider
+                          value={[field.value ?? 300]}
+                          onValueChange={([val]) => field.onChange(val)}
+                          min={60}
+                          max={3600}
+                          step={60}
+                          data-testid="slider-football-refresh"
+                        />
+                      </FormControl>
+                      <FormDescription>How often to refresh data (seconds)</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="flex gap-6">
+                  <FormField
+                    control={form.control}
+                    name="footballShowBadges"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2 space-y-0">
+                        <FormControl>
+                          <input
+                            type="checkbox"
+                            checked={field.value ?? true}
+                            onChange={field.onChange}
+                            className="h-4 w-4 rounded border-gray-300"
+                            data-testid="checkbox-football-badges"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Show badges</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="footballCompactMode"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2 space-y-0">
+                        <FormControl>
+                          <input
+                            type="checkbox"
+                            checked={field.value ?? false}
+                            onChange={field.onChange}
+                            className="h-4 w-4 rounded border-gray-300"
+                            data-testid="checkbox-football-compact"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Compact mode</FormLabel>
                       </FormItem>
                     )}
                   />

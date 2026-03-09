@@ -13,7 +13,7 @@ export const screenTypeEnum = pgEnum("screen_type", ["standard", "led_wall"]);
 export const orientationEnum = pgEnum("orientation", ["landscape", "portrait"]);
 export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "gif"]);
 export const programmeStatusEnum = pgEnum("programme_status", ["draft", "published"]);
-export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown", "shape", "schedule", "media_player"]);
+export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table"]);
 export const scaleModeEnum = pgEnum("scale_mode", ["contain", "cover"]);
 
 // ============ CLIENTS ============
@@ -254,7 +254,7 @@ export type LayoutTemplate = typeof layoutTemplates.$inferSelect;
 export interface LayoutZone {
   id: string;
   name: string;
-  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown" | "shape" | "schedule" | "media_player";
+  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown" | "shape" | "schedule" | "media_player" | "football_table";
   x: number;
   y: number;
   width: number;
@@ -409,6 +409,13 @@ export interface LayoutZone {
   mediaPlayerAutoPlay?: boolean;
   mediaPlayerMuted?: boolean;
   mediaPlayerShuffle?: boolean;
+  // Football table widget configuration
+  footballLeague?: "premier-league";
+  footballSeason?: string;
+  footballRefreshInterval?: number;
+  footballFontSize?: number;
+  footballShowBadges?: boolean;
+  footballCompactMode?: boolean;
   // Schedule widget configuration
   scheduleViewMode?: "hourly" | "daily" | "agenda";
   scheduleEntries?: Array<{
