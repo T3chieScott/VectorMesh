@@ -25,6 +25,9 @@ import {
   Calendar,
   PlayCircle,
   Trophy,
+  PlaneLanding,
+  PlaneTakeoff,
+  Plane,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
@@ -63,6 +66,8 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   schedule: Calendar,
   media_player: PlayCircle,
   football_table: Trophy,
+  heathrow_arrivals: PlaneLanding,
+  heathrow_departures: PlaneTakeoff,
 };
 
 function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
@@ -1159,6 +1164,260 @@ function WeatherWidget({
           {location.split(",")[0]}
         </div>
       )}
+    </div>
+  );
+}
+
+function HeathrowFlightsWidget({
+  direction,
+  terminal,
+  airline,
+  refreshInterval = 120,
+  fontSize = 14,
+  showFilters = false,
+  deviceToken,
+}: {
+  direction: "arrival" | "departure";
+  terminal?: string;
+  airline?: string;
+  refreshInterval?: number;
+  fontSize?: number;
+  showFilters?: boolean;
+  deviceToken?: string;
+}) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [filterTerminal, setFilterTerminal] = useState(terminal || "");
+  const [filterAirline, setFilterAirline] = useState(airline || "");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchFlights = async () => {
+      try {
+        const dirPath = direction === "arrival" ? "arrivals" : "departures";
+        const baseEndpoint = deviceToken
+          ? `/api/player/widgets/heathrow/${dirPath}`
+          : `/api/widgets/heathrow/${dirPath}`;
+
+        const params = new URLSearchParams();
+        if (filterTerminal) params.set("terminal", filterTerminal);
+        if (filterAirline) params.set("airline", filterAirline);
+        if (deviceToken) params.set("token", deviceToken);
+
+        const url = params.toString() ? `${baseEndpoint}?${params}` : baseEndpoint;
+        const response = await fetch(url);
+
+        if (cancelled) return;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const json = await response.json();
+        if (cancelled) return;
+        if (json.error) throw new Error(json.error);
+
+        setData(json);
+        setError(null);
+      } catch (err: any) {
+        if (!cancelled) {
+          setError((prev) => prev || err.message || "Failed to load flight data");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    fetchFlights();
+    const interval = setInterval(fetchFlights, refreshInterval * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [direction, filterTerminal, filterAirline, deviceToken, refreshInterval]);
+
+  const statusColors: Record<string, { bg: string; text: string }> = {
+    "scheduled": { bg: "rgba(59,130,246,0.15)", text: "#3b82f6" },
+    "boarding": { bg: "rgba(245,158,11,0.15)", text: "#f59e0b" },
+    "gate-open": { bg: "rgba(245,158,11,0.15)", text: "#f59e0b" },
+    "final-call": { bg: "rgba(239,68,68,0.15)", text: "#ef4444" },
+    "departed": { bg: "rgba(34,197,94,0.15)", text: "#22c55e" },
+    "arrived": { bg: "rgba(34,197,94,0.15)", text: "#22c55e" },
+    "delayed": { bg: "rgba(245,158,11,0.15)", text: "#f59e0b" },
+    "cancelled": { bg: "rgba(239,68,68,0.15)", text: "#ef4444" },
+    "diverted": { bg: "rgba(168,85,247,0.15)", text: "#a855f7" },
+    "unknown": { bg: "rgba(107,114,128,0.15)", text: "#6b7280" },
+  };
+
+  if (loading && !data) {
+    return (
+      <div className="h-full w-full flex items-center justify-center">
+        <Plane className="h-6 w-6 animate-pulse text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error && !data) {
+    return (
+      <div className="h-full w-full flex flex-col items-center justify-center text-center p-2">
+        <Plane className="h-6 w-6 text-muted-foreground mb-1" />
+        <p style={{ fontSize: `${Math.max(10, fontSize * 0.8)}px` }} className="text-muted-foreground">
+          {error.includes("credentials") ? "Flight data not configured" : "Flight data currently unavailable"}
+        </p>
+      </div>
+    );
+  }
+
+  const flights = data?.flights || [];
+  const isStale = data?.cache?.stale;
+
+  const formatTime = (iso: string | null) => {
+    if (!iso) return "-";
+    try {
+      const d = new Date(iso);
+      return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    } catch {
+      return "-";
+    }
+  };
+
+  const headerStyle: React.CSSProperties = {
+    fontSize: `${Math.max(10, fontSize * 0.75)}px`,
+    padding: "4px 6px",
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+    opacity: 0.6,
+    whiteSpace: "nowrap",
+    borderBottom: "1px solid rgba(255,255,255,0.1)",
+  };
+
+  const cellStyle: React.CSSProperties = {
+    fontSize: `${fontSize}px`,
+    padding: "3px 6px",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  };
+
+  return (
+    <div className="h-full w-full flex flex-col overflow-hidden" data-testid={`heathrow-${direction}s-widget`}>
+      {(showFilters || isStale) && (
+        <div style={{ padding: "4px 6px", display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+          {showFilters && (
+            <>
+              <select
+                value={filterTerminal}
+                onChange={(e) => setFilterTerminal(e.target.value)}
+                style={{
+                  fontSize: `${Math.max(10, fontSize * 0.75)}px`,
+                  padding: "2px 4px",
+                  background: "rgba(255,255,255,0.1)",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  borderRadius: "4px",
+                  color: "inherit",
+                }}
+                data-testid="filter-heathrow-terminal"
+              >
+                <option value="">All Terminals</option>
+                <option value="2">T2</option>
+                <option value="3">T3</option>
+                <option value="4">T4</option>
+                <option value="5">T5</option>
+              </select>
+              <input
+                type="text"
+                value={filterAirline}
+                onChange={(e) => setFilterAirline(e.target.value.toUpperCase())}
+                placeholder="Airline"
+                style={{
+                  fontSize: `${Math.max(10, fontSize * 0.75)}px`,
+                  padding: "2px 4px",
+                  background: "rgba(255,255,255,0.1)",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  borderRadius: "4px",
+                  color: "inherit",
+                  width: "60px",
+                }}
+                data-testid="filter-heathrow-airline"
+              />
+            </>
+          )}
+          {isStale && (
+            <span style={{ fontSize: `${Math.max(9, fontSize * 0.6)}px`, color: "#f59e0b", marginLeft: "auto" }}>
+              Stale data
+            </span>
+          )}
+        </div>
+      )}
+      <div style={{ flex: 1, overflow: "auto" }}>
+        {flights.length === 0 ? (
+          <div className="h-full w-full flex items-center justify-center">
+            <p style={{ fontSize: `${fontSize}px` }} className="text-muted-foreground">
+              No {direction === "arrival" ? "arrivals" : "departures"} found
+            </p>
+          </div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={headerStyle}>Flight</th>
+                <th style={headerStyle}>Airline</th>
+                <th style={{ ...headerStyle, textAlign: "center" }}>T</th>
+                {direction === "departure" && <th style={headerStyle}>Gate</th>}
+                {direction === "arrival" && <th style={headerStyle}>Belt</th>}
+                <th style={headerStyle}>{direction === "arrival" ? "From" : "To"}</th>
+                <th style={headerStyle}>Sched</th>
+                <th style={headerStyle}>Est</th>
+                <th style={{ ...headerStyle, textAlign: "center" }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {flights.map((flight: any, idx: number) => {
+                const sc = statusColors[flight.status?.code] || statusColors["unknown"];
+                return (
+                  <tr
+                    key={flight.id || idx}
+                    style={{
+                      borderBottom: "1px solid rgba(255,255,255,0.05)",
+                    }}
+                    data-testid={`flight-row-${flight.flightNumber || idx}`}
+                  >
+                    <td style={{ ...cellStyle, fontWeight: 600 }}>{flight.flightNumber || "-"}</td>
+                    <td style={{ ...cellStyle, maxWidth: "120px" }}>{flight.airline?.name || flight.airline?.code || "-"}</td>
+                    <td style={{ ...cellStyle, textAlign: "center" }}>{flight.terminal || "-"}</td>
+                    {direction === "departure" && <td style={cellStyle}>{flight.gate || "-"}</td>}
+                    {direction === "arrival" && <td style={cellStyle}>{flight.belt || "-"}</td>}
+                    <td style={{ ...cellStyle, maxWidth: "150px" }}>
+                      {direction === "arrival"
+                        ? (flight.origin?.name || flight.origin?.code || "-")
+                        : (flight.destination?.name || flight.destination?.code || "-")}
+                    </td>
+                    <td style={cellStyle}>{formatTime(flight.scheduledTime)}</td>
+                    <td style={{
+                      ...cellStyle,
+                      color: flight.estimatedTime && flight.estimatedTime !== flight.scheduledTime ? "#f59e0b" : undefined,
+                    }}>
+                      {flight.estimatedTime && flight.estimatedTime !== flight.scheduledTime
+                        ? formatTime(flight.estimatedTime)
+                        : "-"}
+                    </td>
+                    <td style={{ ...cellStyle, textAlign: "center" }}>
+                      <span style={{
+                        display: "inline-block",
+                        padding: "1px 6px",
+                        borderRadius: "4px",
+                        fontSize: `${Math.max(9, fontSize * 0.75)}px`,
+                        fontWeight: 600,
+                        backgroundColor: sc.bg,
+                        color: sc.text,
+                      }}>
+                        {flight.status?.label || "Unknown"}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }
@@ -2811,6 +3070,30 @@ export function ZoneRenderer({
             showBadges={zone.footballShowBadges}
             compactMode={zone.footballCompactMode}
             badgeFormat={zone.footballBadgeFormat}
+            deviceToken={deviceToken}
+          />
+        );
+      case "heathrow_arrivals":
+        return (
+          <HeathrowFlightsWidget
+            direction="arrival"
+            terminal={zone.heathrowTerminal}
+            airline={zone.heathrowAirline}
+            refreshInterval={zone.heathrowRefreshInterval}
+            fontSize={zone.heathrowFontSize}
+            showFilters={zone.heathrowShowFilters}
+            deviceToken={deviceToken}
+          />
+        );
+      case "heathrow_departures":
+        return (
+          <HeathrowFlightsWidget
+            direction="departure"
+            terminal={zone.heathrowTerminal}
+            airline={zone.heathrowAirline}
+            refreshInterval={zone.heathrowRefreshInterval}
+            fontSize={zone.heathrowFontSize}
+            showFilters={zone.heathrowShowFilters}
             deviceToken={deviceToken}
           />
         );

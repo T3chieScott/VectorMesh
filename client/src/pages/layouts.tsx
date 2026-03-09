@@ -106,6 +106,9 @@ import {
   AlignCenter,
   AlignRight,
   Trophy,
+  PlaneLanding,
+  PlaneTakeoff,
+  Plane,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -372,6 +375,8 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   schedule: Calendar,
   media_player: Monitor,
   football_table: Trophy,
+  heathrow_arrivals: PlaneLanding,
+  heathrow_departures: PlaneTakeoff,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -391,11 +396,13 @@ const zoneTypeLabels: Record<string, string> = {
   schedule: "Room Schedule",
   media_player: "Media Player (playlist)",
   football_table: "Football Table",
+  heathrow_arrivals: "Heathrow Arrivals",
+  heathrow_departures: "Heathrow Departures",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "heathrow_arrivals", "heathrow_departures"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(0.01).max(100),
@@ -555,6 +562,11 @@ const zoneFormSchema = z.object({
   footballShowBadges: z.boolean().optional(),
   footballCompactMode: z.boolean().optional(),
   footballBadgeFormat: z.enum(["png", "svg"]).optional(),
+  heathrowTerminal: z.string().optional(),
+  heathrowAirline: z.string().optional(),
+  heathrowRefreshInterval: z.number().min(30).max(600).optional(),
+  heathrowFontSize: z.number().min(8).max(48).optional(),
+  heathrowShowFilters: z.boolean().optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
     id: z.string(),
@@ -1281,6 +1293,11 @@ function ZoneEditorDialog({
       footballShowBadges: true,
       footballCompactMode: false,
       footballBadgeFormat: "png",
+      heathrowTerminal: "",
+      heathrowAirline: "",
+      heathrowRefreshInterval: 120,
+      heathrowFontSize: 14,
+      heathrowShowFilters: false,
       scheduleViewMode: "hourly",
       scheduleEntries: [],
       scheduleShowCurrentTime: true,
@@ -1443,6 +1460,11 @@ function ZoneEditorDialog({
           footballShowBadges: zone.footballShowBadges ?? true,
           footballCompactMode: zone.footballCompactMode ?? false,
           footballBadgeFormat: zone.footballBadgeFormat || "png",
+          heathrowTerminal: zone.heathrowTerminal || "",
+          heathrowAirline: zone.heathrowAirline || "",
+          heathrowRefreshInterval: zone.heathrowRefreshInterval ?? 120,
+          heathrowFontSize: zone.heathrowFontSize ?? 14,
+          heathrowShowFilters: zone.heathrowShowFilters ?? false,
           scheduleViewMode: zone.scheduleViewMode || "hourly",
           scheduleEntries: zone.scheduleEntries || [],
           scheduleShowCurrentTime: zone.scheduleShowCurrentTime ?? true,
@@ -1596,6 +1618,11 @@ function ZoneEditorDialog({
           footballShowBadges: true,
           footballCompactMode: false,
           footballBadgeFormat: "png",
+          heathrowTerminal: "",
+          heathrowAirline: "",
+          heathrowRefreshInterval: 120,
+          heathrowFontSize: 14,
+          heathrowShowFilters: false,
           scheduleViewMode: "hourly",
           scheduleEntries: [],
           scheduleShowCurrentTime: true,
@@ -5488,6 +5515,118 @@ function ZoneEditorDialog({
                       </Select>
                       <FormDescription>Format of badge image files in /assets/football/badges/</FormDescription>
                       <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+
+            {(form.watch("type") === "heathrow_arrivals" || form.watch("type") === "heathrow_departures") && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Plane className="h-4 w-4" />
+                  Heathrow {form.watch("type") === "heathrow_arrivals" ? "Arrivals" : "Departures"} Settings
+                </div>
+                <FormField
+                  control={form.control}
+                  name="heathrowTerminal"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Terminal Filter</FormLabel>
+                      <Select
+                        value={field.value || "all"}
+                        onValueChange={(val) => field.onChange(val === "all" ? "" : val)}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-heathrow-terminal">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="all">All Terminals</SelectItem>
+                          <SelectItem value="2">Terminal 2</SelectItem>
+                          <SelectItem value="3">Terminal 3</SelectItem>
+                          <SelectItem value="4">Terminal 4</SelectItem>
+                          <SelectItem value="5">Terminal 5</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="heathrowAirline"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Airline Filter</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="e.g., BA (leave empty for all)"
+                          {...field}
+                          data-testid="input-heathrow-airline"
+                        />
+                      </FormControl>
+                      <FormDescription>Two-letter IATA airline code</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="heathrowRefreshInterval"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Refresh Interval (seconds)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={30}
+                            max={600}
+                            value={field.value ?? 120}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 120)}
+                            data-testid="input-heathrow-refresh"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="heathrowFontSize"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Font Size (px)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={8}
+                            max={48}
+                            value={field.value ?? 14}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 14)}
+                            data-testid="input-heathrow-font-size"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name="heathrowShowFilters"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? false}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-heathrow-show-filters"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show filter controls on display</FormLabel>
                     </FormItem>
                   )}
                 />

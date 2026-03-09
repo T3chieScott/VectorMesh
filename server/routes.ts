@@ -14,6 +14,7 @@ import * as fileStorage from "./fileStorage";
 import { find as findTimezone } from "geo-tz";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert } from "./email";
 import { createPremierLeagueTableHandler } from "./premierLeague";
+import { createHeathrowArrivalsHandler, createHeathrowDeparturesHandler } from "./heathrowFlights";
 
 function generateTwoFactorSecret(email: string) {
   const secret = new OTPAuth.Secret({ size: 20 });
@@ -2318,6 +2319,13 @@ export async function registerRoutes(
   const handlePremierLeagueTable = createPremierLeagueTableHandler();
   app.get("/api/widgets/football/premier-league/table", requireAuth, handlePremierLeagueTable);
   app.get("/api/player/widgets/football/premier-league/table", validateDeviceToken, handlePremierLeagueTable);
+
+  const handleHeathrowArrivals = createHeathrowArrivalsHandler();
+  const handleHeathrowDepartures = createHeathrowDeparturesHandler();
+  app.get("/api/widgets/heathrow/arrivals", requireAuth, handleHeathrowArrivals);
+  app.get("/api/widgets/heathrow/departures", requireAuth, handleHeathrowDepartures);
+  app.get("/api/player/widgets/heathrow/arrivals", validateDeviceToken, handleHeathrowArrivals);
+  app.get("/api/player/widgets/heathrow/departures", validateDeviceToken, handleHeathrowDepartures);
 
   // ============ ADMIN: USER MANAGEMENT ============
 

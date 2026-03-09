@@ -8,7 +8,7 @@ Key capabilities include:
 - Management of over 50 screens with varied sizes and aspect ratios.
 - Support for various media types: images, videos, GIFs, and HTML widgets, with client-specific ownership.
 - Automatic video thumbnail generation and serving.
-- Zone-based layouts featuring tickers, clocks, logos, QR codes, countdown timers, schedules, media players, football league tables, and media regions.
+- Zone-based layouts featuring tickers, clocks, logos, QR codes, countdown timers, schedules, media players, football league tables, Heathrow flight boards (arrivals/departures), and media regions.
 - Advanced media player zones with playlist management, transition effects, and playback controls.
 - Customizable QR code zones supporting URL, WiFi, and vCard content.
 - Dynamic countdown timers with extensive customization options.
@@ -84,3 +84,7 @@ The system implements custom email/password authentication with bcryptjs for pas
 - `UPLOAD_DIR`: Override default upload root directory (defaults to `./data/uploads`). Can also be set via admin UI.
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`: SMTP server configuration for email sending.
 - `APP_URL`: Base URL for application links in emails.
+- `HEATHROW_API_BASE_URL`: Base URL for Heathrow Flights API.
+- `HEATHROW_API_KEY`: API key from Heathrow Developer Portal.
+- `HEATHROW_API_SUBSCRIPTION_KEY`: Subscription key (Ocp-Apim-Subscription-Key header).
+- `HEATHROW_API_TIMEOUT_MS`: Fetch timeout in ms (default 10000).
