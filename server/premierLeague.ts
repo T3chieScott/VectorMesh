@@ -72,6 +72,9 @@ const TEAM_BADGES: Record<string, string> = {
   TOT: "/assets/football/badges/tottenham",
   WHU: "/assets/football/badges/west-ham",
   WOL: "/assets/football/badges/wolves",
+  SUN: "/assets/football/badges/sunderland",
+  LEE: "/assets/football/badges/leeds",
+  BUR: "/assets/football/badges/burnley",
 };
 
 export function inferPremierLeagueSeasonYear(now = new Date()): number {
