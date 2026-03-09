@@ -1171,15 +1171,12 @@ function NewsWidget({
 
       try {
         setLoading(true);
-        // Note: rss2json.com free tier returns up to 10 items max
-        const response = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}`);
+        const response = await fetch(`/api/widgets/news?url=${encodeURIComponent(rssUrl)}&count=${itemCount}`);
         if (!response.ok) throw new Error("RSS fetch failed");
         
         const data = await response.json();
-        if (data.status === "ok" && data.items && data.items.length > 0) {
-          // Slice to requested count (max 10 on free tier)
-          const count = Math.min(itemCount, data.items.length);
-          setNews(data.items.slice(0, count).map((item: { title: string; link: string }) => ({
+        if (data.items && data.items.length > 0) {
+          setNews(data.items.map((item: { title: string; link: string }) => ({
             title: item.title,
             link: item.link,
           })));
