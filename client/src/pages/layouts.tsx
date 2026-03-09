@@ -946,6 +946,151 @@ function MediaPlayerItemsPicker({
   );
 }
 
+function getLayoutPixelDimensions(layout: LayoutTemplate): { width: number; height: number } {
+  if (layout.aspectRatio === "custom" && layout.customWidth && layout.customHeight) {
+    return { width: layout.customWidth, height: layout.customHeight };
+  }
+  const dims = getAspectRatioDimensions(layout.aspectRatio);
+  const baseWidth = 1920;
+  return { width: baseWidth, height: Math.round(baseWidth * dims.height / dims.width) };
+}
+
+function ZonePositionFields({ form, layout }: { form: any; layout: LayoutTemplate }) {
+  const [usePixels, setUsePixels] = useState(false);
+  const layoutPx = getLayoutPixelDimensions(layout);
+
+  const pctToPixel = (pct: number, total: number) => Math.round((pct / 100) * total);
+  const pixelToPct = (px: number, total: number) => Math.max(0, Math.min(100, Math.round((px / total) * 100)));
+
+  const minWidthPx = Math.max(1, Math.ceil(layoutPx.width * 0.01));
+  const minHeightPx = Math.max(1, Math.ceil(layoutPx.height * 0.01));
+
+  const fields = [
+    { name: "x" as const, label: "X Position", total: layoutPx.width, min: 0, minPx: 0, testId: "zone-x" },
+    { name: "y" as const, label: "Y Position", total: layoutPx.height, min: 0, minPx: 0, testId: "zone-y" },
+    { name: "width" as const, label: "Width", total: layoutPx.width, min: 1, minPx: minWidthPx, testId: "zone-width" },
+    { name: "height" as const, label: "Height", total: layoutPx.height, min: 1, minPx: minHeightPx, testId: "zone-height" },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium">Position & Size</span>
+        <div className="flex rounded-md border overflow-hidden">
+          <button
+            type="button"
+            className={`px-3 py-1 text-xs font-medium transition-colors ${!usePixels ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
+            onClick={() => setUsePixels(false)}
+            data-testid="toggle-unit-percent"
+          >
+            %
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-1 text-xs font-medium transition-colors ${usePixels ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
+            onClick={() => setUsePixels(true)}
+            data-testid="toggle-unit-pixel"
+          >
+            px
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        {fields.slice(0, 2).map((f) => (
+          <FormField
+            key={f.name}
+            control={form.control}
+            name={f.name}
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{f.label} {usePixels ? "(px)" : "(%)"}</FormLabel>
+                <FormControl>
+                  {usePixels ? (
+                    <div className="space-y-1">
+                      <Input
+                        type="number"
+                        min={f.minPx}
+                        max={f.total}
+                        value={pctToPixel(field.value, f.total)}
+                        onChange={(e) => {
+                          const px = Math.max(f.minPx, parseInt(e.target.value) || 0);
+                          field.onChange(pixelToPct(px, f.total));
+                        }}
+                        data-testid={`input-${f.testId}-px`}
+                      />
+                      <span className="text-xs text-muted-foreground">{field.value}% of {f.total}px</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Slider
+                        value={[field.value]}
+                        onValueChange={([val]) => field.onChange(val)}
+                        min={f.min}
+                        max={100}
+                        step={1}
+                        data-testid={`slider-${f.testId}`}
+                      />
+                      <span className="text-sm text-muted-foreground">{field.value}% ({pctToPixel(field.value, f.total)}px)</span>
+                    </div>
+                  )}
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        {fields.slice(2, 4).map((f) => (
+          <FormField
+            key={f.name}
+            control={form.control}
+            name={f.name}
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{f.label} {usePixels ? "(px)" : "(%)"}</FormLabel>
+                <FormControl>
+                  {usePixels ? (
+                    <div className="space-y-1">
+                      <Input
+                        type="number"
+                        min={f.minPx}
+                        max={f.total}
+                        value={pctToPixel(field.value, f.total)}
+                        onChange={(e) => {
+                          const px = Math.max(f.minPx, parseInt(e.target.value) || 0);
+                          field.onChange(pixelToPct(px, f.total));
+                        }}
+                        data-testid={`input-${f.testId}-px`}
+                      />
+                      <span className="text-xs text-muted-foreground">{field.value}% of {f.total}px</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Slider
+                        value={[field.value]}
+                        onValueChange={([val]) => field.onChange(val)}
+                        min={f.min}
+                        max={100}
+                        step={1}
+                        data-testid={`slider-${f.testId}`}
+                      />
+                      <span className="text-sm text-muted-foreground">{field.value}% ({pctToPixel(field.value, f.total)}px)</span>
+                    </div>
+                  )}
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ZoneEditorDialog({
   layout,
   zone,
@@ -5198,101 +5343,7 @@ function ZoneEditorDialog({
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="x"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>X Position (%)</FormLabel>
-                    <FormControl>
-                      <div className="space-y-2">
-                        <Slider
-                          value={[field.value]}
-                          onValueChange={([val]) => field.onChange(val)}
-                          max={100}
-                          step={1}
-                          data-testid="slider-zone-x"
-                        />
-                        <span className="text-sm text-muted-foreground">{field.value}%</span>
-                      </div>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="y"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Y Position (%)</FormLabel>
-                    <FormControl>
-                      <div className="space-y-2">
-                        <Slider
-                          value={[field.value]}
-                          onValueChange={([val]) => field.onChange(val)}
-                          max={100}
-                          step={1}
-                          data-testid="slider-zone-y"
-                        />
-                        <span className="text-sm text-muted-foreground">{field.value}%</span>
-                      </div>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="width"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Width (%)</FormLabel>
-                    <FormControl>
-                      <div className="space-y-2">
-                        <Slider
-                          value={[field.value]}
-                          onValueChange={([val]) => field.onChange(val)}
-                          min={1}
-                          max={100}
-                          step={1}
-                          data-testid="slider-zone-width"
-                        />
-                        <span className="text-sm text-muted-foreground">{field.value}%</span>
-                      </div>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="height"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Height (%)</FormLabel>
-                    <FormControl>
-                      <div className="space-y-2">
-                        <Slider
-                          value={[field.value]}
-                          onValueChange={([val]) => field.onChange(val)}
-                          min={1}
-                          max={100}
-                          step={1}
-                          data-testid="slider-zone-height"
-                        />
-                        <span className="text-sm text-muted-foreground">{field.value}%</span>
-                      </div>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+            <ZonePositionFields form={form} layout={layout} />
 
             <FormField
               control={form.control}
