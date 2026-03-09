@@ -577,16 +577,16 @@ export default function MediaPage() {
     return null;
   };
 
+  const needsSiteSelection = clients.length > 1 && !selectedClientId;
+
   const saveMediaRecords = async (result: any, clientId: string) => {
-    console.log("[media] saveMediaRecords called", { resultKeys: Object.keys(result || {}), successful: result.successful?.length, failed: result.failed?.length, clientId });
     if (result.successful?.length > 0) {
       for (const file of result.successful) {
         const body = file.response?.body;
         const filePath = body?.filePath;
-        console.log("[media] Processing file:", { name: file.name, filePath, body, responseKeys: Object.keys(file.response || {}) });
         if (filePath) {
           try {
-            const mediaData = {
+            await apiRequest("POST", "/api/media", {
               name: file.name,
               originalPath: filePath,
               mediaType: file.type?.startsWith("video/")
@@ -597,34 +597,29 @@ export default function MediaPage() {
               mimeType: file.type,
               fileSize: file.size,
               clientId,
-            };
-            console.log("[media] POST /api/media payload:", mediaData);
-            await apiRequest("POST", "/api/media", mediaData);
-            console.log("[media] Media record created successfully");
+            });
           } catch (e) {
             console.error("Failed to save media record:", e);
           }
-        } else {
-          console.warn("[media] No filePath in upload response body:", body);
         }
       }
       queryClient.invalidateQueries({ queryKey: ["/api/media"] });
       toast({ title: "Media uploaded successfully" });
-    } else {
-      console.warn("[media] No successful uploads in result:", result);
     }
   };
 
   const handleUploadComplete = async (result: any) => {
     const clientId = resolveUploadClientId();
-    console.log("[media] handleUploadComplete called", { clientId, selectedClientId, clientsCount: clients.length, resultKeys: Object.keys(result || {}) });
-    if (clientId) {
-      await saveMediaRecords(result, clientId);
-    } else {
-      console.log("[media] No clientId resolved, opening site picker");
+    if (!clientId) {
+      if (needsSiteSelection) {
+        toast({ title: "Please select a site first", description: "Choose a specific site from the sidebar before uploading media.", variant: "destructive" });
+        return;
+      }
       setPendingUploadResult(result);
       setSitePickerOpen(true);
+      return;
     }
+    await saveMediaRecords(result, clientId);
   };
 
   const handleSiteSelected = async (clientId: string) => {
@@ -643,15 +638,26 @@ export default function MediaPage() {
             Upload and manage images, videos, and GIFs
           </p>
         </div>
-        <ObjectUploader
-          maxNumberOfFiles={10}
-          maxFileSize={104857600}
-          clientId={resolveUploadClientId() || (clients.length > 0 ? clients[0].id : "")}
-          onComplete={handleUploadComplete}
-        >
-          <Upload className="mr-2 h-4 w-4" />
-          Upload Media
-        </ObjectUploader>
+        {needsSiteSelection ? (
+          <Button
+            onClick={() => toast({ title: "Please select a site first", description: "Choose a specific site from the sidebar before uploading media.", variant: "destructive" })}
+            data-testid="button-upload-media"
+          >
+            <Upload className="mr-2 h-4 w-4" />
+            Upload Media
+          </Button>
+        ) : (
+          <ObjectUploader
+            maxNumberOfFiles={10}
+            maxFileSize={104857600}
+            clientId={resolveUploadClientId() || (clients.length > 0 ? clients[0].id : "")}
+            onComplete={handleUploadComplete}
+            buttonTestId="button-upload-media"
+          >
+            <Upload className="mr-2 h-4 w-4" />
+            Upload Media
+          </ObjectUploader>
+        )}
       </div>
 
       <div className="flex flex-col sm:flex-row gap-4">
@@ -757,15 +763,26 @@ export default function MediaPage() {
                 : "Try adjusting your search or filters."}
             </p>
             {media.length === 0 && (
-              <ObjectUploader
-                maxNumberOfFiles={10}
-                maxFileSize={104857600}
-                clientId={resolveUploadClientId() || (clients.length > 0 ? clients[0].id : "")}
-                onComplete={handleUploadComplete}
-              >
-                <Upload className="mr-2 h-4 w-4" />
-                Upload Media
-              </ObjectUploader>
+              needsSiteSelection ? (
+                <Button
+                  onClick={() => toast({ title: "Please select a site first", description: "Choose a specific site from the sidebar before uploading media.", variant: "destructive" })}
+                  data-testid="button-upload-media-empty"
+                >
+                  <Upload className="mr-2 h-4 w-4" />
+                  Upload Media
+                </Button>
+              ) : (
+                <ObjectUploader
+                  maxNumberOfFiles={10}
+                  maxFileSize={104857600}
+                  clientId={resolveUploadClientId() || (clients.length > 0 ? clients[0].id : "")}
+                  onComplete={handleUploadComplete}
+                  buttonTestId="button-upload-media-empty"
+                >
+                  <Upload className="mr-2 h-4 w-4" />
+                  Upload Media
+                </ObjectUploader>
+              )
             )}
           </CardContent>
         </Card>
