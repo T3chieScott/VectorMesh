@@ -303,6 +303,7 @@ export interface LayoutZone {
   weatherLng?: number;
   weatherUnit?: "celsius" | "fahrenheit";
   weatherFontSize?: number;  // Font size in pixels for weather display (default 24)
+  weatherDisplayMode?: "full" | "icon_only" | "text_only";
   // News widget configuration
   newsRssUrl?: string;
   newsScrollSpeed?: number;

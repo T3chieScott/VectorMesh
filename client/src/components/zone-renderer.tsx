@@ -1033,12 +1033,14 @@ function WeatherWidget({
   unit = "celsius",
   location,
   fontSize = 24,
+  displayMode = "full",
 }: { 
   lat?: number;
   lng?: number;
   unit?: string;
   location?: string;
   fontSize?: number;
+  displayMode?: "full" | "icon_only" | "text_only";
 }) {
   const [weather, setWeather] = useState<{
     temperature: number;
@@ -1122,6 +1124,29 @@ function WeatherWidget({
 
   const iconSize = Math.max(16, fontSize * 1.2);
   const locationSize = Math.max(10, fontSize * 0.5);
+
+  if (displayMode === "icon_only") {
+    return (
+      <div className="h-full w-full flex items-center justify-center p-1">
+        <WeatherIcon style={{ width: "60%", height: "60%", maxWidth: "100%", maxHeight: "100%" }} />
+      </div>
+    );
+  }
+
+  if (displayMode === "text_only") {
+    return (
+      <div className="h-full w-full flex flex-col items-center justify-center text-center p-1">
+        <div className="font-bold" style={{ fontSize: `${fontSize}px` }}>
+          {weather.temperature}°{unit === "fahrenheit" ? "F" : "C"}
+        </div>
+        {location && (
+          <div className="text-muted-foreground truncate w-full" style={{ fontSize: `${locationSize}px` }}>
+            {location.split(",")[0]}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="h-full w-full flex flex-col items-center justify-center text-center p-1">
@@ -2623,6 +2648,7 @@ export function ZoneRenderer({
             unit={zone.weatherUnit}
             location={zone.weatherLocation}
             fontSize={zone.weatherFontSize}
+            displayMode={zone.weatherDisplayMode}
           />
         );
       case "news":

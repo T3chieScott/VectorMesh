@@ -441,6 +441,7 @@ const zoneFormSchema = z.object({
   weatherLng: z.number().optional(),
   weatherUnit: z.enum(["celsius", "fahrenheit"]).optional(),
   weatherFontSize: z.number().min(12).max(120).optional(),
+  weatherDisplayMode: z.enum(["full", "icon_only", "text_only"]).optional(),
   // News widget configuration
   newsRssUrl: z.string().optional(),
   newsScrollSpeed: z.number().min(1).max(200).optional(),
@@ -1179,6 +1180,7 @@ function ZoneEditorDialog({
       weatherLng: undefined,
       weatherUnit: "celsius",
       weatherFontSize: 24,
+      weatherDisplayMode: "full",
       newsRssUrl: "",
       newsScrollSpeed: 50,
       newsItemCount: 10,
@@ -1336,6 +1338,7 @@ function ZoneEditorDialog({
           weatherLng: zone.weatherLng,
           weatherUnit: zone.weatherUnit || "celsius",
           weatherFontSize: zone.weatherFontSize ?? 24,
+          weatherDisplayMode: zone.weatherDisplayMode || "full",
           newsRssUrl: zone.newsRssUrl || "",
           newsScrollSpeed: zone.newsScrollSpeed || 50,
           newsItemCount: zone.newsItemCount || 10,
@@ -1492,6 +1495,7 @@ function ZoneEditorDialog({
           weatherLng: undefined,
           weatherUnit: "celsius",
           weatherFontSize: 24,
+          weatherDisplayMode: "full",
           newsRssUrl: "",
           newsScrollSpeed: 50,
           newsItemCount: 10,
@@ -2486,6 +2490,31 @@ function ZoneEditorDialog({
                   <CloudSun className="h-4 w-4" />
                   Weather Widget Settings
                 </div>
+                <FormField
+                  control={form.control}
+                  name="weatherDisplayMode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Display Mode</FormLabel>
+                      <Select
+                        value={field.value || "full"}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-weather-display-mode">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="full">Full (Icon + Text)</SelectItem>
+                          <SelectItem value="icon_only">Icon Only</SelectItem>
+                          <SelectItem value="text_only">Text Only</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 <FormField
                   control={form.control}
                   name="weatherLocation"
