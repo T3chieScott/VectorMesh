@@ -553,6 +553,7 @@ const zoneFormSchema = z.object({
   footballFontSize: z.number().min(8).max(48).optional(),
   footballShowBadges: z.boolean().optional(),
   footballCompactMode: z.boolean().optional(),
+  footballBadgeFormat: z.enum(["png", "svg"]).optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
     id: z.string(),
@@ -1277,6 +1278,7 @@ function ZoneEditorDialog({
       footballFontSize: 14,
       footballShowBadges: true,
       footballCompactMode: false,
+      footballBadgeFormat: "png",
       scheduleViewMode: "hourly",
       scheduleEntries: [],
       scheduleShowCurrentTime: true,
@@ -1437,6 +1439,7 @@ function ZoneEditorDialog({
           footballFontSize: zone.footballFontSize ?? 14,
           footballShowBadges: zone.footballShowBadges ?? true,
           footballCompactMode: zone.footballCompactMode ?? false,
+          footballBadgeFormat: zone.footballBadgeFormat || "png",
           scheduleViewMode: zone.scheduleViewMode || "hourly",
           scheduleEntries: zone.scheduleEntries || [],
           scheduleShowCurrentTime: zone.scheduleShowCurrentTime ?? true,
@@ -1588,6 +1591,7 @@ function ZoneEditorDialog({
           footballFontSize: 14,
           footballShowBadges: true,
           footballCompactMode: false,
+          footballBadgeFormat: "png",
           scheduleViewMode: "hourly",
           scheduleEntries: [],
           scheduleShowCurrentTime: true,
@@ -5432,6 +5436,32 @@ function ZoneEditorDialog({
                     )}
                   />
                 </div>
+
+                <FormField
+                  control={form.control}
+                  name="footballBadgeFormat"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Badge File Format</FormLabel>
+                      <Select
+                        value={field.value || "png"}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-football-badge-format">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="png">PNG</SelectItem>
+                          <SelectItem value="svg">SVG</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>Format of badge image files in /assets/football/badges/</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
             )}
 

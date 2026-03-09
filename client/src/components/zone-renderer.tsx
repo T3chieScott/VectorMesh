@@ -1598,6 +1598,7 @@ function FootballTableWidget({
   fontSize = 14,
   showBadges = true,
   compactMode = false,
+  badgeFormat = "png",
   deviceToken,
 }: {
   league?: string;
@@ -1606,6 +1607,7 @@ function FootballTableWidget({
   fontSize?: number;
   showBadges?: boolean;
   compactMode?: boolean;
+  badgeFormat?: "png" | "svg";
   deviceToken?: string;
 }) {
   const [data, setData] = useState<any>(null);
@@ -1717,7 +1719,7 @@ function FootballTableWidget({
                   <td style={{ ...cellStyle, padding: "2px" }}>
                     {row.team.badge ? (
                       <img
-                        src={row.team.badge}
+                        src={`${row.team.badge}.${badgeFormat}`}
                         alt={row.team.abbr}
                         style={{ width: `${badgeSize}px`, height: `${badgeSize}px`, objectFit: "contain" }}
                         onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
@@ -2782,6 +2784,7 @@ export function ZoneRenderer({
             fontSize={zone.footballFontSize}
             showBadges={zone.footballShowBadges}
             compactMode={zone.footballCompactMode}
+            badgeFormat={zone.footballBadgeFormat}
             deviceToken={deviceToken}
           />
         );

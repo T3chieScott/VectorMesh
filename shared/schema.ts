@@ -416,6 +416,7 @@ export interface LayoutZone {
   footballFontSize?: number;
   footballShowBadges?: boolean;
   footballCompactMode?: boolean;
+  footballBadgeFormat?: "png" | "svg";
   // Schedule widget configuration
   scheduleViewMode?: "hourly" | "daily" | "agenda";
   scheduleEntries?: Array<{
