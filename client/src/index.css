@@ -323,29 +323,38 @@
 
   /* Standard marquee animation for text ticker - scrolls from right to left */
   @keyframes marquee {
-    from {
-      transform: translateX(0);
+    0% {
+      -webkit-transform: translate3d(0, 0, 0);
+      transform: translate3d(0, 0, 0);
     }
-    to {
-      transform: translateX(-100%);
+    100% {
+      -webkit-transform: translate3d(-100%, 0, 0);
+      transform: translate3d(-100%, 0, 0);
     }
   }
 
   /* Seamless marquee animation for news ticker - continuous loop */
   @keyframes marquee-seamless {
-    from {
-      transform: translateX(0);
+    0% {
+      -webkit-transform: translate3d(0, 0, 0);
+      transform: translate3d(0, 0, 0);
     }
-    to {
-      transform: translateX(-50%);
+    100% {
+      -webkit-transform: translate3d(-50%, 0, 0);
+      transform: translate3d(-50%, 0, 0);
     }
   }
 
   .marquee-container {
     display: flex;
     width: max-content;
+    -webkit-animation: marquee-seamless linear infinite;
     animation: marquee-seamless linear infinite;
+    -webkit-animation-duration: 30s;
     animation-duration: 30s; /* default, overridden by JS */
+    will-change: transform;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
   }
 
   /* Vertical scroll animation for ticker */

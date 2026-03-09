@@ -1142,18 +1142,19 @@ function NewsWidget({
   itemCount = 10,
   textSize = 24,
   showHeader = true,
+  deviceToken,
 }: { 
   rssUrl?: string;
   scrollSpeed?: number;
   itemCount?: number;
   textSize?: number;
   showHeader?: boolean;
+  deviceToken?: string;
 }) {
   const [news, setNews] = useState<{ title: string; link: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Use numeric font size directly (in pixels)
   const fontSize = textSize || 24;
 
   useEffect(() => {
@@ -1165,7 +1166,9 @@ function NewsWidget({
 
       try {
         setLoading(true);
-        const response = await fetch(`/api/widgets/news?url=${encodeURIComponent(rssUrl)}&count=${itemCount}`);
+        const baseEndpoint = deviceToken ? "/api/player/widgets/news" : "/api/widgets/news";
+        const tokenParam = deviceToken ? `&token=${deviceToken}` : "";
+        const response = await fetch(`${baseEndpoint}?url=${encodeURIComponent(rssUrl)}&count=${itemCount}${tokenParam}`);
         if (!response.ok) throw new Error("RSS fetch failed");
         
         const data = await response.json();
@@ -2449,6 +2452,7 @@ export function ZoneRenderer({
             itemCount={zone.newsItemCount}
             textSize={zone.newsTextSize}
             showHeader={showBorder}
+            deviceToken={deviceToken}
           />
         );
       case "text":
