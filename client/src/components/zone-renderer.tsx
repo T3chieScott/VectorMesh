@@ -47,12 +47,6 @@ function resolvePlayerVariables(text: string): string {
   return resolved;
 }
 
-function getMediaUrl(originalPath: string | undefined): string {
-  if (!originalPath) return "";
-  if (originalPath.startsWith("http")) return originalPath;
-  return originalPath;
-}
-
 export const zoneTypeIcons: Record<string, typeof Image> = {
   media: Image,
   ticker: Type,
@@ -1248,10 +1242,14 @@ function MediaWidget({
   media,
   mediaIndex,
   isPlaying,
+  mediaBaseUrl,
+  deviceToken,
 }: {
   media: MediaAsset[];
   mediaIndex: number;
   isPlaying: boolean;
+  mediaBaseUrl?: string;
+  deviceToken?: string;
 }) {
   if (media.length === 0) {
     return (
@@ -1267,7 +1265,10 @@ function MediaWidget({
   const currentMedia = media[mediaIndex % media.length];
   if (!currentMedia) return null;
 
-  const mediaUrl = getMediaUrl(currentMedia.originalPath);
+  const baseUrl = mediaBaseUrl || "/api/media";
+  const mediaUrl = currentMedia.originalPath.startsWith("http")
+    ? currentMedia.originalPath
+    : `${baseUrl}/${currentMedia.id}/file${deviceToken ? `?token=${deviceToken}` : ""}`;
   
   if (currentMedia.mediaType === "video") {
     return (
@@ -2401,11 +2402,10 @@ export function ZoneRenderer({
   const renderContent = () => {
     switch (zone.type) {
       case "media": {
-        // If zone has a specific mediaId, filter to show only that media
         const zoneMedia = zone.mediaId 
           ? media.filter(m => m.id === zone.mediaId)
           : media;
-        return <MediaWidget media={zoneMedia} mediaIndex={mediaIndex} isPlaying={isPlaying} />;
+        return <MediaWidget media={zoneMedia} mediaIndex={mediaIndex} isPlaying={isPlaying} mediaBaseUrl={mediaBaseUrl} deviceToken={deviceToken} />;
       }
       case "ticker":
         return <TickerWidget content={zone.textContent} speed={zone.tickerScrollSpeed} animation={zone.tickerAnimation} fontSize={zone.tickerFontSize} />;
