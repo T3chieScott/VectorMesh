@@ -117,7 +117,7 @@ const ASPECT_RATIO_OPTIONS = [
   { value: "9:16", label: "9:16 (Portrait)", description: "Vertical displays" },
   { value: "4:3", label: "4:3 (Standard)", description: "Traditional format" },
   { value: "1:1", label: "1:1 (Square)", description: "Square displays" },
-  { value: "custom", label: "Custom", description: "Custom ratio" },
+  { value: "custom", label: "Custom (Pixels)", description: "Specify exact pixel dimensions" },
 ];
 
 function ColorPickerWithPalette({
@@ -330,7 +330,7 @@ const layoutFormSchema = z.object({
     return data.customWidth && data.customWidth > 0 && data.customHeight && data.customHeight > 0;
   }
   return true;
-}, { message: "Custom width and height are required for custom aspect ratio", path: ["customWidth"] });
+}, { message: "Width and height in pixels are required for custom dimensions", path: ["customWidth"] });
 
 type LayoutFormValues = z.infer<typeof layoutFormSchema>;
 
@@ -6219,7 +6219,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
               <Badge variant="secondary">{zones.length} zones</Badge>
               <Badge variant="outline">
                 {layout.aspectRatio === "custom" && layout.customWidth && layout.customHeight
-                  ? `${layout.customWidth}:${layout.customHeight}`
+                  ? `${layout.customWidth}×${layout.customHeight}px`
                   : layout.aspectRatio || "16:9"}
               </Badge>
               {event && (
@@ -6322,11 +6322,12 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                             name="customWidth"
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel>Width</FormLabel>
+                                <FormLabel>Width (px)</FormLabel>
                                 <FormControl>
                                   <Input
                                     type="number"
                                     min={1}
+                                    placeholder="e.g., 1920"
                                     {...field}
                                     value={field.value || ""}
                                     onChange={(e) => field.onChange(parseInt(e.target.value) || undefined)}
@@ -6342,11 +6343,12 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                             name="customHeight"
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel>Height</FormLabel>
+                                <FormLabel>Height (px)</FormLabel>
                                 <FormControl>
                                   <Input
                                     type="number"
                                     min={1}
+                                    placeholder="e.g., 1080"
                                     {...field}
                                     value={field.value || ""}
                                     onChange={(e) => field.onChange(parseInt(e.target.value) || undefined)}
@@ -6585,12 +6587,12 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
                   name="customWidth"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Width</FormLabel>
+                      <FormLabel>Width (px)</FormLabel>
                       <FormControl>
                         <Input
                           type="number"
                           min={1}
-                          placeholder="e.g., 21"
+                          placeholder="e.g., 1920"
                           {...field}
                           value={field.value || ""}
                           onChange={(e) => field.onChange(parseInt(e.target.value) || undefined)}
@@ -6606,12 +6608,12 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
                   name="customHeight"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Height</FormLabel>
+                      <FormLabel>Height (px)</FormLabel>
                       <FormControl>
                         <Input
                           type="number"
                           min={1}
-                          placeholder="e.g., 9"
+                          placeholder="e.g., 1080"
                           {...field}
                           value={field.value || ""}
                           onChange={(e) => field.onChange(parseInt(e.target.value) || undefined)}
@@ -6689,7 +6691,7 @@ function LayoutListItem({
             <Badge variant="secondary" className="text-xs">{zones.length} zones</Badge>
             <Badge variant="outline" className="text-xs">
               {layout.aspectRatio === "custom" && layout.customWidth && layout.customHeight
-                ? `${layout.customWidth}:${layout.customHeight}`
+                ? `${layout.customWidth}×${layout.customHeight}px`
                 : layout.aspectRatio || "16:9"}
             </Badge>
           </div>
@@ -6977,7 +6979,7 @@ function LayoutEditorPanel({
             <div className="flex items-center gap-2 flex-wrap">
               <Badge variant="outline" className="text-xs">
                 {layout.aspectRatio === "custom" && layout.customWidth && layout.customHeight
-                  ? `${layout.customWidth}:${layout.customHeight}`
+                  ? `${layout.customWidth}×${layout.customHeight}px`
                   : layout.aspectRatio || "16:9"}
               </Badge>
               {event && (
@@ -7189,11 +7191,12 @@ function LayoutEditorPanel({
                     name="customWidth"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Width</FormLabel>
+                        <FormLabel>Width (px)</FormLabel>
                         <FormControl>
                           <Input
                             type="number"
                             min={1}
+                            placeholder="e.g., 1920"
                             {...field}
                             value={field.value || ""}
                             onChange={(e) => field.onChange(parseInt(e.target.value) || undefined)}
@@ -7208,11 +7211,12 @@ function LayoutEditorPanel({
                     name="customHeight"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Height</FormLabel>
+                        <FormLabel>Height (px)</FormLabel>
                         <FormControl>
                           <Input
                             type="number"
                             min={1}
+                            placeholder="e.g., 1080"
                             {...field}
                             value={field.value || ""}
                             onChange={(e) => field.onChange(parseInt(e.target.value) || undefined)}
