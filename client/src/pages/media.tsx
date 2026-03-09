@@ -578,13 +578,15 @@ export default function MediaPage() {
   };
 
   const saveMediaRecords = async (result: any, clientId: string) => {
+    console.log("[media] saveMediaRecords called", { resultKeys: Object.keys(result || {}), successful: result.successful?.length, failed: result.failed?.length, clientId });
     if (result.successful?.length > 0) {
       for (const file of result.successful) {
         const body = file.response?.body;
         const filePath = body?.filePath;
+        console.log("[media] Processing file:", { name: file.name, filePath, body, responseKeys: Object.keys(file.response || {}) });
         if (filePath) {
           try {
-            await apiRequest("POST", "/api/media", {
+            const mediaData = {
               name: file.name,
               originalPath: filePath,
               mediaType: file.type?.startsWith("video/")
@@ -595,22 +597,31 @@ export default function MediaPage() {
               mimeType: file.type,
               fileSize: file.size,
               clientId,
-            });
+            };
+            console.log("[media] POST /api/media payload:", mediaData);
+            await apiRequest("POST", "/api/media", mediaData);
+            console.log("[media] Media record created successfully");
           } catch (e) {
             console.error("Failed to save media record:", e);
           }
+        } else {
+          console.warn("[media] No filePath in upload response body:", body);
         }
       }
       queryClient.invalidateQueries({ queryKey: ["/api/media"] });
       toast({ title: "Media uploaded successfully" });
+    } else {
+      console.warn("[media] No successful uploads in result:", result);
     }
   };
 
   const handleUploadComplete = async (result: any) => {
     const clientId = resolveUploadClientId();
+    console.log("[media] handleUploadComplete called", { clientId, selectedClientId, clientsCount: clients.length, resultKeys: Object.keys(result || {}) });
     if (clientId) {
       await saveMediaRecords(result, clientId);
     } else {
+      console.log("[media] No clientId resolved, opening site picker");
       setPendingUploadResult(result);
       setSitePickerOpen(true);
     }
