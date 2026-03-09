@@ -3,6 +3,11 @@ import fs from "fs";
 import path from "path";
 
 export function serveStatic(app: Express) {
+  const assetsPath = path.resolve(process.cwd(), "assets");
+  if (fs.existsSync(assetsPath)) {
+    app.use("/assets", express.static(assetsPath));
+  }
+
   const distPath = path.resolve(__dirname, "public");
   if (!fs.existsSync(distPath)) {
     throw new Error(
