@@ -79,27 +79,55 @@ export async function getAbsolutePath(storagePath: string): Promise<string> {
   return absolutePath;
 }
 
-export async function streamFile(storagePath: string, res: Response): Promise<void> {
+export async function streamFile(storagePath: string, res: Response, req?: any): Promise<void> {
   const absolutePath = await getAbsolutePath(storagePath);
 
   try {
     const stat = statSync(absolutePath);
     const mimeType = mime.lookup(absolutePath) || "application/octet-stream";
+    const fileSize = stat.size;
 
-    res.set({
-      "Content-Type": mimeType,
-      "Content-Length": String(stat.size),
-      "Cache-Control": "private, max-age=3600",
-    });
+    const range = req?.headers?.range;
+    if (range) {
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunkSize = end - start + 1;
 
-    const stream = createReadStream(absolutePath);
-    stream.on("error", (err) => {
-      console.error("Stream error:", err);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Error streaming file" });
-      }
-    });
-    stream.pipe(res);
+      res.status(206);
+      res.set({
+        "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+        "Accept-Ranges": "bytes",
+        "Content-Length": String(chunkSize),
+        "Content-Type": mimeType,
+        "Cache-Control": "private, max-age=3600",
+      });
+
+      const stream = createReadStream(absolutePath, { start, end });
+      stream.on("error", (err) => {
+        console.error("Stream error:", err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Error streaming file" });
+        }
+      });
+      stream.pipe(res);
+    } else {
+      res.set({
+        "Content-Type": mimeType,
+        "Content-Length": String(fileSize),
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, max-age=3600",
+      });
+
+      const stream = createReadStream(absolutePath);
+      stream.on("error", (err) => {
+        console.error("Stream error:", err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Error streaming file" });
+        }
+      });
+      stream.pipe(res);
+    }
   } catch (err: any) {
     if (err.code === "ENOENT") {
       if (!res.headersSent) {

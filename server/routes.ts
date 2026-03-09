@@ -1255,7 +1255,7 @@ export async function registerRoutes(
       if (asset.originalPath.startsWith("http")) {
         res.redirect(asset.originalPath);
       } else {
-        await fileStorage.streamFile(asset.originalPath, res);
+        await fileStorage.streamFile(asset.originalPath, res, req);
       }
     } catch (error) {
       console.error("Error serving media file:", error);
@@ -1273,7 +1273,7 @@ export async function registerRoutes(
       if (asset.thumbnailPath.startsWith("http")) {
         res.redirect(asset.thumbnailPath);
       } else {
-        await fileStorage.streamFile(asset.thumbnailPath, res);
+        await fileStorage.streamFile(asset.thumbnailPath, res, req);
       }
     } catch (error) {
       console.error("Error serving thumbnail:", error);
@@ -1806,7 +1806,7 @@ export async function registerRoutes(
       if (asset.originalPath.startsWith("http")) {
         res.redirect(asset.originalPath);
       } else {
-        await fileStorage.streamFile(asset.originalPath, res);
+        await fileStorage.streamFile(asset.originalPath, res, req);
       }
     } catch (error) {
       console.error("Error serving player media file:", error);
