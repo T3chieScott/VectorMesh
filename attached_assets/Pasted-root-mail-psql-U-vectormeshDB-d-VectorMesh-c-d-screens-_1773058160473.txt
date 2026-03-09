@@ -1,0 +1,36 @@
+root@mail:~# psql -U vectormeshDB -d VectorMesh -c "\d screens"
+Password for user vectormeshDB: 
+                                   Table "public.screens"
+       Column       |            Type             | Collation | Nullable |      Default      
+--------------------+-----------------------------+-----------+----------+-------------------
+ id                 | character varying           |           | not null | gen_random_uuid()
+ name               | text                        |           | not null | 
+ location           | text                        |           |          | 
+ display_profile_id | character varying           |           |          | 
+ pairing_code       | character varying(6)        |           |          | 
+ is_paired          | boolean                     |           |          | false
+ is_online          | boolean                     |           |          | false
+ last_seen          | timestamp without time zone |           |          | 
+ ip_address         | text                        |           |          | 
+ hardware_class     | text                        |           |          | 
+ current_event_id   | character varying           |           |          | 
+ created_at         | timestamp without time zone |           |          | now()
+ updated_at         | timestamp without time zone |           |          | now()
+ device_token       | text                        |           |          | 
+ fallback_layout_id | character varying           |           |          | 
+ client_id          | character varying           |           |          | 
+ canvas_enabled     | boolean                     |           |          | false
+ canvas_width       | integer                     |           |          | 
+ canvas_height      | integer                     |           |          | 
+ canvas_x           | integer                     |           |          | 0
+ canvas_y           | integer                     |           |          | 0
+Indexes:
+    "screens_pkey" PRIMARY KEY, btree (id)
+Foreign-key constraints:
+    "screens_client_id_clients_id_fk" FOREIGN KEY (client_id) REFERENCES clients(id)
+    "screens_current_event_id_events_id_fk" FOREIGN KEY (current_event_id) REFERENCES events(id)
+    "screens_display_profile_id_display_profiles_id_fk" FOREIGN KEY (display_profile_id) REFERENCES display_profiles(id)
+    "screens_fallback_layout_id_layout_templates_id_fk" FOREIGN KEY (fallback_layout_id) REFERENCES layout_templates(id) ON DELETE SET NULL
+Referenced by:
+    TABLE "player_heartbeats" CONSTRAINT "player_heartbeats_screen_id_screens_id_fk" FOREIGN KEY (screen_id) REFERENCES screens(id) ON DELETE CASCADE
+    TABLE "screen_group_memberships" CONSTRAINT "screen_group_memberships_screen_id_screens_id_fk" FOREIGN KEY (screen_id) REFERENCES screens(id) ON DELETE CASCADE
