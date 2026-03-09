@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import type { ReactNode } from "react";
 import Uppy from "@uppy/core";
 import type { UploadResult } from "@uppy/core";
@@ -32,6 +32,17 @@ export function ObjectUploader({
   children,
 }: ObjectUploaderProps) {
   const [showModal, setShowModal] = useState(false);
+  const onCompleteRef = useRef(onComplete);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
   const [uppy] = useState(() =>
     new Uppy({
       restrictions: {
@@ -50,13 +61,13 @@ export function ObjectUploader({
         withCredentials: true,
       })
       .on("complete", (result) => {
-        onComplete?.(result);
+        onCompleteRef.current?.(result);
       })
       .on("error", (error) => {
-        onError?.(error);
+        onErrorRef.current?.(error);
       })
       .on("upload-error", (_file, error) => {
-        onError?.(error);
+        onErrorRef.current?.(error);
       })
   );
 
