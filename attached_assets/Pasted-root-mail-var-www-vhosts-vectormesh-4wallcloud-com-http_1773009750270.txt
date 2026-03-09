@@ -1,0 +1,240 @@
+root@mail:/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs# grep -rn "location /" /var/www/vhosts/system/vectormesh.4wallcloud.com/conf/
+/var/www/vhosts/system/vectormesh.4wallcloud.com/conf/nginx.conf.bak:14:	location / {
+/var/www/vhosts/system/vectormesh.4wallcloud.com/conf/nginx.conf.bak:126:	location / {
+/var/www/vhosts/system/vectormesh.4wallcloud.com/conf/nginx.conf.bak:170:	location / {
+/var/www/vhosts/system/vectormesh.4wallcloud.com/conf/nginx.conf.bak:228:	location / {
+/var/www/vhosts/system/vectormesh.4wallcloud.com/conf/nginx.conf:14:	location / {
+/var/www/vhosts/system/vectormesh.4wallcloud.com/conf/nginx.conf:126:	location / {
+/var/www/vhosts/system/vectormesh.4wallcloud.com/conf/nginx.conf:170:	location / {
+/var/www/vhosts/system/vectormesh.4wallcloud.com/conf/nginx.conf:228:	location / {
+root@mail:/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs# cat /var/www/vhosts/system/vectormesh.4wallcloud.com/conf/nginx.conf
+#ATTENTION!
+#
+#DO NOT MODIFY THIS FILE BECAUSE IT WAS GENERATED AUTOMATICALLY,
+#SO ALL YOUR CHANGES WILL BE LOST THE NEXT TIME THE FILE IS GENERATED.
+server {
+	listen "185.230.216.245:443" ssl;
+	http2 on;
+
+	ssl_certificate             "/opt/psa/var/certificates/scfc3mvp0nfqdcd7xHKx2V";
+	ssl_certificate_key         "/opt/psa/var/certificates/scfc3mvp0nfqdcd7xHKx2V";
+
+	server_name "www.vectormesh.4wallcloud.com";
+
+	location / {
+		return 301 "https://vectormesh.4wallcloud.com$request_uri";
+	}
+
+	# mailconfig
+	location ~* ^/autodiscover/autodiscover\.xml$ {
+		try_files $uri @mad;
+	}
+	location ~* ^(/\.well-known/autoconfig)?/mail/config\-v1\.1\.xml$ {
+		try_files $uri @mad;
+	}
+
+	location  ~* ^/email\.mobileconfig$ {
+		try_files $uri @mad;
+	}
+
+	location @mad {
+		rewrite ^(.*)$ /mailconfig/ break;
+
+		proxy_pass                          "http://127.0.0.1:8880";
+		proxy_set_header X-Host             $host;
+		proxy_set_header X-Request-URI      $request_uri;
+	}
+	# mailconfig
+}
+
+server {
+	listen "185.230.216.245:443" ssl;
+	http2 on;
+
+	server_name "vectormesh.4wallcloud.com";
+	server_name "ipv4.vectormesh.4wallcloud.com";
+
+	ssl_certificate             "/opt/psa/var/certificates/scfc3mvp0nfqdcd7xHKx2V";
+	ssl_certificate_key         "/opt/psa/var/certificates/scfc3mvp0nfqdcd7xHKx2V";
+
+	client_max_body_size "134217728";
+
+	# mailconfig
+	location ~* ^/autodiscover/autodiscover\.xml$ {
+		try_files $uri @mad;
+	}
+	location ~* ^(/\.well-known/autoconfig)?/mail/config\-v1\.1\.xml$ {
+		try_files $uri @mad;
+	}
+
+	location  ~* ^/email\.mobileconfig$ {
+		try_files $uri @mad;
+	}
+
+	location @mad {
+		rewrite ^(.*)$ /mailconfig/ break;
+
+		proxy_pass                          "http://127.0.0.1:8880";
+		proxy_set_header X-Host             $host;
+		proxy_set_header X-Request-URI      $request_uri;
+	}
+	# mailconfig
+
+	access_log "/var/www/vhosts/system/vectormesh.4wallcloud.com/logs/proxy_access_ssl_log";
+	error_log "/var/www/vhosts/system/vectormesh.4wallcloud.com/logs/proxy_error_log";
+
+	root "/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs";
+
+	#extension performance-booster begin
+	# Additional directives added by Plesk Optimization Settings
+
+	# Additional directives added by Plesk Optimization Settings
+	#extension performance-booster end
+
+	#extension sslit begin
+
+	#extension sslit end
+
+	#extension letsencrypt begin
+	location ^~ /.well-known/acme-challenge/ {
+		root /var/www/vhosts/default/htdocs;
+
+		types { }
+		default_type text/plain;
+
+		satisfy any;
+		auth_basic off;
+		allow all;
+
+		location ~ ^/\.well-known/acme-challenge.*/\. {
+			deny all;
+		}
+	}
+	#extension letsencrypt end
+
+	#extension sectigo begin
+	location ^~ /.well-known/pki-validation/fileauth.txt {
+		try_files $uri $uri/ =404;
+	}
+
+	location ^~ /.well-known/pki-validation/ {
+		root /var/www/vhosts/default/htdocs;
+
+		types { }
+		default_type text/plain;
+
+		satisfy any;
+		auth_basic off;
+		allow all;
+
+		location ~ ^/\.well-known/pki-validation.*/\. {
+			deny all;
+		}
+	}
+	#extension sectigo end
+
+	location / {
+		proxy_pass "https://127.0.0.1:7081";
+		proxy_hide_header upgrade;
+		proxy_ssl_server_name on;
+		proxy_ssl_name $host;
+		proxy_ssl_session_reuse off;
+		proxy_set_header Host             $host;
+		proxy_set_header X-Real-IP        $remote_addr;
+		proxy_set_header X-Forwarded-For  $proxy_add_x_forwarded_for;
+		proxy_set_header X-Accel-Internal /internal-nginx-static-location;
+		access_log off;
+
+	}
+
+	location ^~ /internal-nginx-static-location/ {
+		alias "/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/";
+		internal;
+	}
+
+	location ~ ^/(plesk-stat|awstats-icon|webstat|webstat-ssl|ftpstat|anon_ftpstat) {
+		proxy_pass "https://127.0.0.1:7081";
+		proxy_hide_header upgrade;
+		proxy_ssl_server_name on;
+		proxy_ssl_name $host;
+		proxy_ssl_session_reuse off;
+		proxy_set_header Host             $host;
+		proxy_set_header X-Real-IP        $remote_addr;
+		proxy_set_header X-Forwarded-For  $proxy_add_x_forwarded_for;
+		proxy_set_header X-Accel-Internal /internal-nginx-static-location;
+		access_log off;
+
+	}
+
+	disable_symlinks if_not_owner "from=/var/www/vhosts/vectormesh.4wallcloud.com";
+
+	add_header X-Powered-By PleskLin;
+
+	include "/var/www/vhosts/system/vectormesh.4wallcloud.com/conf/vhost_nginx.conf";
+}
+server {
+	listen "185.230.216.245:80";
+
+	server_name "www.vectormesh.4wallcloud.com";
+
+	location / {
+		return 301 "https://vectormesh.4wallcloud.com$request_uri";
+	}
+
+	# mailconfig
+	location ~* ^/autodiscover/autodiscover\.xml$ {
+		try_files $uri @mad;
+	}
+	location ~* ^(/\.well-known/autoconfig)?/mail/config\-v1\.1\.xml$ {
+		try_files $uri @mad;
+	}
+
+	location  ~* ^/email\.mobileconfig$ {
+		try_files $uri @mad;
+	}
+
+	location @mad {
+		rewrite ^(.*)$ /mailconfig/ break;
+
+		proxy_pass                          "http://127.0.0.1:8880";
+		proxy_set_header X-Host             $host;
+		proxy_set_header X-Request-URI      $request_uri;
+	}
+	# mailconfig
+}
+
+server {
+	listen "185.230.216.245:80";
+
+	server_name "vectormesh.4wallcloud.com";
+	server_name "ipv4.vectormesh.4wallcloud.com";
+
+	client_max_body_size "134217728";
+
+	# mailconfig
+	location ~* ^/autodiscover/autodiscover\.xml$ {
+		try_files $uri @mad;
+	}
+	location ~* ^(/\.well-known/autoconfig)?/mail/config\-v1\.1\.xml$ {
+		try_files $uri @mad;
+	}
+
+	location  ~* ^/email\.mobileconfig$ {
+		try_files $uri @mad;
+	}
+
+	location @mad {
+		rewrite ^(.*)$ /mailconfig/ break;
+
+		proxy_pass                          "http://127.0.0.1:8880";
+		proxy_set_header X-Host             $host;
+		proxy_set_header X-Request-URI      $request_uri;
+	}
+	# mailconfig
+
+	access_log "/var/www/vhosts/system/vectormesh.4wallcloud.com/logs/proxy_access_log";
+	error_log "/var/www/vhosts/system/vectormesh.4wallcloud.com/logs/proxy_error_log";
+
+	location / {
+		return 301 https://$host$request_uri;
+	}
