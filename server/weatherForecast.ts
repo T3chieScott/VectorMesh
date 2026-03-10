@@ -20,6 +20,7 @@ function getConfig() {
 interface CurrentWeather {
   temperature: number | null;
   windSpeed: number | null;
+  windDirection: number | null;
   weatherCode: number | null;
   condition: string;
   icon: string;
@@ -35,6 +36,7 @@ interface DailyForecast {
   temperatureMax: number | null;
   temperatureMin: number | null;
   precipitationSum: number | null;
+  precipitationProbabilityMax: number | null;
   windSpeedMax: number | null;
   sunrise: string | null;
   sunset: string | null;
@@ -52,7 +54,7 @@ interface HourlyForecast {
 }
 
 interface WeatherPayload {
-  source: { provider: string };
+  source: { provider: string; documentedApi: boolean };
   location: { name: string; lat: number; lon: number };
   unit: "celsius" | "fahrenheit";
   current: CurrentWeather;
@@ -121,8 +123,8 @@ function buildWeatherUrl(lat: number, lon: number, unit: "celsius" | "fahrenheit
   const url = new URL(`${cfg.baseUrl}/forecast`);
   url.searchParams.set("latitude", String(lat));
   url.searchParams.set("longitude", String(lon));
-  url.searchParams.set("current", "temperature_2m,weather_code,wind_speed_10m,is_day");
-  url.searchParams.set("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,sunrise,sunset");
+  url.searchParams.set("current", "temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,is_day");
+  url.searchParams.set("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,sunrise,sunset");
   url.searchParams.set("hourly", "temperature_2m,weather_code,precipitation_probability,wind_speed_10m,relative_humidity_2m");
   url.searchParams.set("temperature_unit", tempUnit);
   url.searchParams.set("wind_speed_unit", windUnit);
@@ -152,6 +154,7 @@ function normaliseCurrentWeather(raw: any): CurrentWeather {
   return {
     temperature: current.temperature_2m ?? null,
     windSpeed: current.wind_speed_10m ?? null,
+    windDirection: current.wind_direction_10m ?? null,
     weatherCode: code,
     condition: info.condition,
     icon: info.icon,
@@ -174,6 +177,7 @@ function normaliseDailyForecast(raw: any): DailyForecast[] {
       temperatureMax: daily.temperature_2m_max?.[i] ?? null,
       temperatureMin: daily.temperature_2m_min?.[i] ?? null,
       precipitationSum: daily.precipitation_sum?.[i] ?? null,
+      precipitationProbabilityMax: daily.precipitation_probability_max?.[i] ?? null,
       windSpeedMax: daily.wind_speed_10m_max?.[i] ?? null,
       sunrise: daily.sunrise?.[i] ?? null,
       sunset: daily.sunset?.[i] ?? null,
@@ -207,7 +211,7 @@ function normaliseWeatherPayload(
   cacheInfo: { hit: boolean; stale: boolean }
 ): WeatherPayload {
   return {
-    source: { provider: "Open-Meteo" },
+    source: { provider: "Open-Meteo", documentedApi: true },
     location,
     unit,
     current: normaliseCurrentWeather(raw),

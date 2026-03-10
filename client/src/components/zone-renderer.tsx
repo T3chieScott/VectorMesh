@@ -1508,6 +1508,12 @@ function HeathrowFlightsWidget({
   );
 }
 
+function degreesToCardinal(deg: number | null | undefined): string {
+  if (deg == null) return "";
+  const dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  return dirs[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+}
+
 const FORECAST_ICONS: Record<string, any> = {
   "sun": Sun,
   "cloud-sun": CloudSun,
@@ -1645,8 +1651,9 @@ function WeatherForecastWidget({
             {location?.name || locationName || ""}
           </div>
           {current?.windSpeed != null && (
-            <div style={{ fontSize: `${Math.max(9, fontSize * 0.65)}px`, opacity: 0.6, display: "flex", alignItems: "center", gap: "3px", justifyContent: "flex-end" }}>
+            <div style={{ fontSize: `${Math.max(9, fontSize * 0.65)}px`, opacity: 0.6, display: "flex", alignItems: "center", gap: "3px", justifyContent: "flex-end" }} data-testid="forecast-wind">
               <Wind style={{ width: "10px", height: "10px" }} />
+              {current.windDirection != null && `${degreesToCardinal(current.windDirection)} `}
               {Math.round(current.windSpeed)} {unit === "fahrenheit" ? "mph" : "km/h"}
             </div>
           )}
@@ -1713,7 +1720,16 @@ function WeatherForecastWidget({
                     {day.temperatureMin != null ? `${Math.round(day.temperatureMin)}°` : "--"}
                   </span>
                 </div>
-                {day.precipitationSum != null && day.precipitationSum > 0 && (
+                {day.precipitationProbabilityMax != null && day.precipitationProbabilityMax > 0 ? (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: "2px",
+                    fontSize: `${Math.max(8, fontSize * 0.6)}px`,
+                    color: "#60a5fa",
+                  }}>
+                    <Droplets style={{ width: "8px", height: "8px" }} />
+                    {day.precipitationProbabilityMax}%
+                  </div>
+                ) : day.precipitationSum != null && day.precipitationSum > 0 ? (
                   <div style={{
                     display: "flex", alignItems: "center", gap: "2px",
                     fontSize: `${Math.max(8, fontSize * 0.6)}px`,
@@ -1722,7 +1738,7 @@ function WeatherForecastWidget({
                     <Droplets style={{ width: "8px", height: "8px" }} />
                     {day.precipitationSum.toFixed(1)}mm
                   </div>
-                )}
+                ) : null}
               </div>
             );
           })}
