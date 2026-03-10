@@ -1739,6 +1739,16 @@ function WeatherForecastWidget({
                     {day.precipitationSum.toFixed(1)}mm
                   </div>
                 ) : null}
+                {day.windSpeedMax != null && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: "2px",
+                    fontSize: `${Math.max(8, fontSize * 0.6)}px`,
+                    opacity: 0.5,
+                  }}>
+                    <Wind style={{ width: "8px", height: "8px" }} />
+                    {Math.round(day.windSpeedMax)}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -1788,6 +1798,12 @@ function WeatherForecastWidget({
                     {h.precipitationProbability != null && h.precipitationProbability > 0 && (
                       <span style={{ fontSize: `${Math.max(7, fontSize * 0.5)}px`, color: "#60a5fa" }}>
                         {h.precipitationProbability}%
+                      </span>
+                    )}
+                    {h.windSpeed != null && (
+                      <span style={{ fontSize: `${Math.max(7, fontSize * 0.5)}px`, opacity: 0.5, display: "flex", alignItems: "center", gap: "1px" }}>
+                        <Wind style={{ width: "7px", height: "7px" }} />
+                        {Math.round(h.windSpeed)}
                       </span>
                     )}
                   </div>
