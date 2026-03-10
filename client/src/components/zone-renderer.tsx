@@ -1405,14 +1405,14 @@ function HeathrowFlightsWidget({
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr ref={headerRowRef}>
-                <th style={headerStyle}>Flight</th>
-                <th style={headerStyle}>Airline</th>
+                <th style={{ ...headerStyle, textAlign: "left" }}>Flight</th>
+                <th style={{ ...headerStyle, textAlign: "left" }}>Airline</th>
                 <th style={{ ...headerStyle, textAlign: "center" }}>T</th>
-                {direction === "departure" && <th style={headerStyle}>Gate</th>}
-                {direction === "arrival" && <th style={headerStyle}>Belt</th>}
-                <th style={headerStyle}>{direction === "arrival" ? "From" : "To"}</th>
-                <th style={headerStyle}>Sched</th>
-                <th style={headerStyle}>Est</th>
+                {direction === "departure" && <th style={{ ...headerStyle, textAlign: "center" }}>Gate</th>}
+                {direction === "arrival" && <th style={{ ...headerStyle, textAlign: "center" }}>Belt</th>}
+                <th style={{ ...headerStyle, textAlign: "left" }}>{direction === "arrival" ? "From" : "To"}</th>
+                <th style={{ ...headerStyle, textAlign: "center" }}>Sched</th>
+                <th style={{ ...headerStyle, textAlign: "center" }}>Est</th>
                 <th style={{ ...headerStyle, textAlign: "center" }}>Status</th>
               </tr>
             </thead>
@@ -1428,19 +1428,20 @@ function HeathrowFlightsWidget({
                     }}
                     data-testid={`flight-row-${flight.flightNumber || idx}`}
                   >
-                    <td style={{ ...cellStyle, fontWeight: 600 }}>{flight.flightNumber || "-"}</td>
-                    <td style={{ ...cellStyle, maxWidth: "120px" }}>{flight.airline?.name || flight.airline?.code || "-"}</td>
+                    <td style={{ ...cellStyle, textAlign: "left", fontWeight: 600 }}>{flight.flightNumber || "-"}</td>
+                    <td style={{ ...cellStyle, textAlign: "left", maxWidth: "120px" }}>{flight.airline?.name || flight.airline?.code || "-"}</td>
                     <td style={{ ...cellStyle, textAlign: "center" }}>{flight.terminal || "-"}</td>
-                    {direction === "departure" && <td style={cellStyle}>{flight.gate || "-"}</td>}
-                    {direction === "arrival" && <td style={cellStyle}>{flight.belt || "-"}</td>}
-                    <td style={{ ...cellStyle, maxWidth: "150px" }}>
+                    {direction === "departure" && <td style={{ ...cellStyle, textAlign: "center" }}>{flight.gate || "-"}</td>}
+                    {direction === "arrival" && <td style={{ ...cellStyle, textAlign: "center" }}>{flight.belt || "-"}</td>}
+                    <td style={{ ...cellStyle, textAlign: "left", maxWidth: "150px" }}>
                       {direction === "arrival"
                         ? (flight.origin?.name || flight.origin?.code || "-")
                         : (flight.destination?.name || flight.destination?.code || "-")}
                     </td>
-                    <td style={cellStyle}>{formatTime(flight.scheduledTime)}</td>
+                    <td style={{ ...cellStyle, textAlign: "center" }}>{formatTime(flight.scheduledTime)}</td>
                     <td style={{
                       ...cellStyle,
+                      textAlign: "center",
                       color: flight.estimatedTime && flight.estimatedTime !== flight.scheduledTime ? "#f59e0b" : undefined,
                     }}>
                       {flight.estimatedTime && flight.estimatedTime !== flight.scheduledTime
