@@ -1344,8 +1344,40 @@ function HeathrowFlightsWidget({
   const pageStart = currentPage * rowsPerPage;
   const visibleFlights = flights.slice(pageStart, pageStart + rowsPerPage);
 
+  const directionLabel = direction === "arrival" ? "Arrivals" : "Departures";
+
   return (
     <div className="h-full w-full flex flex-col overflow-hidden" data-testid={`heathrow-${direction}s-widget`}>
+      <div style={{
+        padding: "6px 10px",
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        flexShrink: 0,
+        borderBottom: "1px solid rgba(255,255,255,0.15)",
+      }}>
+        <Plane style={{ width: `${Math.max(12, fontSize)}px`, height: `${Math.max(12, fontSize)}px`, opacity: 0.8 }} />
+        <span style={{
+          fontSize: `${Math.max(12, fontSize * 1.1)}px`,
+          fontWeight: 700,
+          letterSpacing: "0.03em",
+        }}
+        data-testid="heathrow-header-title"
+        >
+          Heathrow Airport — {directionLabel}
+        </span>
+        {totalPages > 1 && (
+          <span style={{
+            marginLeft: "auto",
+            fontSize: `${Math.max(9, fontSize * 0.65)}px`,
+            opacity: 0.5,
+          }}
+          data-testid="heathrow-pagination-info-header"
+          >
+            {currentPage + 1}/{totalPages}
+          </span>
+        )}
+      </div>
       {(showFilters || isStale) && (
         <div style={{ padding: "4px 6px", display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
           {showFilters && (
@@ -1468,23 +1500,6 @@ function HeathrowFlightsWidget({
           </table>
         )}
       </div>
-      {totalPages > 1 && (
-        <div style={{
-          padding: "2px 6px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexShrink: 0,
-          borderTop: "1px solid rgba(255,255,255,0.1)",
-          fontSize: `${Math.max(9, fontSize * 0.65)}px`,
-          opacity: 0.5,
-        }}
-        data-testid="heathrow-pagination-info"
-        >
-          <span>{flights.length} flights</span>
-          <span>Page {currentPage + 1} of {totalPages}</span>
-        </div>
-      )}
     </div>
   );
 }
