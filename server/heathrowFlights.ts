@@ -195,18 +195,29 @@ async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<any
 }
 
 // ============ AeroDataBox Flight Normalisation ============
-// AeroDataBox flight record shape (key fields — may vary, mapped defensively):
-//   number: "BA 117"
-//   callSign: "BAW117"
-//   status: "Expected" | "Departed" | "Landed" | "Canceled" | ...
-//   airline: { name: "British Airways", iata: "BA", icao: "BAW" }
-//   departure: { airport: { iata, name, ... }, scheduledTime: { utc, local }, revisedTime: { utc, local }, terminal, gate }
-//   arrival:   { airport: { iata, name, ... }, scheduledTime: { utc, local }, revisedTime: { utc, local }, terminal, baggageBelt }
+// AeroDataBox flight record shape (actual observed structure):
+//   number: "MS 779"
+//   callSign: "MSR779"
+//   status: "Arrived" | "Expected" | "Departed" | "Canceled" | ...
+//   airline: { name: "EgyptAir", iata: "MS", icao: "MSR" }
+//   movement: {
+//     airport: { iata: "CAI", name: "Cairo", icao: "HECA" },
+//     scheduledTime: { utc: "2026-03-10 21:00Z", local: "2026-03-10 21:00+00:00" },
+//     revisedTime: { utc: "...", local: "..." },
+//     runwayTime: { utc: "...", local: "..." },
+//     terminal: "2",
+//     gate: "A10",
+//     baggageBelt: "8"
+//   }
+//
+// The "movement" object represents the remote airport and LHR-side details:
+// - For arrivals: movement.airport = origin, terminal/belt = LHR arrival info
+// - For departures: movement.airport = destination, terminal/gate = LHR departure info
 //
 // Important mapping notes:
 // - "revisedTime" is the estimated/revised time (not "estimatedTime" or "actualTimeUtc")
+// - "runwayTime" is the actual touchdown/takeoff time when available
 // - If revisedTime differs from scheduledTime, it indicates a delay or update
-// - "actualTime" is not reliably present; we use revisedTime as estimatedTime and leave actualTime null
 // - Adjust field names here if AeroDataBox changes their payload schema
 
 function extractTimeUtc(timeObj: any): string | null {
@@ -220,36 +231,37 @@ function normaliseAeroDataBoxFlight(raw: any, direction: "arrival" | "departure"
   const airlineIata = safeString(raw.airline?.iata) || flightNumber.replace(/\d+/g, "") || "";
   const airlineName = safeString(raw.airline?.name) || airlineIata;
 
-  const dep = raw.departure || {};
-  const arr = raw.arrival || {};
+  // AeroDataBox uses a single "movement" object for the remote airport and LHR-side info
+  const mov = raw.movement || {};
+  const remoteAirport = mov.airport || {};
 
+  // For arrivals: movement.airport is the origin (where the flight came from)
+  // For departures: movement.airport is the destination (where the flight is going)
   const originCode = direction === "arrival"
-    ? (safeString(dep.airport?.iata) || "")
+    ? (safeString(remoteAirport.iata) || "")
     : AIRPORT_IATA;
   const originName = direction === "arrival"
-    ? (safeString(dep.airport?.name) || originCode)
+    ? (safeString(remoteAirport.name) || originCode)
     : "London Heathrow";
 
   const destCode = direction === "departure"
-    ? (safeString(arr.airport?.iata) || "")
+    ? (safeString(remoteAirport.iata) || "")
     : AIRPORT_IATA;
   const destName = direction === "departure"
-    ? (safeString(arr.airport?.name) || destCode)
+    ? (safeString(remoteAirport.name) || destCode)
     : "London Heathrow";
 
-  // For the "local" side of the flight (the LHR end), pick the right leg
-  const lhrLeg = direction === "arrival" ? arr : dep;
-  const remoteLeg = direction === "arrival" ? dep : arr;
-
-  const scheduledTime = extractTimeUtc(lhrLeg.scheduledTime) || extractTimeUtc(remoteLeg.scheduledTime);
+  const scheduledTime = extractTimeUtc(mov.scheduledTime);
   // revisedTime is AeroDataBox's estimated/updated time field
-  const revisedTime = extractTimeUtc(lhrLeg.revisedTime) || extractTimeUtc(remoteLeg.revisedTime);
+  const revisedTime = extractTimeUtc(mov.revisedTime);
+  // runwayTime is the actual touchdown/takeoff time
+  const actualTime = extractTimeUtc(mov.runwayTime);
   // Only show estimatedTime if it differs from scheduled
   const estimatedTime = revisedTime && revisedTime !== scheduledTime ? revisedTime : null;
 
-  const terminal = safeString(lhrLeg.terminal);
-  const gate = safeString(lhrLeg.gate) || safeString(dep.gate);
-  const belt = safeString(arr.baggageBelt) || safeString(lhrLeg.baggageBelt);
+  const terminal = safeString(mov.terminal);
+  const gate = safeString(mov.gate);
+  const belt = safeString(mov.baggageBelt);
 
   const rawStatus = safeString(raw.status);
 
@@ -271,7 +283,7 @@ function normaliseAeroDataBoxFlight(raw: any, direction: "arrival" | "departure"
     destination: { code: destCode, name: destName },
     scheduledTime,
     estimatedTime,
-    actualTime: null, // AeroDataBox does not reliably provide actual times
+    actualTime,
     status: normaliseStatus(rawStatus),
     rawStatus,
     remarks: null,
