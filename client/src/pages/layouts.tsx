@@ -565,6 +565,7 @@ const zoneFormSchema = z.object({
   heathrowTerminal: z.string().optional(),
   heathrowAirline: z.string().optional(),
   heathrowRefreshInterval: z.number().min(30).max(600).optional(),
+  heathrowPageInterval: z.number().min(3).max(120).optional(),
   heathrowFontSize: z.number().min(8).max(48).optional(),
   heathrowShowFilters: z.boolean().optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
@@ -1296,6 +1297,7 @@ function ZoneEditorDialog({
       heathrowTerminal: "",
       heathrowAirline: "",
       heathrowRefreshInterval: 120,
+      heathrowPageInterval: 10,
       heathrowFontSize: 14,
       heathrowShowFilters: false,
       scheduleViewMode: "hourly",
@@ -1463,6 +1465,7 @@ function ZoneEditorDialog({
           heathrowTerminal: zone.heathrowTerminal || "",
           heathrowAirline: zone.heathrowAirline || "",
           heathrowRefreshInterval: zone.heathrowRefreshInterval ?? 120,
+          heathrowPageInterval: zone.heathrowPageInterval ?? 10,
           heathrowFontSize: zone.heathrowFontSize ?? 14,
           heathrowShowFilters: zone.heathrowShowFilters ?? false,
           scheduleViewMode: zone.scheduleViewMode || "hourly",
@@ -1621,6 +1624,7 @@ function ZoneEditorDialog({
           heathrowTerminal: "",
           heathrowAirline: "",
           heathrowRefreshInterval: 120,
+          heathrowPageInterval: 10,
           heathrowFontSize: 14,
           heathrowShowFilters: false,
           scheduleViewMode: "hourly",
@@ -5572,13 +5576,13 @@ function ZoneEditorDialog({
                     </FormItem>
                   )}
                 />
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <FormField
                     control={form.control}
                     name="heathrowRefreshInterval"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Refresh Interval (seconds)</FormLabel>
+                        <FormLabel>Data Refresh (s)</FormLabel>
                         <FormControl>
                           <Input
                             type="number"
@@ -5587,6 +5591,26 @@ function ZoneEditorDialog({
                             value={field.value ?? 120}
                             onChange={(e) => field.onChange(parseInt(e.target.value) || 120)}
                             data-testid="input-heathrow-refresh"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="heathrowPageInterval"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Page Interval (s)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={3}
+                            max={120}
+                            value={field.value ?? 10}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 10)}
+                            data-testid="input-heathrow-page-interval"
                           />
                         </FormControl>
                         <FormMessage />

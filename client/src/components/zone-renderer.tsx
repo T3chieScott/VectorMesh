@@ -1173,6 +1173,7 @@ function HeathrowFlightsWidget({
   terminal,
   airline,
   refreshInterval = 120,
+  pageInterval = 10,
   fontSize = 14,
   showFilters = false,
   deviceToken,
@@ -1181,6 +1182,7 @@ function HeathrowFlightsWidget({
   terminal?: string;
   airline?: string;
   refreshInterval?: number;
+  pageInterval?: number;
   fontSize?: number;
   showFilters?: boolean;
   deviceToken?: string;
@@ -1190,6 +1192,11 @@ function HeathrowFlightsWidget({
   const [error, setError] = useState<string | null>(null);
   const [filterTerminal, setFilterTerminal] = useState(terminal || "");
   const [filterAirline, setFilterAirline] = useState(airline || "");
+  const [currentPage, setCurrentPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const headerRowRef = useRef<HTMLTableRowElement>(null);
+  const sampleRowRef = useRef<HTMLTableRowElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -1232,6 +1239,45 @@ function HeathrowFlightsWidget({
     return () => { cancelled = true; clearInterval(interval); };
   }, [direction, filterTerminal, filterAirline, deviceToken, refreshInterval]);
 
+  useEffect(() => {
+    const measure = () => {
+      const container = tableContainerRef.current;
+      if (!container) return;
+      const containerHeight = container.clientHeight;
+      const headerHeight = headerRowRef.current?.offsetHeight || 0;
+      const sampleHeight = sampleRowRef.current?.offsetHeight || (fontSize + 10);
+      if (sampleHeight > 0) {
+        const available = containerHeight - headerHeight;
+        const fits = Math.max(1, Math.floor(available / sampleHeight));
+        setRowsPerPage(fits);
+      }
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (tableContainerRef.current) observer.observe(tableContainerRef.current);
+    return () => observer.disconnect();
+  }, [fontSize, data]);
+
+  const flights = data?.flights || [];
+  const totalPages = Math.max(1, Math.ceil(flights.length / rowsPerPage));
+
+  useEffect(() => {
+    if (totalPages <= 1) {
+      setCurrentPage(0);
+      return;
+    }
+    const timer = setInterval(() => {
+      setCurrentPage((prev) => (prev + 1) % totalPages);
+    }, (pageInterval || 10) * 1000);
+    return () => clearInterval(timer);
+  }, [totalPages, pageInterval]);
+
+  useEffect(() => {
+    if (currentPage >= totalPages) {
+      setCurrentPage(0);
+    }
+  }, [totalPages, currentPage]);
+
   const statusColors: Record<string, { bg: string; text: string }> = {
     "scheduled": { bg: "rgba(59,130,246,0.15)", text: "#3b82f6" },
     "boarding": { bg: "rgba(245,158,11,0.15)", text: "#f59e0b" },
@@ -1264,7 +1310,6 @@ function HeathrowFlightsWidget({
     );
   }
 
-  const flights = data?.flights || [];
   const isStale = data?.cache?.stale;
 
   const formatTime = (iso: string | null) => {
@@ -1295,6 +1340,9 @@ function HeathrowFlightsWidget({
     overflow: "hidden",
     textOverflow: "ellipsis",
   };
+
+  const pageStart = currentPage * rowsPerPage;
+  const visibleFlights = flights.slice(pageStart, pageStart + rowsPerPage);
 
   return (
     <div className="h-full w-full flex flex-col overflow-hidden" data-testid={`heathrow-${direction}s-widget`}>
@@ -1346,7 +1394,7 @@ function HeathrowFlightsWidget({
           )}
         </div>
       )}
-      <div style={{ flex: 1, overflow: "auto" }}>
+      <div ref={tableContainerRef} style={{ flex: 1, overflow: "hidden" }}>
         {flights.length === 0 ? (
           <div className="h-full w-full flex items-center justify-center">
             <p style={{ fontSize: `${fontSize}px` }} className="text-muted-foreground">
@@ -1356,7 +1404,7 @@ function HeathrowFlightsWidget({
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
-              <tr>
+              <tr ref={headerRowRef}>
                 <th style={headerStyle}>Flight</th>
                 <th style={headerStyle}>Airline</th>
                 <th style={{ ...headerStyle, textAlign: "center" }}>T</th>
@@ -1369,11 +1417,12 @@ function HeathrowFlightsWidget({
               </tr>
             </thead>
             <tbody>
-              {flights.map((flight: any, idx: number) => {
+              {visibleFlights.map((flight: any, idx: number) => {
                 const sc = statusColors[flight.status?.code] || statusColors["unknown"];
                 return (
                   <tr
                     key={flight.id || idx}
+                    ref={idx === 0 ? sampleRowRef : undefined}
                     style={{
                       borderBottom: "1px solid rgba(255,255,255,0.05)",
                     }}
@@ -1418,6 +1467,23 @@ function HeathrowFlightsWidget({
           </table>
         )}
       </div>
+      {totalPages > 1 && (
+        <div style={{
+          padding: "2px 6px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexShrink: 0,
+          borderTop: "1px solid rgba(255,255,255,0.1)",
+          fontSize: `${Math.max(9, fontSize * 0.65)}px`,
+          opacity: 0.5,
+        }}
+        data-testid="heathrow-pagination-info"
+        >
+          <span>{flights.length} flights</span>
+          <span>Page {currentPage + 1} of {totalPages}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -3080,6 +3146,7 @@ export function ZoneRenderer({
             terminal={zone.heathrowTerminal}
             airline={zone.heathrowAirline}
             refreshInterval={zone.heathrowRefreshInterval}
+            pageInterval={zone.heathrowPageInterval}
             fontSize={zone.heathrowFontSize}
             showFilters={zone.heathrowShowFilters}
             deviceToken={deviceToken}
@@ -3092,6 +3159,7 @@ export function ZoneRenderer({
             terminal={zone.heathrowTerminal}
             airline={zone.heathrowAirline}
             refreshInterval={zone.heathrowRefreshInterval}
+            pageInterval={zone.heathrowPageInterval}
             fontSize={zone.heathrowFontSize}
             showFilters={zone.heathrowShowFilters}
             deviceToken={deviceToken}
