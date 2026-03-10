@@ -5689,11 +5689,54 @@ function ZoneEditorDialog({
                     <FormItem>
                       <FormLabel>Location Name</FormLabel>
                       <FormControl>
-                        <Input
-                          placeholder="e.g., London"
-                          {...field}
-                          data-testid="input-forecast-location"
-                        />
+                        <div className="flex gap-2">
+                          <Input
+                            placeholder="e.g., London, UK"
+                            {...field}
+                            data-testid="input-forecast-location"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            disabled={isGeocoding || !field.value?.trim()}
+                            onClick={async () => {
+                              const location = field.value;
+                              if (!location?.trim()) {
+                                toast({ title: "Enter a location first", variant: "destructive" });
+                                return;
+                              }
+                              setIsGeocoding(true);
+                              try {
+                                const res = await fetch(`/api/widgets/geocode?q=${encodeURIComponent(location)}`);
+                                if (!res.ok) throw new Error("Geocoding failed");
+                                const data = await res.json();
+                                if (!data.results || data.results.length === 0) {
+                                  throw new Error("No results found");
+                                }
+                                const result = data.results[0];
+                                const displayName = result.admin1
+                                  ? `${result.name}, ${result.admin1}, ${result.country}`
+                                  : `${result.name}, ${result.country}`;
+                                form.setValue("weatherLocation", displayName);
+                                form.setValue("weatherLat", result.lat);
+                                form.setValue("weatherLng", result.lng);
+                                toast({ title: `Found: ${displayName}` });
+                              } catch {
+                                toast({ title: "Could not find location", variant: "destructive" });
+                              } finally {
+                                setIsGeocoding(false);
+                              }
+                            }}
+                            data-testid="button-forecast-geocode"
+                          >
+                            {isGeocoding ? (
+                              <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                            ) : (
+                              <MapPin className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
