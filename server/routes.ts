@@ -15,6 +15,7 @@ import { find as findTimezone } from "geo-tz";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert } from "./email";
 import { createPremierLeagueTableHandler } from "./premierLeague";
 import { createHeathrowArrivalsHandler, createHeathrowDeparturesHandler } from "./heathrowFlights";
+import { createWeatherForecastHandler } from "./weatherForecast";
 
 function generateTwoFactorSecret(email: string) {
   const secret = new OTPAuth.Secret({ size: 20 });
@@ -2354,6 +2355,10 @@ export async function registerRoutes(
   app.get("/api/widgets/heathrow/departures", requireAuth, handleHeathrowDepartures);
   app.get("/api/player/widgets/heathrow/arrivals", validateDeviceToken, handleHeathrowArrivals);
   app.get("/api/player/widgets/heathrow/departures", validateDeviceToken, handleHeathrowDepartures);
+
+  const handleWeatherForecast = createWeatherForecastHandler();
+  app.get("/api/widgets/weather-forecast", requireAuth, handleWeatherForecast);
+  app.get("/api/player/widgets/weather-forecast", validateDeviceToken, handleWeatherForecast);
 
   // ============ ADMIN: USER MANAGEMENT ============
 

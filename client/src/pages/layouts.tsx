@@ -109,6 +109,7 @@ import {
   PlaneLanding,
   PlaneTakeoff,
   Plane,
+  CloudRain,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -377,6 +378,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   football_table: Trophy,
   heathrow_arrivals: PlaneLanding,
   heathrow_departures: PlaneTakeoff,
+  weather_forecast: CloudRain,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -398,11 +400,12 @@ const zoneTypeLabels: Record<string, string> = {
   football_table: "Football Table",
   heathrow_arrivals: "Heathrow Arrivals",
   heathrow_departures: "Heathrow Departures",
+  weather_forecast: "Weather Forecast",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "heathrow_arrivals", "heathrow_departures"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "heathrow_arrivals", "heathrow_departures", "weather_forecast"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(0.01).max(100),
@@ -568,6 +571,10 @@ const zoneFormSchema = z.object({
   heathrowPageInterval: z.number().min(3).max(120).optional(),
   heathrowFontSize: z.number().min(8).max(48).optional(),
   heathrowShowFilters: z.boolean().optional(),
+  forecastDays: z.number().min(1).max(14).optional(),
+  forecastRefreshInterval: z.number().min(60).max(3600).optional(),
+  forecastFontSize: z.number().min(8).max(48).optional(),
+  forecastShowHourly: z.boolean().optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
     id: z.string(),
@@ -1300,6 +1307,10 @@ function ZoneEditorDialog({
       heathrowPageInterval: 10,
       heathrowFontSize: 14,
       heathrowShowFilters: false,
+      forecastDays: 5,
+      forecastRefreshInterval: 600,
+      forecastFontSize: 14,
+      forecastShowHourly: false,
       scheduleViewMode: "hourly",
       scheduleEntries: [],
       scheduleShowCurrentTime: true,
@@ -1468,6 +1479,10 @@ function ZoneEditorDialog({
           heathrowPageInterval: zone.heathrowPageInterval ?? 10,
           heathrowFontSize: zone.heathrowFontSize ?? 14,
           heathrowShowFilters: zone.heathrowShowFilters ?? false,
+          forecastDays: zone.forecastDays ?? 5,
+          forecastRefreshInterval: zone.forecastRefreshInterval ?? 600,
+          forecastFontSize: zone.forecastFontSize ?? 14,
+          forecastShowHourly: zone.forecastShowHourly ?? false,
           scheduleViewMode: zone.scheduleViewMode || "hourly",
           scheduleEntries: zone.scheduleEntries || [],
           scheduleShowCurrentTime: zone.scheduleShowCurrentTime ?? true,
@@ -1627,6 +1642,10 @@ function ZoneEditorDialog({
           heathrowPageInterval: 10,
           heathrowFontSize: 14,
           heathrowShowFilters: false,
+          forecastDays: 5,
+          forecastRefreshInterval: 600,
+          forecastFontSize: 14,
+          forecastShowHourly: false,
           scheduleViewMode: "hourly",
           scheduleEntries: [],
           scheduleShowCurrentTime: true,
@@ -5651,6 +5670,176 @@ function ZoneEditorDialog({
                         />
                       </FormControl>
                       <FormLabel className="!mt-0">Show filter controls on display</FormLabel>
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+
+            {form.watch("type") === "weather_forecast" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <CloudRain className="h-4 w-4" />
+                  Weather Forecast Settings
+                </div>
+                <FormField
+                  control={form.control}
+                  name="weatherLocation"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Location Name</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="e.g., London"
+                          {...field}
+                          data-testid="input-forecast-location"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="weatherLat"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Latitude</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            step="0.0001"
+                            placeholder="51.5072"
+                            value={field.value ?? ""}
+                            onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
+                            data-testid="input-forecast-lat"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="weatherLng"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Longitude</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            step="0.0001"
+                            placeholder="-0.1276"
+                            value={field.value ?? ""}
+                            onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
+                            data-testid="input-forecast-lng"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name="weatherUnit"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Temperature Unit</FormLabel>
+                      <Select
+                        value={field.value || "celsius"}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-forecast-unit">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="celsius">Celsius (°C)</SelectItem>
+                          <SelectItem value="fahrenheit">Fahrenheit (°F)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="grid grid-cols-3 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="forecastDays"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Forecast Days</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={14}
+                            value={field.value ?? 5}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 5)}
+                            data-testid="input-forecast-days"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="forecastRefreshInterval"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Refresh (s)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={60}
+                            max={3600}
+                            value={field.value ?? 600}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 600)}
+                            data-testid="input-forecast-refresh"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="forecastFontSize"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Font Size (px)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={8}
+                            max={48}
+                            value={field.value ?? 14}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 14)}
+                            data-testid="input-forecast-font-size"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name="forecastShowHourly"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? false}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-forecast-show-hourly"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show hourly forecast (next 24h)</FormLabel>
                     </FormItem>
                   )}
                 />

@@ -28,6 +28,9 @@ import {
   PlaneLanding,
   PlaneTakeoff,
   Plane,
+  Thermometer,
+  ArrowDown,
+  ArrowUp,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
@@ -68,6 +71,7 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   football_table: Trophy,
   heathrow_arrivals: PlaneLanding,
   heathrow_departures: PlaneTakeoff,
+  weather_forecast: CloudRain,
 };
 
 function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
@@ -1498,6 +1502,283 @@ function HeathrowFlightsWidget({
               })}
             </tbody>
           </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const FORECAST_ICONS: Record<string, any> = {
+  "sun": Sun,
+  "cloud-sun": CloudSun,
+  "cloud": Cloud,
+  "cloud-fog": CloudFog,
+  "cloud-drizzle": CloudDrizzle,
+  "cloud-rain": CloudRain,
+  "cloud-lightning": CloudLightning,
+  "snowflake": Snowflake,
+};
+
+function WeatherForecastWidget({
+  lat,
+  lon,
+  locationName,
+  unit = "celsius",
+  days = 5,
+  refreshInterval = 600,
+  fontSize = 14,
+  showHourly = false,
+  deviceToken,
+}: {
+  lat?: number;
+  lon?: number;
+  locationName?: string;
+  unit?: "celsius" | "fahrenheit";
+  days?: number;
+  refreshInterval?: number;
+  fontSize?: number;
+  showHourly?: boolean;
+  deviceToken?: string;
+}) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchForecast = async () => {
+      try {
+        const baseEndpoint = deviceToken
+          ? "/api/player/widgets/weather-forecast"
+          : "/api/widgets/weather-forecast";
+
+        const params = new URLSearchParams();
+        if (lat !== undefined) params.set("lat", String(lat));
+        if (lon !== undefined) params.set("lon", String(lon));
+        if (locationName) params.set("name", locationName);
+        params.set("unit", unit);
+        params.set("days", String(days));
+        if (deviceToken) params.set("token", deviceToken);
+
+        const url = `${baseEndpoint}?${params}`;
+        const response = await fetch(url);
+
+        if (cancelled) return;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const json = await response.json();
+        if (cancelled) return;
+        if (json.error) throw new Error(json.error);
+
+        setData(json);
+        setError(null);
+      } catch (err: any) {
+        if (!cancelled) {
+          setError((prev) => prev || err.message || "Failed to load forecast");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    fetchForecast();
+    const interval = setInterval(fetchForecast, refreshInterval * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [lat, lon, locationName, unit, days, deviceToken, refreshInterval]);
+
+  if (loading && !data) {
+    return (
+      <div className="h-full w-full flex items-center justify-center">
+        <CloudRain className="h-6 w-6 animate-pulse text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error && !data) {
+    return (
+      <div className="h-full w-full flex flex-col items-center justify-center text-center p-2">
+        <CloudRain className="h-6 w-6 text-muted-foreground mb-1" />
+        <p style={{ fontSize: `${Math.max(10, fontSize * 0.8)}px` }} className="text-muted-foreground">
+          Forecast unavailable
+        </p>
+      </div>
+    );
+  }
+
+  const current = data?.current;
+  const daily: any[] = data?.daily || [];
+  const hourly: any[] = data?.hourly || [];
+  const location = data?.location;
+  const unitSymbol = unit === "fahrenheit" ? "°F" : "°C";
+  const isStale = data?.cache?.stale;
+
+  const CurrentIcon = FORECAST_ICONS[current?.icon] || Cloud;
+
+  const now = new Date();
+  const next24h = hourly.filter((h: any) => {
+    const t = new Date(h.time);
+    return t >= now && t <= new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  }).filter((_: any, i: number) => i % 2 === 0).slice(0, 12);
+
+  return (
+    <div className="h-full w-full flex flex-col overflow-hidden" data-testid="weather-forecast-widget">
+      <div style={{
+        padding: "8px 12px",
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        flexShrink: 0,
+        borderBottom: "1px solid rgba(255,255,255,0.1)",
+      }}>
+        <CurrentIcon style={{ width: `${Math.max(20, fontSize * 1.8)}px`, height: `${Math.max(20, fontSize * 1.8)}px` }} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: `${Math.max(14, fontSize * 1.4)}px`, fontWeight: 700 }} data-testid="forecast-current-temp">
+            {current?.temperature != null ? `${Math.round(current.temperature)}${unitSymbol}` : "--"}
+          </div>
+          <div style={{ fontSize: `${Math.max(10, fontSize * 0.75)}px`, opacity: 0.7 }} data-testid="forecast-current-condition">
+            {current?.condition || ""}
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: `${Math.max(11, fontSize * 0.85)}px`, fontWeight: 600 }} data-testid="forecast-location">
+            {location?.name || locationName || ""}
+          </div>
+          {current?.windSpeed != null && (
+            <div style={{ fontSize: `${Math.max(9, fontSize * 0.65)}px`, opacity: 0.6, display: "flex", alignItems: "center", gap: "3px", justifyContent: "flex-end" }}>
+              <Wind style={{ width: "10px", height: "10px" }} />
+              {Math.round(current.windSpeed)} {unit === "fahrenheit" ? "mph" : "km/h"}
+            </div>
+          )}
+          {isStale && (
+            <div style={{ fontSize: `${Math.max(9, fontSize * 0.6)}px`, color: "#f59e0b" }}>Stale data</div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <div style={{
+          display: "flex",
+          gap: "2px",
+          padding: "6px 8px",
+          flexShrink: 0,
+          overflow: "hidden",
+        }}>
+          {daily.map((day: any, idx: number) => {
+            const DayIcon = FORECAST_ICONS[day.icon] || Cloud;
+            const isToday = idx === 0;
+            return (
+              <div
+                key={day.date}
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "2px",
+                  padding: "4px 2px",
+                  borderRadius: "6px",
+                  backgroundColor: isToday ? "rgba(255,255,255,0.08)" : "transparent",
+                  minWidth: 0,
+                }}
+                data-testid={`forecast-day-${idx}`}
+              >
+                <span style={{
+                  fontSize: `${Math.max(9, fontSize * 0.7)}px`,
+                  fontWeight: isToday ? 700 : 500,
+                  opacity: isToday ? 1 : 0.7,
+                }}>
+                  {isToday ? "Today" : day.dayName}
+                </span>
+                <DayIcon style={{
+                  width: `${Math.max(14, fontSize * 1.1)}px`,
+                  height: `${Math.max(14, fontSize * 1.1)}px`,
+                  opacity: 0.8,
+                }} />
+                <div style={{ display: "flex", alignItems: "center", gap: "2px" }}>
+                  <ArrowUp style={{ width: "8px", height: "8px", opacity: 0.5 }} />
+                  <span style={{
+                    fontSize: `${Math.max(10, fontSize * 0.8)}px`,
+                    fontWeight: 600,
+                  }}>
+                    {day.temperatureMax != null ? `${Math.round(day.temperatureMax)}°` : "--"}
+                  </span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "2px" }}>
+                  <ArrowDown style={{ width: "8px", height: "8px", opacity: 0.5 }} />
+                  <span style={{
+                    fontSize: `${Math.max(10, fontSize * 0.8)}px`,
+                    opacity: 0.6,
+                  }}>
+                    {day.temperatureMin != null ? `${Math.round(day.temperatureMin)}°` : "--"}
+                  </span>
+                </div>
+                {day.precipitationSum != null && day.precipitationSum > 0 && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: "2px",
+                    fontSize: `${Math.max(8, fontSize * 0.6)}px`,
+                    color: "#60a5fa",
+                  }}>
+                    <Droplets style={{ width: "8px", height: "8px" }} />
+                    {day.precipitationSum.toFixed(1)}mm
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {showHourly && next24h.length > 0 && (
+          <div style={{
+            borderTop: "1px solid rgba(255,255,255,0.08)",
+            padding: "4px 8px",
+            overflow: "hidden",
+          }}>
+            <div style={{
+              fontSize: `${Math.max(9, fontSize * 0.65)}px`,
+              fontWeight: 600,
+              opacity: 0.5,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginBottom: "4px",
+            }}>
+              Next 24 Hours
+            </div>
+            <div style={{ display: "flex", gap: "2px", overflow: "hidden" }}>
+              {next24h.map((h: any, idx: number) => {
+                const HIcon = FORECAST_ICONS[h.icon] || Cloud;
+                const t = new Date(h.time);
+                const hourStr = t.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+                return (
+                  <div
+                    key={h.time}
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: "1px",
+                      minWidth: 0,
+                    }}
+                    data-testid={`forecast-hour-${idx}`}
+                  >
+                    <span style={{ fontSize: `${Math.max(8, fontSize * 0.55)}px`, opacity: 0.6 }}>
+                      {hourStr}
+                    </span>
+                    <HIcon style={{ width: `${Math.max(10, fontSize * 0.8)}px`, height: `${Math.max(10, fontSize * 0.8)}px`, opacity: 0.7 }} />
+                    <span style={{ fontSize: `${Math.max(9, fontSize * 0.7)}px`, fontWeight: 600 }}>
+                      {h.temperature != null ? `${Math.round(h.temperature)}°` : "--"}
+                    </span>
+                    {h.precipitationProbability != null && h.precipitationProbability > 0 && (
+                      <span style={{ fontSize: `${Math.max(7, fontSize * 0.5)}px`, color: "#60a5fa" }}>
+                        {h.precipitationProbability}%
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         )}
       </div>
     </div>
@@ -3178,6 +3459,20 @@ export function ZoneRenderer({
             pageInterval={zone.heathrowPageInterval}
             fontSize={zone.heathrowFontSize}
             showFilters={zone.heathrowShowFilters}
+            deviceToken={deviceToken}
+          />
+        );
+      case "weather_forecast":
+        return (
+          <WeatherForecastWidget
+            lat={zone.weatherLat}
+            lon={zone.weatherLng}
+            locationName={zone.weatherLocation}
+            unit={zone.weatherUnit || "celsius"}
+            days={zone.forecastDays}
+            refreshInterval={zone.forecastRefreshInterval}
+            fontSize={zone.forecastFontSize}
+            showHourly={zone.forecastShowHourly}
             deviceToken={deviceToken}
           />
         );
