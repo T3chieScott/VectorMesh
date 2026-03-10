@@ -1,28 +1,35 @@
 import type { Request, Response } from "express";
 
-// Heathrow API configuration — set these in Replit Secrets
-// HEATHROW_API_BASE_URL: Base URL for Heathrow flights API (e.g. https://api-dp-prod.dp.heathrow.com)
-// HEATHROW_API_KEY: API key from Heathrow Developer Portal
-// HEATHROW_API_SUBSCRIPTION_KEY: Subscription key (Ocp-Apim-Subscription-Key header)
-// HEATHROW_API_TIMEOUT_MS: Fetch timeout in ms (optional, default 10000)
+// ============ AeroDataBox Configuration ============
+// Set these in Replit Secrets (or environment variables on the remote server):
+//   AERODATABOX_RAPIDAPI_KEY   — Required. Your RapidAPI key for AeroDataBox.
+//   AERODATABOX_RAPIDAPI_HOST  — Optional. Defaults to "aerodatabox.p.rapidapi.com".
+//   AERODATABOX_BASE_URL       — Optional. Defaults to "https://aerodatabox.p.rapidapi.com".
+//   AERODATABOX_TIMEOUT_MS     — Optional. Fetch timeout in ms (default 10000).
 
+const AIRPORT_IATA = "LHR";
 const CACHE_TTL = 2 * 60 * 1000;
 const DEFAULT_TIMEOUT = 10_000;
 const DEFAULT_LIMIT = 50;
+// Default FIDS-style time window: 2 hours before now to 12 hours ahead
+const DEFAULT_WINDOW_BACK_HOURS = 2;
+const DEFAULT_WINDOW_AHEAD_HOURS = 12;
 
 function getConfig() {
   return {
-    baseUrl: process.env.HEATHROW_API_BASE_URL || "",
-    apiKey: process.env.HEATHROW_API_KEY || "",
-    subscriptionKey: process.env.HEATHROW_API_SUBSCRIPTION_KEY || "",
-    timeout: parseInt(process.env.HEATHROW_API_TIMEOUT_MS || "", 10) || DEFAULT_TIMEOUT,
+    baseUrl: process.env.AERODATABOX_BASE_URL || "https://aerodatabox.p.rapidapi.com",
+    rapidApiKey: process.env.AERODATABOX_RAPIDAPI_KEY || "",
+    rapidApiHost: process.env.AERODATABOX_RAPIDAPI_HOST || "aerodatabox.p.rapidapi.com",
+    timeout: parseInt(process.env.AERODATABOX_TIMEOUT_MS || "", 10) || DEFAULT_TIMEOUT,
   };
 }
 
 function credentialsPresent(): boolean {
   const cfg = getConfig();
-  return !!(cfg.baseUrl && (cfg.apiKey || cfg.subscriptionKey));
+  return !!cfg.rapidApiKey;
 }
+
+// ============ Types ============
 
 interface FlightStatus {
   code: string;
@@ -87,14 +94,18 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-// Status normalisation mapping
-// Adjust these mappings if Heathrow returns different status strings
+// ============ Status Normalisation ============
+// AeroDataBox returns status strings like "Expected", "Departed", "Landed", "Canceled", etc.
+// Map them to our consistent internal codes.
 const STATUS_MAP: Record<string, FlightStatus> = {
   "scheduled": { code: "scheduled", label: "Scheduled" },
   "on time": { code: "scheduled", label: "On Time" },
+  "expected": { code: "scheduled", label: "Expected" },
+  "en route": { code: "departed", label: "En Route" },
   "boarding": { code: "boarding", label: "Boarding" },
   "gate open": { code: "gate-open", label: "Gate Open" },
   "gate-open": { code: "gate-open", label: "Gate Open" },
+  "gateopen": { code: "gate-open", label: "Gate Open" },
   "final call": { code: "final-call", label: "Final Call" },
   "final-call": { code: "final-call", label: "Final Call" },
   "last call": { code: "final-call", label: "Final Call" },
@@ -107,8 +118,7 @@ const STATUS_MAP: Record<string, FlightStatus> = {
   "cancelled": { code: "cancelled", label: "Cancelled" },
   "canceled": { code: "cancelled", label: "Cancelled" },
   "diverted": { code: "diverted", label: "Diverted" },
-  "expected": { code: "scheduled", label: "Expected" },
-  "estimatedtime": { code: "scheduled", label: "Estimated" },
+  "unknown": { code: "unknown", label: "Unknown" },
 };
 
 function normaliseStatus(rawStatus: string | null | undefined): FlightStatus {
@@ -122,42 +132,46 @@ function safeString(val: unknown): string | null {
   return String(val);
 }
 
-function buildHeathrowHeaders(): Record<string, string> {
+// ============ AeroDataBox Request Building ============
+
+function buildAeroDataBoxHeaders(): Record<string, string> {
   const cfg = getConfig();
-  const headers: Record<string, string> = {
+  return {
+    "x-rapidapi-key": cfg.rapidApiKey,
+    "x-rapidapi-host": cfg.rapidApiHost,
     "Accept": "application/json",
-    "User-Agent": "VectorMesh/1.0",
   };
-  if (cfg.apiKey) {
-    headers["x-api-key"] = cfg.apiKey;
-  }
-  if (cfg.subscriptionKey) {
-    headers["Ocp-Apim-Subscription-Key"] = cfg.subscriptionKey;
-  }
-  return headers;
 }
 
-function buildHeathrowRequestUrl(
+// AeroDataBox airport flights endpoint:
+// GET /flights/airports/iata/{code}/{fromLocal}/{toLocal}
+// Times are local airport times in ISO 8601 format (YYYY-MM-DDTHH:mm)
+// Params: direction=Arrival|Departure, withCancelled=true, withCodeshared=true, withPrivate=false, withCargo=false
+function buildAirportFlightsUrl(
   direction: "arrival" | "departure",
-  params: { terminal?: string; airline?: string; date?: string }
+  fromLocal: string,
+  toLocal: string
 ): string {
   const cfg = getConfig();
-  // Heathrow API endpoint pattern — adjust path if the actual API differs
-  // Common patterns: /flights/arrivals, /flights/departures, /api/flights
-  const directionPath = direction === "arrival" ? "arrivals" : "departures";
-  const url = new URL(`${cfg.baseUrl}/flights/${directionPath}`);
-
-  if (params.date) {
-    url.searchParams.set("date", params.date);
-  }
-  if (params.terminal) {
-    url.searchParams.set("terminal", params.terminal);
-  }
-  if (params.airline) {
-    url.searchParams.set("airline", params.airline);
-  }
-
+  const dirParam = direction === "arrival" ? "Arrival" : "Departure";
+  const base = `${cfg.baseUrl}/flights/airports/iata/${AIRPORT_IATA}/${fromLocal}/${toLocal}`;
+  const url = new URL(base);
+  url.searchParams.set("direction", dirParam);
+  url.searchParams.set("withCancelled", "true");
+  url.searchParams.set("withCodeshared", "false");
+  url.searchParams.set("withPrivate", "false");
+  url.searchParams.set("withCargo", "false");
   return url.toString();
+}
+
+function buildDefaultTimeWindow(): { fromLocal: string; toLocal: string } {
+  const now = new Date();
+  const from = new Date(now.getTime() - DEFAULT_WINDOW_BACK_HOURS * 60 * 60 * 1000);
+  const to = new Date(now.getTime() + DEFAULT_WINDOW_AHEAD_HOURS * 60 * 60 * 1000);
+  return {
+    fromLocal: from.toISOString().slice(0, 16),
+    toLocal: to.toISOString().slice(0, 16),
+  };
 }
 
 async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<any> {
@@ -166,12 +180,12 @@ async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<any
 
   try {
     const response = await fetch(url, {
-      headers: buildHeathrowHeaders(),
+      headers: buildAeroDataBoxHeaders(),
       signal: controller.signal,
     });
 
     if (!response.ok) {
-      throw new Error(`Heathrow API returned ${response.status}: ${response.statusText}`);
+      throw new Error(`AeroDataBox API returned ${response.status}: ${response.statusText}`);
     }
 
     return await response.json();
@@ -180,49 +194,87 @@ async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<any
   }
 }
 
-// Normalise a single flight record from upstream payload
-// Adjust field mappings here if the Heathrow API returns different field names
-function normaliseFlightRecord(raw: any, direction: "arrival" | "departure"): NormalisedFlight {
-  const flightNumber = safeString(raw.flightNumber) || safeString(raw.flight) || safeString(raw.iata) || "Unknown";
-  const airlineCode = safeString(raw.airlineCode) || safeString(raw.airline?.code) || flightNumber.replace(/\d+/g, "") || "";
-  const airlineName = safeString(raw.airlineName) || safeString(raw.airline?.name) || safeString(raw.carrier) || airlineCode;
+// ============ AeroDataBox Flight Normalisation ============
+// AeroDataBox flight record shape (key fields — may vary, mapped defensively):
+//   number: "BA 117"
+//   callSign: "BAW117"
+//   status: "Expected" | "Departed" | "Landed" | "Canceled" | ...
+//   airline: { name: "British Airways", iata: "BA", icao: "BAW" }
+//   departure: { airport: { iata, name, ... }, scheduledTime: { utc, local }, revisedTime: { utc, local }, terminal, gate }
+//   arrival:   { airport: { iata, name, ... }, scheduledTime: { utc, local }, revisedTime: { utc, local }, terminal, baggageBelt }
+//
+// Important mapping notes:
+// - "revisedTime" is the estimated/revised time (not "estimatedTime" or "actualTimeUtc")
+// - If revisedTime differs from scheduledTime, it indicates a delay or update
+// - "actualTime" is not reliably present; we use revisedTime as estimatedTime and leave actualTime null
+// - Adjust field names here if AeroDataBox changes their payload schema
+
+function extractTimeUtc(timeObj: any): string | null {
+  if (!timeObj) return null;
+  if (typeof timeObj === "string") return timeObj;
+  return safeString(timeObj.utc) || safeString(timeObj.local) || null;
+}
+
+function normaliseAeroDataBoxFlight(raw: any, direction: "arrival" | "departure"): NormalisedFlight {
+  const flightNumber = safeString(raw.number)?.replace(/\s/g, "") || "Unknown";
+  const airlineIata = safeString(raw.airline?.iata) || flightNumber.replace(/\d+/g, "") || "";
+  const airlineName = safeString(raw.airline?.name) || airlineIata;
+
+  const dep = raw.departure || {};
+  const arr = raw.arrival || {};
 
   const originCode = direction === "arrival"
-    ? (safeString(raw.originCode) || safeString(raw.origin?.code) || safeString(raw.from) || "")
-    : "LHR";
+    ? (safeString(dep.airport?.iata) || "")
+    : AIRPORT_IATA;
   const originName = direction === "arrival"
-    ? (safeString(raw.originName) || safeString(raw.origin?.name) || safeString(raw.originAirport) || originCode)
+    ? (safeString(dep.airport?.name) || originCode)
     : "London Heathrow";
 
   const destCode = direction === "departure"
-    ? (safeString(raw.destinationCode) || safeString(raw.destination?.code) || safeString(raw.to) || "")
-    : "LHR";
+    ? (safeString(arr.airport?.iata) || "")
+    : AIRPORT_IATA;
   const destName = direction === "departure"
-    ? (safeString(raw.destinationName) || safeString(raw.destination?.name) || safeString(raw.destinationAirport) || destCode)
+    ? (safeString(arr.airport?.name) || destCode)
     : "London Heathrow";
 
+  // For the "local" side of the flight (the LHR end), pick the right leg
+  const lhrLeg = direction === "arrival" ? arr : dep;
+  const remoteLeg = direction === "arrival" ? dep : arr;
+
+  const scheduledTime = extractTimeUtc(lhrLeg.scheduledTime) || extractTimeUtc(remoteLeg.scheduledTime);
+  // revisedTime is AeroDataBox's estimated/updated time field
+  const revisedTime = extractTimeUtc(lhrLeg.revisedTime) || extractTimeUtc(remoteLeg.revisedTime);
+  // Only show estimatedTime if it differs from scheduled
+  const estimatedTime = revisedTime && revisedTime !== scheduledTime ? revisedTime : null;
+
+  const terminal = safeString(lhrLeg.terminal);
+  const gate = safeString(lhrLeg.gate) || safeString(dep.gate);
+  const belt = safeString(arr.baggageBelt) || safeString(lhrLeg.baggageBelt);
+
+  const rawStatus = safeString(raw.status);
+
   return {
-    id: safeString(raw.id) || safeString(raw.flightId) || `${flightNumber}-${raw.scheduledTime || Date.now()}`,
+    id: `${flightNumber}-${scheduledTime || Date.now()}`,
     flightNumber,
-    iata: safeString(raw.iata) || flightNumber,
-    icao: safeString(raw.icao) || null,
+    iata: flightNumber,
+    icao: safeString(raw.callSign) || null,
     direction,
     airline: {
       name: airlineName,
-      code: airlineCode,
-      logo: safeString(raw.airlineLogo) || safeString(raw.airline?.logo) || null,
+      code: airlineIata,
+      logo: null,
     },
-    terminal: safeString(raw.terminal),
-    gate: safeString(raw.gate) || safeString(raw.stand),
-    belt: safeString(raw.belt) || safeString(raw.carousel) || safeString(raw.baggageBelt),
+    terminal,
+    gate,
+    belt,
     origin: { code: originCode, name: originName },
     destination: { code: destCode, name: destName },
-    scheduledTime: safeString(raw.scheduledTime) || safeString(raw.scheduled) || safeString(raw.scheduledDateTime),
-    estimatedTime: safeString(raw.estimatedTime) || safeString(raw.estimated) || safeString(raw.estimatedDateTime),
-    actualTime: safeString(raw.actualTime) || safeString(raw.actual) || safeString(raw.actualDateTime),
-    status: normaliseStatus(raw.status || raw.flightStatus),
-    rawStatus: safeString(raw.status) || safeString(raw.flightStatus),
-    remarks: safeString(raw.remarks) || safeString(raw.comment),
+    scheduledTime,
+    estimatedTime,
+    actualTime: null, // AeroDataBox does not reliably provide actual times
+    status: normaliseStatus(rawStatus),
+    rawStatus,
+    remarks: null,
   };
 }
 
@@ -232,18 +284,26 @@ function normaliseFlightsPayload(
   filters: { terminal: string | null; airline: string | null; date: string | null },
   cacheInfo: { hit: boolean; stale: boolean }
 ): NormalisedFlightsPayload {
-  // Adapt to actual Heathrow payload shape — look for flights array at these common paths
+  // AeroDataBox returns: { departures: [...] } or { arrivals: [...] }
+  // Also handle array root or other shapes defensively
   const flightsArray: any[] =
     Array.isArray(raw) ? raw :
+    Array.isArray(raw.departures) ? raw.departures :
+    Array.isArray(raw.arrivals) ? raw.arrivals :
     Array.isArray(raw.flights) ? raw.flights :
-    Array.isArray(raw.flightList) ? raw.flightList :
     Array.isArray(raw.data) ? raw.data :
-    Array.isArray(raw.results) ? raw.results :
     [];
 
-  const flights = flightsArray.map((f: any) => normaliseFlightRecord(f, direction));
+  const flights = flightsArray
+    .map((f: any) => {
+      try {
+        return normaliseAeroDataBoxFlight(f, direction);
+      } catch {
+        return null;
+      }
+    })
+    .filter((f): f is NormalisedFlight => f !== null);
 
-  // Sort by scheduled time
   flights.sort((a, b) => {
     if (!a.scheduledTime) return 1;
     if (!b.scheduledTime) return -1;
@@ -252,17 +312,19 @@ function normaliseFlightsPayload(
 
   return {
     source: {
-      provider: "Heathrow Flights API",
+      provider: "AeroDataBox",
       documentedApi: true,
     },
     direction,
-    airport: "LHR",
+    airport: AIRPORT_IATA,
     updatedAt: new Date().toISOString(),
     filters,
     flights,
     cache: cacheInfo,
   };
 }
+
+// ============ Filtering ============
 
 function applyFlightFilters(
   payload: NormalisedFlightsPayload,
@@ -297,16 +359,32 @@ function applyFlightFilters(
   return { ...payload, flights };
 }
 
-function createCacheKey(direction: "arrival" | "departure", date: string | null): string {
-  return `${direction}:${date || "today"}`;
+// ============ Cache ============
+
+function createCacheKey(direction: "arrival" | "departure", fromLocal: string): string {
+  return `${direction}:${fromLocal}`;
 }
+
+// ============ Core Fetch ============
 
 async function fetchHeathrowFlights(
   direction: "arrival" | "departure",
-  params: { terminal?: string; airline?: string; date?: string }
+  params: { terminal?: string; airline?: string; date?: string; from?: string; to?: string }
 ): Promise<NormalisedFlightsPayload> {
-  const dateKey = params.date || new Date().toISOString().split("T")[0];
-  const cacheKey = createCacheKey(direction, dateKey);
+  let fromLocal: string;
+  let toLocal: string;
+
+  if (params.from && params.to) {
+    fromLocal = params.from;
+    toLocal = params.to;
+  } else {
+    const window = buildDefaultTimeWindow();
+    fromLocal = window.fromLocal;
+    toLocal = window.toLocal;
+  }
+
+  const dateKey = params.date || fromLocal.slice(0, 10);
+  const cacheKey = createCacheKey(direction, fromLocal);
 
   const now = Date.now();
   const cached = cache.get(cacheKey);
@@ -325,12 +403,12 @@ async function fetchHeathrowFlights(
         cache: { hit: true, stale: true },
       };
     }
-    throw new Error("Heathrow API credentials not configured. Set HEATHROW_API_BASE_URL and HEATHROW_API_KEY or HEATHROW_API_SUBSCRIPTION_KEY in environment variables.");
+    throw new Error("AeroDataBox credentials not configured. Set AERODATABOX_RAPIDAPI_KEY in environment variables.");
   }
 
   try {
     const cfg = getConfig();
-    const url = buildHeathrowRequestUrl(direction, { date: dateKey });
+    const url = buildAirportFlightsUrl(direction, fromLocal, toLocal);
     const raw = await fetchJsonWithTimeout(url, cfg.timeout);
 
     const filters = {
@@ -358,11 +436,15 @@ async function fetchHeathrowFlights(
   }
 }
 
+// ============ Public API ============
+
 export async function getHeathrowArrivals(params: {
   terminal?: string;
   airline?: string;
   flight?: string;
   date?: string;
+  from?: string;
+  to?: string;
   limit?: number;
 } = {}): Promise<NormalisedFlightsPayload> {
   const raw = await fetchHeathrowFlights("arrival", params);
@@ -374,6 +456,8 @@ export async function getHeathrowDepartures(params: {
   airline?: string;
   flight?: string;
   date?: string;
+  from?: string;
+  to?: string;
   limit?: number;
 } = {}): Promise<NormalisedFlightsPayload> {
   const raw = await fetchHeathrowFlights("departure", params);
@@ -394,11 +478,15 @@ export function clearHeathrowFlightsCache(): void {
   cache.clear();
 }
 
+// ============ Route Handlers ============
+
 function parseQueryParams(query: any): {
   terminal?: string;
   airline?: string;
   flight?: string;
   date?: string;
+  from?: string;
+  to?: string;
   limit?: number;
   error?: string;
 } {
@@ -406,6 +494,8 @@ function parseQueryParams(query: any): {
   const airline = query.airline ? String(query.airline) : undefined;
   const flight = query.flight ? String(query.flight) : undefined;
   const date = query.date ? String(query.date) : undefined;
+  const from = query.from ? String(query.from) : undefined;
+  const to = query.to ? String(query.to) : undefined;
 
   if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return { error: "Invalid date format. Use YYYY-MM-DD." };
@@ -419,7 +509,7 @@ function parseQueryParams(query: any): {
     }
   }
 
-  return { terminal, airline, flight, date, limit };
+  return { terminal, airline, flight, date, from, to, limit };
 }
 
 export function createHeathrowArrivalsHandler() {

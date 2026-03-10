@@ -84,7 +84,7 @@ The system implements custom email/password authentication with bcryptjs for pas
 - `UPLOAD_DIR`: Override default upload root directory (defaults to `./data/uploads`). Can also be set via admin UI.
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`: SMTP server configuration for email sending.
 - `APP_URL`: Base URL for application links in emails.
-- `HEATHROW_API_BASE_URL`: Base URL for Heathrow Flights API.
-- `HEATHROW_API_KEY`: API key from Heathrow Developer Portal.
-- `HEATHROW_API_SUBSCRIPTION_KEY`: Subscription key (Ocp-Apim-Subscription-Key header).
-- `HEATHROW_API_TIMEOUT_MS`: Fetch timeout in ms (default 10000).
+- `AERODATABOX_RAPIDAPI_KEY`: Required. RapidAPI key for AeroDataBox flight data.
+- `AERODATABOX_RAPIDAPI_HOST`: Optional. Defaults to "aerodatabox.p.rapidapi.com".
+- `AERODATABOX_BASE_URL`: Optional. Defaults to "https://aerodatabox.p.rapidapi.com".
+- `AERODATABOX_TIMEOUT_MS`: Optional. Fetch timeout in ms (default 10000).
