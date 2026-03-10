@@ -276,6 +276,11 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         playlistItems: data.playlistItems,
       });
 
+      if (data.refreshRequested) {
+        window.location.reload();
+        return;
+      }
+
       if (newHash !== contentHashRef.current) {
         contentHashRef.current = newHash;
         setContent(data);

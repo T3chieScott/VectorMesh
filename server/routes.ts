@@ -124,6 +124,9 @@ function logAudit(req: Request, action: string, entityType: string, entityId?: s
   });
 }
 
+const pendingPlayerRefreshes = new Map<string, number>();
+const REFRESH_SIGNAL_TTL = 60_000;
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -1035,6 +1038,21 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error regenerating pairing code:", error);
       res.status(500).json({ error: "Failed to regenerate pairing code" });
+    }
+  });
+
+  app.post("/api/screens/:id/refresh", requireAuth, async (req, res) => {
+    try {
+      const screen = await storage.getScreen(req.params.id);
+      if (!screen) {
+        return res.status(404).json({ error: "Screen not found" });
+      }
+      pendingPlayerRefreshes.set(screen.id, Date.now());
+      logAudit(req, "refresh", "screen", screen.id, { name: screen.name });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error sending refresh signal:", error);
+      res.status(500).json({ error: "Failed to send refresh signal" });
     }
   });
 
@@ -2018,6 +2036,15 @@ export async function registerRoutes(
         event = await storage.getEvent(screen.currentEventId);
       }
 
+      let refreshRequested = false;
+      const refreshTs = pendingPlayerRefreshes.get(screen.id);
+      if (refreshTs && (Date.now() - refreshTs) < REFRESH_SIGNAL_TTL) {
+        refreshRequested = true;
+        pendingPlayerRefreshes.delete(screen.id);
+      } else if (refreshTs) {
+        pendingPlayerRefreshes.delete(screen.id);
+      }
+
       res.json({
         screen,
         profile,
@@ -2028,6 +2055,7 @@ export async function registerRoutes(
         liveOverride,
         event,
         timestamp: now.toISOString(),
+        refreshRequested,
       });
     } catch (error) {
       console.error("Error fetching player content:", error);

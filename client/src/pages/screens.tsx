@@ -372,6 +372,17 @@ function ScreenCard({
     },
   });
 
+  const refreshPlayerMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", `/api/screens/${screen.id}/refresh`),
+    onSuccess: () => {
+      toast({ title: "Refresh signal sent", description: "The player will reload within a few seconds." });
+    },
+    onError: () => {
+      toast({ title: "Failed to send refresh signal", variant: "destructive" });
+    },
+  });
+
   const copyPairingCode = () => {
     if (screen.pairingCode) {
       navigator.clipboard.writeText(screen.pairingCode);
@@ -630,6 +641,15 @@ function ScreenCard({
               >
                 <RefreshCw className="mr-2 h-4 w-4" />
                 Regenerate Code
+              </DropdownMenuItem>
+            )}
+            {screen.isOnline && (
+              <DropdownMenuItem
+                onSelect={() => refreshPlayerMutation.mutate()}
+                data-testid={`button-refresh-player-${screen.id}`}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Refresh Player
               </DropdownMenuItem>
             )}
             {screen.isPaired && (
