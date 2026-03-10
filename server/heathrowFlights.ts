@@ -11,9 +11,9 @@ const AIRPORT_IATA = "LHR";
 const CACHE_TTL = 2 * 60 * 1000;
 const DEFAULT_TIMEOUT = 10_000;
 const DEFAULT_LIMIT = 50;
-// Default FIDS-style time window: 2 hours before now to 12 hours ahead
+// Default FIDS-style time window: 2 hours before now to 10 hours ahead (max 12h total for AeroDataBox)
 const DEFAULT_WINDOW_BACK_HOURS = 2;
-const DEFAULT_WINDOW_AHEAD_HOURS = 12;
+const DEFAULT_WINDOW_AHEAD_HOURS = 10;
 
 function getConfig() {
   return {
