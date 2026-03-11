@@ -1912,6 +1912,7 @@ function EarthquakesWidget({
   const [currentPage, setCurrentPage] = useState(0);
   const [fittingRows, setFittingRows] = useState<number | null>(null);
   const listContainerRef = useRef<HTMLDivElement>(null);
+  const measureRowRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollInnerRef = useRef<HTMLDivElement>(null);
   const animationRef = useRef<number>(0);
@@ -2009,22 +2010,12 @@ function EarthquakesWidget({
     }
     const measure = () => {
       const container = listContainerRef.current;
-      if (!container) return;
+      const measureRow = measureRowRef.current;
+      if (!container || !measureRow) return;
       const containerH = container.clientHeight;
-      const rows = container.querySelectorAll("[data-eq-row]");
-      if (rows.length === 0) return;
-      let visibleCount = 0;
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i] as HTMLElement;
-        const rowBottom = row.offsetTop + row.offsetHeight;
-        if (rowBottom <= containerH) {
-          visibleCount++;
-        } else {
-          break;
-        }
-      }
-      if (visibleCount > 0) {
-        setFittingRows(visibleCount);
+      const rowH = measureRow.getBoundingClientRect().height;
+      if (rowH > 0 && containerH > 0) {
+        setFittingRows(Math.max(1, Math.floor(containerH / rowH)));
       }
     };
     const frame = requestAnimationFrame(() => {
@@ -2374,7 +2365,7 @@ function EarthquakesWidget({
 
   return (
     <div
-      className="h-full w-full overflow-hidden flex flex-col"
+      className="h-full w-full overflow-hidden flex flex-col relative"
       style={{
         fontSize: fs,
         background: "linear-gradient(135deg, #0a1628 0%, #0f1f3d 50%, #1a2744 100%)",
@@ -2384,6 +2375,15 @@ function EarthquakesWidget({
       data-testid="earthquakes-widget"
     >
       {renderHeader()}
+      {earthquakes.length > 0 && (
+        <div
+          ref={measureRowRef}
+          style={{ position: "absolute", visibility: "hidden", pointerEvents: "none", width: "100%", left: 0, top: -9999 }}
+          aria-hidden="true"
+        >
+          {renderRow(earthquakes[0], -1)}
+        </div>
+      )}
       <div className="flex-1 overflow-hidden flex flex-col" style={{ padding: `${fs * 0.3}px 0` }}>
         {earthquakes.length === 0 ? (
           <div className="h-full flex items-center justify-center" style={{ color: "#64748b", fontSize: fs * 0.85 }} data-testid="earthquakes-empty">
