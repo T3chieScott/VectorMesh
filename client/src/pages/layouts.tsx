@@ -111,6 +111,7 @@ import {
   Plane,
   CloudRain,
   Rocket,
+  Globe,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -381,6 +382,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   heathrow_departures: PlaneTakeoff,
   weather_forecast: CloudRain,
   spacex_launch: Rocket,
+  earthquakes: Globe,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -404,11 +406,12 @@ const zoneTypeLabels: Record<string, string> = {
   heathrow_departures: "Heathrow Departures",
   weather_forecast: "Weather Forecast",
   spacex_launch: "SpaceX Launch Countdown",
+  earthquakes: "Global Earthquakes",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(0.01).max(100),
@@ -588,6 +591,14 @@ const zoneFormSchema = z.object({
   spacexShowPatch: z.boolean().optional(),
   spacexShowLinks: z.boolean().optional(),
   spacexShowLaunchpad: z.boolean().optional(),
+  earthquakeFeed: z.enum(["all_hour", "all_day", "significant_hour", "significant_day"]).optional(),
+  earthquakeMinMagnitude: z.number().min(0).max(10).optional(),
+  earthquakeLimit: z.number().min(1).max(100).optional(),
+  earthquakeRefreshInterval: z.number().min(30).max(3600).optional(),
+  earthquakeFontSize: z.number().min(8).max(48).optional(),
+  earthquakeShowDepth: z.boolean().optional(),
+  earthquakeShowTsunami: z.boolean().optional(),
+  earthquakeShowAlert: z.boolean().optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
     id: z.string(),
@@ -1334,6 +1345,14 @@ function ZoneEditorDialog({
       spacexShowPatch: true,
       spacexShowLinks: false,
       spacexShowLaunchpad: true,
+      earthquakeFeed: "all_hour",
+      earthquakeMinMagnitude: 0,
+      earthquakeLimit: 50,
+      earthquakeRefreshInterval: 60,
+      earthquakeFontSize: 14,
+      earthquakeShowDepth: true,
+      earthquakeShowTsunami: true,
+      earthquakeShowAlert: true,
       scheduleViewMode: "hourly",
       scheduleEntries: [],
       scheduleShowCurrentTime: true,
@@ -1516,6 +1535,14 @@ function ZoneEditorDialog({
           spacexShowPatch: zone.spacexShowPatch ?? true,
           spacexShowLinks: zone.spacexShowLinks ?? false,
           spacexShowLaunchpad: zone.spacexShowLaunchpad ?? true,
+          earthquakeFeed: zone.earthquakeFeed || "all_hour",
+          earthquakeMinMagnitude: zone.earthquakeMinMagnitude ?? 0,
+          earthquakeLimit: zone.earthquakeLimit ?? 50,
+          earthquakeRefreshInterval: zone.earthquakeRefreshInterval ?? 60,
+          earthquakeFontSize: zone.earthquakeFontSize ?? 14,
+          earthquakeShowDepth: zone.earthquakeShowDepth ?? true,
+          earthquakeShowTsunami: zone.earthquakeShowTsunami ?? true,
+          earthquakeShowAlert: zone.earthquakeShowAlert ?? true,
           scheduleViewMode: zone.scheduleViewMode || "hourly",
           scheduleEntries: zone.scheduleEntries || [],
           scheduleShowCurrentTime: zone.scheduleShowCurrentTime ?? true,
@@ -1689,6 +1716,14 @@ function ZoneEditorDialog({
           spacexShowPatch: true,
           spacexShowLinks: false,
           spacexShowLaunchpad: true,
+          earthquakeFeed: "all_hour",
+          earthquakeMinMagnitude: 0,
+          earthquakeLimit: 50,
+          earthquakeRefreshInterval: 60,
+          earthquakeFontSize: 14,
+          earthquakeShowDepth: true,
+          earthquakeShowTsunami: true,
+          earthquakeShowAlert: true,
           scheduleViewMode: "hourly",
           scheduleEntries: [],
           scheduleShowCurrentTime: true,
@@ -6105,6 +6140,174 @@ function ZoneEditorDialog({
                         />
                       </FormControl>
                       <FormLabel className="!mt-0">Show webcast/article links</FormLabel>
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+
+            {form.watch("type") === "earthquakes" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Globe className="h-4 w-4" />
+                  Global Earthquakes Settings
+                </div>
+                <FormField
+                  control={form.control}
+                  name="earthquakeFeed"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Feed Window</FormLabel>
+                      <Select
+                        value={field.value || "all_hour"}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-earthquake-feed">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="all_hour">All — Past Hour</SelectItem>
+                          <SelectItem value="all_day">All — Past Day</SelectItem>
+                          <SelectItem value="significant_hour">Significant — Past Hour</SelectItem>
+                          <SelectItem value="significant_day">Significant — Past Day</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="earthquakeRefreshInterval"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Refresh (s)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={30}
+                            max={3600}
+                            value={field.value ?? 60}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 60)}
+                            data-testid="input-earthquake-refresh"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="earthquakeFontSize"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Font Size (px)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={8}
+                            max={48}
+                            value={field.value ?? 14}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 14)}
+                            data-testid="input-earthquake-font-size"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="earthquakeMinMagnitude"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Min Magnitude</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={10}
+                            step={0.1}
+                            value={field.value ?? 0}
+                            onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                            data-testid="input-earthquake-min-mag"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="earthquakeLimit"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Max Items</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={field.value ?? 50}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 50)}
+                            data-testid="input-earthquake-limit"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name="earthquakeShowDepth"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? true}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-earthquake-show-depth"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show depth</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="earthquakeShowTsunami"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? true}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-earthquake-show-tsunami"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show tsunami flag</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="earthquakeShowAlert"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? true}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-earthquake-show-alert"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show alert level</FormLabel>
                     </FormItem>
                   )}
                 />

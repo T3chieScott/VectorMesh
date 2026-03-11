@@ -17,6 +17,7 @@ import { createPremierLeagueTableHandler } from "./premierLeague";
 import { createHeathrowArrivalsHandler, createHeathrowDeparturesHandler } from "./heathrowFlights";
 import { createWeatherForecastHandler } from "./weatherForecast";
 import { createNextSpaceXLaunchHandler } from "./spacexLaunch";
+import { createEarthquakesHandler } from "./usgsEarthquakes";
 
 function generateTwoFactorSecret(email: string) {
   const secret = new OTPAuth.Secret({ size: 20 });
@@ -2364,6 +2365,10 @@ export async function registerRoutes(
   const handleSpaceXLaunch = createNextSpaceXLaunchHandler();
   app.get("/api/widgets/spacex/next-launch", requireAuth, handleSpaceXLaunch);
   app.get("/api/player/widgets/spacex/next-launch", validateDeviceToken, handleSpaceXLaunch);
+
+  const handleEarthquakes = createEarthquakesHandler();
+  app.get("/api/widgets/earthquakes/recent", requireAuth, handleEarthquakes);
+  app.get("/api/player/widgets/earthquakes/recent", validateDeviceToken, handleEarthquakes);
 
   // ============ ADMIN: USER MANAGEMENT ============
 

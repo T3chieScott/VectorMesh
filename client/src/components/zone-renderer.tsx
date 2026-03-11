@@ -32,6 +32,7 @@ import {
   ArrowDown,
   ArrowUp,
   Rocket,
+  Globe,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
@@ -74,6 +75,7 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   heathrow_departures: PlaneTakeoff,
   weather_forecast: CloudRain,
   spacex_launch: Rocket,
+  earthquakes: Globe,
 };
 
 function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
@@ -1870,6 +1872,267 @@ function WeatherForecastWidget({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function EarthquakesWidget({
+  feed = "all_hour",
+  minMagnitude = 0,
+  limit = 50,
+  refreshInterval = 60,
+  fontSize = 14,
+  showDepth = true,
+  showTsunami = true,
+  showAlert = true,
+  deviceToken,
+}: {
+  feed?: string;
+  minMagnitude?: number;
+  limit?: number;
+  refreshInterval?: number;
+  fontSize?: number;
+  showDepth?: boolean;
+  showTsunami?: boolean;
+  showAlert?: boolean;
+  deviceToken?: string;
+}) {
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const fetchData = async () => {
+      try {
+        const base = deviceToken
+          ? `/api/player/widgets/earthquakes/recent`
+          : `/api/widgets/earthquakes/recent`;
+        const params = new URLSearchParams();
+        if (feed) params.set("feed", feed);
+        if (minMagnitude > 0) params.set("minMagnitude", String(minMagnitude));
+        if (limit) params.set("limit", String(limit));
+        const url = `${base}?${params.toString()}`;
+
+        const headers: Record<string, string> = {};
+        if (deviceToken) headers["x-device-token"] = deviceToken;
+
+        const res = await fetch(url, { headers });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        if (mounted) {
+          setData(json);
+          setError(null);
+        }
+      } catch (err: any) {
+        if (mounted) setError(err.message || "Failed to fetch earthquake data");
+      }
+    };
+
+    fetchData();
+    const interval = setInterval(fetchData, (refreshInterval || 60) * 1000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [feed, minMagnitude, limit, refreshInterval, deviceToken]);
+
+  const fs = fontSize || 14;
+
+  function getMagColor(mag: number | null): { bg: string; text: string; border: string } {
+    if (mag == null) return { bg: "rgba(148,163,184,0.15)", text: "#94a3b8", border: "rgba(148,163,184,0.3)" };
+    if (mag >= 5.0) return { bg: "rgba(239,68,68,0.15)", text: "#ef4444", border: "rgba(239,68,68,0.3)" };
+    if (mag >= 2.5) return { bg: "rgba(245,158,11,0.15)", text: "#f59e0b", border: "rgba(245,158,11,0.3)" };
+    return { bg: "rgba(34,197,94,0.15)", text: "#22c55e", border: "rgba(34,197,94,0.3)" };
+  }
+
+  function getAlertColor(alert: string | null): string {
+    if (!alert) return "#94a3b8";
+    switch (alert) {
+      case "red": return "#ef4444";
+      case "orange": return "#f97316";
+      case "yellow": return "#eab308";
+      case "green": return "#22c55e";
+      default: return "#94a3b8";
+    }
+  }
+
+  function timeAgo(isoStr: string | null): string {
+    if (!isoStr) return "";
+    const diff = Date.now() - new Date(isoStr).getTime();
+    if (isNaN(diff)) return "";
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ${mins % 60}m ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  }
+
+  const feedLabels: Record<string, string> = {
+    all_hour: "Past Hour",
+    all_day: "Past 24 Hours",
+    significant_hour: "Significant — Hour",
+    significant_day: "Significant — Day",
+  };
+
+  if (error && !data) {
+    return (
+      <div
+        className="h-full w-full flex items-center justify-center"
+        style={{ fontSize: fs, background: "linear-gradient(135deg, #0a1628 0%, #1a2744 100%)", color: "#ef4444" }}
+        data-testid="earthquakes-error"
+      >
+        <p>Error: {error}</p>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div
+        className="h-full w-full flex items-center justify-center"
+        style={{ fontSize: fs, background: "linear-gradient(135deg, #0a1628 0%, #1a2744 100%)", color: "#94a3b8" }}
+        data-testid="earthquakes-loading"
+      >
+        <div className="animate-pulse">Loading earthquake data...</div>
+      </div>
+    );
+  }
+
+  const earthquakes: any[] = data.earthquakes || [];
+
+  return (
+    <div
+      className="h-full w-full overflow-hidden flex flex-col"
+      style={{
+        fontSize: fs,
+        background: "linear-gradient(135deg, #0a1628 0%, #0f1f3d 50%, #1a2744 100%)",
+        color: "#e2e8f0",
+        fontFamily: "'Inter', 'Segoe UI', sans-serif",
+      }}
+      data-testid="earthquakes-widget"
+    >
+      <div style={{ padding: `${fs * 0.5}px ${fs * 0.8}px` }} className="flex items-center justify-between border-b border-white/10">
+        <div className="flex items-center gap-2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ width: fs * 1.2, height: fs * 1.2, color: "#f59e0b", flexShrink: 0 }}>
+            <circle cx="12" cy="12" r="10" />
+            <path d="M2 12h20" />
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+          </svg>
+          <span style={{ fontSize: fs * 0.7, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "#f59e0b" }}>
+            Earthquakes
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span style={{ fontSize: fs * 0.6, color: "#64748b" }}>
+            {feedLabels[data.feed] || data.feed}
+          </span>
+          <span style={{
+            fontSize: fs * 0.65,
+            color: "#e2e8f0",
+            background: "rgba(245,158,11,0.15)",
+            padding: `${fs * 0.1}px ${fs * 0.35}px`,
+            borderRadius: fs * 0.25,
+            fontWeight: 600,
+          }} data-testid="earthquakes-count">
+            {earthquakes.length}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-auto" style={{ padding: `${fs * 0.3}px 0` }}>
+        {earthquakes.length === 0 ? (
+          <div className="h-full flex items-center justify-center" style={{ color: "#64748b", fontSize: fs * 0.85 }} data-testid="earthquakes-empty">
+            No earthquakes recorded in this window
+          </div>
+        ) : (
+          earthquakes.map((eq: any, idx: number) => {
+            const magColors = getMagColor(eq.magnitude);
+            return (
+              <div
+                key={eq.id || idx}
+                style={{
+                  padding: `${fs * 0.4}px ${fs * 0.8}px`,
+                  borderBottom: "1px solid rgba(255,255,255,0.05)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: fs * 0.5,
+                }}
+                data-testid={`earthquake-row-${idx}`}
+              >
+                <div
+                  style={{
+                    width: fs * 2.8,
+                    height: fs * 2,
+                    flexShrink: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: magColors.bg,
+                    border: `1px solid ${magColors.border}`,
+                    borderRadius: fs * 0.3,
+                    color: magColors.text,
+                    fontWeight: 700,
+                    fontSize: fs * 1.05,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                  data-testid={`earthquake-mag-${idx}`}
+                >
+                  {eq.magnitude != null ? eq.magnitude.toFixed(1) : "?"}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div style={{ fontSize: fs * 0.85, color: "#e2e8f0", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} data-testid={`earthquake-place-${idx}`}>
+                    {eq.place}
+                  </div>
+                  <div style={{ display: "flex", gap: fs * 0.5, marginTop: fs * 0.15, flexWrap: "wrap", alignItems: "center" }}>
+                    <span style={{ fontSize: fs * 0.7, color: "#64748b" }}>
+                      {timeAgo(eq.time)}
+                    </span>
+                    {showDepth && eq.depthKm != null && (
+                      <span style={{ fontSize: fs * 0.65, color: "#64748b" }}>
+                        {eq.depthKm} km deep
+                      </span>
+                    )}
+                    {showTsunami && eq.tsunami && (
+                      <span style={{
+                        fontSize: fs * 0.6,
+                        color: "#38bdf8",
+                        background: "rgba(56,189,248,0.12)",
+                        padding: `0 ${fs * 0.25}px`,
+                        borderRadius: fs * 0.15,
+                        fontWeight: 600,
+                      }} data-testid={`earthquake-tsunami-${idx}`}>
+                        TSUNAMI
+                      </span>
+                    )}
+                    {showAlert && eq.alert && (
+                      <span style={{
+                        fontSize: fs * 0.6,
+                        color: getAlertColor(eq.alert),
+                        background: `${getAlertColor(eq.alert)}18`,
+                        padding: `0 ${fs * 0.25}px`,
+                        borderRadius: fs * 0.15,
+                        fontWeight: 600,
+                        textTransform: "uppercase",
+                      }} data-testid={`earthquake-alert-${idx}`}>
+                        {eq.alert}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {data.cache?.stale && (
+        <div style={{ padding: `${fs * 0.2}px ${fs * 0.8}px`, fontSize: fs * 0.6, color: "#f59e0b", background: "rgba(245,158,11,0.1)", textAlign: "center" }}>
+          Showing cached data — USGS feed temporarily unavailable
+        </div>
+      )}
     </div>
   );
 }
@@ -3854,6 +4117,20 @@ export function ZoneRenderer({
             showSunrise={zone.forecastShowSunrise}
             showHumidity={zone.forecastShowHumidity}
             showHourlyCondition={zone.forecastShowHourlyCondition}
+            deviceToken={deviceToken}
+          />
+        );
+      case "earthquakes":
+        return (
+          <EarthquakesWidget
+            feed={zone.earthquakeFeed}
+            minMagnitude={zone.earthquakeMinMagnitude}
+            limit={zone.earthquakeLimit}
+            refreshInterval={zone.earthquakeRefreshInterval}
+            fontSize={zone.earthquakeFontSize}
+            showDepth={zone.earthquakeShowDepth}
+            showTsunami={zone.earthquakeShowTsunami}
+            showAlert={zone.earthquakeShowAlert}
             deviceToken={deviceToken}
           />
         );

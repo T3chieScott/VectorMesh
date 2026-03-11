@@ -13,7 +13,7 @@ export const screenTypeEnum = pgEnum("screen_type", ["standard", "led_wall"]);
 export const orientationEnum = pgEnum("orientation", ["landscape", "portrait"]);
 export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "gif"]);
 export const programmeStatusEnum = pgEnum("programme_status", ["draft", "published"]);
-export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch"]);
+export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes"]);
 export const scaleModeEnum = pgEnum("scale_mode", ["contain", "cover"]);
 
 // ============ CLIENTS ============
@@ -254,7 +254,7 @@ export type LayoutTemplate = typeof layoutTemplates.$inferSelect;
 export interface LayoutZone {
   id: string;
   name: string;
-  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown" | "shape" | "schedule" | "media_player" | "football_table" | "heathrow_arrivals" | "heathrow_departures" | "weather_forecast" | "spacex_launch";
+  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown" | "shape" | "schedule" | "media_player" | "football_table" | "heathrow_arrivals" | "heathrow_departures" | "weather_forecast" | "spacex_launch" | "earthquakes";
   x: number;
   y: number;
   width: number;
@@ -438,6 +438,15 @@ export interface LayoutZone {
   spacexShowPatch?: boolean;
   spacexShowLinks?: boolean;
   spacexShowLaunchpad?: boolean;
+  // Global Earthquakes configuration
+  earthquakeFeed?: string;
+  earthquakeMinMagnitude?: number;
+  earthquakeLimit?: number;
+  earthquakeRefreshInterval?: number;
+  earthquakeFontSize?: number;
+  earthquakeShowDepth?: boolean;
+  earthquakeShowTsunami?: boolean;
+  earthquakeShowAlert?: boolean;
   // Schedule widget configuration
   scheduleViewMode?: "hourly" | "daily" | "agenda";
   scheduleEntries?: Array<{
