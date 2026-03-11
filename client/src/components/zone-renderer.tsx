@@ -2083,6 +2083,31 @@ function SpaceXLaunchWidget({
           </div>
         </div>
 
+        {(launch.status || launch.probability != null || launch.orbit || launch.missionType) && (
+          <div style={{ marginTop: fs * 0.5, display: "flex", gap: fs * 0.4, flexWrap: "wrap" }}>
+            {launch.status && (
+              <span style={{ fontSize: fs * 0.7, color: "#a78bfa", padding: `${fs * 0.1}px ${fs * 0.3}px`, background: "rgba(167,139,250,0.1)", borderRadius: fs * 0.2 }} data-testid="spacex-status">
+                {launch.status}
+              </span>
+            )}
+            {launch.probability != null && launch.probability >= 0 && (
+              <span style={{ fontSize: fs * 0.7, color: "#34d399", padding: `${fs * 0.1}px ${fs * 0.3}px`, background: "rgba(52,211,153,0.1)", borderRadius: fs * 0.2 }} data-testid="spacex-probability">
+                {launch.probability}% GO
+              </span>
+            )}
+            {launch.missionType && (
+              <span style={{ fontSize: fs * 0.7, color: "#94a3b8", padding: `${fs * 0.1}px ${fs * 0.3}px`, background: "rgba(148,163,184,0.1)", borderRadius: fs * 0.2 }} data-testid="spacex-mission-type">
+                {launch.missionType}
+              </span>
+            )}
+            {launch.orbit && (
+              <span style={{ fontSize: fs * 0.7, color: "#94a3b8", padding: `${fs * 0.1}px ${fs * 0.3}px`, background: "rgba(148,163,184,0.1)", borderRadius: fs * 0.2 }} data-testid="spacex-orbit">
+                {launch.orbit}
+              </span>
+            )}
+          </div>
+        )}
+
         {showLaunchpad && launch.launchpadName && (
           <div style={{ marginTop: fs * 0.5, fontSize: fs * 0.8, color: "#94a3b8" }} data-testid="spacex-launchpad">
             <span style={{ color: "#64748b" }}>Launchpad:</span> {launch.launchpadName}

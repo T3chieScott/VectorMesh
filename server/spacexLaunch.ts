@@ -1,12 +1,12 @@
 import type { Request, Response } from "express";
 
-const DEFAULT_BASE_URL = "https://api.spacexdata.com/v4";
-const DEFAULT_TIMEOUT = 10_000;
-const DEFAULT_CACHE_TTL = 60 * 1000;
+const LL2_BASE_URL = "https://ll.thespacedevs.com/2.2.0";
+const DEFAULT_TIMEOUT = 15_000;
+const DEFAULT_CACHE_TTL = 5 * 60 * 1000;
 
 function getConfig() {
   return {
-    baseUrl: process.env.SPACEX_BASE_URL || DEFAULT_BASE_URL,
+    baseUrl: process.env.LL2_BASE_URL || LL2_BASE_URL,
     timeout: parseInt(process.env.SPACEX_TIMEOUT_MS || "", 10) || DEFAULT_TIMEOUT,
     cacheTtl: parseInt(process.env.SPACEX_CACHE_TTL_MS || "", 10) || DEFAULT_CACHE_TTL,
   };
@@ -33,6 +33,12 @@ interface NormalisedLaunch {
   rocketName: string | null;
   launchpadName: string | null;
   links: LaunchLinks;
+  status: string | null;
+  probability: number | null;
+  missionType: string | null;
+  orbit: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
 }
 
 interface SpaceXPayload {
@@ -49,18 +55,13 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-function buildSpaceXUrl(path: string): string {
-  const cfg = getConfig();
-  return `${cfg.baseUrl}${path}`;
-}
-
 async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<any> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) {
-      throw new Error(`SpaceX API returned ${response.status}: ${response.statusText}`);
+      throw new Error(`Launch Library 2 API returned ${response.status}: ${response.statusText}`);
     }
     return await response.json();
   } finally {
@@ -68,68 +69,77 @@ async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<any
   }
 }
 
-function normaliseNextLaunch(raw: any): NormalisedLaunch {
+function normaliseLL2Launch(raw: any): NormalisedLaunch {
+  const mission = raw?.mission;
+  const pad = raw?.pad;
+  const rocket = raw?.rocket?.configuration;
+
+  let webcast: string | null = null;
+  if (raw?.vidURLs && raw.vidURLs.length > 0) {
+    webcast = raw.vidURLs[0]?.url || null;
+  }
+
+  let article: string | null = null;
+  if (raw?.infoURLs && raw.infoURLs.length > 0) {
+    article = raw.infoURLs[0]?.url || null;
+  }
+
+  let wikipedia: string | null = null;
+  if (rocket?.wiki_url) {
+    wikipedia = rocket.wiki_url;
+  }
+
+  let patchSmall: string | null = null;
+  let patchLarge: string | null = null;
+  if (raw?.mission_patches && raw.mission_patches.length > 0) {
+    patchSmall = raw.mission_patches[0]?.image_url || null;
+    patchLarge = patchSmall;
+  } else if (raw?.image?.image_url) {
+    patchSmall = raw.image.image_url;
+    patchLarge = patchSmall;
+  } else if (raw?.image) {
+    patchSmall = typeof raw.image === "string" ? raw.image : null;
+    patchLarge = patchSmall;
+  }
+
   return {
-    id: raw?.id || "unknown",
+    id: raw?.id?.toString() || "unknown",
     name: raw?.name || "Unknown Mission",
-    net: raw?.date_utc || raw?.date_local || null,
-    upcoming: raw?.upcoming ?? true,
-    flightNumber: raw?.flight_number ?? null,
-    details: raw?.details || null,
-    success: raw?.success ?? null,
-    rocketId: raw?.rocket || null,
-    launchpadId: raw?.launchpad || null,
-    rocketName: null,
-    launchpadName: null,
+    net: raw?.net || null,
+    upcoming: raw?.status?.id !== 3 && raw?.status?.id !== 4 && raw?.status?.id !== 7,
+    flightNumber: null,
+    details: mission?.description || raw?.status?.description || null,
+    success: raw?.status?.id === 3 ? true : raw?.status?.id === 4 ? false : null,
+    rocketId: rocket?.id?.toString() || null,
+    launchpadId: pad?.id?.toString() || null,
+    rocketName: rocket?.full_name || rocket?.name || null,
+    launchpadName: pad?.name || pad?.location?.name || null,
     links: {
-      webcast: raw?.links?.webcast || null,
-      wikipedia: raw?.links?.wikipedia || null,
-      article: raw?.links?.article || null,
-      patchSmall: raw?.links?.patch?.small || null,
-      patchLarge: raw?.links?.patch?.large || null,
+      webcast,
+      wikipedia,
+      article,
+      patchSmall,
+      patchLarge,
     },
+    status: raw?.status?.name || raw?.status?.abbrev || null,
+    probability: raw?.probability != null && raw.probability >= 0 ? raw.probability : null,
+    missionType: mission?.type || null,
+    orbit: mission?.orbit?.name || mission?.orbit?.abbrev || null,
+    windowStart: raw?.window_start || null,
+    windowEnd: raw?.window_end || null,
   };
 }
 
-async function enrichLaunch(launch: NormalisedLaunch, timeoutMs: number): Promise<NormalisedLaunch> {
-  const enriched = { ...launch };
-
-  const promises: Promise<void>[] = [];
-
-  if (launch.rocketId) {
-    promises.push(
-      fetchJsonWithTimeout(buildSpaceXUrl(`/rockets/${launch.rocketId}`), timeoutMs)
-        .then((r) => { enriched.rocketName = r?.name || null; })
-        .catch(() => {})
-    );
-  }
-
-  if (launch.launchpadId) {
-    promises.push(
-      fetchJsonWithTimeout(buildSpaceXUrl(`/launchpads/${launch.launchpadId}`), timeoutMs)
-        .then((p) => { enriched.launchpadName = p?.full_name || p?.name || null; })
-        .catch(() => {})
-    );
-  }
-
-  await Promise.all(promises);
-  return enriched;
-}
-
-function normaliseSpaceXPayload(
+function buildPayload(
   launch: NormalisedLaunch | null,
   cacheInfo: { hit: boolean; stale: boolean }
 ): SpaceXPayload {
   return {
-    source: { provider: "SpaceX API", documentedApi: true },
+    source: { provider: "Launch Library 2 (thespacedevs.com)", documentedApi: true },
     updatedAt: new Date().toISOString(),
     launch,
     cache: cacheInfo,
   };
-}
-
-function createCacheKey(): string {
-  return "next-launch";
 }
 
 export function clearSpaceXCache(): void {
@@ -138,7 +148,7 @@ export function clearSpaceXCache(): void {
 
 export async function getNextSpaceXLaunch(): Promise<SpaceXPayload> {
   const cfg = getConfig();
-  const cacheKey = createCacheKey();
+  const cacheKey = "spacex-next-launch";
   const now = Date.now();
   const cached = cache.get(cacheKey);
 
@@ -147,13 +157,15 @@ export async function getNextSpaceXLaunch(): Promise<SpaceXPayload> {
   }
 
   try {
-    const url = buildSpaceXUrl("/launches/next");
+    const url = `${cfg.baseUrl}/launch/upcoming/?mode=detailed&lsp__name=SpaceX&limit=1&ordering=net`;
     const raw = await fetchJsonWithTimeout(url, cfg.timeout);
 
-    let launch = normaliseNextLaunch(raw);
-    launch = await enrichLaunch(launch, cfg.timeout);
+    let launch: NormalisedLaunch | null = null;
+    if (raw?.results && raw.results.length > 0) {
+      launch = normaliseLL2Launch(raw.results[0]);
+    }
 
-    const payload = normaliseSpaceXPayload(launch, { hit: false, stale: false });
+    const payload = buildPayload(launch, { hit: false, stale: false });
     cache.set(cacheKey, { data: payload, timestamp: now });
     return payload;
   } catch (err) {
@@ -168,7 +180,7 @@ export function createNextSpaceXLaunchHandler() {
   return async (_req: Request, res: Response) => {
     try {
       const result = await getNextSpaceXLaunch();
-      res.set("Cache-Control", "public, max-age=30");
+      res.set("Cache-Control", "public, max-age=60");
       res.json(result);
     } catch (err: any) {
       res.status(502).json({
