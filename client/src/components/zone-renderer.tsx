@@ -1910,9 +1910,9 @@ function EarthquakesWidget({
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
-  const [fittingRows, setFittingRows] = useState<number | null>(null);
+  const [rowsPerPage, setRowsPerPage] = useState<number>(itemsPerPage || 8);
   const listContainerRef = useRef<HTMLDivElement>(null);
-  const measureRowRef = useRef<HTMLDivElement>(null);
+  const sampleRowRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollInnerRef = useRef<HTMLDivElement>(null);
   const animationRef = useRef<number>(0);
@@ -1985,49 +1985,47 @@ function EarthquakesWidget({
   }, [displayMode, scrollSpeed, data]);
 
   useEffect(() => {
-    if (displayMode !== "list" || !data) return;
-    const eqs: any[] = data.earthquakes || [];
-    const maxPerPage = itemsPerPage || 8;
-    const perPage = fittingRows != null ? Math.min(maxPerPage, Math.max(1, fittingRows)) : maxPerPage;
-    const totalPages = Math.max(1, Math.ceil(eqs.length / perPage));
-    if (totalPages <= 1) return;
+    if (displayMode !== "list") return;
+    const measure = () => {
+      const container = listContainerRef.current;
+      if (!container) return;
+      const containerH = container.clientHeight;
+      const sampleH = sampleRowRef.current?.offsetHeight || (fontSize + 10);
+      if (sampleH > 0) {
+        const fits = Math.max(1, Math.floor(containerH / sampleH));
+        setRowsPerPage(fits);
+      }
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (listContainerRef.current) observer.observe(listContainerRef.current);
+    return () => observer.disconnect();
+  }, [displayMode, fontSize, data]);
 
-    const duration = (pageDuration || 8) * 1000;
-    const timer = setInterval(() => {
-      setCurrentPage((prev) => (prev + 1) % totalPages);
-    }, duration);
-    return () => clearInterval(timer);
-  }, [displayMode, data, itemsPerPage, pageDuration, fittingRows]);
+  const earthquakes: any[] = data?.earthquakes || [];
+  const totalPages = Math.max(1, Math.ceil(earthquakes.length / rowsPerPage));
 
   useEffect(() => {
     setCurrentPage(0);
   }, [data]);
 
   useEffect(() => {
-    if (displayMode !== "list") {
-      setFittingRows(null);
+    if (totalPages <= 1) {
+      setCurrentPage(0);
       return;
     }
-    const measure = () => {
-      const container = listContainerRef.current;
-      const measureRow = measureRowRef.current;
-      if (!container || !measureRow) return;
-      const containerH = container.clientHeight;
-      const rowH = measureRow.getBoundingClientRect().height;
-      if (rowH > 0 && containerH > 0) {
-        setFittingRows(Math.max(1, Math.floor(containerH / rowH)));
-      }
-    };
-    const frame = requestAnimationFrame(() => {
-      measure();
-    });
-    const ro = new ResizeObserver(measure);
-    if (listContainerRef.current) ro.observe(listContainerRef.current);
-    return () => {
-      cancelAnimationFrame(frame);
-      ro.disconnect();
-    };
-  }, [displayMode, data, fontSize, currentPage]);
+    const duration = (pageDuration || 8) * 1000;
+    const timer = setInterval(() => {
+      setCurrentPage((prev) => (prev + 1) % totalPages);
+    }, duration);
+    return () => clearInterval(timer);
+  }, [totalPages, pageDuration]);
+
+  useEffect(() => {
+    if (currentPage >= totalPages) {
+      setCurrentPage(0);
+    }
+  }, [totalPages, currentPage]);
 
   const fs = fontSize || 14;
 
@@ -2107,8 +2105,6 @@ function EarthquakesWidget({
       </div>
     );
   }
-
-  const earthquakes: any[] = data.earthquakes || [];
 
   function lonToX(lon: number): number {
     return ((lon + 180) / 360) * WORLD_MAP_VIEWBOX.width + WORLD_MAP_VIEWBOX.x;
@@ -2375,60 +2371,49 @@ function EarthquakesWidget({
       data-testid="earthquakes-widget"
     >
       {renderHeader()}
-      {earthquakes.length > 0 && (
-        <div
-          ref={measureRowRef}
-          style={{ position: "absolute", visibility: "hidden", pointerEvents: "none", width: "100%", left: 0, top: -9999 }}
-          aria-hidden="true"
-        >
-          {renderRow(earthquakes[0], -1)}
-        </div>
-      )}
-      <div className="flex-1 overflow-hidden flex flex-col" style={{ padding: `${fs * 0.3}px 0` }}>
+      <div ref={listContainerRef} style={{ flex: 1, overflow: "hidden" }}>
         {earthquakes.length === 0 ? (
           <div className="h-full flex items-center justify-center" style={{ color: "#64748b", fontSize: fs * 0.85 }} data-testid="earthquakes-empty">
             No earthquakes recorded in this window
           </div>
         ) : (() => {
-          const maxPerPage = itemsPerPage || 8;
-          const perPage = fittingRows != null ? Math.min(maxPerPage, Math.max(1, fittingRows)) : maxPerPage;
-          const totalPages = Math.max(1, Math.ceil(earthquakes.length / perPage));
           const safePage = currentPage % totalPages;
-          const start = safePage * perPage;
-          const pageItems = earthquakes.slice(start, start + perPage);
-          return (
-            <>
-              <div ref={listContainerRef} className="flex-1 overflow-hidden">
-                {pageItems.map((eq: any, idx: number) => renderRow(eq, start + idx))}
-              </div>
-              {totalPages > 1 && (
-                <div
-                  className="flex items-center justify-center gap-1"
-                  style={{
-                    padding: `${fs * 0.3}px`,
-                    borderTop: "1px solid rgba(255,255,255,0.05)",
-                    flexShrink: 0,
-                  }}
-                  data-testid="earthquakes-page-indicator"
-                >
-                  {Array.from({ length: totalPages }, (_, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        width: i === safePage ? fs * 1.2 : fs * 0.4,
-                        height: fs * 0.4,
-                        borderRadius: fs * 0.2,
-                        background: i === safePage ? "#f59e0b" : "rgba(255,255,255,0.15)",
-                        transition: "all 0.3s ease",
-                      }}
-                    />
-                  ))}
-                </div>
-              )}
-            </>
-          );
+          const start = safePage * rowsPerPage;
+          const pageItems = earthquakes.slice(start, start + rowsPerPage);
+          return pageItems.map((eq: any, idx: number) => (
+            <div key={eq.id || (start + idx)} ref={idx === 0 ? sampleRowRef : undefined}>
+              {renderRow(eq, start + idx)}
+            </div>
+          ));
         })()}
       </div>
+      {totalPages > 1 && (
+        <div
+          className="flex items-center justify-center gap-1"
+          style={{
+            padding: `${fs * 0.3}px`,
+            borderTop: "1px solid rgba(255,255,255,0.05)",
+            flexShrink: 0,
+          }}
+          data-testid="earthquakes-page-indicator"
+        >
+          {Array.from({ length: totalPages }, (_, i) => {
+            const safePage = currentPage % totalPages;
+            return (
+              <div
+                key={i}
+                style={{
+                  width: i === safePage ? fs * 1.2 : fs * 0.4,
+                  height: fs * 0.4,
+                  borderRadius: fs * 0.2,
+                  background: i === safePage ? "#f59e0b" : "rgba(255,255,255,0.15)",
+                  transition: "all 0.3s ease",
+                }}
+              />
+            );
+          })}
+        </div>
+      )}
       {renderStaleBar()}
     </div>
   );
