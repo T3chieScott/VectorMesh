@@ -599,6 +599,8 @@ const zoneFormSchema = z.object({
   earthquakeShowDepth: z.boolean().optional(),
   earthquakeShowTsunami: z.boolean().optional(),
   earthquakeShowAlert: z.boolean().optional(),
+  earthquakeDisplayMode: z.enum(["list", "auto_scroll", "map"]).optional(),
+  earthquakeScrollSpeed: z.number().min(5).max(200).optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
     id: z.string(),
@@ -1353,6 +1355,8 @@ function ZoneEditorDialog({
       earthquakeShowDepth: true,
       earthquakeShowTsunami: true,
       earthquakeShowAlert: true,
+      earthquakeDisplayMode: "list",
+      earthquakeScrollSpeed: 30,
       scheduleViewMode: "hourly",
       scheduleEntries: [],
       scheduleShowCurrentTime: true,
@@ -1543,6 +1547,8 @@ function ZoneEditorDialog({
           earthquakeShowDepth: zone.earthquakeShowDepth ?? true,
           earthquakeShowTsunami: zone.earthquakeShowTsunami ?? true,
           earthquakeShowAlert: zone.earthquakeShowAlert ?? true,
+          earthquakeDisplayMode: zone.earthquakeDisplayMode || "list",
+          earthquakeScrollSpeed: zone.earthquakeScrollSpeed ?? 30,
           scheduleViewMode: zone.scheduleViewMode || "hourly",
           scheduleEntries: zone.scheduleEntries || [],
           scheduleShowCurrentTime: zone.scheduleShowCurrentTime ?? true,
@@ -1724,6 +1730,8 @@ function ZoneEditorDialog({
           earthquakeShowDepth: true,
           earthquakeShowTsunami: true,
           earthquakeShowAlert: true,
+          earthquakeDisplayMode: "list",
+          earthquakeScrollSpeed: 30,
           scheduleViewMode: "hourly",
           scheduleEntries: [],
           scheduleShowCurrentTime: true,
@@ -6152,6 +6160,53 @@ function ZoneEditorDialog({
                   <Globe className="h-4 w-4" />
                   Global Earthquakes Settings
                 </div>
+                <FormField
+                  control={form.control}
+                  name="earthquakeDisplayMode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Display Mode</FormLabel>
+                      <Select
+                        value={field.value || "list"}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-earthquake-display-mode">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="list">List (static scroll)</SelectItem>
+                          <SelectItem value="auto_scroll">Auto-scroll (continuous loop)</SelectItem>
+                          <SelectItem value="map">World Map</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                {form.watch("earthquakeDisplayMode") === "auto_scroll" && (
+                  <FormField
+                    control={form.control}
+                    name="earthquakeScrollSpeed"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Scroll Speed (px/s)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={5}
+                            max={200}
+                            value={field.value ?? 30}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 30)}
+                            data-testid="input-earthquake-scroll-speed"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
                 <FormField
                   control={form.control}
                   name="earthquakeFeed"

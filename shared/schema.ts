@@ -447,6 +447,8 @@ export interface LayoutZone {
   earthquakeShowDepth?: boolean;
   earthquakeShowTsunami?: boolean;
   earthquakeShowAlert?: boolean;
+  earthquakeDisplayMode?: "list" | "auto_scroll" | "map";
+  earthquakeScrollSpeed?: number;
   // Schedule widget configuration
   scheduleViewMode?: "hourly" | "daily" | "agenda";
   scheduleEntries?: Array<{
