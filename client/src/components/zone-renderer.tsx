@@ -34,6 +34,7 @@ import {
   ArrowUp,
   Rocket,
   Globe,
+  Radar,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
@@ -77,6 +78,7 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   weather_forecast: CloudRain,
   spacex_launch: Rocket,
   earthquakes: Globe,
+  aircraft_radar: Radar,
 };
 
 function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
@@ -2419,6 +2421,483 @@ function EarthquakesWidget({
   );
 }
 
+function AircraftRadarWidget({
+  refreshInterval = 15,
+  fontSize = 14,
+  boundsLamin = 51.2,
+  boundsLomin = -0.9,
+  boundsLamax = 51.8,
+  boundsLomax = 0.3,
+  limit = 100,
+  showCallsign = true,
+  showAltitude = true,
+  showSpeed = true,
+  showHeading = true,
+  showCountry = false,
+  displayMode = "radar",
+  scrollSpeed = 30,
+  itemsPerPage = 8,
+  pageDuration = 8,
+  deviceToken,
+}: {
+  refreshInterval?: number;
+  fontSize?: number;
+  boundsLamin?: number;
+  boundsLomin?: number;
+  boundsLamax?: number;
+  boundsLomax?: number;
+  limit?: number;
+  showCallsign?: boolean;
+  showAltitude?: boolean;
+  showSpeed?: boolean;
+  showHeading?: boolean;
+  showCountry?: boolean;
+  displayMode?: string;
+  scrollSpeed?: number;
+  itemsPerPage?: number;
+  pageDuration?: number;
+  deviceToken?: string;
+}) {
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState<number>(itemsPerPage || 8);
+  const listContainerRef = useRef<HTMLDivElement>(null);
+  const sampleRowRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrollInnerRef = useRef<HTMLDivElement>(null);
+  const animationRef = useRef<number>(0);
+  const sweepRef = useRef<number>(0);
+  const sweepAngleRef = useRef<number>(0);
+
+  useEffect(() => {
+    let mounted = true;
+    const fetchData = async () => {
+      try {
+        const base = deviceToken
+          ? `/api/player/widgets/aircraft/overhead`
+          : `/api/widgets/aircraft/overhead`;
+        const params = new URLSearchParams();
+        params.set("lamin", String(boundsLamin));
+        params.set("lomin", String(boundsLomin));
+        params.set("lamax", String(boundsLamax));
+        params.set("lomax", String(boundsLomax));
+        if (limit) params.set("limit", String(limit));
+        const url = `${base}?${params.toString()}`;
+        const headers: Record<string, string> = {};
+        if (deviceToken) headers["x-device-token"] = deviceToken;
+        const res = await fetch(url, { headers });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        if (mounted) { setData(json); setError(null); }
+      } catch (err: any) {
+        if (mounted) setError(err.message || "Failed to fetch aircraft data");
+      }
+    };
+    fetchData();
+    const interval = setInterval(fetchData, (refreshInterval || 15) * 1000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, [boundsLamin, boundsLomin, boundsLamax, boundsLomax, limit, refreshInterval, deviceToken]);
+
+  useEffect(() => {
+    if (displayMode !== "auto_scroll" || !data) return;
+    const container = scrollContainerRef.current;
+    const inner = scrollInnerRef.current;
+    if (!container || !inner) return;
+    let scrollPos = 0;
+    let lastTime = performance.now();
+    const speed = scrollSpeed || 30;
+    const halfHeight = inner.scrollHeight / 2;
+    if (halfHeight <= 0) return;
+    const tick = (now: number) => {
+      const dt = (now - lastTime) / 1000;
+      lastTime = now;
+      scrollPos += speed * dt;
+      if (scrollPos >= halfHeight) scrollPos -= halfHeight;
+      container.scrollTop = scrollPos;
+      animationRef.current = requestAnimationFrame(tick);
+    };
+    animationRef.current = requestAnimationFrame(tick);
+    return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current); };
+  }, [displayMode, scrollSpeed, data]);
+
+  useEffect(() => {
+    if (displayMode !== "list") return;
+    const measure = () => {
+      const container = listContainerRef.current;
+      if (!container) return;
+      const containerH = container.clientHeight;
+      const sampleH = sampleRowRef.current?.offsetHeight || (fontSize + 10);
+      if (sampleH > 0) {
+        const fits = Math.max(1, Math.floor(containerH / sampleH));
+        setRowsPerPage(fits);
+      }
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (listContainerRef.current) observer.observe(listContainerRef.current);
+    return () => observer.disconnect();
+  }, [displayMode, fontSize, data]);
+
+  useEffect(() => {
+    if (displayMode !== "radar") return;
+    let lastTime = performance.now();
+    const tick = (now: number) => {
+      const dt = (now - lastTime) / 1000;
+      lastTime = now;
+      sweepAngleRef.current = (sweepAngleRef.current + 45 * dt) % 360;
+      sweepRef.current = requestAnimationFrame(tick);
+    };
+    sweepRef.current = requestAnimationFrame(tick);
+    return () => { if (sweepRef.current) cancelAnimationFrame(sweepRef.current); };
+  }, [displayMode]);
+
+  const aircraft: any[] = data?.aircraft || [];
+  const totalPages = Math.max(1, Math.ceil(aircraft.length / rowsPerPage));
+
+  useEffect(() => { setCurrentPage(0); }, [data]);
+
+  useEffect(() => {
+    if (totalPages <= 1) { setCurrentPage(0); return; }
+    const duration = (pageDuration || 8) * 1000;
+    const timer = setInterval(() => {
+      setCurrentPage((prev) => (prev + 1) % totalPages);
+    }, duration);
+    return () => clearInterval(timer);
+  }, [totalPages, pageDuration]);
+
+  useEffect(() => {
+    if (currentPage >= totalPages) setCurrentPage(0);
+  }, [totalPages, currentPage]);
+
+  const fs = fontSize || 14;
+
+  function getAltColor(alt: number | null, onGround: boolean): string {
+    if (onGround) return "#f59e0b";
+    if (alt == null) return "#94a3b8";
+    if (alt > 10000) return "#38bdf8";
+    if (alt > 5000) return "#22c55e";
+    if (alt > 1000) return "#a3e635";
+    return "#fbbf24";
+  }
+
+  function formatAlt(m: number | null): string {
+    if (m == null) return "—";
+    const ft = Math.round(m * 3.28084);
+    if (ft >= 10000) return `${(ft / 1000).toFixed(1)}k ft`;
+    return `${ft.toLocaleString()} ft`;
+  }
+
+  function formatSpeed(ms: number | null): string {
+    if (ms == null) return "—";
+    const kts = Math.round(ms * 1.94384);
+    return `${kts} kts`;
+  }
+
+  function formatHeading(deg: number | null): string {
+    if (deg == null) return "—";
+    return `${Math.round(deg)}°`;
+  }
+
+  const renderRow = (ac: any, idx: number, keySuffix = "") => {
+    const statusColor = ac.onGround ? "#f59e0b" : "#22c55e";
+    return (
+      <div
+        key={`${ac.icao24 || idx}${keySuffix}`}
+        style={{
+          padding: `${fs * 0.4}px ${fs * 0.8}px`,
+          borderBottom: "1px solid rgba(255,255,255,0.05)",
+          display: "flex",
+          alignItems: "center",
+          gap: fs * 0.5,
+        }}
+        data-testid={`aircraft-row-${idx}`}
+      >
+        <div style={{
+          width: fs * 0.5, height: fs * 0.5, borderRadius: "50%",
+          background: statusColor, flexShrink: 0,
+        }} />
+        <div style={{
+          width: fs * 4, flexShrink: 0, fontWeight: 700,
+          fontSize: fs * 0.9, color: "#e2e8f0",
+          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+        }} data-testid={`aircraft-callsign-${idx}`}>
+          {showCallsign ? (ac.callsign || ac.icao24?.toUpperCase()) : ac.icao24?.toUpperCase()}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div style={{ display: "flex", gap: fs * 0.6, flexWrap: "wrap", alignItems: "center" }}>
+            {showAltitude && (
+              <span style={{ fontSize: fs * 0.75, color: getAltColor(ac.baroAltitude, ac.onGround) }}>
+                {ac.onGround ? "GND" : formatAlt(ac.baroAltitude)}
+              </span>
+            )}
+            {showSpeed && (
+              <span style={{ fontSize: fs * 0.75, color: "#94a3b8" }}>
+                {formatSpeed(ac.velocity)}
+              </span>
+            )}
+            {showHeading && ac.heading != null && (
+              <span style={{ fontSize: fs * 0.75, color: "#94a3b8" }}>
+                {formatHeading(ac.heading)}
+              </span>
+            )}
+            {showCountry && (
+              <span style={{ fontSize: fs * 0.65, color: "#64748b" }}>
+                {ac.originCountry}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderHeader = () => (
+    <div style={{ padding: `${fs * 0.5}px ${fs * 0.8}px` }} className="flex items-center justify-between border-b border-white/10">
+      <div className="flex items-center gap-2">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ width: fs * 1.2, height: fs * 1.2, color: "#22c55e", flexShrink: 0 }}>
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 2v10l7 4" />
+        </svg>
+        <span style={{ fontSize: fs * 0.7, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "#22c55e" }}>
+          Aircraft Overhead
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        {data?.summary && (
+          <>
+            <span style={{ fontSize: fs * 0.6, color: "#22c55e" }} data-testid="aircraft-airborne-count">
+              {data.summary.airborne} airborne
+            </span>
+            <span style={{ fontSize: fs * 0.6, color: "#f59e0b" }} data-testid="aircraft-ground-count">
+              {data.summary.onGround} ground
+            </span>
+          </>
+        )}
+        <span style={{
+          fontSize: fs * 0.65, color: "#e2e8f0",
+          background: "rgba(34,197,94,0.15)",
+          padding: `${fs * 0.1}px ${fs * 0.35}px`,
+          borderRadius: fs * 0.25, fontWeight: 600,
+        }} data-testid="aircraft-count">
+          {aircraft.length}
+        </span>
+      </div>
+    </div>
+  );
+
+  const renderStaleBar = () => data?.cache?.stale ? (
+    <div style={{ padding: `${fs * 0.2}px ${fs * 0.8}px`, fontSize: fs * 0.6, color: "#f59e0b", background: "rgba(245,158,11,0.1)", textAlign: "center" }}>
+      Showing cached data — OpenSky feed temporarily unavailable
+    </div>
+  ) : null;
+
+  if (error && !data) {
+    return (
+      <div className="h-full w-full flex items-center justify-center"
+        style={{ fontSize: fs, background: "linear-gradient(135deg, #0a1628 0%, #1a2744 100%)", color: "#ef4444" }}
+        data-testid="aircraft-error">
+        <p>Error: {error}</p>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="h-full w-full flex items-center justify-center"
+        style={{ fontSize: fs, background: "linear-gradient(135deg, #0a1628 0%, #1a2744 100%)", color: "#94a3b8" }}
+        data-testid="aircraft-loading">
+        <div className="animate-pulse">Loading aircraft data...</div>
+      </div>
+    );
+  }
+
+  if (displayMode === "radar") {
+    const centerLat = (boundsLamin + boundsLamax) / 2;
+    const centerLon = (boundsLomin + boundsLomax) / 2;
+    const latRange = boundsLamax - boundsLamin;
+    const lonRange = boundsLomax - boundsLomin;
+
+    const latLonToXY = (lat: number, lon: number): { x: number; y: number } => {
+      const x = ((lon - centerLon) / lonRange) * 400;
+      const y = -((lat - centerLat) / latRange) * 400;
+      return { x, y };
+    };
+
+    return (
+      <div className="h-full w-full overflow-hidden flex flex-col"
+        style={{
+          fontSize: fs,
+          background: "radial-gradient(ellipse at center, #0a1e0a 0%, #0a1628 60%, #050d1a 100%)",
+          color: "#e2e8f0",
+          fontFamily: "'Inter', 'Segoe UI', sans-serif",
+        }}
+        data-testid="aircraft-widget">
+        {renderHeader()}
+        <div className="flex-1 relative" style={{ minHeight: 0 }}>
+          {aircraft.length === 0 ? (
+            <div className="h-full flex items-center justify-center" style={{ color: "#64748b", fontSize: fs * 0.85 }} data-testid="aircraft-empty">
+              No aircraft detected in this area
+            </div>
+          ) : (
+            <svg viewBox="-250 -250 500 500" preserveAspectRatio="xMidYMid meet"
+              style={{ width: "100%", height: "100%", display: "block" }}
+              data-testid="aircraft-radar">
+              <defs>
+                <style>{`
+                  @keyframes radar-sweep {
+                    from { transform: rotate(0deg); }
+                    to { transform: rotate(360deg); }
+                  }
+                  .radar-sweep { animation: radar-sweep 4s linear infinite; transform-origin: center; }
+                `}</style>
+                <radialGradient id="radar-sweep-grad" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stopColor="rgba(34,197,94,0.2)" />
+                  <stop offset="100%" stopColor="rgba(34,197,94,0)" />
+                </radialGradient>
+              </defs>
+
+              <circle cx="0" cy="0" r="200" fill="none" stroke="rgba(34,197,94,0.15)" strokeWidth="0.5" />
+              <circle cx="0" cy="0" r="150" fill="none" stroke="rgba(34,197,94,0.1)" strokeWidth="0.5" />
+              <circle cx="0" cy="0" r="100" fill="none" stroke="rgba(34,197,94,0.1)" strokeWidth="0.5" />
+              <circle cx="0" cy="0" r="50" fill="none" stroke="rgba(34,197,94,0.08)" strokeWidth="0.5" />
+              <line x1="-200" y1="0" x2="200" y2="0" stroke="rgba(34,197,94,0.08)" strokeWidth="0.5" />
+              <line x1="0" y1="-200" x2="0" y2="200" stroke="rgba(34,197,94,0.08)" strokeWidth="0.5" />
+              <line x1="-141" y1="-141" x2="141" y2="141" stroke="rgba(34,197,94,0.05)" strokeWidth="0.5" />
+              <line x1="-141" y1="141" x2="141" y2="-141" stroke="rgba(34,197,94,0.05)" strokeWidth="0.5" />
+
+              <g className="radar-sweep">
+                <line x1="0" y1="0" x2="200" y2="0" stroke="rgba(34,197,94,0.6)" strokeWidth="1" />
+                <path d="M 0 0 L 200 0 A 200 200 0 0 0 190 -50 Z" fill="url(#radar-sweep-grad)" opacity="0.4" />
+              </g>
+
+              <circle cx="0" cy="0" r="3" fill="#22c55e" opacity="0.8" />
+
+              {aircraft.map((ac: any, idx: number) => {
+                if (ac.latitude == null || ac.longitude == null) return null;
+                const pos = latLonToXY(ac.latitude, ac.longitude);
+                if (Math.abs(pos.x) > 210 || Math.abs(pos.y) > 210) return null;
+                const color = ac.onGround ? "#f59e0b" : "#22c55e";
+                const heading = ac.heading != null ? ac.heading : 0;
+                return (
+                  <g key={ac.icao24 || idx} data-testid={`aircraft-blip-${idx}`}>
+                    <g transform={`translate(${pos.x},${pos.y}) rotate(${heading})`}>
+                      <polygon points="0,-6 -3,4 0,2 3,4" fill={color} opacity="0.9" />
+                    </g>
+                    {showCallsign && ac.callsign && (
+                      <text x={pos.x + 6} y={pos.y - 6}
+                        fill={color} fontSize="8" fontFamily="'JetBrains Mono', monospace"
+                        opacity="0.7">
+                        {ac.callsign}
+                      </text>
+                    )}
+                    {showAltitude && !ac.onGround && ac.baroAltitude != null && (
+                      <text x={pos.x + 6} y={pos.y + 4}
+                        fill="#94a3b8" fontSize="6" fontFamily="'JetBrains Mono', monospace"
+                        opacity="0.5">
+                        {formatAlt(ac.baroAltitude)}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+
+              <g transform="translate(140, 170)">
+                <rect x="0" y="0" width="65" height="46" rx="3" fill="rgba(10,22,40,0.85)" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+                <polygon points="8,10 5,16 8,14 11,16" fill="#22c55e" />
+                <text x="18" y="15" fill="#94a3b8" fontSize="7" fontFamily="sans-serif">Airborne</text>
+                <polygon points="8,26 5,32 8,30 11,32" fill="#f59e0b" />
+                <text x="18" y="31" fill="#94a3b8" fontSize="7" fontFamily="sans-serif">Ground</text>
+              </g>
+            </svg>
+          )}
+        </div>
+        {renderStaleBar()}
+      </div>
+    );
+  }
+
+  if (displayMode === "auto_scroll") {
+    return (
+      <div className="h-full w-full overflow-hidden flex flex-col"
+        style={{
+          fontSize: fs,
+          background: "linear-gradient(135deg, #0a1628 0%, #0f1f3d 50%, #1a2744 100%)",
+          color: "#e2e8f0",
+          fontFamily: "'Inter', 'Segoe UI', sans-serif",
+        }}
+        data-testid="aircraft-widget">
+        {renderHeader()}
+        <div ref={scrollContainerRef} className="flex-1 overflow-hidden" style={{ padding: `${fs * 0.3}px 0` }}>
+          {aircraft.length === 0 ? (
+            <div className="h-full flex items-center justify-center" style={{ color: "#64748b", fontSize: fs * 0.85 }} data-testid="aircraft-empty">
+              No aircraft detected in this area
+            </div>
+          ) : (
+            <div ref={scrollInnerRef}>
+              {aircraft.map((ac: any, idx: number) => renderRow(ac, idx, "-a"))}
+              {aircraft.map((ac: any, idx: number) => renderRow(ac, idx, "-b"))}
+            </div>
+          )}
+        </div>
+        {renderStaleBar()}
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full w-full overflow-hidden flex flex-col relative"
+      style={{
+        fontSize: fs,
+        background: "linear-gradient(135deg, #0a1628 0%, #0f1f3d 50%, #1a2744 100%)",
+        color: "#e2e8f0",
+        fontFamily: "'Inter', 'Segoe UI', sans-serif",
+      }}
+      data-testid="aircraft-widget">
+      {renderHeader()}
+      <div ref={listContainerRef} style={{ flex: 1, overflow: "hidden" }}>
+        {aircraft.length === 0 ? (
+          <div className="h-full flex items-center justify-center" style={{ color: "#64748b", fontSize: fs * 0.85 }} data-testid="aircraft-empty">
+            No aircraft detected in this area
+          </div>
+        ) : (() => {
+          const safePage = currentPage % totalPages;
+          const start = safePage * rowsPerPage;
+          const pageItems = aircraft.slice(start, start + rowsPerPage);
+          return pageItems.map((ac: any, idx: number) => (
+            <div key={ac.icao24 || (start + idx)} ref={idx === 0 ? sampleRowRef : undefined}>
+              {renderRow(ac, start + idx)}
+            </div>
+          ));
+        })()}
+      </div>
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-1"
+          style={{
+            padding: `${fs * 0.3}px`,
+            borderTop: "1px solid rgba(255,255,255,0.05)",
+            flexShrink: 0,
+          }}
+          data-testid="aircraft-page-indicator">
+          {Array.from({ length: totalPages }, (_, i) => {
+            const safePage = currentPage % totalPages;
+            return (
+              <div key={i} style={{
+                width: i === safePage ? fs * 1.2 : fs * 0.4,
+                height: fs * 0.4,
+                borderRadius: fs * 0.2,
+                background: i === safePage ? "#22c55e" : "rgba(255,255,255,0.15)",
+                transition: "all 0.3s ease",
+              }} />
+            );
+          })}
+        </div>
+      )}
+      {renderStaleBar()}
+    </div>
+  );
+}
+
 function SpaceXLaunchWidget({
   refreshInterval = 60,
   fontSize = 14,
@@ -4417,6 +4896,28 @@ export function ZoneRenderer({
             scrollSpeed={zone.earthquakeScrollSpeed}
             itemsPerPage={zone.earthquakeItemsPerPage}
             pageDuration={zone.earthquakePageDuration}
+            deviceToken={deviceToken}
+          />
+        );
+      case "aircraft_radar":
+        return (
+          <AircraftRadarWidget
+            refreshInterval={zone.aircraftRefreshInterval}
+            fontSize={zone.aircraftFontSize}
+            boundsLamin={zone.aircraftBoundsLamin}
+            boundsLomin={zone.aircraftBoundsLomin}
+            boundsLamax={zone.aircraftBoundsLamax}
+            boundsLomax={zone.aircraftBoundsLomax}
+            limit={zone.aircraftLimit}
+            showCallsign={zone.aircraftShowCallsign}
+            showAltitude={zone.aircraftShowAltitude}
+            showSpeed={zone.aircraftShowSpeed}
+            showHeading={zone.aircraftShowHeading}
+            showCountry={zone.aircraftShowCountry}
+            displayMode={zone.aircraftDisplayMode}
+            scrollSpeed={zone.aircraftScrollSpeed}
+            itemsPerPage={zone.aircraftItemsPerPage}
+            pageDuration={zone.aircraftPageDuration}
             deviceToken={deviceToken}
           />
         );

@@ -18,6 +18,7 @@ import { createHeathrowArrivalsHandler, createHeathrowDeparturesHandler } from "
 import { createWeatherForecastHandler } from "./weatherForecast";
 import { createNextSpaceXLaunchHandler } from "./spacexLaunch";
 import { createEarthquakesHandler } from "./usgsEarthquakes";
+import { createAircraftOverheadHandler } from "./openSkyAircraft";
 
 function generateTwoFactorSecret(email: string) {
   const secret = new OTPAuth.Secret({ size: 20 });
@@ -2369,6 +2370,10 @@ export async function registerRoutes(
   const handleEarthquakes = createEarthquakesHandler();
   app.get("/api/widgets/earthquakes/recent", requireAuth, handleEarthquakes);
   app.get("/api/player/widgets/earthquakes/recent", validateDeviceToken, handleEarthquakes);
+
+  const handleAircraftOverhead = createAircraftOverheadHandler();
+  app.get("/api/widgets/aircraft/overhead", requireAuth, handleAircraftOverhead);
+  app.get("/api/player/widgets/aircraft/overhead", validateDeviceToken, handleAircraftOverhead);
 
   // ============ ADMIN: USER MANAGEMENT ============
 

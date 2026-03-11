@@ -112,6 +112,7 @@ import {
   CloudRain,
   Rocket,
   Globe,
+  Radar,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -383,6 +384,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   weather_forecast: CloudRain,
   spacex_launch: Rocket,
   earthquakes: Globe,
+  aircraft_radar: Radar,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -407,11 +409,12 @@ const zoneTypeLabels: Record<string, string> = {
   weather_forecast: "Weather Forecast",
   spacex_launch: "SpaceX Launch Countdown",
   earthquakes: "Global Earthquakes",
+  aircraft_radar: "Aircraft Overhead Radar",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(0.01).max(100),
@@ -603,6 +606,22 @@ const zoneFormSchema = z.object({
   earthquakeScrollSpeed: z.number().min(5).max(200).optional(),
   earthquakeItemsPerPage: z.number().min(3).max(50).optional(),
   earthquakePageDuration: z.number().min(3).max(60).optional(),
+  aircraftRefreshInterval: z.number().min(5).max(300).optional(),
+  aircraftFontSize: z.number().min(8).max(72).optional(),
+  aircraftBoundsLamin: z.number().min(-90).max(90).optional(),
+  aircraftBoundsLomin: z.number().min(-180).max(180).optional(),
+  aircraftBoundsLamax: z.number().min(-90).max(90).optional(),
+  aircraftBoundsLomax: z.number().min(-180).max(180).optional(),
+  aircraftLimit: z.number().min(1).max(500).optional(),
+  aircraftShowCallsign: z.boolean().optional(),
+  aircraftShowAltitude: z.boolean().optional(),
+  aircraftShowSpeed: z.boolean().optional(),
+  aircraftShowHeading: z.boolean().optional(),
+  aircraftShowCountry: z.boolean().optional(),
+  aircraftDisplayMode: z.enum(["radar", "list", "auto_scroll"]).optional(),
+  aircraftScrollSpeed: z.number().min(5).max(200).optional(),
+  aircraftItemsPerPage: z.number().min(1).max(50).optional(),
+  aircraftPageDuration: z.number().min(1).max(60).optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
     id: z.string(),
@@ -1361,6 +1380,22 @@ function ZoneEditorDialog({
       earthquakeScrollSpeed: 30,
       earthquakeItemsPerPage: 8,
       earthquakePageDuration: 8,
+      aircraftRefreshInterval: 15,
+      aircraftFontSize: 14,
+      aircraftBoundsLamin: 51.2,
+      aircraftBoundsLomin: -0.9,
+      aircraftBoundsLamax: 51.8,
+      aircraftBoundsLomax: 0.3,
+      aircraftLimit: 100,
+      aircraftShowCallsign: true,
+      aircraftShowAltitude: true,
+      aircraftShowSpeed: true,
+      aircraftShowHeading: true,
+      aircraftShowCountry: false,
+      aircraftDisplayMode: "radar",
+      aircraftScrollSpeed: 30,
+      aircraftItemsPerPage: 8,
+      aircraftPageDuration: 8,
       scheduleViewMode: "hourly",
       scheduleEntries: [],
       scheduleShowCurrentTime: true,
@@ -1555,6 +1590,22 @@ function ZoneEditorDialog({
           earthquakeScrollSpeed: zone.earthquakeScrollSpeed ?? 30,
           earthquakeItemsPerPage: zone.earthquakeItemsPerPage ?? 8,
           earthquakePageDuration: zone.earthquakePageDuration ?? 8,
+          aircraftRefreshInterval: zone.aircraftRefreshInterval ?? 15,
+          aircraftFontSize: zone.aircraftFontSize ?? 14,
+          aircraftBoundsLamin: zone.aircraftBoundsLamin ?? 51.2,
+          aircraftBoundsLomin: zone.aircraftBoundsLomin ?? -0.9,
+          aircraftBoundsLamax: zone.aircraftBoundsLamax ?? 51.8,
+          aircraftBoundsLomax: zone.aircraftBoundsLomax ?? 0.3,
+          aircraftLimit: zone.aircraftLimit ?? 100,
+          aircraftShowCallsign: zone.aircraftShowCallsign ?? true,
+          aircraftShowAltitude: zone.aircraftShowAltitude ?? true,
+          aircraftShowSpeed: zone.aircraftShowSpeed ?? true,
+          aircraftShowHeading: zone.aircraftShowHeading ?? true,
+          aircraftShowCountry: zone.aircraftShowCountry ?? false,
+          aircraftDisplayMode: zone.aircraftDisplayMode || "radar",
+          aircraftScrollSpeed: zone.aircraftScrollSpeed ?? 30,
+          aircraftItemsPerPage: zone.aircraftItemsPerPage ?? 8,
+          aircraftPageDuration: zone.aircraftPageDuration ?? 8,
           scheduleViewMode: zone.scheduleViewMode || "hourly",
           scheduleEntries: zone.scheduleEntries || [],
           scheduleShowCurrentTime: zone.scheduleShowCurrentTime ?? true,
@@ -1740,6 +1791,22 @@ function ZoneEditorDialog({
           earthquakeScrollSpeed: 30,
           earthquakeItemsPerPage: 8,
           earthquakePageDuration: 8,
+          aircraftRefreshInterval: 15,
+          aircraftFontSize: 14,
+          aircraftBoundsLamin: 51.2,
+          aircraftBoundsLomin: -0.9,
+          aircraftBoundsLamax: 51.8,
+          aircraftBoundsLomax: 0.3,
+          aircraftLimit: 100,
+          aircraftShowCallsign: true,
+          aircraftShowAltitude: true,
+          aircraftShowSpeed: true,
+          aircraftShowHeading: true,
+          aircraftShowCountry: false,
+          aircraftDisplayMode: "radar",
+          aircraftScrollSpeed: 30,
+          aircraftItemsPerPage: 8,
+          aircraftPageDuration: 8,
           scheduleViewMode: "hourly",
           scheduleEntries: [],
           scheduleShowCurrentTime: true,
@@ -6418,6 +6485,229 @@ function ZoneEditorDialog({
                     </FormItem>
                   )}
                 />
+              </div>
+            )}
+
+            {form.watch("type") === "aircraft_radar" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Radar className="h-4 w-4" />
+                  Aircraft Overhead Radar Settings
+                </div>
+                <FormField
+                  control={form.control}
+                  name="aircraftDisplayMode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Display Mode</FormLabel>
+                      <Select value={field.value || "radar"} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-aircraft-display-mode">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="radar">Radar View</SelectItem>
+                          <SelectItem value="list">Paginated List</SelectItem>
+                          <SelectItem value="auto_scroll">Auto-scroll List</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FormItem>
+                  )}
+                />
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField
+                    control={form.control}
+                    name="aircraftRefreshInterval"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Refresh (sec)</FormLabel>
+                        <FormControl>
+                          <Input type="number" min={5} max={300} {...field} onChange={e => field.onChange(+e.target.value)} data-testid="input-aircraft-refresh" />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="aircraftFontSize"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Font Size</FormLabel>
+                        <FormControl>
+                          <Input type="number" min={8} max={72} {...field} onChange={e => field.onChange(+e.target.value)} data-testid="input-aircraft-font-size" />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name="aircraftLimit"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Max Aircraft</FormLabel>
+                      <FormControl>
+                        <Input type="number" min={1} max={500} {...field} onChange={e => field.onChange(+e.target.value)} data-testid="input-aircraft-limit" />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Bounding Box (lat/lon)</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField
+                      control={form.control}
+                      name="aircraftBoundsLamin"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Min Lat</FormLabel>
+                          <FormControl>
+                            <Input type="number" step="0.1" min={-90} max={90} {...field} onChange={e => field.onChange(+e.target.value)} data-testid="input-aircraft-lamin" />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="aircraftBoundsLamax"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Max Lat</FormLabel>
+                          <FormControl>
+                            <Input type="number" step="0.1" min={-90} max={90} {...field} onChange={e => field.onChange(+e.target.value)} data-testid="input-aircraft-lamax" />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="aircraftBoundsLomin"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Min Lon</FormLabel>
+                          <FormControl>
+                            <Input type="number" step="0.1" min={-180} max={180} {...field} onChange={e => field.onChange(+e.target.value)} data-testid="input-aircraft-lomin" />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="aircraftBoundsLomax"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Max Lon</FormLabel>
+                          <FormControl>
+                            <Input type="number" step="0.1" min={-180} max={180} {...field} onChange={e => field.onChange(+e.target.value)} data-testid="input-aircraft-lomax" />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
+                <FormField
+                  control={form.control}
+                  name="aircraftShowCallsign"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox checked={field.value ?? true} onCheckedChange={field.onChange} data-testid="checkbox-aircraft-callsign" />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show callsign</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="aircraftShowAltitude"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox checked={field.value ?? true} onCheckedChange={field.onChange} data-testid="checkbox-aircraft-altitude" />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show altitude</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="aircraftShowSpeed"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox checked={field.value ?? true} onCheckedChange={field.onChange} data-testid="checkbox-aircraft-speed" />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show speed</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="aircraftShowHeading"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox checked={field.value ?? true} onCheckedChange={field.onChange} data-testid="checkbox-aircraft-heading" />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show heading</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="aircraftShowCountry"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox checked={field.value ?? false} onCheckedChange={field.onChange} data-testid="checkbox-aircraft-country" />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show country of origin</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                {(form.watch("aircraftDisplayMode") === "list") && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField
+                      control={form.control}
+                      name="aircraftItemsPerPage"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Items/Page</FormLabel>
+                          <FormControl>
+                            <Input type="number" min={1} max={50} {...field} onChange={e => field.onChange(+e.target.value)} data-testid="input-aircraft-items-per-page" />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="aircraftPageDuration"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Page Duration (sec)</FormLabel>
+                          <FormControl>
+                            <Input type="number" min={1} max={60} {...field} onChange={e => field.onChange(+e.target.value)} data-testid="input-aircraft-page-duration" />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
+                {(form.watch("aircraftDisplayMode") === "auto_scroll") && (
+                  <FormField
+                    control={form.control}
+                    name="aircraftScrollSpeed"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Scroll Speed (px/sec)</FormLabel>
+                        <FormControl>
+                          <Input type="number" min={5} max={200} {...field} onChange={e => field.onChange(+e.target.value)} data-testid="input-aircraft-scroll-speed" />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                )}
               </div>
             )}
 
