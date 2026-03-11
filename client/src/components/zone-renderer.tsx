@@ -1912,7 +1912,6 @@ function EarthquakesWidget({
   const [currentPage, setCurrentPage] = useState(0);
   const [fittingRows, setFittingRows] = useState<number | null>(null);
   const listContainerRef = useRef<HTMLDivElement>(null);
-  const measureRowRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollInnerRef = useRef<HTMLDivElement>(null);
   const animationRef = useRef<number>(0);
@@ -2010,19 +2009,34 @@ function EarthquakesWidget({
     }
     const measure = () => {
       const container = listContainerRef.current;
-      const row = measureRowRef.current;
-      if (!container || !row) return;
+      if (!container) return;
       const containerH = container.clientHeight;
-      const rowH = row.getBoundingClientRect().height;
-      if (rowH > 0) {
-        setFittingRows(Math.floor(containerH / rowH));
+      const rows = container.querySelectorAll("[data-eq-row]");
+      if (rows.length === 0) return;
+      let visibleCount = 0;
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i] as HTMLElement;
+        const rowBottom = row.offsetTop + row.offsetHeight;
+        if (rowBottom <= containerH) {
+          visibleCount++;
+        } else {
+          break;
+        }
+      }
+      if (visibleCount > 0) {
+        setFittingRows(visibleCount);
       }
     };
-    measure();
+    const frame = requestAnimationFrame(() => {
+      measure();
+    });
     const ro = new ResizeObserver(measure);
     if (listContainerRef.current) ro.observe(listContainerRef.current);
-    return () => ro.disconnect();
-  }, [displayMode, data, fontSize]);
+    return () => {
+      cancelAnimationFrame(frame);
+      ro.disconnect();
+    };
+  }, [displayMode, data, fontSize, currentPage]);
 
   const fs = fontSize || 14;
 
@@ -2117,6 +2131,7 @@ function EarthquakesWidget({
     return (
       <div
         key={`${eq.id || idx}${keySuffix}`}
+        data-eq-row
         style={{
           padding: `${fs * 0.4}px ${fs * 0.8}px`,
           borderBottom: "1px solid rgba(255,255,255,0.05)",
@@ -2383,13 +2398,6 @@ function EarthquakesWidget({
           const pageItems = earthquakes.slice(start, start + perPage);
           return (
             <>
-              <div
-                ref={measureRowRef}
-                style={{ position: "absolute", visibility: "hidden", pointerEvents: "none", left: -9999 }}
-                aria-hidden="true"
-              >
-                {renderRow(earthquakes[0], -1)}
-              </div>
               <div ref={listContainerRef} className="flex-1 overflow-hidden">
                 {pageItems.map((eq: any, idx: number) => renderRow(eq, start + idx))}
               </div>
