@@ -2467,9 +2467,6 @@ function AircraftRadarWidget({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollInnerRef = useRef<HTMLDivElement>(null);
   const animationRef = useRef<number>(0);
-  const sweepRef = useRef<number>(0);
-  const sweepAngleRef = useRef<number>(0);
-
   useEffect(() => {
     let mounted = true;
     const fetchData = async () => {
@@ -2538,19 +2535,6 @@ function AircraftRadarWidget({
     if (listContainerRef.current) observer.observe(listContainerRef.current);
     return () => observer.disconnect();
   }, [displayMode, fontSize, data]);
-
-  useEffect(() => {
-    if (displayMode !== "radar") return;
-    let lastTime = performance.now();
-    const tick = (now: number) => {
-      const dt = (now - lastTime) / 1000;
-      lastTime = now;
-      sweepAngleRef.current = (sweepAngleRef.current + 45 * dt) % 360;
-      sweepRef.current = requestAnimationFrame(tick);
-    };
-    sweepRef.current = requestAnimationFrame(tick);
-    return () => { if (sweepRef.current) cancelAnimationFrame(sweepRef.current); };
-  }, [displayMode]);
 
   const aircraft: any[] = data?.aircraft || [];
   const totalPages = Math.max(1, Math.ceil(aircraft.length / rowsPerPage));
