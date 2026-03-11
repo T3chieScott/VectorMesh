@@ -1,0 +1,270 @@
+Add a new live-data zone called Global Earthquakes into the existing app without removing, replacing, or breaking any current functionality. This must be an additive change only. Do not remove any current displayed information, routes, components, styling, zones, cards, or navigation items.
+
+Goal:
+Create a new Global Earthquakes zone powered by a backend integration with the USGS real-time GeoJSON earthquake feeds, exposed through our own backend API route and rendered in the frontend using the app’s existing design patterns.
+
+Important implementation rule:
+Inspect the current codebase first and follow the existing project structure, routing style, naming conventions, data-fetching approach, component layout, and styling system. Do not force a generic architecture if the project already has one.
+
+General requirements
+
+- Preserve all existing working functionality
+- Do not remove or rename any existing sections unless absolutely necessary
+- Reuse existing API route patterns if present
+- Reuse existing UI cards, tables, zone wrappers, filters, tabs, or layout components where possible
+- Keep upstream API calls on the backend only
+- Frontend must call our own backend routes only
+- Handle null/missing fields safely
+- Add loading, error, and empty states
+- Use short in-memory caching
+- Ensure no syntax or linting errors are introduced
+
+==================================================
+1. BACKEND USGS INTEGRATION
+==================================================
+
+Use the USGS real-time GeoJSON summary feed as the upstream source.
+
+Create or adapt backend files such as:
+- lib/usgsEarthquakes.js
+- routes/earthquakes.js
+
+Use Node and match the existing module system in the project (ESM or CommonJS).
+
+Suggested environment variables:
+- USGS_EARTHQUAKE_BASE_URL
+- USGS_EARTHQUAKE_TIMEOUT_MS
+- USGS_EARTHQUAKE_CACHE_TTL_MS
+
+Default values if env vars are not set:
+- USGS_EARTHQUAKE_BASE_URL = https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary
+- USGS_EARTHQUAKE_TIMEOUT_MS = 10000
+- USGS_EARTHQUAKE_CACHE_TTL_MS = 60000
+
+Important:
+- Use the USGS GeoJSON summary feeds intended for real-time display
+- Default to all_hour.geojson
+- Optionally support other standard feed windows later such as all_day.geojson
+- Keep all upstream-specific assumptions isolated inside one service file
+- Build defensively in case some earthquake properties are null
+
+Implement helper functions such as:
+- buildUsgsFeedUrl()
+- fetchJsonWithTimeout()
+- normaliseEarthquakeFeature()
+- normaliseEarthquakesPayload()
+- createCacheKey()
+- clearEarthquakesCache()
+- getRecentEarthquakes()
+- createEarthquakesHandler()
+
+Use fetch with:
+- AbortController
+- timeout handling
+- defensive null checks
+
+Use in-memory cache via Map with:
+- configurable TTL
+- stale fallback if upstream refresh fails
+- cache metadata returned in the JSON response
+
+==================================================
+2. UPSTREAM REQUEST SHAPE
+==================================================
+
+Fetch recent earthquake data from the USGS summary feed.
+
+Default upstream feed:
+- https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson
+
+Support query params on our backend route where sensible:
+- feed
+- minMagnitude
+- limit
+
+Allowed feed values can include:
+- all_hour
+- all_day
+- significant_hour
+- significant_day
+
+If none are provided, default to:
+- feed = all_hour
+
+If minMagnitude is provided, filter server-side after normalisation unless the project already has a preferred pattern for feed-specific filtering.
+
+==================================================
+3. BACKEND ROUTE
+==================================================
+
+Create or adapt a backend route such as:
+
+- /api/data/earthquakes/recent
+
+This route must:
+- return JSON only
+- use our USGS earthquake service module
+- set Cache-Control headers
+- return readable JSON errors
+- return stale cached data with a stale flag if refresh fails and stale data exists
+- return 502 JSON error if upstream fails and there is no cache to fall back to
+
+==================================================
+4. NORMALISED RESPONSE SHAPE
+==================================================
+
+Normalise the backend response into a stable frontend-friendly structure like this:
+
+{
+  "source": {
+    "provider": "USGS",
+    "documentedApi": true
+  },
+  "feed": "all_hour",
+  "updatedAt": "ISO date string",
+  "earthquakes": [
+    {
+      "id": "us7000abcd",
+      "place": "12 km SE of Somewhere",
+      "magnitude": 4.7,
+      "time": "2026-03-10T10:15:00.000Z",
+      "updated": "2026-03-10T10:25:00.000Z",
+      "url": "USGS detail url if present",
+      "longitude": 140.12,
+      "latitude": 35.67,
+      "depthKm": 10.5,
+      "tsunami": false,
+      "feltReports": 3,
+      "alert": null
+    }
+  ],
+  "cache": {
+    "hit": false,
+    "stale": false
+  }
+}
+
+Keep the frontend dependent only on this normalised shape, not on raw USGS fields.
+
+==================================================
+5. FIELD MAPPING REQUIREMENTS
+==================================================
+
+Map common USGS GeoJSON fields carefully and defensively.
+
+At minimum support:
+- feature.id -> id
+- properties.place -> place
+- properties.mag -> magnitude
+- properties.time -> time
+- properties.updated -> updated
+- properties.url -> url
+- geometry.coordinates[0] -> longitude
+- geometry.coordinates[1] -> latitude
+- geometry.coordinates[2] -> depthKm
+- properties.tsunami -> tsunami (boolean)
+- properties.felt -> feltReports
+- properties.alert -> alert
+
+Convert epoch millisecond values from USGS into ISO strings for frontend use.
+
+Guard against:
+- missing geometry
+- null magnitude
+- missing place
+- missing coordinates
+- partial features
+
+Add comments in the service file noting where payload mappings may need adjustment if the upstream schema changes.
+
+==================================================
+6. FRONTEND EARTHQUAKE ZONE
+==================================================
+
+Add a new frontend zone/component called:
+
+- Global Earthquakes
+
+Requirements:
+- Fetch only from our backend route
+- Show a ranked list or table of recent earthquakes
+- Prefer a map only if the app already has a map component or mapping library
+- If there is no existing map system, do not introduce a heavy dependency just for this feature
+- Display at minimum:
+  - magnitude
+  - place
+  - depth
+  - time
+- Show loading state
+- Show error state
+- Show empty state if no earthquake data is available
+- Handle missing fields gracefully
+- Fit the app’s current design system and styling
+- Reuse existing card/zone/table/list patterns if available
+
+Optional enhancements if they fit the existing app patterns:
+- show earthquake count in the current feed window
+- show a minimum magnitude filter
+- show a subtle visual emphasis for stronger earthquakes
+- show a “tsunami flag” or alert badge if present
+
+==================================================
+7. MAGNITUDE / VISUAL HANDLING
+==================================================
+
+Add a lightweight presentation rule for earthquake magnitude.
+
+For example:
+- magnitudes below 2.5 = low emphasis
+- 2.5 to 4.9 = medium emphasis
+- 5.0 and above = higher emphasis
+
+Use the app’s existing design tokens, CSS variables, or status badge styles if they exist.
+Do not introduce harsh colours unless that matches the current design system.
+
+If the app already has badge or chip patterns, use them for:
+- magnitude band
+- tsunami flag
+- alert level
+
+==================================================
+8. UI PLACEMENT
+==================================================
+
+Integrate the Global Earthquakes zone into the most sensible existing place in the app.
+
+Requirements:
+- If there is already a dashboard, utilities, live data, monitoring, or information wall section, place it there
+- Otherwise add a clearly labelled new zone entry called Global Earthquakes
+- Do not disturb existing navigation behaviour
+- Do not remove or rename existing sections
+
+==================================================
+9. SHARED QUALITY REQUIREMENTS
+==================================================
+
+- Do not log secrets
+- Keep logs minimal and useful
+- Return clean JSON errors from backend
+- Guard against null/undefined payload fields
+- Do not crash on partial upstream responses
+- Keep code comments where they help future maintenance
+- Match the project’s existing coding conventions
+- Ensure imports, exports, and route registration are complete
+
+==================================================
+10. FINAL OUTPUT REQUIRED
+==================================================
+
+After implementing:
+- list all files created or changed
+- show the important code snippets
+- explain where the new Global Earthquakes zone was added in the UI
+- explain the new backend route
+- explain any environment variables used
+- confirm that no existing functionality was removed
+- point out any USGS payload assumptions that may need tuning after live testing
+
+Important delivery instruction:
+Implement the feature fully, not as placeholders.
+Wire the backend service module, route, and frontend zone together so the Global Earthquakes zone is actually usable in the app.
