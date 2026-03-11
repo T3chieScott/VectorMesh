@@ -31,6 +31,7 @@ import {
   Thermometer,
   ArrowDown,
   ArrowUp,
+  Rocket,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
@@ -72,6 +73,7 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   heathrow_arrivals: PlaneLanding,
   heathrow_departures: PlaneTakeoff,
   weather_forecast: CloudRain,
+  spacex_launch: Rocket,
 };
 
 function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
@@ -1872,6 +1874,269 @@ function WeatherForecastWidget({
   );
 }
 
+function SpaceXLaunchWidget({
+  refreshInterval = 60,
+  fontSize = 14,
+  showDetails = true,
+  showPatch = true,
+  showLinks = false,
+  showLaunchpad = true,
+  deviceToken,
+}: {
+  refreshInterval?: number;
+  fontSize?: number;
+  showDetails?: boolean;
+  showPatch?: boolean;
+  showLinks?: boolean;
+  showLaunchpad?: boolean;
+  deviceToken?: string;
+}) {
+  const [launchData, setLaunchData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState<string>("");
+
+  useEffect(() => {
+    let mounted = true;
+
+    const fetchData = async () => {
+      try {
+        const base = deviceToken
+          ? `/api/player/widgets/spacex/next-launch`
+          : `/api/widgets/spacex/next-launch`;
+        const headers: Record<string, string> = {};
+        if (deviceToken) headers["x-device-token"] = deviceToken;
+
+        const res = await fetch(base, { headers });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (mounted) {
+          setLaunchData(data);
+          setError(null);
+        }
+      } catch (err: any) {
+        if (mounted) setError(err.message || "Failed to fetch launch data");
+      }
+    };
+
+    fetchData();
+    const interval = setInterval(fetchData, (refreshInterval || 60) * 1000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [refreshInterval, deviceToken]);
+
+  useEffect(() => {
+    if (!launchData?.launch?.net) {
+      setCountdown("");
+      return;
+    }
+
+    const parsedTarget = new Date(launchData.launch.net).getTime();
+    if (isNaN(parsedTarget)) {
+      setCountdown("");
+      return;
+    }
+
+    const tick = () => {
+      const now = Date.now();
+      const target = parsedTarget;
+      const diff = target - now;
+
+      if (diff <= 0) {
+        setCountdown("LAUNCHED");
+        return;
+      }
+
+      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+      const parts: string[] = [];
+      if (days > 0) parts.push(`${days}d`);
+      parts.push(`${String(hours).padStart(2, "0")}h`);
+      parts.push(`${String(minutes).padStart(2, "0")}m`);
+      parts.push(`${String(seconds).padStart(2, "0")}s`);
+
+      setCountdown(parts.join(" "));
+    };
+
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [launchData]);
+
+  const fs = fontSize || 14;
+
+  if (error && !launchData) {
+    return (
+      <div
+        className="h-full w-full flex items-center justify-center"
+        style={{ fontSize: fs, background: "linear-gradient(135deg, #0a0a2e 0%, #1a1a4e 100%)", color: "#ef4444" }}
+        data-testid="spacex-error"
+      >
+        <p>Error: {error}</p>
+      </div>
+    );
+  }
+
+  if (!launchData) {
+    return (
+      <div
+        className="h-full w-full flex items-center justify-center"
+        style={{ fontSize: fs, background: "linear-gradient(135deg, #0a0a2e 0%, #1a1a4e 100%)", color: "#94a3b8" }}
+        data-testid="spacex-loading"
+      >
+        <div className="animate-pulse">Loading SpaceX data...</div>
+      </div>
+    );
+  }
+
+  const launch = launchData.launch;
+  if (!launch) {
+    return (
+      <div
+        className="h-full w-full flex items-center justify-center"
+        style={{ fontSize: fs, background: "linear-gradient(135deg, #0a0a2e 0%, #1a1a4e 100%)", color: "#94a3b8" }}
+        data-testid="spacex-no-data"
+      >
+        No upcoming launch data available
+      </div>
+    );
+  }
+
+  const rawDate = launch.net ? new Date(launch.net) : null;
+  const launchDate = rawDate && !isNaN(rawDate.getTime()) ? rawDate : null;
+  const formattedDate = launchDate
+    ? launchDate.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" })
+    : "TBD";
+  const formattedTime = launchDate
+    ? launchDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })
+    : "";
+
+  return (
+    <div
+      className="h-full w-full overflow-hidden flex flex-col"
+      style={{
+        fontSize: fs,
+        background: "linear-gradient(135deg, #0a0a2e 0%, #0d1542 50%, #1a1a4e 100%)",
+        color: "#e2e8f0",
+        fontFamily: "'Inter', 'Segoe UI', sans-serif",
+      }}
+      data-testid="spacex-launch-widget"
+    >
+      <div style={{ padding: `${fs * 0.6}px ${fs * 0.8}px` }} className="flex items-center gap-2 border-b border-white/10">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ width: fs * 1.2, height: fs * 1.2, color: "#60a5fa", flexShrink: 0 }}>
+          <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z" />
+          <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" />
+          <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
+          <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+        </svg>
+        <span style={{ fontSize: fs * 0.7, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "#60a5fa" }}>
+          SpaceX — Next Launch
+        </span>
+      </div>
+
+      <div className="flex-1 overflow-auto" style={{ padding: `${fs * 0.6}px ${fs * 0.8}px` }}>
+        <div className="flex gap-3">
+          {showPatch && launch.links?.patchSmall && (
+            <div style={{ flexShrink: 0, width: fs * 4, height: fs * 4 }}>
+              <img
+                src={launch.links.patchSmall}
+                alt="Mission patch"
+                style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                data-testid="spacex-patch"
+              />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <div style={{ fontSize: fs * 1.3, fontWeight: 700, color: "#fff", lineHeight: 1.2 }} data-testid="spacex-mission-name">
+              {launch.name}
+            </div>
+            {launch.rocketName && (
+              <div style={{ fontSize: fs * 0.85, color: "#94a3b8", marginTop: fs * 0.15 }} data-testid="spacex-rocket">
+                {launch.rocketName}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ marginTop: fs * 0.8, padding: `${fs * 0.5}px`, background: "rgba(255,255,255,0.05)", borderRadius: fs * 0.4 }}>
+          <div style={{ fontSize: fs * 0.7, textTransform: "uppercase", letterSpacing: "0.08em", color: "#94a3b8", marginBottom: fs * 0.3 }}>
+            Countdown
+          </div>
+          <div
+            style={{
+              fontSize: fs * 2,
+              fontWeight: 800,
+              fontVariantNumeric: "tabular-nums",
+              color: countdown === "LAUNCHED" ? "#22c55e" : "#f0f0f0",
+              letterSpacing: "0.04em",
+            }}
+            data-testid="spacex-countdown"
+          >
+            {countdown || "T-??:??:??"}
+          </div>
+          <div style={{ fontSize: fs * 0.75, color: "#94a3b8", marginTop: fs * 0.2 }}>
+            {formattedDate} {formattedTime && `• ${formattedTime}`}
+          </div>
+        </div>
+
+        {showLaunchpad && launch.launchpadName && (
+          <div style={{ marginTop: fs * 0.5, fontSize: fs * 0.8, color: "#94a3b8" }} data-testid="spacex-launchpad">
+            <span style={{ color: "#64748b" }}>Launchpad:</span> {launch.launchpadName}
+          </div>
+        )}
+
+        {showDetails && launch.details && (
+          <div
+            style={{
+              marginTop: fs * 0.5,
+              fontSize: fs * 0.8,
+              color: "#94a3b8",
+              lineHeight: 1.4,
+              overflow: "hidden",
+              display: "-webkit-box",
+              WebkitLineClamp: 3,
+              WebkitBoxOrient: "vertical",
+            }}
+            data-testid="spacex-details"
+          >
+            {launch.details}
+          </div>
+        )}
+
+        {showLinks && (
+          <div style={{ marginTop: fs * 0.5, display: "flex", gap: fs * 0.4, flexWrap: "wrap" }}>
+            {launch.links?.webcast && (
+              <a href={launch.links.webcast} target="_blank" rel="noopener noreferrer" style={{ fontSize: fs * 0.7, color: "#60a5fa", padding: `${fs * 0.1}px ${fs * 0.3}px`, background: "rgba(96,165,250,0.1)", borderRadius: fs * 0.2, textDecoration: "none" }} data-testid="spacex-link-webcast">
+                Webcast
+              </a>
+            )}
+            {launch.links?.wikipedia && (
+              <a href={launch.links.wikipedia} target="_blank" rel="noopener noreferrer" style={{ fontSize: fs * 0.7, color: "#60a5fa", padding: `${fs * 0.1}px ${fs * 0.3}px`, background: "rgba(96,165,250,0.1)", borderRadius: fs * 0.2, textDecoration: "none" }} data-testid="spacex-link-wiki">
+                Wikipedia
+              </a>
+            )}
+            {launch.links?.article && (
+              <a href={launch.links.article} target="_blank" rel="noopener noreferrer" style={{ fontSize: fs * 0.7, color: "#60a5fa", padding: `${fs * 0.1}px ${fs * 0.3}px`, background: "rgba(96,165,250,0.1)", borderRadius: fs * 0.2, textDecoration: "none" }} data-testid="spacex-link-article">
+                Article
+              </a>
+            )}
+          </div>
+        )}
+      </div>
+
+      {launchData.cache?.stale && (
+        <div style={{ padding: `${fs * 0.2}px ${fs * 0.8}px`, fontSize: fs * 0.6, color: "#f59e0b", background: "rgba(245,158,11,0.1)", textAlign: "center" }}>
+          Showing cached data — API temporarily unavailable
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NewsWidget({ 
   rssUrl,
   scrollSpeed = 50,
@@ -3564,6 +3829,18 @@ export function ZoneRenderer({
             showSunrise={zone.forecastShowSunrise}
             showHumidity={zone.forecastShowHumidity}
             showHourlyCondition={zone.forecastShowHourlyCondition}
+            deviceToken={deviceToken}
+          />
+        );
+      case "spacex_launch":
+        return (
+          <SpaceXLaunchWidget
+            refreshInterval={zone.spacexRefreshInterval}
+            fontSize={zone.spacexFontSize}
+            showDetails={zone.spacexShowDetails}
+            showPatch={zone.spacexShowPatch}
+            showLinks={zone.spacexShowLinks}
+            showLaunchpad={zone.spacexShowLaunchpad}
             deviceToken={deviceToken}
           />
         );

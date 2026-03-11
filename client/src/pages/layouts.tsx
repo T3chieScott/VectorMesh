@@ -110,6 +110,7 @@ import {
   PlaneTakeoff,
   Plane,
   CloudRain,
+  Rocket,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -379,6 +380,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   heathrow_arrivals: PlaneLanding,
   heathrow_departures: PlaneTakeoff,
   weather_forecast: CloudRain,
+  spacex_launch: Rocket,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -401,11 +403,12 @@ const zoneTypeLabels: Record<string, string> = {
   heathrow_arrivals: "Heathrow Arrivals",
   heathrow_departures: "Heathrow Departures",
   weather_forecast: "Weather Forecast",
+  spacex_launch: "SpaceX Launch Countdown",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "heathrow_arrivals", "heathrow_departures", "weather_forecast"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(0.01).max(100),
@@ -579,6 +582,12 @@ const zoneFormSchema = z.object({
   forecastShowSunrise: z.boolean().optional(),
   forecastShowHumidity: z.boolean().optional(),
   forecastShowHourlyCondition: z.boolean().optional(),
+  spacexRefreshInterval: z.number().min(30).max(3600).optional(),
+  spacexFontSize: z.number().min(8).max(48).optional(),
+  spacexShowDetails: z.boolean().optional(),
+  spacexShowPatch: z.boolean().optional(),
+  spacexShowLinks: z.boolean().optional(),
+  spacexShowLaunchpad: z.boolean().optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
     id: z.string(),
@@ -1319,6 +1328,12 @@ function ZoneEditorDialog({
       forecastShowSunrise: false,
       forecastShowHumidity: false,
       forecastShowHourlyCondition: false,
+      spacexRefreshInterval: 60,
+      spacexFontSize: 14,
+      spacexShowDetails: true,
+      spacexShowPatch: true,
+      spacexShowLinks: false,
+      spacexShowLaunchpad: true,
       scheduleViewMode: "hourly",
       scheduleEntries: [],
       scheduleShowCurrentTime: true,
@@ -1495,6 +1510,12 @@ function ZoneEditorDialog({
           forecastShowSunrise: zone.forecastShowSunrise ?? false,
           forecastShowHumidity: zone.forecastShowHumidity ?? false,
           forecastShowHourlyCondition: zone.forecastShowHourlyCondition ?? false,
+          spacexRefreshInterval: zone.spacexRefreshInterval ?? 60,
+          spacexFontSize: zone.spacexFontSize ?? 14,
+          spacexShowDetails: zone.spacexShowDetails ?? true,
+          spacexShowPatch: zone.spacexShowPatch ?? true,
+          spacexShowLinks: zone.spacexShowLinks ?? false,
+          spacexShowLaunchpad: zone.spacexShowLaunchpad ?? true,
           scheduleViewMode: zone.scheduleViewMode || "hourly",
           scheduleEntries: zone.scheduleEntries || [],
           scheduleShowCurrentTime: zone.scheduleShowCurrentTime ?? true,
@@ -1662,6 +1683,12 @@ function ZoneEditorDialog({
           forecastShowSunrise: false,
           forecastShowHumidity: false,
           forecastShowHourlyCondition: false,
+          spacexRefreshInterval: 60,
+          spacexFontSize: 14,
+          spacexShowDetails: true,
+          spacexShowPatch: true,
+          spacexShowLinks: false,
+          spacexShowLaunchpad: true,
           scheduleViewMode: "hourly",
           scheduleEntries: [],
           scheduleShowCurrentTime: true,
@@ -5963,6 +5990,121 @@ function ZoneEditorDialog({
                         />
                       </FormControl>
                       <FormLabel className="!mt-0">Show hourly condition text</FormLabel>
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+
+            {form.watch("type") === "spacex_launch" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Rocket className="h-4 w-4" />
+                  SpaceX Launch Countdown Settings
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="spacexRefreshInterval"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Refresh Interval (s)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={30}
+                            max={3600}
+                            value={field.value ?? 60}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 60)}
+                            data-testid="input-spacex-refresh"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="spacexFontSize"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Font Size (px)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={8}
+                            max={48}
+                            value={field.value ?? 14}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 14)}
+                            data-testid="input-spacex-font-size"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name="spacexShowDetails"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? true}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-spacex-show-details"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show mission details</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="spacexShowPatch"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? true}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-spacex-show-patch"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show mission patch</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="spacexShowLaunchpad"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? true}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-spacex-show-launchpad"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show launchpad info</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="spacexShowLinks"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? false}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-spacex-show-links"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show webcast/article links</FormLabel>
                     </FormItem>
                   )}
                 />
