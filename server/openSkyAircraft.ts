@@ -1,8 +1,10 @@
 import type { Request, Response } from "express";
 
 const DEFAULT_BASE_URL = "https://opensky-network.org/api";
-const DEFAULT_TIMEOUT = 10_000;
+const DEFAULT_TIMEOUT = 15_000;
 const DEFAULT_CACHE_TTL = 15_000;
+const TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
+const TOKEN_REFRESH_MARGIN = 30;
 
 const DEFAULT_BOUNDS = {
   lamin: 51.2,
@@ -14,11 +16,55 @@ const DEFAULT_BOUNDS = {
 function getConfig() {
   return {
     baseUrl: process.env.OPENSKY_BASE_URL || DEFAULT_BASE_URL,
-    username: process.env.OPENSKY_USERNAME || "",
-    password: process.env.OPENSKY_PASSWORD || "",
+    clientId: process.env.OPENSKY_CLIENT_ID || "",
+    clientSecret: process.env.OPENSKY_CLIENT_SECRET || "",
     timeout: parseInt(process.env.OPENSKY_TIMEOUT_MS || "", 10) || DEFAULT_TIMEOUT,
     cacheTtl: parseInt(process.env.OPENSKY_CACHE_TTL_MS || "", 10) || DEFAULT_CACHE_TTL,
   };
+}
+
+let oauthToken: string | null = null;
+let tokenExpiresAt: number = 0;
+
+async function getAccessToken(): Promise<string | null> {
+  const cfg = getConfig();
+  if (!cfg.clientId || !cfg.clientSecret) return null;
+
+  const now = Date.now();
+  if (oauthToken && now < tokenExpiresAt) return oauthToken;
+
+  try {
+    const body = new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: cfg.clientId,
+      client_secret: cfg.clientSecret,
+    });
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
+    const response = await fetch(TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (!response.ok) {
+      console.error(`[OpenSky] Token request failed: ${response.status} ${response.statusText}`);
+      return oauthToken;
+    }
+
+    const data = await response.json() as { access_token: string; expires_in?: number };
+    oauthToken = data.access_token;
+    const expiresIn = data.expires_in || 1800;
+    tokenExpiresAt = now + (expiresIn - TOKEN_REFRESH_MARGIN) * 1000;
+    console.log(`[OpenSky] OAuth2 token obtained, expires in ${expiresIn}s`);
+    return oauthToken;
+  } catch (err: any) {
+    console.error(`[OpenSky] Failed to obtain OAuth2 token: ${err.message}`);
+    return oauthToken;
+  }
 }
 
 interface NormalisedAircraft {
@@ -68,14 +114,13 @@ function buildOpenSkyUrl(bounds: { lamin: number; lomin: number; lamax: number; 
   return url.toString();
 }
 
-function buildOpenSkyHeaders(): Record<string, string> {
-  const cfg = getConfig();
+async function buildOpenSkyHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     "Accept": "application/json",
   };
-  if (cfg.username && cfg.password) {
-    const encoded = Buffer.from(`${cfg.username}:${cfg.password}`).toString("base64");
-    headers["Authorization"] = `Basic ${encoded}`;
+  const token = await getAccessToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
   return headers;
 }
@@ -84,8 +129,9 @@ async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<any
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const headers = await buildOpenSkyHeaders();
     const response = await fetch(url, {
-      headers: buildOpenSkyHeaders(),
+      headers,
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -97,25 +143,6 @@ async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<any
   }
 }
 
-// OpenSky state vector array indices:
-// 0  = icao24 (string)
-// 1  = callsign (string, may have trailing spaces)
-// 2  = origin_country (string)
-// 3  = time_position (int, unix seconds)
-// 4  = last_contact (int, unix seconds)
-// 5  = longitude (float)
-// 6  = latitude (float)
-// 7  = baro_altitude (float, meters)
-// 8  = on_ground (boolean)
-// 9  = velocity (float, m/s)
-// 10 = true_track (float, degrees clockwise from north)
-// 11 = vertical_rate (float, m/s)
-// 12 = sensors (array of int)
-// 13 = geo_altitude (float, meters)
-// 14 = squawk (string)
-// 15 = spi (boolean)
-// 16 = position_source (int: 0=ADS-B, 1=ASTERIX, 2=MLAT, 3=FLARM)
-// 17 = category (int, only with extended=1)
 function normaliseAircraftState(state: any[]): NormalisedAircraft | null {
   if (!Array.isArray(state) || state.length < 17) return null;
 
@@ -171,12 +198,39 @@ function normaliseAircraftPayload(
   };
 }
 
+function createEmptyPayload(
+  bounds: { lamin: number; lomin: number; lamax: number; lomax: number }
+): AircraftPayload {
+  return {
+    source: { provider: "OpenSky Network", documentedApi: true },
+    updatedAt: new Date().toISOString(),
+    bounds,
+    aircraft: [],
+    summary: { count: 0, airborne: 0, onGround: 0 },
+    cache: { hit: false, stale: false },
+  };
+}
+
 function createCacheKey(bounds: { lamin: number; lomin: number; lamax: number; lomax: number }): string {
   return `aircraft-${bounds.lamin}-${bounds.lomin}-${bounds.lamax}-${bounds.lomax}`;
 }
 
 export function clearOpenSkyCache(): void {
   cache.clear();
+}
+
+function applyLimit(payload: AircraftPayload, limit?: number): AircraftPayload {
+  if (!limit || limit <= 0 || payload.aircraft.length <= limit) return payload;
+  const sliced = payload.aircraft.slice(0, limit);
+  return {
+    ...payload,
+    aircraft: sliced,
+    summary: {
+      count: sliced.length,
+      airborne: sliced.filter(a => !a.onGround).length,
+      onGround: sliced.filter(a => a.onGround).length,
+    },
+  };
 }
 
 export async function getAircraftOverhead(
@@ -190,16 +244,7 @@ export async function getAircraftOverhead(
   const cached = cache.get(cacheKey);
 
   if (cached && (now - cached.timestamp) < cfg.cacheTtl) {
-    let result = { ...cached.data, cache: { hit: true, stale: false } };
-    if (limit && limit > 0) {
-      result = { ...result, aircraft: result.aircraft.slice(0, limit) };
-      result.summary = {
-        count: result.aircraft.length,
-        airborne: result.aircraft.filter(a => !a.onGround).length,
-        onGround: result.aircraft.filter(a => a.onGround).length,
-      };
-    }
-    return result;
+    return applyLimit({ ...cached.data, cache: { hit: true, stale: false } }, limit);
   }
 
   try {
@@ -207,32 +252,15 @@ export async function getAircraftOverhead(
     const raw = await fetchJsonWithTimeout(url, cfg.timeout);
     const payload = normaliseAircraftPayload(raw, effectiveBounds, { hit: false, stale: false });
     cache.set(cacheKey, { data: payload, timestamp: now });
+    return applyLimit(payload, limit);
+  } catch (err: any) {
+    console.error(`[OpenSky] API fetch failed: ${err.message}`);
 
-    if (limit && limit > 0) {
-      const limited = { ...payload, aircraft: payload.aircraft.slice(0, limit) };
-      limited.summary = {
-        count: limited.aircraft.length,
-        airborne: limited.aircraft.filter(a => !a.onGround).length,
-        onGround: limited.aircraft.filter(a => a.onGround).length,
-      };
-      return limited;
-    }
-
-    return payload;
-  } catch (err) {
     if (cached) {
-      let result = { ...cached.data, cache: { hit: true, stale: true } };
-      if (limit && limit > 0) {
-        result = { ...result, aircraft: result.aircraft.slice(0, limit) };
-        result.summary = {
-          count: result.aircraft.length,
-          airborne: result.aircraft.filter(a => !a.onGround).length,
-          onGround: result.aircraft.filter(a => a.onGround).length,
-        };
-      }
-      return result;
+      return applyLimit({ ...cached.data, cache: { hit: true, stale: true } }, limit);
     }
-    throw err;
+
+    return createEmptyPayload(effectiveBounds);
   }
 }
 
@@ -277,6 +305,7 @@ export function createAircraftOverheadHandler() {
       res.set("Cache-Control", "public, max-age=10");
       res.json(result);
     } catch (err: any) {
+      console.error(`[OpenSky] Handler error: ${err.message}`);
       res.status(502).json({
         error: err.message || "Failed to fetch aircraft data",
       });
