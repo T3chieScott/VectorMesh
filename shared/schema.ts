@@ -427,6 +427,10 @@ export interface LayoutZone {
   forecastRefreshInterval?: number;
   forecastFontSize?: number;
   forecastShowHourly?: boolean;
+  forecastShowCondition?: boolean;
+  forecastShowSunrise?: boolean;
+  forecastShowHumidity?: boolean;
+  forecastShowHourlyCondition?: boolean;
   // Schedule widget configuration
   scheduleViewMode?: "hourly" | "daily" | "agenda";
   scheduleEntries?: Array<{

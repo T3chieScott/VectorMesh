@@ -1534,6 +1534,10 @@ function WeatherForecastWidget({
   refreshInterval = 600,
   fontSize = 14,
   showHourly = false,
+  showCondition = false,
+  showSunrise = false,
+  showHumidity = false,
+  showHourlyCondition = false,
   deviceToken,
 }: {
   lat?: number;
@@ -1544,6 +1548,10 @@ function WeatherForecastWidget({
   refreshInterval?: number;
   fontSize?: number;
   showHourly?: boolean;
+  showCondition?: boolean;
+  showSunrise?: boolean;
+  showHumidity?: boolean;
+  showHourlyCondition?: boolean;
   deviceToken?: string;
 }) {
   const [data, setData] = useState<any>(null);
@@ -1749,6 +1757,37 @@ function WeatherForecastWidget({
                     {Math.round(day.windSpeedMax)}
                   </div>
                 )}
+                {showCondition && day.condition && (
+                  <span style={{
+                    fontSize: `${Math.max(7, fontSize * 0.5)}px`,
+                    opacity: 0.6,
+                    textAlign: "center",
+                    lineHeight: 1.2,
+                  }}>
+                    {day.condition}
+                  </span>
+                )}
+                {showSunrise && (day.sunrise || day.sunset) && (
+                  <div style={{
+                    fontSize: `${Math.max(7, fontSize * 0.5)}px`,
+                    opacity: 0.5,
+                    textAlign: "center",
+                    lineHeight: 1.3,
+                  }}>
+                    {day.sunrise && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "2px", justifyContent: "center" }}>
+                        <Sun style={{ width: "7px", height: "7px" }} />
+                        {new Date(day.sunrise).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                    )}
+                    {day.sunset && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "2px", justifyContent: "center" }}>
+                        <Cloud style={{ width: "7px", height: "7px" }} />
+                        {new Date(day.sunset).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -1804,6 +1843,22 @@ function WeatherForecastWidget({
                       <span style={{ fontSize: `${Math.max(7, fontSize * 0.5)}px`, opacity: 0.5, display: "flex", alignItems: "center", gap: "1px" }}>
                         <Wind style={{ width: "7px", height: "7px" }} />
                         {Math.round(h.windSpeed)}
+                      </span>
+                    )}
+                    {showHumidity && h.humidity != null && (
+                      <span style={{ fontSize: `${Math.max(7, fontSize * 0.5)}px`, opacity: 0.5, display: "flex", alignItems: "center", gap: "1px" }}>
+                        <Droplets style={{ width: "7px", height: "7px" }} />
+                        {h.humidity}%
+                      </span>
+                    )}
+                    {showHourlyCondition && h.condition && (
+                      <span style={{
+                        fontSize: `${Math.max(6, fontSize * 0.45)}px`,
+                        opacity: 0.5,
+                        textAlign: "center",
+                        lineHeight: 1.1,
+                      }}>
+                        {h.condition}
                       </span>
                     )}
                   </div>
@@ -3505,6 +3560,10 @@ export function ZoneRenderer({
             refreshInterval={zone.forecastRefreshInterval}
             fontSize={zone.forecastFontSize}
             showHourly={zone.forecastShowHourly}
+            showCondition={zone.forecastShowCondition}
+            showSunrise={zone.forecastShowSunrise}
+            showHumidity={zone.forecastShowHumidity}
+            showHourlyCondition={zone.forecastShowHourlyCondition}
             deviceToken={deviceToken}
           />
         );

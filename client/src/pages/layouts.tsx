@@ -575,6 +575,10 @@ const zoneFormSchema = z.object({
   forecastRefreshInterval: z.number().min(60).max(3600).optional(),
   forecastFontSize: z.number().min(8).max(48).optional(),
   forecastShowHourly: z.boolean().optional(),
+  forecastShowCondition: z.boolean().optional(),
+  forecastShowSunrise: z.boolean().optional(),
+  forecastShowHumidity: z.boolean().optional(),
+  forecastShowHourlyCondition: z.boolean().optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
     id: z.string(),
@@ -1311,6 +1315,10 @@ function ZoneEditorDialog({
       forecastRefreshInterval: 600,
       forecastFontSize: 14,
       forecastShowHourly: false,
+      forecastShowCondition: false,
+      forecastShowSunrise: false,
+      forecastShowHumidity: false,
+      forecastShowHourlyCondition: false,
       scheduleViewMode: "hourly",
       scheduleEntries: [],
       scheduleShowCurrentTime: true,
@@ -1483,6 +1491,10 @@ function ZoneEditorDialog({
           forecastRefreshInterval: zone.forecastRefreshInterval ?? 600,
           forecastFontSize: zone.forecastFontSize ?? 14,
           forecastShowHourly: zone.forecastShowHourly ?? false,
+          forecastShowCondition: zone.forecastShowCondition ?? false,
+          forecastShowSunrise: zone.forecastShowSunrise ?? false,
+          forecastShowHumidity: zone.forecastShowHumidity ?? false,
+          forecastShowHourlyCondition: zone.forecastShowHourlyCondition ?? false,
           scheduleViewMode: zone.scheduleViewMode || "hourly",
           scheduleEntries: zone.scheduleEntries || [],
           scheduleShowCurrentTime: zone.scheduleShowCurrentTime ?? true,
@@ -1646,6 +1658,10 @@ function ZoneEditorDialog({
           forecastRefreshInterval: 600,
           forecastFontSize: 14,
           forecastShowHourly: false,
+          forecastShowCondition: false,
+          forecastShowSunrise: false,
+          forecastShowHumidity: false,
+          forecastShowHourlyCondition: false,
           scheduleViewMode: "hourly",
           scheduleEntries: [],
           scheduleShowCurrentTime: true,
@@ -5883,6 +5899,70 @@ function ZoneEditorDialog({
                         />
                       </FormControl>
                       <FormLabel className="!mt-0">Show hourly forecast (next 24h)</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="forecastShowCondition"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? false}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-forecast-show-condition"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show daily condition text</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="forecastShowSunrise"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? false}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-forecast-show-sunrise"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show sunrise / sunset times</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="forecastShowHumidity"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? false}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-forecast-show-humidity"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show hourly humidity</FormLabel>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="forecastShowHourlyCondition"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value ?? false}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-forecast-show-hourly-condition"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0">Show hourly condition text</FormLabel>
                     </FormItem>
                   )}
                 />
