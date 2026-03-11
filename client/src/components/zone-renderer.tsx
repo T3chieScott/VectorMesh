@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { WORLD_MAP_PATHS, WORLD_MAP_VIEWBOX } from "./world-map-paths";
 import {
   Clock,
   Image,
@@ -1876,22 +1877,6 @@ function WeatherForecastWidget({
   );
 }
 
-const WORLD_MAP_PATHS = [
-  "M-168,-65 L-160,-60 L-150,-58 L-140,-60 L-135,-63 L-130,-65 L-125,-60 L-120,-55 L-123,-52 L-125,-50 L-124,-48 L-122,-46 L-120,-44 L-117,-40 L-115,-37 L-110,-35 L-105,-32 L-102,-30 L-100,-28 L-97,-25 L-95,-22 L-92,-20 L-90,-18 L-87,-15 L-84,-14 L-82,-17 L-80,-19 L-78,-18 L-75,-15 L-73,-12 L-70,-10 L-67,-12 L-65,-14 L-64,-18 L-62,-20 L-58,-22 L-55,-24 L-52,-25 L-53,-28 L-55,-30 L-60,-35 L-67,-38 L-72,-40 L-77,-40 L-80,-38 L-83,-35 L-88,-33 L-92,-30 L-96,-28 L-100,-25 L-105,-22 L-108,-20 L-112,-18 L-116,-18 L-118,-20 L-120,-22 L-124,-25 L-128,-28 L-130,-30 L-135,-32 L-140,-35 L-145,-38 L-150,-40 L-155,-42 L-160,-45 L-165,-50 L-168,-55 L-170,-60 L-168,-65Z",
-  "M-80,-10 L-77,-8 L-72,-5 L-68,-3 L-63,0 L-58,2 L-55,3 L-50,5 L-48,8 L-45,10 L-42,14 L-40,18 L-38,22 L-37,26 L-38,30 L-40,33 L-42,36 L-45,38 L-48,40 L-50,42 L-53,44 L-56,46 L-60,48 L-63,50 L-66,52 L-68,54 L-70,55 L-72,52 L-73,48 L-72,44 L-70,40 L-68,36 L-66,32 L-64,28 L-62,24 L-60,20 L-58,16 L-56,12 L-54,8 L-55,5 L-58,2 L-62,0 L-65,-2 L-68,-4 L-72,-6 L-76,-8 L-80,-10Z",
-  "M-10,-36 L-8,-38 L-5,-40 L-2,-42 L0,-44 L3,-46 L5,-48 L8,-50 L10,-52 L12,-54 L15,-56 L18,-58 L20,-60 L22,-62 L25,-64 L28,-66 L30,-68 L33,-70 L35,-68 L38,-66 L40,-64 L42,-62 L44,-60 L42,-58 L40,-56 L38,-54 L35,-52 L32,-50 L30,-48 L28,-46 L25,-44 L22,-42 L20,-40 L18,-38 L15,-36 L12,-35 L10,-36 L8,-38 L5,-40 L2,-38 L0,-36 L-3,-35 L-5,-36 L-8,-37 L-10,-36Z",
-  "M-17,-35 L-15,-32 L-12,-30 L-8,-28 L-5,-25 L0,-22 L5,-20 L10,-18 L15,-16 L20,-14 L25,-12 L30,-10 L35,-8 L38,-5 L40,-2 L42,0 L44,2 L46,5 L48,8 L50,12 L50,16 L48,20 L45,24 L42,27 L38,30 L35,33 L32,34 L28,33 L25,30 L22,27 L18,24 L15,20 L12,16 L10,12 L8,8 L5,5 L2,2 L0,0 L-3,-2 L-5,-5 L-8,-8 L-10,-12 L-12,-16 L-14,-20 L-16,-24 L-17,-28 L-17,-32 L-17,-35Z",
-  "M30,-70 L35,-68 L40,-65 L45,-62 L50,-60 L55,-58 L60,-56 L65,-55 L70,-54 L75,-52 L80,-50 L85,-48 L90,-46 L95,-45 L100,-44 L105,-42 L110,-40 L115,-38 L120,-36 L125,-34 L130,-32 L135,-30 L140,-32 L142,-35 L140,-38 L135,-40 L130,-42 L125,-40 L120,-38 L115,-35 L110,-32 L105,-28 L100,-25 L95,-22 L90,-20 L85,-18 L80,-15 L75,-12 L70,-10 L65,-8 L60,-5 L55,-3 L50,-5 L45,-8 L40,-12 L35,-18 L32,-22 L28,-25 L25,-28 L22,-32 L20,-35 L22,-38 L25,-42 L28,-46 L30,-48 L32,-50 L35,-52 L38,-54 L40,-56 L38,-58 L35,-60 L32,-62 L30,-65 L30,-70Z",
-  "M70,-28 L72,-25 L74,-22 L76,-18 L78,-14 L80,-10 L78,-7 L76,-5 L73,-8 L70,-12 L68,-16 L66,-20 L68,-24 L70,-28Z",
-  "M126,-38 L128,-36 L130,-34 L132,-32 L134,-30 L135,-33 L134,-36 L132,-38 L130,-40 L128,-40 L126,-38Z",
-  "M112,10 L118,12 L122,15 L126,18 L130,20 L134,22 L138,25 L142,28 L146,30 L150,32 L152,34 L153,37 L152,40 L148,38 L144,36 L140,34 L136,32 L132,30 L128,28 L124,26 L120,24 L116,22 L114,18 L112,14 L112,10Z",
-  "M95,2 L100,0 L105,2 L110,4 L115,2 L120,0 L125,2 L130,0 L135,2 L138,5 L135,6 L130,4 L125,6 L120,4 L115,6 L110,8 L105,6 L100,4 L95,5 L95,2Z",
-  "M-8,-50 L-5,-52 L-3,-54 L0,-56 L2,-55 L0,-52 L-2,-50 L-5,-49 L-8,-50Z",
-  "M-55,-60 L-50,-62 L-45,-65 L-40,-68 L-35,-72 L-30,-75 L-25,-78 L-20,-80 L-25,-82 L-30,-83 L-35,-82 L-40,-80 L-45,-78 L-50,-75 L-55,-72 L-58,-68 L-55,-64 L-55,-60Z",
-  "M-180,82 L-150,78 L-120,76 L-90,75 L-60,76 L-30,78 L0,80 L30,78 L60,76 L90,75 L120,76 L150,78 L180,82 L180,90 L-180,90 L-180,82Z",
-  "M165,38 L167,40 L170,42 L172,44 L174,46 L172,47 L170,45 L168,43 L166,41 L165,38Z",
-  "M46,12 L48,14 L49,18 L48,22 L46,25 L44,22 L44,18 L45,14 L46,12Z",
-];
 
 function EarthquakesWidget({
   feed = "all_hour",
@@ -2008,11 +1993,11 @@ function EarthquakesWidget({
   }
 
   function getMagRadius(mag: number | null): number {
-    if (mag == null) return 1.5;
-    if (mag >= 7) return 5;
-    if (mag >= 5) return 3.5;
-    if (mag >= 2.5) return 2.5;
-    return 1.5;
+    if (mag == null) return 4;
+    if (mag >= 7) return 13;
+    if (mag >= 5) return 9;
+    if (mag >= 2.5) return 6.5;
+    return 4;
   }
 
   function getAlertColor(alert: string | null): string {
@@ -2073,10 +2058,10 @@ function EarthquakesWidget({
   const earthquakes: any[] = data.earthquakes || [];
 
   function lonToX(lon: number): number {
-    return ((lon + 180) / 360) * 360 - 180;
+    return ((lon + 180) / 360) * WORLD_MAP_VIEWBOX.width + WORLD_MAP_VIEWBOX.x;
   }
   function latToY(lat: number): number {
-    return -lat;
+    return ((90 - lat) / 180) * WORLD_MAP_VIEWBOX.height + WORLD_MAP_VIEWBOX.y;
   }
 
   const renderRow = (eq: any, idx: number, keySuffix = "") => {
@@ -2213,7 +2198,7 @@ function EarthquakesWidget({
             </div>
           ) : (
             <svg
-              viewBox="-180 -90 360 180"
+              viewBox={`${WORLD_MAP_VIEWBOX.x} ${WORLD_MAP_VIEWBOX.y} ${WORLD_MAP_VIEWBOX.width} ${WORLD_MAP_VIEWBOX.height}`}
               preserveAspectRatio="xMidYMid meet"
               style={{ width: "100%", height: "100%", display: "block" }}
               data-testid="earthquakes-map"
@@ -2221,30 +2206,22 @@ function EarthquakesWidget({
               <defs>
                 <style>{`
                   @keyframes eq-pulse {
-                    0% { opacity: 1; r: inherit; }
+                    0% { opacity: 1; }
                     50% { opacity: 0.4; }
                     100% { opacity: 1; }
                   }
                   .eq-pulse-dot { animation: eq-pulse 2s ease-in-out infinite; }
                 `}</style>
               </defs>
-              <rect x="-180" y="-90" width="360" height="180" fill="#0a1628" />
-              <g opacity="0.15" stroke="#334155" strokeWidth="0.3" fill="none">
-                {[-60,-30,0,30,60].map(lat => (
-                  <line key={`lat${lat}`} x1="-180" y1={-lat} x2="180" y2={-lat} />
-                ))}
-                {[-150,-120,-90,-60,-30,0,30,60,90,120,150].map(lon => (
-                  <line key={`lon${lon}`} x1={lon} y1="-90" x2={lon} y2="90" />
-                ))}
-              </g>
+              <rect x={WORLD_MAP_VIEWBOX.x} y={WORLD_MAP_VIEWBOX.y} width={WORLD_MAP_VIEWBOX.width} height={WORLD_MAP_VIEWBOX.height} fill="#0a1628" />
               {WORLD_MAP_PATHS.map((d, i) => (
                 <path
                   key={i}
                   d={d}
                   fill="#1e3a5f"
                   stroke="#2d5a8a"
-                  strokeWidth="0.3"
-                  opacity="0.6"
+                  strokeWidth="0.5"
+                  opacity="0.7"
                 />
               ))}
               {earthquakes.map((eq: any, idx: number) => {
@@ -2261,9 +2238,9 @@ function EarthquakesWidget({
                       cy={cy}
                       r={r}
                       fill={color}
-                      opacity={0.7}
+                      opacity={0.8}
                       stroke={color}
-                      strokeWidth="0.3"
+                      strokeWidth="0.5"
                       className={isNewest ? "eq-pulse-dot" : ""}
                     />
                     {isNewest && (
@@ -2273,7 +2250,7 @@ function EarthquakesWidget({
                         r={r * 2.5}
                         fill="none"
                         stroke={color}
-                        strokeWidth="0.3"
+                        strokeWidth="0.5"
                         opacity={0.3}
                         className="eq-pulse-dot"
                       />
@@ -2281,14 +2258,14 @@ function EarthquakesWidget({
                   </g>
                 );
               })}
-              <g transform="translate(120, 68)">
-                <rect x="0" y="0" width="55" height="28" rx="2" fill="rgba(10,22,40,0.85)" stroke="rgba(255,255,255,0.1)" strokeWidth="0.3" />
-                <circle cx="6" cy="7" r="2" fill="#22c55e" />
-                <text x="10" y="9" fill="#94a3b8" fontSize="4" fontFamily="sans-serif">&lt; 2.5</text>
-                <circle cx="6" cy="15" r="2.5" fill="#f59e0b" />
-                <text x="10" y="17" fill="#94a3b8" fontSize="4" fontFamily="sans-serif">2.5–4.9</text>
-                <circle cx="6" cy="23" r="3" fill="#ef4444" />
-                <text x="10" y="25" fill="#94a3b8" fontSize="4" fontFamily="sans-serif">≥ 5.0</text>
+              <g transform={`translate(${WORLD_MAP_VIEWBOX.x + WORLD_MAP_VIEWBOX.width - 150}, ${WORLD_MAP_VIEWBOX.y + WORLD_MAP_VIEWBOX.height - 80})`}>
+                <rect x="0" y="0" width="145" height="72" rx="4" fill="rgba(10,22,40,0.85)" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+                <circle cx="16" cy="18" r="5" fill="#22c55e" />
+                <text x="28" y="22" fill="#94a3b8" fontSize="11" fontFamily="sans-serif">&lt; 2.5</text>
+                <circle cx="16" cy="38" r="6.5" fill="#f59e0b" />
+                <text x="28" y="42" fill="#94a3b8" fontSize="11" fontFamily="sans-serif">2.5–4.9</text>
+                <circle cx="16" cy="58" r="8" fill="#ef4444" />
+                <text x="28" y="62" fill="#94a3b8" fontSize="11" fontFamily="sans-serif">≥ 5.0</text>
               </g>
             </svg>
           )}
