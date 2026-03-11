@@ -1910,6 +1910,9 @@ function EarthquakesWidget({
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
+  const [fittingRows, setFittingRows] = useState<number | null>(null);
+  const listContainerRef = useRef<HTMLDivElement>(null);
+  const measureRowRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollInnerRef = useRef<HTMLDivElement>(null);
   const animationRef = useRef<number>(0);
@@ -1984,7 +1987,8 @@ function EarthquakesWidget({
   useEffect(() => {
     if (displayMode !== "list" || !data) return;
     const eqs: any[] = data.earthquakes || [];
-    const perPage = itemsPerPage || 8;
+    const maxPerPage = itemsPerPage || 8;
+    const perPage = fittingRows != null ? Math.min(maxPerPage, Math.max(1, fittingRows)) : maxPerPage;
     const totalPages = Math.max(1, Math.ceil(eqs.length / perPage));
     if (totalPages <= 1) return;
 
@@ -1993,11 +1997,32 @@ function EarthquakesWidget({
       setCurrentPage((prev) => (prev + 1) % totalPages);
     }, duration);
     return () => clearInterval(timer);
-  }, [displayMode, data, itemsPerPage, pageDuration]);
+  }, [displayMode, data, itemsPerPage, pageDuration, fittingRows]);
 
   useEffect(() => {
     setCurrentPage(0);
   }, [data]);
+
+  useEffect(() => {
+    if (displayMode !== "list") {
+      setFittingRows(null);
+      return;
+    }
+    const measure = () => {
+      const container = listContainerRef.current;
+      const row = measureRowRef.current;
+      if (!container || !row) return;
+      const containerH = container.clientHeight;
+      const rowH = row.getBoundingClientRect().height;
+      if (rowH > 0) {
+        setFittingRows(Math.floor(containerH / rowH));
+      }
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (listContainerRef.current) ro.observe(listContainerRef.current);
+    return () => ro.disconnect();
+  }, [displayMode, data, fontSize]);
 
   const fs = fontSize || 14;
 
@@ -2344,20 +2369,28 @@ function EarthquakesWidget({
       data-testid="earthquakes-widget"
     >
       {renderHeader()}
-      <div className="flex-1 overflow-hidden" style={{ padding: `${fs * 0.3}px 0` }}>
+      <div className="flex-1 overflow-hidden flex flex-col" style={{ padding: `${fs * 0.3}px 0` }}>
         {earthquakes.length === 0 ? (
           <div className="h-full flex items-center justify-center" style={{ color: "#64748b", fontSize: fs * 0.85 }} data-testid="earthquakes-empty">
             No earthquakes recorded in this window
           </div>
         ) : (() => {
-          const perPage = itemsPerPage || 8;
+          const maxPerPage = itemsPerPage || 8;
+          const perPage = fittingRows != null ? Math.min(maxPerPage, Math.max(1, fittingRows)) : maxPerPage;
           const totalPages = Math.max(1, Math.ceil(earthquakes.length / perPage));
           const safePage = currentPage % totalPages;
           const start = safePage * perPage;
           const pageItems = earthquakes.slice(start, start + perPage);
           return (
-            <div className="h-full flex flex-col">
-              <div className="flex-1">
+            <>
+              <div
+                ref={measureRowRef}
+                style={{ position: "absolute", visibility: "hidden", pointerEvents: "none", left: -9999 }}
+                aria-hidden="true"
+              >
+                {renderRow(earthquakes[0], -1)}
+              </div>
+              <div ref={listContainerRef} className="flex-1 overflow-hidden">
                 {pageItems.map((eq: any, idx: number) => renderRow(eq, start + idx))}
               </div>
               {totalPages > 1 && (
@@ -2366,6 +2399,7 @@ function EarthquakesWidget({
                   style={{
                     padding: `${fs * 0.3}px`,
                     borderTop: "1px solid rgba(255,255,255,0.05)",
+                    flexShrink: 0,
                   }}
                   data-testid="earthquakes-page-indicator"
                 >
@@ -2383,7 +2417,7 @@ function EarthquakesWidget({
                   ))}
                 </div>
               )}
-            </div>
+            </>
           );
         })()}
       </div>
