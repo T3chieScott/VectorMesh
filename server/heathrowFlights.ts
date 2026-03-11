@@ -71,6 +71,7 @@ interface NormalisedFlight {
   codeshareStatus: string | null;
   aircraftModel: string | null;
   aircraftReg: string | null;
+  quality: string | null;
   remarks: string | null;
 }
 
@@ -313,6 +314,7 @@ function normaliseAeroDataBoxFlight(raw: any, direction: "arrival" | "departure"
     codeshareStatus: safeString(raw.codeshareStatus) || null,
     aircraftModel: safeString(raw.aircraft?.model) || null,
     aircraftReg: safeString(raw.aircraft?.reg) || null,
+    quality: safeString(localSide.quality) || null,
     remarks: null,
   };
 }

@@ -1309,7 +1309,7 @@ const HEATHROW_COLUMN_DEFS: Record<string, {
   },
 };
 
-const DEFAULT_DEPARTURE_COLUMNS = ["flight", "airline", "terminal", "gate", "checkInDesk", "destination", "scheduled", "estimated", "status"];
+const DEFAULT_DEPARTURE_COLUMNS = ["flight", "airline", "terminal", "gate", "destination", "scheduled", "estimated", "status"];
 const DEFAULT_ARRIVAL_COLUMNS = ["flight", "airline", "terminal", "belt", "destination", "scheduled", "estimated", "status"];
 
 function HeathrowFlightsWidget({

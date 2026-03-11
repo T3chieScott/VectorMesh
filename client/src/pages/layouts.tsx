@@ -5842,6 +5842,10 @@ function ZoneEditorDialog({
                   control={form.control}
                   name="heathrowColumns"
                   render={({ field }) => {
+                    const isArrivals = form.watch("type") === "heathrow_arrivals";
+                    const defaultDepartureCols = ["flight", "airline", "terminal", "gate", "destination", "scheduled", "estimated", "status"];
+                    const defaultArrivalCols = ["flight", "airline", "terminal", "belt", "destination", "scheduled", "estimated", "status"];
+                    const defaultCols = isArrivals ? defaultArrivalCols : defaultDepartureCols;
                     const allColumns = [
                       { key: "flight", label: "Flight Number" },
                       { key: "airline", label: "Airline" },
@@ -5849,7 +5853,7 @@ function ZoneEditorDialog({
                       { key: "gate", label: "Gate" },
                       { key: "checkInDesk", label: "Check-In Desk" },
                       { key: "belt", label: "Baggage Belt" },
-                      { key: "destination", label: form.watch("type") === "heathrow_arrivals" ? "Origin" : "Destination" },
+                      { key: "destination", label: isArrivals ? "Origin" : "Destination" },
                       { key: "scheduled", label: "Scheduled Time" },
                       { key: "estimated", label: "Estimated Time" },
                       { key: "predicted", label: "Predicted Time (ML)" },
@@ -5861,18 +5865,19 @@ function ZoneEditorDialog({
                       { key: "callSign", label: "Callsign" },
                       { key: "codeshare", label: "Codeshare Status" },
                     ];
-                    const selected: string[] = field.value || [];
+                    const effective: string[] = (field.value && field.value.length > 0) ? field.value : defaultCols;
                     const toggleColumn = (key: string) => {
-                      const next = selected.includes(key)
-                        ? selected.filter((k: string) => k !== key)
-                        : [...selected, key];
+                      const next = effective.includes(key)
+                        ? effective.filter((k: string) => k !== key)
+                        : [...effective, key];
                       field.onChange(next);
                     };
+                    const isDefault = !field.value || field.value.length === 0;
                     return (
                       <FormItem>
                         <FormLabel>Visible Columns</FormLabel>
                         <FormDescription>
-                          Select which columns to display. Leave empty to use defaults.
+                          {isDefault ? "Using default columns. Toggle any to customise." : "Custom column selection active."}
                         </FormDescription>
                         <div className="grid grid-cols-2 gap-1 mt-2">
                           {allColumns.map(({ key, label }) => (
@@ -5881,7 +5886,7 @@ function ZoneEditorDialog({
                               className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 rounded px-1 py-0.5"
                             >
                               <Checkbox
-                                checked={selected.includes(key)}
+                                checked={effective.includes(key)}
                                 onCheckedChange={() => toggleColumn(key)}
                                 data-testid={`checkbox-heathrow-col-${key}`}
                               />
@@ -5889,6 +5894,18 @@ function ZoneEditorDialog({
                             </label>
                           ))}
                         </div>
+                        {!isDefault && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="mt-1 text-xs"
+                            onClick={() => field.onChange([])}
+                            data-testid="button-reset-heathrow-columns"
+                          >
+                            Reset to defaults
+                          </Button>
+                        )}
                       </FormItem>
                     );
                   }}
