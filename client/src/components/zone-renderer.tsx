@@ -2728,13 +2728,6 @@ function AircraftRadarWidget({
               style={{ width: "100%", height: "100%", display: "block" }}
               data-testid="aircraft-radar">
               <defs>
-                <style>{`
-                  @keyframes radar-sweep {
-                    from { transform: rotate(0deg); }
-                    to { transform: rotate(360deg); }
-                  }
-                  .radar-sweep { animation: radar-sweep 4s linear infinite; transform-origin: center; }
-                `}</style>
                 <radialGradient id="radar-sweep-grad" cx="50%" cy="50%" r="50%">
                   <stop offset="0%" stopColor="rgba(34,197,94,0.2)" />
                   <stop offset="100%" stopColor="rgba(34,197,94,0)" />
@@ -2750,7 +2743,8 @@ function AircraftRadarWidget({
               <line x1="-141" y1="-141" x2="141" y2="141" stroke="rgba(34,197,94,0.05)" strokeWidth="0.5" />
               <line x1="-141" y1="141" x2="141" y2="-141" stroke="rgba(34,197,94,0.05)" strokeWidth="0.5" />
 
-              <g className="radar-sweep">
+              <g>
+                <animateTransform attributeName="transform" type="rotate" from="0 0 0" to="360 0 0" dur="4s" repeatCount="indefinite" />
                 <line x1="0" y1="0" x2="200" y2="0" stroke="rgba(34,197,94,0.6)" strokeWidth="1" />
                 <path d="M 0 0 L 200 0 A 200 200 0 0 0 190 -50 Z" fill="url(#radar-sweep-grad)" opacity="0.4" />
               </g>
