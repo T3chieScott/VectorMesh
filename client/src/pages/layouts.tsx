@@ -601,6 +601,8 @@ const zoneFormSchema = z.object({
   earthquakeShowAlert: z.boolean().optional(),
   earthquakeDisplayMode: z.enum(["list", "auto_scroll", "map"]).optional(),
   earthquakeScrollSpeed: z.number().min(5).max(200).optional(),
+  earthquakeItemsPerPage: z.number().min(3).max(50).optional(),
+  earthquakePageDuration: z.number().min(3).max(60).optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
     id: z.string(),
@@ -1357,6 +1359,8 @@ function ZoneEditorDialog({
       earthquakeShowAlert: true,
       earthquakeDisplayMode: "list",
       earthquakeScrollSpeed: 30,
+      earthquakeItemsPerPage: 8,
+      earthquakePageDuration: 8,
       scheduleViewMode: "hourly",
       scheduleEntries: [],
       scheduleShowCurrentTime: true,
@@ -1549,6 +1553,8 @@ function ZoneEditorDialog({
           earthquakeShowAlert: zone.earthquakeShowAlert ?? true,
           earthquakeDisplayMode: zone.earthquakeDisplayMode || "list",
           earthquakeScrollSpeed: zone.earthquakeScrollSpeed ?? 30,
+          earthquakeItemsPerPage: zone.earthquakeItemsPerPage ?? 8,
+          earthquakePageDuration: zone.earthquakePageDuration ?? 8,
           scheduleViewMode: zone.scheduleViewMode || "hourly",
           scheduleEntries: zone.scheduleEntries || [],
           scheduleShowCurrentTime: zone.scheduleShowCurrentTime ?? true,
@@ -1732,6 +1738,8 @@ function ZoneEditorDialog({
           earthquakeShowAlert: true,
           earthquakeDisplayMode: "list",
           earthquakeScrollSpeed: 30,
+          earthquakeItemsPerPage: 8,
+          earthquakePageDuration: 8,
           scheduleViewMode: "hourly",
           scheduleEntries: [],
           scheduleShowCurrentTime: true,
@@ -6206,6 +6214,50 @@ function ZoneEditorDialog({
                       </FormItem>
                     )}
                   />
+                )}
+                {form.watch("earthquakeDisplayMode") === "list" && (
+                  <>
+                    <FormField
+                      control={form.control}
+                      name="earthquakeItemsPerPage"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Items Per Page</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min={3}
+                              max={50}
+                              value={field.value ?? 8}
+                              onChange={(e) => field.onChange(parseInt(e.target.value) || 8)}
+                              data-testid="input-earthquake-items-per-page"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="earthquakePageDuration"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Page Duration (seconds)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min={3}
+                              max={60}
+                              value={field.value ?? 8}
+                              onChange={(e) => field.onChange(parseInt(e.target.value) || 8)}
+                              data-testid="input-earthquake-page-duration"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </>
                 )}
                 <FormField
                   control={form.control}

@@ -1889,6 +1889,8 @@ function EarthquakesWidget({
   showAlert = true,
   displayMode = "list",
   scrollSpeed = 30,
+  itemsPerPage = 8,
+  pageDuration = 8,
   deviceToken,
 }: {
   feed?: string;
@@ -1901,10 +1903,13 @@ function EarthquakesWidget({
   showAlert?: boolean;
   displayMode?: string;
   scrollSpeed?: number;
+  itemsPerPage?: number;
+  pageDuration?: number;
   deviceToken?: string;
 }) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollInnerRef = useRef<HTMLDivElement>(null);
   const animationRef = useRef<number>(0);
@@ -1975,6 +1980,24 @@ function EarthquakesWidget({
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
   }, [displayMode, scrollSpeed, data]);
+
+  useEffect(() => {
+    if (displayMode !== "list" || !data) return;
+    const eqs: any[] = data.earthquakes || [];
+    const perPage = itemsPerPage || 8;
+    const totalPages = Math.max(1, Math.ceil(eqs.length / perPage));
+    if (totalPages <= 1) return;
+
+    const duration = (pageDuration || 8) * 1000;
+    const timer = setInterval(() => {
+      setCurrentPage((prev) => (prev + 1) % totalPages);
+    }, duration);
+    return () => clearInterval(timer);
+  }, [displayMode, data, itemsPerPage, pageDuration]);
+
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [data]);
 
   const fs = fontSize || 14;
 
@@ -2321,14 +2344,48 @@ function EarthquakesWidget({
       data-testid="earthquakes-widget"
     >
       {renderHeader()}
-      <div className="flex-1 overflow-auto" style={{ padding: `${fs * 0.3}px 0` }}>
+      <div className="flex-1 overflow-hidden" style={{ padding: `${fs * 0.3}px 0` }}>
         {earthquakes.length === 0 ? (
           <div className="h-full flex items-center justify-center" style={{ color: "#64748b", fontSize: fs * 0.85 }} data-testid="earthquakes-empty">
             No earthquakes recorded in this window
           </div>
-        ) : (
-          earthquakes.map((eq: any, idx: number) => renderRow(eq, idx))
-        )}
+        ) : (() => {
+          const perPage = itemsPerPage || 8;
+          const totalPages = Math.max(1, Math.ceil(earthquakes.length / perPage));
+          const safePage = currentPage % totalPages;
+          const start = safePage * perPage;
+          const pageItems = earthquakes.slice(start, start + perPage);
+          return (
+            <div className="h-full flex flex-col">
+              <div className="flex-1">
+                {pageItems.map((eq: any, idx: number) => renderRow(eq, start + idx))}
+              </div>
+              {totalPages > 1 && (
+                <div
+                  className="flex items-center justify-center gap-1"
+                  style={{
+                    padding: `${fs * 0.3}px`,
+                    borderTop: "1px solid rgba(255,255,255,0.05)",
+                  }}
+                  data-testid="earthquakes-page-indicator"
+                >
+                  {Array.from({ length: totalPages }, (_, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        width: i === safePage ? fs * 1.2 : fs * 0.4,
+                        height: fs * 0.4,
+                        borderRadius: fs * 0.2,
+                        background: i === safePage ? "#f59e0b" : "rgba(255,255,255,0.15)",
+                        transition: "all 0.3s ease",
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
       {renderStaleBar()}
     </div>
@@ -4331,6 +4388,8 @@ export function ZoneRenderer({
             showAlert={zone.earthquakeShowAlert}
             displayMode={zone.earthquakeDisplayMode}
             scrollSpeed={zone.earthquakeScrollSpeed}
+            itemsPerPage={zone.earthquakeItemsPerPage}
+            pageDuration={zone.earthquakePageDuration}
             deviceToken={deviceToken}
           />
         );
