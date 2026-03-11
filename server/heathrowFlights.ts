@@ -52,18 +52,25 @@ interface NormalisedFlight {
   flightNumber: string;
   iata: string;
   icao: string | null;
+  callSign: string | null;
   direction: "arrival" | "departure";
   airline: FlightAirline;
   terminal: string | null;
   gate: string | null;
+  checkInDesk: string | null;
   belt: string | null;
+  runway: string | null;
   origin: FlightAirport;
   destination: FlightAirport;
   scheduledTime: string | null;
   estimatedTime: string | null;
+  predictedTime: string | null;
   actualTime: string | null;
   status: FlightStatus;
   rawStatus: string | null;
+  codeshareStatus: string | null;
+  aircraftModel: string | null;
+  aircraftReg: string | null;
   remarks: string | null;
 }
 
@@ -101,8 +108,15 @@ const STATUS_MAP: Record<string, FlightStatus> = {
   "scheduled": { code: "scheduled", label: "Scheduled" },
   "on time": { code: "scheduled", label: "On Time" },
   "expected": { code: "scheduled", label: "Expected" },
+  "enroute": { code: "departed", label: "En Route" },
   "en route": { code: "departed", label: "En Route" },
+  "checkin": { code: "check-in", label: "Check-In" },
+  "check-in": { code: "check-in", label: "Check-In" },
+  "check in": { code: "check-in", label: "Check-In" },
   "boarding": { code: "boarding", label: "Boarding" },
+  "gateclosed": { code: "gate-closed", label: "Gate Closed" },
+  "gate closed": { code: "gate-closed", label: "Gate Closed" },
+  "gate-closed": { code: "gate-closed", label: "Gate Closed" },
   "gate open": { code: "gate-open", label: "Gate Open" },
   "gate-open": { code: "gate-open", label: "Gate Open" },
   "gateopen": { code: "gate-open", label: "Gate Open" },
@@ -112,11 +126,13 @@ const STATUS_MAP: Record<string, FlightStatus> = {
   "departed": { code: "departed", label: "Departed" },
   "in flight": { code: "departed", label: "In Flight" },
   "airborne": { code: "departed", label: "Airborne" },
+  "approaching": { code: "approaching", label: "Approaching" },
   "arrived": { code: "arrived", label: "Arrived" },
   "landed": { code: "arrived", label: "Landed" },
   "delayed": { code: "delayed", label: "Delayed" },
   "cancelled": { code: "cancelled", label: "Cancelled" },
   "canceled": { code: "cancelled", label: "Cancelled" },
+  "canceleduncertain": { code: "cancelled", label: "Likely Cancelled" },
   "diverted": { code: "diverted", label: "Diverted" },
   "unknown": { code: "unknown", label: "Unknown" },
 };
@@ -157,6 +173,7 @@ function buildAirportFlightsUrl(
   const base = `${cfg.baseUrl}/flights/airports/iata/${AIRPORT_IATA}/${fromLocal}/${toLocal}`;
   const url = new URL(base);
   url.searchParams.set("direction", dirParam);
+  url.searchParams.set("withLeg", "true");
   url.searchParams.set("withCancelled", "true");
   url.searchParams.set("withCodeshared", "false");
   url.searchParams.set("withPrivate", "false");
@@ -195,30 +212,16 @@ async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<any
 }
 
 // ============ AeroDataBox Flight Normalisation ============
-// AeroDataBox flight record shape (actual observed structure):
-//   number: "MS 779"
-//   callSign: "MSR779"
-//   status: "Arrived" | "Expected" | "Departed" | "Canceled" | ...
-//   airline: { name: "EgyptAir", iata: "MS", icao: "MSR" }
-//   movement: {
-//     airport: { iata: "CAI", name: "Cairo", icao: "HECA" },
-//     scheduledTime: { utc: "2026-03-10 21:00Z", local: "2026-03-10 21:00+00:00" },
-//     revisedTime: { utc: "...", local: "..." },
-//     runwayTime: { utc: "...", local: "..." },
-//     terminal: "2",
-//     gate: "A10",
-//     baggageBelt: "8"
-//   }
+// With withLeg=true the API returns separate departure/arrival objects:
+//   departure: { scheduledTime, revisedTime, predictedTime, runwayTime,
+//                terminal, checkInDesk, gate, runway, quality, airport }
+//   arrival:   { scheduledTime, revisedTime, predictedTime, runwayTime,
+//                terminal, baggageBelt, gate, runway, quality, airport }
 //
-// The "movement" object represents the remote airport and LHR-side details:
-// - For arrivals: movement.airport = origin, terminal/belt = LHR arrival info
-// - For departures: movement.airport = destination, terminal/gate = LHR departure info
+// For departures: raw.departure = LHR-side info, raw.arrival.airport = destination
+// For arrivals:   raw.arrival = LHR-side info, raw.departure.airport = origin
 //
-// Important mapping notes:
-// - "revisedTime" is the estimated/revised time (not "estimatedTime" or "actualTimeUtc")
-// - "runwayTime" is the actual touchdown/takeoff time when available
-// - If revisedTime differs from scheduledTime, it indicates a delay or update
-// - Adjust field names here if AeroDataBox changes their payload schema
+// Without withLeg (fallback): raw.movement contains merged info.
 
 function extractTimeUtc(timeObj: any): string | null {
   if (!timeObj) return null;
@@ -231,12 +234,28 @@ function normaliseAeroDataBoxFlight(raw: any, direction: "arrival" | "departure"
   const airlineIata = safeString(raw.airline?.iata) || flightNumber.replace(/\d+/g, "") || "";
   const airlineName = safeString(raw.airline?.name) || airlineIata;
 
-  // AeroDataBox uses a single "movement" object for the remote airport and LHR-side info
-  const mov = raw.movement || {};
-  const remoteAirport = mov.airport || {};
+  const hasLeg = !!(raw.departure || raw.arrival);
 
-  // For arrivals: movement.airport is the origin (where the flight came from)
-  // For departures: movement.airport is the destination (where the flight is going)
+  let localSide: any;
+  let remoteSide: any;
+
+  if (hasLeg) {
+    if (direction === "departure") {
+      localSide = raw.departure || {};
+      remoteSide = raw.arrival || {};
+    } else {
+      localSide = raw.arrival || {};
+      remoteSide = raw.departure || {};
+    }
+  } else {
+    localSide = raw.movement || {};
+    remoteSide = raw.movement || {};
+  }
+
+  const remoteAirport = hasLeg
+    ? (remoteSide.airport || {})
+    : (localSide.airport || {});
+
   const originCode = direction === "arrival"
     ? (safeString(remoteAirport.iata) || "")
     : AIRPORT_IATA;
@@ -251,25 +270,27 @@ function normaliseAeroDataBoxFlight(raw: any, direction: "arrival" | "departure"
     ? (safeString(remoteAirport.name) || destCode)
     : "London Heathrow";
 
-  const scheduledTime = extractTimeUtc(mov.scheduledTime);
-  // revisedTime is AeroDataBox's estimated/updated time field
-  const revisedTime = extractTimeUtc(mov.revisedTime);
-  // runwayTime is the actual touchdown/takeoff time
-  const actualTime = extractTimeUtc(mov.runwayTime);
-  // Only show estimatedTime if it differs from scheduled
+  const scheduledTime = extractTimeUtc(localSide.scheduledTime);
+  const revisedTime = extractTimeUtc(localSide.revisedTime);
+  const predictedTime = extractTimeUtc(localSide.predictedTime);
+  const actualTime = extractTimeUtc(localSide.runwayTime);
   const estimatedTime = revisedTime && revisedTime !== scheduledTime ? revisedTime : null;
 
-  const terminal = safeString(mov.terminal);
-  const gate = safeString(mov.gate);
-  const belt = safeString(mov.baggageBelt);
+  const terminal = safeString(localSide.terminal);
+  const gate = safeString(localSide.gate);
+  const checkInDesk = safeString(localSide.checkInDesk);
+  const belt = safeString(localSide.baggageBelt);
+  const runway = safeString(localSide.runway);
 
   const rawStatus = safeString(raw.status);
+  const callSign = safeString(raw.callSign) || null;
 
   return {
     id: `${flightNumber}-${scheduledTime || Date.now()}`,
     flightNumber,
     iata: flightNumber,
-    icao: safeString(raw.callSign) || null,
+    icao: callSign,
+    callSign,
     direction,
     airline: {
       name: airlineName,
@@ -278,14 +299,20 @@ function normaliseAeroDataBoxFlight(raw: any, direction: "arrival" | "departure"
     },
     terminal,
     gate,
+    checkInDesk,
     belt,
+    runway,
     origin: { code: originCode, name: originName },
     destination: { code: destCode, name: destName },
     scheduledTime,
     estimatedTime,
+    predictedTime,
     actualTime,
     status: normaliseStatus(rawStatus),
     rawStatus,
+    codeshareStatus: safeString(raw.codeshareStatus) || null,
+    aircraftModel: safeString(raw.aircraft?.model) || null,
+    aircraftReg: safeString(raw.aircraft?.reg) || null,
     remarks: null,
   };
 }

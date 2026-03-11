@@ -1179,6 +1179,139 @@ function WeatherWidget({
   );
 }
 
+const HEATHROW_COLUMN_DEFS: Record<string, {
+  label: string;
+  depLabel?: string;
+  arrLabel?: string;
+  align: "left" | "center";
+  maxWidth?: string;
+  render: (flight: any, direction: string, formatTime: (iso: string | null) => string, statusColors: Record<string, { bg: string; text: string }>, fontSize: number) => React.ReactNode;
+}> = {
+  flight: {
+    label: "Flight",
+    align: "left",
+    render: (f) => <span style={{ fontWeight: 600 }}>{f.flightNumber || "-"}</span>,
+  },
+  airline: {
+    label: "Airline",
+    align: "left",
+    maxWidth: "120px",
+    render: (f) => f.airline?.name || f.airline?.code || "-",
+  },
+  terminal: {
+    label: "T",
+    align: "center",
+    render: (f) => f.terminal || "-",
+  },
+  gate: {
+    label: "Gate",
+    align: "center",
+    render: (f) => f.gate || "-",
+  },
+  checkInDesk: {
+    label: "Check-In",
+    align: "center",
+    render: (f) => f.checkInDesk || "-",
+  },
+  belt: {
+    label: "Belt",
+    align: "center",
+    render: (f) => f.belt || "-",
+  },
+  destination: {
+    label: "To",
+    depLabel: "To",
+    arrLabel: "From",
+    align: "left",
+    maxWidth: "150px",
+    render: (f, dir) => dir === "arrival"
+      ? (f.origin?.name || f.origin?.code || "-")
+      : (f.destination?.name || f.destination?.code || "-"),
+  },
+  scheduled: {
+    label: "Sched",
+    align: "center",
+    render: (f, _dir, fmt) => fmt(f.scheduledTime),
+  },
+  estimated: {
+    label: "Est",
+    align: "center",
+    render: (f, _dir, fmt) => {
+      const hasEst = f.estimatedTime && f.estimatedTime !== f.scheduledTime;
+      return (
+        <span style={{ color: hasEst ? "#f59e0b" : undefined }}>
+          {hasEst ? fmt(f.estimatedTime) : "-"}
+        </span>
+      );
+    },
+  },
+  predicted: {
+    label: "Pred",
+    align: "center",
+    render: (f, _dir, fmt) => f.predictedTime ? fmt(f.predictedTime) : "-",
+  },
+  actual: {
+    label: "Actual",
+    align: "center",
+    render: (f, _dir, fmt) => f.actualTime ? fmt(f.actualTime) : "-",
+  },
+  status: {
+    label: "Status",
+    align: "center",
+    render: (f, _dir, _fmt, statusColors, fontSize) => {
+      const sc = statusColors[f.status?.code] || statusColors["unknown"];
+      return (
+        <span style={{
+          display: "inline-block",
+          padding: "1px 6px",
+          borderRadius: "4px",
+          fontSize: `${Math.max(9, fontSize * 0.75)}px`,
+          fontWeight: 600,
+          backgroundColor: sc.bg,
+          color: sc.text,
+        }}>
+          {f.status?.label || "Unknown"}
+        </span>
+      );
+    },
+  },
+  aircraftType: {
+    label: "Aircraft",
+    align: "left",
+    maxWidth: "140px",
+    render: (f) => f.aircraftModel || "-",
+  },
+  aircraftReg: {
+    label: "Reg",
+    align: "center",
+    render: (f) => f.aircraftReg || "-",
+  },
+  runway: {
+    label: "RWY",
+    align: "center",
+    render: (f) => f.runway || "-",
+  },
+  callSign: {
+    label: "Callsign",
+    align: "center",
+    render: (f) => f.callSign || "-",
+  },
+  codeshare: {
+    label: "Codeshare",
+    align: "center",
+    render: (f) => {
+      const cs = f.codeshareStatus;
+      if (!cs || cs === "Unknown") return "-";
+      if (cs === "IsOperator") return "Operator";
+      if (cs === "IsCodeshared") return "Codeshare";
+      return cs;
+    },
+  },
+};
+
+const DEFAULT_DEPARTURE_COLUMNS = ["flight", "airline", "terminal", "gate", "checkInDesk", "destination", "scheduled", "estimated", "status"];
+const DEFAULT_ARRIVAL_COLUMNS = ["flight", "airline", "terminal", "belt", "destination", "scheduled", "estimated", "status"];
+
 function HeathrowFlightsWidget({
   direction,
   terminal,
@@ -1187,6 +1320,7 @@ function HeathrowFlightsWidget({
   pageInterval = 10,
   fontSize = 14,
   showFilters = false,
+  visibleColumns,
   deviceToken,
 }: {
   direction: "arrival" | "departure";
@@ -1196,6 +1330,7 @@ function HeathrowFlightsWidget({
   pageInterval?: number;
   fontSize?: number;
   showFilters?: boolean;
+  visibleColumns?: string[];
   deviceToken?: string;
 }) {
   const [data, setData] = useState<any>(null);
@@ -1289,12 +1424,19 @@ function HeathrowFlightsWidget({
     }
   }, [totalPages, currentPage]);
 
+  const columns = visibleColumns && visibleColumns.length > 0
+    ? visibleColumns.filter(c => c in HEATHROW_COLUMN_DEFS)
+    : (direction === "departure" ? DEFAULT_DEPARTURE_COLUMNS : DEFAULT_ARRIVAL_COLUMNS);
+
   const statusColors: Record<string, { bg: string; text: string }> = {
     "scheduled": { bg: "rgba(59,130,246,0.15)", text: "#3b82f6" },
+    "check-in": { bg: "rgba(59,130,246,0.15)", text: "#3b82f6" },
     "boarding": { bg: "rgba(245,158,11,0.15)", text: "#f59e0b" },
     "gate-open": { bg: "rgba(245,158,11,0.15)", text: "#f59e0b" },
+    "gate-closed": { bg: "rgba(239,68,68,0.15)", text: "#ef4444" },
     "final-call": { bg: "rgba(239,68,68,0.15)", text: "#ef4444" },
     "departed": { bg: "rgba(34,197,94,0.15)", text: "#22c55e" },
+    "approaching": { bg: "rgba(59,130,246,0.15)", text: "#3b82f6" },
     "arrived": { bg: "rgba(34,197,94,0.15)", text: "#22c55e" },
     "delayed": { bg: "rgba(245,158,11,0.15)", text: "#f59e0b" },
     "cancelled": { bg: "rgba(239,68,68,0.15)", text: "#ef4444" },
@@ -1448,65 +1590,39 @@ function HeathrowFlightsWidget({
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr ref={headerRowRef}>
-                <th style={{ ...headerStyle, textAlign: "left" }}>Flight</th>
-                <th style={{ ...headerStyle, textAlign: "left" }}>Airline</th>
-                <th style={{ ...headerStyle, textAlign: "center" }}>T</th>
-                {direction === "departure" && <th style={{ ...headerStyle, textAlign: "center" }}>Gate</th>}
-                {direction === "arrival" && <th style={{ ...headerStyle, textAlign: "center" }}>Belt</th>}
-                <th style={{ ...headerStyle, textAlign: "left" }}>{direction === "arrival" ? "From" : "To"}</th>
-                <th style={{ ...headerStyle, textAlign: "center" }}>Sched</th>
-                <th style={{ ...headerStyle, textAlign: "center" }}>Est</th>
-                <th style={{ ...headerStyle, textAlign: "center" }}>Status</th>
+                {columns.map((colKey) => {
+                  const def = HEATHROW_COLUMN_DEFS[colKey];
+                  if (!def) return null;
+                  const label = direction === "arrival" && def.arrLabel
+                    ? def.arrLabel
+                    : direction === "departure" && def.depLabel
+                    ? def.depLabel
+                    : def.label;
+                  return (
+                    <th key={colKey} style={{ ...headerStyle, textAlign: def.align }}>{label}</th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
-              {visibleFlights.map((flight: any, idx: number) => {
-                const sc = statusColors[flight.status?.code] || statusColors["unknown"];
-                return (
-                  <tr
-                    key={flight.id || idx}
-                    ref={idx === 0 ? sampleRowRef : undefined}
-                    style={{
-                      borderBottom: "1px solid rgba(255,255,255,0.05)",
-                    }}
-                    data-testid={`flight-row-${flight.flightNumber || idx}`}
-                  >
-                    <td style={{ ...cellStyle, textAlign: "left", fontWeight: 600 }}>{flight.flightNumber || "-"}</td>
-                    <td style={{ ...cellStyle, textAlign: "left", maxWidth: "120px" }}>{flight.airline?.name || flight.airline?.code || "-"}</td>
-                    <td style={{ ...cellStyle, textAlign: "center" }}>{flight.terminal || "-"}</td>
-                    {direction === "departure" && <td style={{ ...cellStyle, textAlign: "center" }}>{flight.gate || "-"}</td>}
-                    {direction === "arrival" && <td style={{ ...cellStyle, textAlign: "center" }}>{flight.belt || "-"}</td>}
-                    <td style={{ ...cellStyle, textAlign: "left", maxWidth: "150px" }}>
-                      {direction === "arrival"
-                        ? (flight.origin?.name || flight.origin?.code || "-")
-                        : (flight.destination?.name || flight.destination?.code || "-")}
-                    </td>
-                    <td style={{ ...cellStyle, textAlign: "center" }}>{formatTime(flight.scheduledTime)}</td>
-                    <td style={{
-                      ...cellStyle,
-                      textAlign: "center",
-                      color: flight.estimatedTime && flight.estimatedTime !== flight.scheduledTime ? "#f59e0b" : undefined,
-                    }}>
-                      {flight.estimatedTime && flight.estimatedTime !== flight.scheduledTime
-                        ? formatTime(flight.estimatedTime)
-                        : "-"}
-                    </td>
-                    <td style={{ ...cellStyle, textAlign: "center" }}>
-                      <span style={{
-                        display: "inline-block",
-                        padding: "1px 6px",
-                        borderRadius: "4px",
-                        fontSize: `${Math.max(9, fontSize * 0.75)}px`,
-                        fontWeight: 600,
-                        backgroundColor: sc.bg,
-                        color: sc.text,
-                      }}>
-                        {flight.status?.label || "Unknown"}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
+              {visibleFlights.map((flight: any, idx: number) => (
+                <tr
+                  key={flight.id || idx}
+                  ref={idx === 0 ? sampleRowRef : undefined}
+                  style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
+                  data-testid={`flight-row-${flight.flightNumber || idx}`}
+                >
+                  {columns.map((colKey) => {
+                    const def = HEATHROW_COLUMN_DEFS[colKey];
+                    if (!def) return null;
+                    return (
+                      <td key={colKey} style={{ ...cellStyle, textAlign: def.align, maxWidth: def.maxWidth }}>
+                        {def.render(flight, direction, formatTime, statusColors, fontSize)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
             </tbody>
           </table>
         )}
@@ -4825,6 +4941,7 @@ export function ZoneRenderer({
             pageInterval={zone.heathrowPageInterval}
             fontSize={zone.heathrowFontSize}
             showFilters={zone.heathrowShowFilters}
+            visibleColumns={zone.heathrowColumns}
             deviceToken={deviceToken}
           />
         );
@@ -4838,6 +4955,7 @@ export function ZoneRenderer({
             pageInterval={zone.heathrowPageInterval}
             fontSize={zone.heathrowFontSize}
             showFilters={zone.heathrowShowFilters}
+            visibleColumns={zone.heathrowColumns}
             deviceToken={deviceToken}
           />
         );

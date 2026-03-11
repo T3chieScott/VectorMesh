@@ -423,6 +423,7 @@ export interface LayoutZone {
   heathrowRefreshInterval?: number;
   heathrowFontSize?: number;
   heathrowShowFilters?: boolean;
+  heathrowColumns?: string[];
   forecastDays?: number;
   forecastRefreshInterval?: number;
   forecastFontSize?: number;

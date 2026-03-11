@@ -580,6 +580,7 @@ const zoneFormSchema = z.object({
   heathrowPageInterval: z.number().min(3).max(120).optional(),
   heathrowFontSize: z.number().min(8).max(48).optional(),
   heathrowShowFilters: z.boolean().optional(),
+  heathrowColumns: z.array(z.string()).optional(),
   forecastDays: z.number().min(1).max(14).optional(),
   forecastRefreshInterval: z.number().min(60).max(3600).optional(),
   forecastFontSize: z.number().min(8).max(48).optional(),
@@ -1354,6 +1355,7 @@ function ZoneEditorDialog({
       heathrowPageInterval: 10,
       heathrowFontSize: 14,
       heathrowShowFilters: false,
+      heathrowColumns: [] as string[],
       forecastDays: 5,
       forecastRefreshInterval: 600,
       forecastFontSize: 14,
@@ -1564,6 +1566,7 @@ function ZoneEditorDialog({
           heathrowPageInterval: zone.heathrowPageInterval ?? 10,
           heathrowFontSize: zone.heathrowFontSize ?? 14,
           heathrowShowFilters: zone.heathrowShowFilters ?? false,
+          heathrowColumns: zone.heathrowColumns || [],
           forecastDays: zone.forecastDays ?? 5,
           forecastRefreshInterval: zone.forecastRefreshInterval ?? 600,
           forecastFontSize: zone.forecastFontSize ?? 14,
@@ -1765,6 +1768,7 @@ function ZoneEditorDialog({
           heathrowPageInterval: 10,
           heathrowFontSize: 14,
           heathrowShowFilters: false,
+          heathrowColumns: [] as string[],
           forecastDays: 5,
           forecastRefreshInterval: 600,
           forecastFontSize: 14,
@@ -5833,6 +5837,61 @@ function ZoneEditorDialog({
                       <FormLabel className="!mt-0">Show filter controls on display</FormLabel>
                     </FormItem>
                   )}
+                />
+                <FormField
+                  control={form.control}
+                  name="heathrowColumns"
+                  render={({ field }) => {
+                    const allColumns = [
+                      { key: "flight", label: "Flight Number" },
+                      { key: "airline", label: "Airline" },
+                      { key: "terminal", label: "Terminal" },
+                      { key: "gate", label: "Gate" },
+                      { key: "checkInDesk", label: "Check-In Desk" },
+                      { key: "belt", label: "Baggage Belt" },
+                      { key: "destination", label: form.watch("type") === "heathrow_arrivals" ? "Origin" : "Destination" },
+                      { key: "scheduled", label: "Scheduled Time" },
+                      { key: "estimated", label: "Estimated Time" },
+                      { key: "predicted", label: "Predicted Time (ML)" },
+                      { key: "actual", label: "Actual Time" },
+                      { key: "status", label: "Status" },
+                      { key: "aircraftType", label: "Aircraft Type" },
+                      { key: "aircraftReg", label: "Aircraft Registration" },
+                      { key: "runway", label: "Runway" },
+                      { key: "callSign", label: "Callsign" },
+                      { key: "codeshare", label: "Codeshare Status" },
+                    ];
+                    const selected: string[] = field.value || [];
+                    const toggleColumn = (key: string) => {
+                      const next = selected.includes(key)
+                        ? selected.filter((k: string) => k !== key)
+                        : [...selected, key];
+                      field.onChange(next);
+                    };
+                    return (
+                      <FormItem>
+                        <FormLabel>Visible Columns</FormLabel>
+                        <FormDescription>
+                          Select which columns to display. Leave empty to use defaults.
+                        </FormDescription>
+                        <div className="grid grid-cols-2 gap-1 mt-2">
+                          {allColumns.map(({ key, label }) => (
+                            <label
+                              key={key}
+                              className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 rounded px-1 py-0.5"
+                            >
+                              <Checkbox
+                                checked={selected.includes(key)}
+                                onCheckedChange={() => toggleColumn(key)}
+                                data-testid={`checkbox-heathrow-col-${key}`}
+                              />
+                              <span>{label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </FormItem>
+                    );
+                  }}
                 />
               </div>
             )}
