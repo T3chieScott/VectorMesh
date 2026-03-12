@@ -424,6 +424,7 @@ export interface LayoutZone {
   plFixturesShowBadges?: boolean;
   plFixturesShowVenue?: boolean;
   plFixturesCompactMode?: boolean;
+  plFixturesShowCompleted?: boolean;
   plFixturesLimit?: number;
   heathrowTerminal?: string;
   heathrowAirline?: string;

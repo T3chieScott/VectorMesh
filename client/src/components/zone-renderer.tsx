@@ -4042,6 +4042,7 @@ function PremierLeagueFixturesWidget({
   showBadges = true,
   showVenue = false,
   compactMode = false,
+  showCompleted = false,
   limit = 20,
   deviceToken,
 }: {
@@ -4051,6 +4052,7 @@ function PremierLeagueFixturesWidget({
   showBadges?: boolean;
   showVenue?: boolean;
   compactMode?: boolean;
+  showCompleted?: boolean;
   limit?: number;
   deviceToken?: string;
 }) {
@@ -4102,7 +4104,11 @@ function PremierLeagueFixturesWidget({
   }
 
   const fixtures = data.fixtures
-    .filter((f: any) => f.status !== "completed" && f.status !== "cancelled")
+    .filter((f: any) => {
+      if (f.status === "cancelled") return false;
+      if (f.status === "completed" && !showCompleted) return false;
+      return true;
+    })
     .slice(0, limit);
 
   const badgeSize = compactMode ? Math.max(14, fontSize) : Math.max(18, fontSize * 1.3);
@@ -4165,12 +4171,19 @@ function PremierLeagueFixturesWidget({
 
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
-                  {showBadges && fix.home.espnLogo && (
+                  {showBadges && (fix.home.badge || fix.home.espnLogo) && (
                     <img
-                      src={fix.home.espnLogo}
+                      src={fix.home.badge ? `${fix.home.badge}.png` : fix.home.espnLogo}
                       alt={fix.home.abbr}
                       style={{ width: `${badgeSize}px`, height: `${badgeSize}px`, objectFit: "contain", flexShrink: 0 }}
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      onError={(e) => {
+                        const img = e.target as HTMLImageElement;
+                        if (fix.home.badge && fix.home.espnLogo && img.src.includes("/assets/football/badges/")) {
+                          img.src = fix.home.espnLogo;
+                        } else {
+                          img.style.display = "none";
+                        }
+                      }}
                     />
                   )}
                   <span style={{ fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -4181,12 +4194,19 @@ function PremierLeagueFixturesWidget({
                   )}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  {showBadges && fix.away.espnLogo && (
+                  {showBadges && (fix.away.badge || fix.away.espnLogo) && (
                     <img
-                      src={fix.away.espnLogo}
+                      src={fix.away.badge ? `${fix.away.badge}.png` : fix.away.espnLogo}
                       alt={fix.away.abbr}
                       style={{ width: `${badgeSize}px`, height: `${badgeSize}px`, objectFit: "contain", flexShrink: 0 }}
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      onError={(e) => {
+                        const img = e.target as HTMLImageElement;
+                        if (fix.away.badge && fix.away.espnLogo && img.src.includes("/assets/football/badges/")) {
+                          img.src = fix.away.espnLogo;
+                        } else {
+                          img.style.display = "none";
+                        }
+                      }}
                     />
                   )}
                   <span style={{ fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -5270,6 +5290,7 @@ export function ZoneRenderer({
             showBadges={zone.plFixturesShowBadges}
             showVenue={zone.plFixturesShowVenue}
             compactMode={zone.plFixturesCompactMode}
+            showCompleted={zone.plFixturesShowCompleted}
             limit={zone.plFixturesLimit}
             deviceToken={deviceToken}
           />

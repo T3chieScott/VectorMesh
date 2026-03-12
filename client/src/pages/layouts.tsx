@@ -575,6 +575,7 @@ const zoneFormSchema = z.object({
   plFixturesShowBadges: z.boolean().optional(),
   plFixturesShowVenue: z.boolean().optional(),
   plFixturesCompactMode: z.boolean().optional(),
+  plFixturesShowCompleted: z.boolean().optional(),
   plFixturesLimit: z.number().min(1).max(50).optional(),
   footballLeague: z.enum(["premier-league"]).optional(),
   footballSeason: z.string().optional(),
@@ -1358,6 +1359,7 @@ function ZoneEditorDialog({
       plFixturesShowBadges: true,
       plFixturesShowVenue: false,
       plFixturesCompactMode: false,
+      plFixturesShowCompleted: false,
       plFixturesLimit: 20,
       footballLeague: "premier-league",
       footballSeason: "auto",
@@ -1577,6 +1579,7 @@ function ZoneEditorDialog({
           plFixturesShowBadges: zone.plFixturesShowBadges ?? true,
           plFixturesShowVenue: zone.plFixturesShowVenue ?? false,
           plFixturesCompactMode: zone.plFixturesCompactMode ?? false,
+          plFixturesShowCompleted: zone.plFixturesShowCompleted ?? false,
           plFixturesLimit: zone.plFixturesLimit ?? 20,
           footballLeague: zone.footballLeague || "premier-league",
           footballSeason: zone.footballSeason || "auto",
@@ -1787,6 +1790,7 @@ function ZoneEditorDialog({
           plFixturesShowBadges: true,
           plFixturesShowVenue: false,
           plFixturesCompactMode: false,
+          plFixturesShowCompleted: false,
           plFixturesLimit: 20,
           footballLeague: "premier-league",
           footballSeason: "auto",
@@ -5891,6 +5895,25 @@ function ZoneEditorDialog({
                           />
                         </FormControl>
                         <FormLabel className="!mt-0">Compact mode</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="plFixturesShowCompleted"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2 space-y-0">
+                        <FormControl>
+                          <input
+                            type="checkbox"
+                            checked={field.value ?? false}
+                            onChange={field.onChange}
+                            className="h-4 w-4 rounded border-gray-300"
+                            data-testid="checkbox-pl-fixtures-completed"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Show completed</FormLabel>
                       </FormItem>
                     )}
                   />
