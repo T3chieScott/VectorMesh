@@ -4035,6 +4035,192 @@ function FootballTableWidget({
   );
 }
 
+function PremierLeagueFixturesWidget({
+  daysAhead = 30,
+  refreshInterval = 300,
+  fontSize = 14,
+  showBadges = true,
+  showVenue = false,
+  compactMode = false,
+  limit = 20,
+  deviceToken,
+}: {
+  daysAhead?: number;
+  refreshInterval?: number;
+  fontSize?: number;
+  showBadges?: boolean;
+  showVenue?: boolean;
+  compactMode?: boolean;
+  limit?: number;
+  deviceToken?: string;
+}) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchFixtures = async () => {
+      try {
+        setError(null);
+        const baseUrl = deviceToken
+          ? `/api/player/widgets/football/premier-league/fixtures`
+          : `/api/widgets/football/premier-league/fixtures`;
+        const params = `?days=${daysAhead}`;
+        const url = deviceToken
+          ? `${baseUrl}${params}&token=${deviceToken}`
+          : `${baseUrl}${params}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        setData(json);
+      } catch (err) {
+        setError("Failed to load fixtures");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchFixtures();
+    const interval = setInterval(fetchFixtures, refreshInterval * 1000);
+    return () => clearInterval(interval);
+  }, [daysAhead, refreshInterval, deviceToken]);
+
+  if (loading) {
+    return (
+      <div className="h-full w-full flex items-center justify-center" data-testid="pl-fixtures-loading">
+        <div className="animate-pulse text-muted-foreground" style={{ fontSize: `${fontSize}px` }}>Loading fixtures...</div>
+      </div>
+    );
+  }
+
+  if (error || !data?.fixtures) {
+    return (
+      <div className="h-full w-full flex flex-col items-center justify-center text-center p-2" data-testid="pl-fixtures-error">
+        <p className="text-xs text-muted-foreground">{error || "No data"}</p>
+      </div>
+    );
+  }
+
+  const fixtures = data.fixtures
+    .filter((f: any) => f.status !== "completed" && f.status !== "cancelled")
+    .slice(0, limit);
+
+  const badgeSize = compactMode ? Math.max(14, fontSize) : Math.max(18, fontSize * 1.3);
+
+  let currentDate = "";
+
+  return (
+    <div className="h-full w-full overflow-auto" data-testid="pl-fixtures-widget" style={{ fontSize: `${fontSize}px` }}>
+      {fixtures.map((fix: any) => {
+        const fixDate = new Date(fix.date);
+        const dateStr = fixDate.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+        const timeStr = fixDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+        const showDateHeader = dateStr !== currentDate;
+        if (showDateHeader) currentDate = dateStr;
+        const isLive = fix.status === "live";
+        const isCompleted = fix.status === "completed";
+
+        return (
+          <div key={fix.id} data-testid={`pl-fixture-${fix.id}`}>
+            {showDateHeader && (
+              <div
+                style={{
+                  padding: compactMode ? "3px 8px" : "6px 10px",
+                  fontSize: `${Math.max(10, fontSize * 0.75)}px`,
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                  opacity: 0.5,
+                  borderBottom: "1px solid rgba(128,128,128,0.2)",
+                }}
+              >
+                {dateStr}
+              </div>
+            )}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                padding: compactMode ? "4px 8px" : "8px 10px",
+                borderBottom: "1px solid rgba(128,128,128,0.12)",
+                gap: compactMode ? "6px" : "10px",
+                borderLeft: isLive ? "3px solid #e53935" : "3px solid transparent",
+              }}
+            >
+              <div style={{ minWidth: compactMode ? "36px" : "48px", textAlign: "center", flexShrink: 0 }}>
+                {isLive ? (
+                  <span style={{ color: "#e53935", fontWeight: 700, fontSize: `${Math.max(10, fontSize * 0.8)}px` }}>
+                    {fix.matchMinute || "LIVE"}
+                  </span>
+                ) : isCompleted ? (
+                  <span style={{ color: "rgba(128,128,128,0.6)", fontWeight: 600, fontSize: `${Math.max(10, fontSize * 0.8)}px` }}>FT</span>
+                ) : fix.status === "postponed" ? (
+                  <span style={{ color: "#f57c00", fontWeight: 600, fontSize: `${Math.max(10, fontSize * 0.8)}px` }}>PPD</span>
+                ) : fix.status === "cancelled" ? (
+                  <span style={{ color: "#9e9e9e", fontWeight: 600, fontSize: `${Math.max(10, fontSize * 0.8)}px` }}>CAN</span>
+                ) : (
+                  <span style={{ fontSize: `${Math.max(10, fontSize * 0.85)}px`, opacity: 0.8 }}>{timeStr}</span>
+                )}
+              </div>
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
+                  {showBadges && fix.home.espnLogo && (
+                    <img
+                      src={fix.home.espnLogo}
+                      alt={fix.home.abbr}
+                      style={{ width: `${badgeSize}px`, height: `${badgeSize}px`, objectFit: "contain", flexShrink: 0 }}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                    />
+                  )}
+                  <span style={{ fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {compactMode ? fix.home.abbr : fix.home.shortName}
+                  </span>
+                  {(isLive || isCompleted) && (
+                    <span style={{ fontWeight: 700, marginLeft: "auto", flexShrink: 0 }}>{fix.home.score ?? ""}</span>
+                  )}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  {showBadges && fix.away.espnLogo && (
+                    <img
+                      src={fix.away.espnLogo}
+                      alt={fix.away.abbr}
+                      style={{ width: `${badgeSize}px`, height: `${badgeSize}px`, objectFit: "contain", flexShrink: 0 }}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                    />
+                  )}
+                  <span style={{ fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {compactMode ? fix.away.abbr : fix.away.shortName}
+                  </span>
+                  {(isLive || isCompleted) && (
+                    <span style={{ fontWeight: 700, marginLeft: "auto", flexShrink: 0 }}>{fix.away.score ?? ""}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            {showVenue && fix.venue && !compactMode && (
+              <div
+                style={{
+                  padding: "0 10px 4px 61px",
+                  fontSize: `${Math.max(9, fontSize * 0.65)}px`,
+                  opacity: 0.4,
+                }}
+              >
+                {fix.venue}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {fixtures.length === 0 && (
+        <div className="h-full w-full flex items-center justify-center" data-testid="pl-fixtures-empty">
+          <p style={{ fontSize: `${fontSize}px`, opacity: 0.5 }}>No upcoming fixtures</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function QRCodeWidget({
   contentType = "url",
   content = "",
@@ -5072,6 +5258,19 @@ export function ZoneRenderer({
             showBadges={zone.footballShowBadges}
             compactMode={zone.footballCompactMode}
             badgeFormat={zone.footballBadgeFormat}
+            deviceToken={deviceToken}
+          />
+        );
+      case "premier_league_fixtures":
+        return (
+          <PremierLeagueFixturesWidget
+            daysAhead={zone.plFixturesDaysAhead}
+            refreshInterval={zone.plFixturesRefreshInterval}
+            fontSize={zone.plFixturesFontSize}
+            showBadges={zone.plFixturesShowBadges}
+            showVenue={zone.plFixturesShowVenue}
+            compactMode={zone.plFixturesCompactMode}
+            limit={zone.plFixturesLimit}
             deviceToken={deviceToken}
           />
         );

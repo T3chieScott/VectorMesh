@@ -14,6 +14,7 @@ import * as fileStorage from "./fileStorage";
 import { find as findTimezone } from "geo-tz";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert } from "./email";
 import { createPremierLeagueTableHandler } from "./premierLeague";
+import { createPremierLeagueFixturesHandler } from "./premierLeagueFixtures";
 import { createHeathrowArrivalsHandler, createHeathrowDeparturesHandler } from "./heathrowFlights";
 import { createWeatherForecastHandler } from "./weatherForecast";
 import { createNextSpaceXLaunchHandler } from "./spacexLaunch";
@@ -2351,6 +2352,10 @@ export async function registerRoutes(
   const handlePremierLeagueTable = createPremierLeagueTableHandler();
   app.get("/api/widgets/football/premier-league/table", requireAuth, handlePremierLeagueTable);
   app.get("/api/player/widgets/football/premier-league/table", validateDeviceToken, handlePremierLeagueTable);
+
+  const handlePremierLeagueFixtures = createPremierLeagueFixturesHandler();
+  app.get("/api/widgets/football/premier-league/fixtures", requireAuth, handlePremierLeagueFixtures);
+  app.get("/api/player/widgets/football/premier-league/fixtures", validateDeviceToken, handlePremierLeagueFixtures);
 
   const handleHeathrowArrivals = createHeathrowArrivalsHandler();
   const handleHeathrowDepartures = createHeathrowDeparturesHandler();

@@ -379,6 +379,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   schedule: Calendar,
   media_player: Monitor,
   football_table: Trophy,
+  premier_league_fixtures: Calendar,
   heathrow_arrivals: PlaneLanding,
   heathrow_departures: PlaneTakeoff,
   weather_forecast: CloudRain,
@@ -404,6 +405,7 @@ const zoneTypeLabels: Record<string, string> = {
   schedule: "Room Schedule",
   media_player: "Media Player (playlist)",
   football_table: "Football Table",
+  premier_league_fixtures: "PL Upcoming Fixtures",
   heathrow_arrivals: "Heathrow Arrivals",
   heathrow_departures: "Heathrow Departures",
   weather_forecast: "Weather Forecast",
@@ -414,7 +416,7 @@ const zoneTypeLabels: Record<string, string> = {
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(0.01).max(100),
@@ -567,6 +569,13 @@ const zoneFormSchema = z.object({
   mediaPlayerAutoPlay: z.boolean().optional(),
   mediaPlayerMuted: z.boolean().optional(),
   mediaPlayerShuffle: z.boolean().optional(),
+  plFixturesDaysAhead: z.number().min(1).max(90).optional(),
+  plFixturesRefreshInterval: z.number().min(60).max(3600).optional(),
+  plFixturesFontSize: z.number().min(8).max(48).optional(),
+  plFixturesShowBadges: z.boolean().optional(),
+  plFixturesShowVenue: z.boolean().optional(),
+  plFixturesCompactMode: z.boolean().optional(),
+  plFixturesLimit: z.number().min(1).max(50).optional(),
   footballLeague: z.enum(["premier-league"]).optional(),
   footballSeason: z.string().optional(),
   footballRefreshInterval: z.number().min(60).max(3600).optional(),
@@ -1343,6 +1352,13 @@ function ZoneEditorDialog({
       mediaPlayerAutoPlay: true,
       mediaPlayerMuted: true,
       mediaPlayerShuffle: false,
+      plFixturesDaysAhead: 30,
+      plFixturesRefreshInterval: 300,
+      plFixturesFontSize: 14,
+      plFixturesShowBadges: true,
+      plFixturesShowVenue: false,
+      plFixturesCompactMode: false,
+      plFixturesLimit: 20,
       footballLeague: "premier-league",
       footballSeason: "auto",
       footballRefreshInterval: 300,
@@ -1555,6 +1571,13 @@ function ZoneEditorDialog({
           mediaPlayerAutoPlay: zone.mediaPlayerAutoPlay ?? true,
           mediaPlayerMuted: zone.mediaPlayerMuted ?? true,
           mediaPlayerShuffle: zone.mediaPlayerShuffle ?? false,
+          plFixturesDaysAhead: zone.plFixturesDaysAhead ?? 30,
+          plFixturesRefreshInterval: zone.plFixturesRefreshInterval ?? 300,
+          plFixturesFontSize: zone.plFixturesFontSize ?? 14,
+          plFixturesShowBadges: zone.plFixturesShowBadges ?? true,
+          plFixturesShowVenue: zone.plFixturesShowVenue ?? false,
+          plFixturesCompactMode: zone.plFixturesCompactMode ?? false,
+          plFixturesLimit: zone.plFixturesLimit ?? 20,
           footballLeague: zone.footballLeague || "premier-league",
           footballSeason: zone.footballSeason || "auto",
           footballRefreshInterval: zone.footballRefreshInterval ?? 300,
@@ -1758,6 +1781,13 @@ function ZoneEditorDialog({
           mediaPlayerAutoPlay: true,
           mediaPlayerMuted: true,
           mediaPlayerShuffle: false,
+          plFixturesDaysAhead: 30,
+          plFixturesRefreshInterval: 300,
+          plFixturesFontSize: 14,
+          plFixturesShowBadges: true,
+          plFixturesShowVenue: false,
+          plFixturesCompactMode: false,
+          plFixturesLimit: 20,
           footballLeague: "premier-league",
           footballSeason: "auto",
           footballRefreshInterval: 300,
@@ -5710,6 +5740,161 @@ function ZoneEditorDialog({
                     </FormItem>
                   )}
                 />
+              </div>
+            )}
+
+            {form.watch("type") === "premier_league_fixtures" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg" data-testid="pl-fixtures-config-section">
+                <h4 className="font-medium flex items-center gap-2">
+                  <Calendar className="h-4 w-4" />
+                  PL Fixtures Settings
+                </h4>
+
+                <FormField
+                  control={form.control}
+                  name="plFixturesDaysAhead"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Days Ahead ({field.value ?? 30})</FormLabel>
+                      <FormControl>
+                        <Slider
+                          value={[field.value ?? 30]}
+                          onValueChange={([val]) => field.onChange(val)}
+                          min={1}
+                          max={90}
+                          step={1}
+                          data-testid="slider-pl-fixtures-days"
+                        />
+                      </FormControl>
+                      <FormDescription>How many days ahead to show fixtures</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="plFixturesLimit"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Max Fixtures ({field.value ?? 20})</FormLabel>
+                      <FormControl>
+                        <Slider
+                          value={[field.value ?? 20]}
+                          onValueChange={([val]) => field.onChange(val)}
+                          min={1}
+                          max={50}
+                          step={1}
+                          data-testid="slider-pl-fixtures-limit"
+                        />
+                      </FormControl>
+                      <FormDescription>Maximum number of fixtures to display</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="plFixturesFontSize"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Font Size ({field.value ?? 14}px)</FormLabel>
+                      <FormControl>
+                        <Slider
+                          value={[field.value ?? 14]}
+                          onValueChange={([val]) => field.onChange(val)}
+                          min={8}
+                          max={48}
+                          step={1}
+                          data-testid="slider-pl-fixtures-font-size"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="plFixturesRefreshInterval"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Refresh Interval ({field.value ?? 300}s)</FormLabel>
+                      <FormControl>
+                        <Slider
+                          value={[field.value ?? 300]}
+                          onValueChange={([val]) => field.onChange(val)}
+                          min={60}
+                          max={3600}
+                          step={60}
+                          data-testid="slider-pl-fixtures-refresh"
+                        />
+                      </FormControl>
+                      <FormDescription>How often to refresh data (seconds)</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="flex gap-6 flex-wrap">
+                  <FormField
+                    control={form.control}
+                    name="plFixturesShowBadges"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2 space-y-0">
+                        <FormControl>
+                          <input
+                            type="checkbox"
+                            checked={field.value ?? true}
+                            onChange={field.onChange}
+                            className="h-4 w-4 rounded border-gray-300"
+                            data-testid="checkbox-pl-fixtures-badges"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Show badges</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="plFixturesShowVenue"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2 space-y-0">
+                        <FormControl>
+                          <input
+                            type="checkbox"
+                            checked={field.value ?? false}
+                            onChange={field.onChange}
+                            className="h-4 w-4 rounded border-gray-300"
+                            data-testid="checkbox-pl-fixtures-venue"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Show venue</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="plFixturesCompactMode"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2 space-y-0">
+                        <FormControl>
+                          <input
+                            type="checkbox"
+                            checked={field.value ?? false}
+                            onChange={field.onChange}
+                            className="h-4 w-4 rounded border-gray-300"
+                            data-testid="checkbox-pl-fixtures-compact"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Compact mode</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+                </div>
               </div>
             )}
 
