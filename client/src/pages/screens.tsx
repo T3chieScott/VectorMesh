@@ -486,7 +486,7 @@ function ScreenCard({
                   Edit
                 </DropdownMenuItem>
               </DialogTrigger>
-              <DialogContent>
+              <DialogContent className="max-h-[85vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Edit Screen</DialogTitle>
                 </DialogHeader>
@@ -831,7 +831,7 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
           Add Screen
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create New Screen</DialogTitle>
         </DialogHeader>
