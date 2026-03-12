@@ -512,43 +512,42 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
 
           {canvasEnabled ? (
             <div
-              className="absolute overflow-hidden"
+              className="absolute"
               style={{
                 left: `${(playerCanvasX / canvasW) * 100}%`,
                 top: `${(playerCanvasY / canvasH) * 100}%`,
                 width: `${(playerScreenW / canvasW) * 100}%`,
                 height: `${(playerScreenH / canvasH) * 100}%`,
+                overflow: "hidden",
               }}
             >
-              <div className="absolute inset-0 relative">
-                {zones.map((zone) => (
-                  <div
-                    key={zone.id}
-                    className="absolute"
-                    style={{
-                      left: `${zone.x}%`,
-                      top: `${zone.y}%`,
-                      width: `${zone.width}%`,
-                      height: `${zone.height}%`,
-                      zIndex: zone.zIndex || 1,
-                    }}
-                  >
-                    <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
-                      <ZoneRenderer
-                        zone={zone}
-                        media={getZoneMedia(zone.id)}
-                        mediaIndex={getZoneMediaIndex(zone.id)}
-                        isPlaying={true}
-                        showBorder={false}
-                        timezone={weatherTimezone}
-                        fillContainer={true}
-                        mediaBaseUrl="/api/player/media"
-                        deviceToken={token}
-                      />
-                    </div>
+              {zones.map((zone) => (
+                <div
+                  key={zone.id}
+                  className="absolute"
+                  style={{
+                    left: `${zone.x}%`,
+                    top: `${zone.y}%`,
+                    width: `${zone.width}%`,
+                    height: `${zone.height}%`,
+                    zIndex: zone.zIndex || 1,
+                  }}
+                >
+                  <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
+                    <ZoneRenderer
+                      zone={zone}
+                      media={getZoneMedia(zone.id)}
+                      mediaIndex={getZoneMediaIndex(zone.id)}
+                      isPlaying={true}
+                      showBorder={false}
+                      timezone={weatherTimezone}
+                      fillContainer={true}
+                      mediaBaseUrl="/api/player/media"
+                      deviceToken={token}
+                    />
                   </div>
-                ))}
-              </div>
+                </div>
+              ))}
             </div>
           ) : (
             zones.map((zone) => (

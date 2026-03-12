@@ -147,37 +147,6 @@ function PlayerDisplay({
   const scaledWidth = trueWidth * scale;
   const scaledHeight = trueHeight * scale;
 
-  const renderZones = (containerW: number, containerH: number) => (
-    zones.length > 0 ? (
-      zones.map((zone) => (
-        <div
-          key={zone.id}
-          className="absolute"
-          style={{
-            left: `${zone.x}%`,
-            top: `${zone.y}%`,
-            width: `${zone.width}%`,
-            height: `${zone.height}%`,
-            zIndex: zone.zIndex || 1,
-          }}
-        >
-          <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
-            <ZoneRenderer
-              zone={zone}
-              media={getZoneMedia(zone.id)}
-              mediaIndex={getZoneMediaIndex(zone.id)}
-              isPlaying={state.isPlaying}
-              showBorder={state.showZoneBorders}
-              playlistName={getPlaylistName(zone.id)}
-              timezone={weatherTimezone}
-              fillContainer={true}
-            />
-          </div>
-        </div>
-      ))
-    ) : null
-  );
-
   return (
     <div 
       ref={containerRef} 
@@ -210,17 +179,41 @@ function PlayerDisplay({
           {isFullCanvasMode ? (
             <>
               <div
-                className="absolute overflow-hidden"
+                className="absolute"
                 style={{
                   left: `${(canvasX / canvasW) * 100}%`,
                   top: `${(canvasY / canvasH) * 100}%`,
                   width: `${(screenW / canvasW) * 100}%`,
                   height: `${(screenH / canvasH) * 100}%`,
+                  overflow: "hidden",
                 }}
               >
-                <div className="absolute inset-0 relative">
-                  {renderZones(screenW, screenH)}
-                </div>
+                {zones.map((zone) => (
+                  <div
+                    key={zone.id}
+                    className="absolute"
+                    style={{
+                      left: `${zone.x}%`,
+                      top: `${zone.y}%`,
+                      width: `${zone.width}%`,
+                      height: `${zone.height}%`,
+                      zIndex: zone.zIndex || 1,
+                    }}
+                  >
+                    <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
+                      <ZoneRenderer
+                        zone={zone}
+                        media={getZoneMedia(zone.id)}
+                        mediaIndex={getZoneMediaIndex(zone.id)}
+                        isPlaying={state.isPlaying}
+                        showBorder={state.showZoneBorders}
+                        playlistName={getPlaylistName(zone.id)}
+                        timezone={weatherTimezone}
+                        fillContainer={true}
+                      />
+                    </div>
+                  </div>
+                ))}
               </div>
               <div
                 className="absolute border-2 border-amber-400 z-30 pointer-events-none"
