@@ -7917,11 +7917,11 @@ function CopyMoveDialog({ layout, mode, open, onOpenChange }: { layout: LayoutTe
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{mode === "copy" ? "Copy" : "Move"} Layout to Site</DialogTitle>
+          <DialogTitle>{mode === "copy" ? "Copy" : (layout.clientId ? "Move" : "Assign")} Layout to Site</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            {mode === "copy" ? "Create a copy of" : "Move"} <strong>{layout.name}</strong> to another site.
+            {mode === "copy" ? "Create a copy of" : "Assign"} <strong>{layout.name}</strong> {layout.clientId ? "to another site" : "to a site"}.
             {mode === "move" && layout.eventId && " The event association will be cleared if the event belongs to a different site."}
           </p>
           <Select value={targetClientId} onValueChange={setTargetClientId}>
@@ -8290,7 +8290,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                     data-testid={`button-move-to-site-${layout.id}`}
                   >
                     <Move className="mr-2 h-4 w-4" />
-                    Move to Site
+                    {layout.clientId ? "Move to Site" : "Assign to Site"}
                   </DropdownMenuItem>
                 </>
               )}
