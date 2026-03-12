@@ -7829,11 +7829,8 @@ function InteractiveLayoutPreview({
                   : undefined}
               onClick={(e) => {
                 e.stopPropagation();
-                if (e.shiftKey) {
-                  toggleZoneSelection(zone.id);
-                } else {
-                  setSelectedZoneId(zone.id);
-                }
+                if (e.shiftKey) return;
+                setSelectedZoneId(zone.id);
               }}
               onDoubleClick={(e) => {
                 e.stopPropagation();
