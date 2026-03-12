@@ -7404,22 +7404,30 @@ function InteractiveLayoutPreview({
       y: [0, 50, 100] as number[],
     };
     
+    const excludeIds = new Set<string>();
+    excludeIds.add(excludeZoneId);
+    if (selectedZoneIds.size > 1 && selectedZoneIds.has(excludeZoneId)) {
+      selectedZoneIds.forEach(id => excludeIds.add(id));
+    }
+    
     zonesToRender.forEach((zone) => {
-      if (zone.id === excludeZoneId) return;
-      points.x.push(zone.x, zone.x + zone.width);
-      points.y.push(zone.y, zone.y + zone.height);
+      if (excludeIds.has(zone.id)) return;
+      points.x.push(zone.x, zone.x + zone.width / 2, zone.x + zone.width);
+      points.y.push(zone.y, zone.y + zone.height / 2, zone.y + zone.height);
     });
     
     return points;
-  }, [zonesToRender]);
+  }, [zonesToRender, selectedZoneIds]);
 
-  const snapValue = useCallback((value: number, snapPoints: number[]): { value: number; snapped: boolean } => {
+  const snapValue = useCallback((value: number, snapPoints: number[]): { value: number; snapped: boolean; distance: number } => {
+    let best: { value: number; snapped: boolean; distance: number } = { value, snapped: false, distance: Infinity };
     for (const point of snapPoints) {
-      if (Math.abs(value - point) < SNAP_THRESHOLD) {
-        return { value: point, snapped: true };
+      const dist = Math.abs(value - point);
+      if (dist < SNAP_THRESHOLD && dist < best.distance) {
+        best = { value: point, snapped: true, distance: dist };
       }
     }
-    return { value, snapped: false };
+    return best;
   }, []);
 
   const handleMouseDown = useCallback((
@@ -7486,26 +7494,26 @@ function InteractiveLayoutPreview({
       const bottomSnap = snapValue(newY + newHeight, snapPoints.y);
       const centerYSnap = snapValue(newY + newHeight / 2, snapPoints.y);
 
-      if (centerXSnap.snapped) {
-        newX = centerXSnap.value - newWidth / 2;
-        newSnapLines.push({ type: "vertical", position: centerXSnap.value, isCenter: centerXSnap.value === 50 });
-      } else if (leftSnap.snapped) {
-        newX = leftSnap.value;
-        newSnapLines.push({ type: "vertical", position: leftSnap.value, isCenter: leftSnap.value === 50 });
-      } else if (rightSnap.snapped) {
-        newX = rightSnap.value - newWidth;
-        newSnapLines.push({ type: "vertical", position: rightSnap.value, isCenter: rightSnap.value === 50 });
+      const xCandidates = [
+        { snap: leftSnap, apply: () => { newX = leftSnap.value; }, line: leftSnap.value },
+        { snap: rightSnap, apply: () => { newX = rightSnap.value - newWidth; }, line: rightSnap.value },
+        { snap: centerXSnap, apply: () => { newX = centerXSnap.value - newWidth / 2; }, line: centerXSnap.value },
+      ].filter(c => c.snap.snapped).sort((a, b) => a.snap.distance - b.snap.distance);
+
+      if (xCandidates.length > 0) {
+        xCandidates[0].apply();
+        newSnapLines.push({ type: "vertical", position: xCandidates[0].line, isCenter: xCandidates[0].line === 50 });
       }
 
-      if (centerYSnap.snapped) {
-        newY = centerYSnap.value - newHeight / 2;
-        newSnapLines.push({ type: "horizontal", position: centerYSnap.value, isCenter: centerYSnap.value === 50 });
-      } else if (topSnap.snapped) {
-        newY = topSnap.value;
-        newSnapLines.push({ type: "horizontal", position: topSnap.value, isCenter: topSnap.value === 50 });
-      } else if (bottomSnap.snapped) {
-        newY = bottomSnap.value - newHeight;
-        newSnapLines.push({ type: "horizontal", position: bottomSnap.value, isCenter: bottomSnap.value === 50 });
+      const yCandidates = [
+        { snap: topSnap, apply: () => { newY = topSnap.value; }, line: topSnap.value },
+        { snap: bottomSnap, apply: () => { newY = bottomSnap.value - newHeight; }, line: bottomSnap.value },
+        { snap: centerYSnap, apply: () => { newY = centerYSnap.value - newHeight / 2; }, line: centerYSnap.value },
+      ].filter(c => c.snap.snapped).sort((a, b) => a.snap.distance - b.snap.distance);
+
+      if (yCandidates.length > 0) {
+        yCandidates[0].apply();
+        newSnapLines.push({ type: "horizontal", position: yCandidates[0].line, isCenter: yCandidates[0].line === 50 });
       }
 
       if (dragState.multiDragStartZones) {
