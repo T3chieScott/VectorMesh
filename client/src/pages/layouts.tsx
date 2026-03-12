@@ -8386,7 +8386,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
 function CreateLayoutDialog({ events }: { events: Event[] }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const { selectedClientId } = useSiteContext();
+  const { selectedClientId, selectedClient } = useSiteContext();
 
   const form = useForm<LayoutFormValues>({
     resolver: zodResolver(layoutFormSchema),
@@ -8434,6 +8434,16 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
         <DialogHeader>
           <DialogTitle>Create New Layout</DialogTitle>
         </DialogHeader>
+        {selectedClient && (
+          <p className="text-sm text-muted-foreground">
+            This layout will be created for <strong>{selectedClient.name}</strong>.
+          </p>
+        )}
+        {!selectedClient && (
+          <p className="text-sm text-muted-foreground">
+            Select a site from the top bar to assign this layout to a specific site.
+          </p>
+        )}
         <Form {...form}>
           <form
             onSubmit={form.handleSubmit((data) => createMutation.mutate(data))}

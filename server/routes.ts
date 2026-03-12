@@ -1376,7 +1376,7 @@ export async function registerRoutes(
         if (!canAccessClient(req, clientId)) {
           return res.status(403).json({ error: "Access denied to requested site" });
         }
-        filtered = filtered.filter(l => l.clientId === clientId);
+        filtered = filtered.filter(l => !l.clientId || l.clientId === clientId);
       }
       res.json(filtered);
     } catch (error) {
