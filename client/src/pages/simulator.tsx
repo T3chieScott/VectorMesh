@@ -147,10 +147,36 @@ function PlayerDisplay({
   const scaledWidth = trueWidth * scale;
   const scaledHeight = trueHeight * scale;
 
-  const aoiLeftPct = isAoiMode ? -(canvasX / screenW) * 100 : 0;
-  const aoiTopPct = isAoiMode ? -(canvasY / screenH) * 100 : 0;
-  const aoiScaleW = isAoiMode ? canvasW / screenW : 1;
-  const aoiScaleH = isAoiMode ? canvasH / screenH : 1;
+  const renderZones = (containerW: number, containerH: number) => (
+    zones.length > 0 ? (
+      zones.map((zone) => (
+        <div
+          key={zone.id}
+          className="absolute"
+          style={{
+            left: `${zone.x}%`,
+            top: `${zone.y}%`,
+            width: `${zone.width}%`,
+            height: `${zone.height}%`,
+            zIndex: zone.zIndex || 1,
+          }}
+        >
+          <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
+            <ZoneRenderer
+              zone={zone}
+              media={getZoneMedia(zone.id)}
+              mediaIndex={getZoneMediaIndex(zone.id)}
+              isPlaying={state.isPlaying}
+              showBorder={state.showZoneBorders}
+              playlistName={getPlaylistName(zone.id)}
+              timezone={weatherTimezone}
+              fillContainer={true}
+            />
+          </div>
+        </div>
+      ))
+    ) : null
+  );
 
   return (
     <div 
@@ -174,22 +200,6 @@ function PlayerDisplay({
           }}
           className="relative"
         >
-          {isFullCanvasMode && (
-            <div
-              className="absolute border-2 border-amber-400 z-30 pointer-events-none"
-              style={{
-                left: `${(canvasX / canvasW) * 100}%`,
-                top: `${(canvasY / canvasH) * 100}%`,
-                width: `${(screenW / canvasW) * 100}%`,
-                height: `${(screenH / canvasH) * 100}%`,
-              }}
-              data-testid="aoi-overlay"
-            >
-              <span className="absolute -top-5 left-0 text-[10px] text-amber-400 whitespace-nowrap font-medium">
-                AOI: {screenW}×{screenH} at ({canvasX},{canvasY})
-              </span>
-            </div>
-          )}
       {hasLiveOverride && (
         <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white px-3 py-1.5 flex items-center justify-center gap-2 text-sm font-medium">
           <AlertTriangle className="h-4 w-4" />
@@ -197,48 +207,36 @@ function PlayerDisplay({
         </div>
       )}
 
-          {isAoiMode ? (
-            <div
-              className="absolute inset-0"
-              style={{ overflow: "hidden" }}
-            >
+          {isFullCanvasMode ? (
+            <>
               <div
-                className="absolute"
+                className="absolute overflow-hidden"
                 style={{
-                  width: `${aoiScaleW * 100}%`,
-                  height: `${aoiScaleH * 100}%`,
-                  left: `${aoiLeftPct}%`,
-                  top: `${aoiTopPct}%`,
+                  left: `${(canvasX / canvasW) * 100}%`,
+                  top: `${(canvasY / canvasH) * 100}%`,
+                  width: `${(screenW / canvasW) * 100}%`,
+                  height: `${(screenH / canvasH) * 100}%`,
                 }}
               >
-                {zones.map((zone) => (
-                  <div
-                    key={zone.id}
-                    className="absolute"
-                    style={{
-                      left: `${zone.x}%`,
-                      top: `${zone.y}%`,
-                      width: `${zone.width}%`,
-                      height: `${zone.height}%`,
-                      zIndex: zone.zIndex || 1,
-                    }}
-                  >
-                    <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
-                      <ZoneRenderer
-                        zone={zone}
-                        media={getZoneMedia(zone.id)}
-                        mediaIndex={getZoneMediaIndex(zone.id)}
-                        isPlaying={state.isPlaying}
-                        showBorder={state.showZoneBorders}
-                        playlistName={getPlaylistName(zone.id)}
-                        timezone={weatherTimezone}
-                        fillContainer={true}
-                      />
-                    </div>
-                  </div>
-                ))}
+                <div className="absolute inset-0 relative">
+                  {renderZones(screenW, screenH)}
+                </div>
               </div>
-            </div>
+              <div
+                className="absolute border-2 border-amber-400 z-30 pointer-events-none"
+                style={{
+                  left: `${(canvasX / canvasW) * 100}%`,
+                  top: `${(canvasY / canvasH) * 100}%`,
+                  width: `${(screenW / canvasW) * 100}%`,
+                  height: `${(screenH / canvasH) * 100}%`,
+                }}
+                data-testid="aoi-overlay"
+              >
+                <span className="absolute -top-5 left-0 text-[10px] text-amber-400 whitespace-nowrap font-medium">
+                  AOI: {screenW}×{screenH} at ({canvasX},{canvasY})
+                </span>
+              </div>
+            </>
           ) : zones.length > 0 ? (
         zones.map((zone) => (
           <div

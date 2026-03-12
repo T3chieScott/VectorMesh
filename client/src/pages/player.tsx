@@ -377,6 +377,10 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const canvasEnabled = content?.screen?.canvasEnabled ?? false;
   const canvasW = content?.screen?.canvasWidth || 1920;
   const canvasH = content?.screen?.canvasHeight || 1080;
+  const playerCanvasX = content?.screen?.canvasX || 0;
+  const playerCanvasY = content?.screen?.canvasY || 0;
+  const playerScreenW = content?.profile?.width || 1920;
+  const playerScreenH = content?.profile?.height || 1080;
 
   const displayAspect = canvasEnabled ? canvasW / canvasH : aspectRatio;
   const trueWidth = Math.round(REFERENCE_HEIGHT * displayAspect);
@@ -506,33 +510,75 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
             </div>
           )}
 
-          {zones.map((zone) => (
+          {canvasEnabled ? (
             <div
-              key={zone.id}
-              className="absolute"
+              className="absolute overflow-hidden"
               style={{
-                left: `${zone.x}%`,
-                top: `${zone.y}%`,
-                width: `${zone.width}%`,
-                height: `${zone.height}%`,
-                zIndex: zone.zIndex || 1,
+                left: `${(playerCanvasX / canvasW) * 100}%`,
+                top: `${(playerCanvasY / canvasH) * 100}%`,
+                width: `${(playerScreenW / canvasW) * 100}%`,
+                height: `${(playerScreenH / canvasH) * 100}%`,
               }}
             >
-              <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
-                <ZoneRenderer
-                  zone={zone}
-                  media={getZoneMedia(zone.id)}
-                  mediaIndex={getZoneMediaIndex(zone.id)}
-                  isPlaying={true}
-                  showBorder={false}
-                  timezone={weatherTimezone}
-                  fillContainer={true}
-                  mediaBaseUrl="/api/player/media"
-                  deviceToken={token}
-                />
+              <div className="absolute inset-0 relative">
+                {zones.map((zone) => (
+                  <div
+                    key={zone.id}
+                    className="absolute"
+                    style={{
+                      left: `${zone.x}%`,
+                      top: `${zone.y}%`,
+                      width: `${zone.width}%`,
+                      height: `${zone.height}%`,
+                      zIndex: zone.zIndex || 1,
+                    }}
+                  >
+                    <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
+                      <ZoneRenderer
+                        zone={zone}
+                        media={getZoneMedia(zone.id)}
+                        mediaIndex={getZoneMediaIndex(zone.id)}
+                        isPlaying={true}
+                        showBorder={false}
+                        timezone={weatherTimezone}
+                        fillContainer={true}
+                        mediaBaseUrl="/api/player/media"
+                        deviceToken={token}
+                      />
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-          ))}
+          ) : (
+            zones.map((zone) => (
+              <div
+                key={zone.id}
+                className="absolute"
+                style={{
+                  left: `${zone.x}%`,
+                  top: `${zone.y}%`,
+                  width: `${zone.width}%`,
+                  height: `${zone.height}%`,
+                  zIndex: zone.zIndex || 1,
+                }}
+              >
+                <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
+                  <ZoneRenderer
+                    zone={zone}
+                    media={getZoneMedia(zone.id)}
+                    mediaIndex={getZoneMediaIndex(zone.id)}
+                    isPlaying={true}
+                    showBorder={false}
+                    timezone={weatherTimezone}
+                    fillContainer={true}
+                    mediaBaseUrl="/api/player/media"
+                    deviceToken={token}
+                  />
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

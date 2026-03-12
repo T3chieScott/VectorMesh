@@ -13,7 +13,7 @@ Key capabilities include:
 - Customizable QR code zones supporting URL, WiFi, and vCard content.
 - Dynamic countdown timers with extensive customization options.
 - Flexible layout aspect ratio support for diverse display hardware.
-- **Canvas positioning for video walls**: Screens can be positioned within a larger virtual canvas (e.g., placing a 348×1044 screen at coordinates (0,0) on a 1920×1080 canvas). Canvas positioning fields (`canvasEnabled`, `canvasWidth`, `canvasHeight`, `canvasX`, `canvasY`) are on the screens table with validation enforced both client-side and server-side. The Player Simulator has a Full Canvas / Screen AOI toggle (visible when a canvas-enabled screen is selected) to preview either the full canvas with AOI overlay or just the screen's viewport. The player device always receives the full canvas.
+- **Canvas positioning for video walls**: Screens can be positioned within a larger virtual canvas (e.g., placing a 348×1044 screen at coordinates (0,0) on a 1920×1080 canvas). Canvas positioning fields (`canvasEnabled`, `canvasWidth`, `canvasHeight`, `canvasX`, `canvasY`) are on the screens table with validation enforced both client-side and server-side. The layout fills the screen's AOI (its own resolution area) — the rest of the canvas is black. The Player Simulator has a Full Canvas / Screen AOI toggle: Full Canvas shows the entire canvas with the layout inside the AOI rectangle and black elsewhere; Screen AOI shows just the screen's viewport with the layout filling it. The player device renders the full canvas with the layout positioned inside the AOI.
 - Room schedule zones with multiple viewing modes.
 - Dynamic player variables for personalized content display.
 - Event-specific color palettes for consistent branding.
