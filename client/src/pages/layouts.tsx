@@ -7151,37 +7151,19 @@ function ZoneEditorDialog({
 }
 
 function ZoneListItem({
-  layout,
   zone,
   onEdit,
+  onDelete,
   isHighlighted,
   onSelect,
 }: {
-  layout: LayoutTemplate;
   zone: LayoutZone;
   onEdit: () => void;
+  onDelete: () => void;
   isHighlighted?: boolean;
   onSelect?: () => void;
 }) {
-  const { toast } = useToast();
   const Icon = zoneTypeIcons[zone.type] || Grid3X3;
-
-  const deleteMutation = useMutation({
-    mutationFn: () => {
-      const existingZones = (layout.zones as LayoutZone[]) || [];
-      const updatedZones = existingZones.filter((z) => z.id !== zone.id);
-      return apiRequest("PATCH", `/api/layouts/${layout.id}`, {
-        zones: updatedZones,
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
-      toast({ title: "Zone deleted" });
-    },
-    onError: () => {
-      toast({ title: "Failed to delete zone", variant: "destructive" });
-    },
-  });
 
   return (
     <div
@@ -7209,37 +7191,14 @@ function ZoneListItem({
         <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onEdit(); }} data-testid={`button-edit-zone-${zone.id}`}>
           <Pencil className="h-4 w-4" />
         </Button>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={(e) => { e.stopPropagation(); }}
-              disabled={deleteMutation.isPending}
-              data-testid={`button-delete-zone-${zone.id}`}
-            >
-              <Trash2 className="h-4 w-4 text-destructive" />
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete Zone</AlertDialogTitle>
-              <AlertDialogDescription>
-                Are you sure you want to delete "{zone.name}"? This action cannot be undone.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel data-testid="button-cancel-delete-zone">Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => deleteMutation.mutate()}
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                data-testid="button-confirm-delete-zone"
-              >
-                Delete
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          data-testid={`button-delete-zone-${zone.id}`}
+        >
+          <Trash2 className="h-4 w-4 text-destructive" />
+        </Button>
       </div>
     </div>
   );
@@ -8403,9 +8362,14 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                   {zones.map((zone) => (
                     <ZoneListItem
                       key={zone.id}
-                      layout={layout}
                       zone={zone}
                       onEdit={() => handleEditZone(zone)}
+                      onDelete={() => {
+                        const updated = zones.filter(z => z.id !== zone.id);
+                        setDraftZones(updated);
+                        setHasUnsavedChanges(true);
+                        if (highlightedZoneId === zone.id) setHighlightedZoneId(null);
+                      }}
                       isHighlighted={highlightedZoneId === zone.id}
                       onSelect={() => setHighlightedZoneId(highlightedZoneId === zone.id ? null : zone.id)}
                     />
@@ -8930,19 +8894,14 @@ function LayoutEditorPanel({
     },
   });
 
-  const deleteZoneMutation = useMutation({
-    mutationFn: (zoneId: string) => {
-      const updatedZones = zones.filter(z => z.id !== zoneId);
-      return apiRequest("PATCH", `/api/layouts/${layout.id}`, { zones: updatedZones });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
-      toast({ title: "Zone deleted" });
-    },
-    onError: () => {
-      toast({ title: "Failed to delete zone", variant: "destructive" });
-    },
-  });
+  const handleDeleteZone = (zoneId: string) => {
+    const updatedZones = zones.filter(z => z.id !== zoneId);
+    onZonesChange(updatedZones);
+    if (editingZoneId === zoneId) {
+      setEditingZoneId(undefined);
+      setZoneDialogOpen(false);
+    }
+  };
 
   const cloneZoneMutation = useMutation({
     mutationFn: (zoneToClone: LayoutZone) => {
@@ -9151,13 +9110,13 @@ function LayoutEditorPanel({
                       <AlertDialogHeader>
                         <AlertDialogTitle>Delete Zone</AlertDialogTitle>
                         <AlertDialogDescription>
-                          Are you sure you want to delete "{zone.name}"? This action cannot be undone.
+                          Remove "{zone.name}" from this layout? You can discard the change before saving.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
                         <AlertDialogCancel data-testid="button-cancel-delete-zone">Cancel</AlertDialogCancel>
                         <AlertDialogAction
-                          onClick={() => deleteZoneMutation.mutate(zone.id)}
+                          onClick={() => handleDeleteZone(zone.id)}
                           className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                           data-testid="button-confirm-delete-zone"
                         >
