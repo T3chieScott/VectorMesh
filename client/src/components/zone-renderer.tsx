@@ -76,6 +76,7 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   schedule: Calendar,
   media_player: PlayCircle,
   football_table: Trophy,
+  premier_league_fixtures: Calendar,
   heathrow_arrivals: PlaneLanding,
   heathrow_departures: PlaneTakeoff,
   weather_forecast: CloudRain,
