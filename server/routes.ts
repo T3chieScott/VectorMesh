@@ -558,8 +558,8 @@ export async function registerRoutes(
       if (!existing) {
         return res.status(404).json({ error: "Client not found" });
       }
-      if (existing.locked && !isAdmin(req)) {
-        return res.status(403).json({ error: "This site is locked and cannot be modified" });
+      if (existing.locked) {
+        return res.status(403).json({ error: "This site is locked and cannot be modified. Unlock it first." });
       }
       const data = insertClientSchema.partial().parse(req.body);
       const client = await storage.updateClient(req.params.id, data);
@@ -1024,8 +1024,8 @@ export async function registerRoutes(
       if (!existing) {
         return res.status(404).json({ error: "Screen not found" });
       }
-      if (existing.locked && !isAdmin(req)) {
-        return res.status(403).json({ error: "This screen is locked and cannot be modified" });
+      if (existing.locked) {
+        return res.status(403).json({ error: "This screen is locked and cannot be modified. Unlock it first." });
       }
       const body = {
         ...req.body,
@@ -1472,8 +1472,8 @@ export async function registerRoutes(
       if (existing.clientId && !canAccessClient(req, existing.clientId)) {
         return res.status(403).json({ error: "Access denied" });
       }
-      if (existing.locked && !isAdmin(req)) {
-        return res.status(403).json({ error: "This layout is locked and cannot be modified" });
+      if (existing.locked) {
+        return res.status(403).json({ error: "This layout is locked and cannot be modified. Unlock it first." });
       }
       const data = insertLayoutTemplateSchema.partial().parse(req.body);
       const layout = await storage.updateLayoutTemplate(req.params.id, data);

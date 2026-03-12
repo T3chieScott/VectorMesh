@@ -481,7 +481,7 @@ function ScreenCard({
           <DropdownMenuContent align="end">
             <Dialog open={editOpen} onOpenChange={setEditOpen}>
               <DialogTrigger asChild>
-                <DropdownMenuItem onSelect={(e) => e.preventDefault()} disabled={screen.locked && !isUserAdmin}>
+                <DropdownMenuItem onSelect={(e) => e.preventDefault()} disabled={!!screen.locked}>
                   <Pencil className="mr-2 h-4 w-4" />
                   Edit
                 </DropdownMenuItem>

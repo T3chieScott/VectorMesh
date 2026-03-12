@@ -127,7 +127,7 @@ function ClientCard({ client, events }: { client: Client; events: Event[] }) {
           <DropdownMenuContent align="end">
             <Dialog open={editOpen} onOpenChange={setEditOpen}>
               <DialogTrigger asChild>
-                <DropdownMenuItem onSelect={(e) => e.preventDefault()} disabled={client.locked && !isUserAdmin}>
+                <DropdownMenuItem onSelect={(e) => e.preventDefault()} disabled={!!client.locked}>
                   <Pencil className="mr-2 h-4 w-4" />
                   Edit
                 </DropdownMenuItem>

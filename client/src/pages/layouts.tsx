@@ -8154,7 +8154,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
             <DropdownMenuContent align="end">
               <Dialog open={editOpen} onOpenChange={setEditOpen}>
                 <DialogTrigger asChild>
-                  <DropdownMenuItem onSelect={(e) => e.preventDefault()} disabled={layout.locked && !isAdmin}>
+                  <DropdownMenuItem onSelect={(e) => e.preventDefault()} disabled={!!layout.locked}>
                     <Pencil className="mr-2 h-4 w-4" />
                     Edit
                   </DropdownMenuItem>
@@ -9024,7 +9024,7 @@ function LayoutEditorPanel({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => setEditOpen(true)} disabled={layout.locked && !isUserAdmin}>
+              <DropdownMenuItem onClick={() => setEditOpen(true)} disabled={!!layout.locked}>
                 <Pencil className="mr-2 h-4 w-4" />
                 Edit Layout
               </DropdownMenuItem>
