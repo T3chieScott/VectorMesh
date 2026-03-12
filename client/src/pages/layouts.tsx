@@ -113,6 +113,8 @@ import {
   Rocket,
   Globe,
   Radar,
+  Lock,
+  Unlock,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -8033,8 +8035,20 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
       toast({ title: "Layout deleted successfully" });
     },
+    onError: (error: any) => {
+      toast({ title: error?.message || "Failed to delete layout", variant: "destructive" });
+    },
+  });
+
+  const lockMutation = useMutation({
+    mutationFn: (locked: boolean) =>
+      apiRequest("POST", `/api/layouts/${layout.id}/lock`, { locked }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      toast({ title: layout.locked ? "Layout unlocked" : "Layout locked" });
+    },
     onError: () => {
-      toast({ title: "Failed to delete layout", variant: "destructive" });
+      toast({ title: "Failed to toggle lock", variant: "destructive" });
     },
   });
 
@@ -8092,7 +8106,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
 
   return (
     <>
-      <Card className="overflow-hidden transition-all">
+      <Card className={`overflow-hidden transition-all ${layout.locked ? "ring-1 ring-amber-500/30" : ""}`}>
         <div className="p-3">
           <InteractiveLayoutPreview 
             layout={layout} 
@@ -8111,9 +8125,14 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
         </div>
         <CardHeader className="flex flex-row items-start justify-between gap-4 pt-0 pb-3">
           <div>
-            <CardTitle className="text-base" data-testid={`text-layout-name-${layout.id}`}>
-              {layout.name}
-            </CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-base" data-testid={`text-layout-name-${layout.id}`}>
+                {layout.name}
+              </CardTitle>
+              {layout.locked && (
+                <Lock className="h-3.5 w-3.5 text-amber-500" />
+              )}
+            </div>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               <Badge variant="secondary">{zones.length} zones</Badge>
               <Badge variant="outline">
@@ -8135,7 +8154,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
             <DropdownMenuContent align="end">
               <Dialog open={editOpen} onOpenChange={setEditOpen}>
                 <DialogTrigger asChild>
-                  <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+                  <DropdownMenuItem onSelect={(e) => e.preventDefault()} disabled={layout.locked && !isAdmin}>
                     <Pencil className="mr-2 h-4 w-4" />
                     Edit
                   </DropdownMenuItem>
@@ -8322,6 +8341,14 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                     <Move className="mr-2 h-4 w-4" />
                     {layout.clientId ? "Move to Site" : "Assign to Site"}
                   </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => lockMutation.mutate(!layout.locked)}>
+                    {layout.locked ? (
+                      <><Unlock className="mr-2 h-4 w-4" />Unlock</>
+                    ) : (
+                      <><Lock className="mr-2 h-4 w-4" />Lock</>
+                    )}
+                  </DropdownMenuItem>
                 </>
               )}
               <DropdownMenuSeparator />
@@ -8332,7 +8359,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                     deleteMutation.mutate();
                   }
                 }}
-                disabled={deleteMutation.isPending}
+                disabled={deleteMutation.isPending || layout.locked}
                 data-testid={`button-delete-layout-${layout.id}`}
               >
                 <Trash2 className="mr-2 h-4 w-4" />
@@ -8718,6 +8745,8 @@ function LayoutEditorPanel({
   const { toast } = useToast();
   const editingZone = editingZoneId ? zones.find(z => z.id === editingZoneId) : undefined;
   const { clients } = useSiteContext();
+  const { user } = useAuth();
+  const isUserAdmin = user?.role === "admin";
   const event = events.find((e) => e.id === layout.eventId);
 
   useEffect(() => {
@@ -8870,6 +8899,18 @@ function LayoutEditorPanel({
     },
   });
 
+  const lockMutation = useMutation({
+    mutationFn: (locked: boolean) =>
+      apiRequest("POST", `/api/layouts/${layout.id}/lock`, { locked }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      toast({ title: layout.locked ? "Layout unlocked" : "Layout locked" });
+    },
+    onError: () => {
+      toast({ title: "Failed to toggle lock", variant: "destructive" });
+    },
+  });
+
   const duplicateMutation = useMutation({
     mutationFn: () => 
       apiRequest("POST", "/api/layouts", {
@@ -8959,7 +9000,12 @@ function LayoutEditorPanel({
             </Button>
           )}
           <div className="min-w-0 flex-1">
-            <h2 className="font-semibold truncate text-sm">{layout.name}</h2>
+            <div className="flex items-center gap-1.5">
+              <h2 className="font-semibold truncate text-sm">{layout.name}</h2>
+              {layout.locked && (
+                <Lock className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />
+              )}
+            </div>
             <div className="flex items-center gap-2 flex-wrap">
               <Badge variant="outline" className="text-xs">
                 {layout.aspectRatio === "custom" && layout.customWidth && layout.customHeight
@@ -8978,7 +9024,7 @@ function LayoutEditorPanel({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => setEditOpen(true)}>
+              <DropdownMenuItem onClick={() => setEditOpen(true)} disabled={layout.locked && !isUserAdmin}>
                 <Pencil className="mr-2 h-4 w-4" />
                 Edit Layout
               </DropdownMenuItem>
@@ -8986,9 +9032,23 @@ function LayoutEditorPanel({
                 <Copy className="mr-2 h-4 w-4" />
                 Duplicate
               </DropdownMenuItem>
+              {isUserAdmin && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => lockMutation.mutate(!layout.locked)}>
+                    {layout.locked ? (
+                      <><Unlock className="mr-2 h-4 w-4" />Unlock</>
+                    ) : (
+                      <><Lock className="mr-2 h-4 w-4" />Lock</>
+                    )}
+                  </DropdownMenuItem>
+                </>
+              )}
+              <DropdownMenuSeparator />
               <DropdownMenuItem 
                 className="text-destructive"
                 onClick={() => deleteMutation.mutate()}
+                disabled={layout.locked}
               >
                 <Trash2 className="mr-2 h-4 w-4" />
                 Delete

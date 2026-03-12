@@ -23,6 +23,7 @@ export const clients = pgTable("clients", {
   name: text("name").notNull(),
   description: text("description"),
   logoUrl: text("logo_url"),
+  locked: boolean("locked").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -147,6 +148,7 @@ export const screens = pgTable("screens", {
   canvasHeight: integer("canvas_height"),
   canvasX: integer("canvas_x").default(0),
   canvasY: integer("canvas_y").default(0),
+  locked: boolean("locked").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -234,11 +236,12 @@ export const layoutTemplates = pgTable("layout_templates", {
   eventId: varchar("event_id").references(() => events.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   version: integer("version").default(1),
-  aspectRatio: text("aspect_ratio").notNull().default("16:9"), // "16:9", "9:16", "4:3", "1:1", "custom"
-  customWidth: integer("custom_width"), // Only used when aspectRatio is "custom"
-  customHeight: integer("custom_height"), // Only used when aspectRatio is "custom"
+  aspectRatio: text("aspect_ratio").notNull().default("16:9"),
+  customWidth: integer("custom_width"),
+  customHeight: integer("custom_height"),
   zones: jsonb("zones").notNull().$type<LayoutZone[]>(),
   profileOverrides: jsonb("profile_overrides"),
+  locked: boolean("locked").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

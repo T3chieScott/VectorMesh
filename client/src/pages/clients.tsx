@@ -33,7 +33,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, MoreHorizontal, Pencil, Trash2, Users, Calendar, Building2 } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil, Trash2, Users, Calendar, Building2, Lock, Unlock } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
 import type { Client, Event } from "@shared/schema";
 
 const clientFormSchema = z.object({
@@ -46,6 +47,8 @@ type ClientFormValues = z.infer<typeof clientFormSchema>;
 function ClientCard({ client, events }: { client: Client; events: Event[] }) {
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isUserAdmin = user?.role === "admin";
 
   const clientEvents = events.filter((e) => e.clientId === client.id);
   const activeEvents = clientEvents.filter((e) => e.isActive);
@@ -66,8 +69,8 @@ function ClientCard({ client, events }: { client: Client; events: Event[] }) {
       setEditOpen(false);
       toast({ title: "Client updated successfully" });
     },
-    onError: () => {
-      toast({ title: "Failed to update client", variant: "destructive" });
+    onError: (error: any) => {
+      toast({ title: error?.message || "Failed to update client", variant: "destructive" });
     },
   });
 
@@ -77,20 +80,37 @@ function ClientCard({ client, events }: { client: Client; events: Event[] }) {
       queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
       toast({ title: "Client deleted successfully" });
     },
+    onError: (error: any) => {
+      toast({ title: error?.message || "Failed to delete client", variant: "destructive" });
+    },
+  });
+
+  const lockMutation = useMutation({
+    mutationFn: (locked: boolean) =>
+      apiRequest("POST", `/api/clients/${client.id}/lock`, { locked }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
+      toast({ title: client.locked ? "Site unlocked" : "Site locked" });
+    },
     onError: () => {
-      toast({ title: "Failed to delete client", variant: "destructive" });
+      toast({ title: "Failed to toggle lock", variant: "destructive" });
     },
   });
 
   return (
-    <Card className="hover-elevate transition-all">
+    <Card className={`hover-elevate transition-all ${client.locked ? "ring-1 ring-amber-500/30" : ""}`}>
       <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
             <Building2 className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <CardTitle className="text-base" data-testid={`text-client-name-${client.id}`}>{client.name}</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-base" data-testid={`text-client-name-${client.id}`}>{client.name}</CardTitle>
+              {client.locked && (
+                <Lock className="h-3.5 w-3.5 text-amber-500" />
+              )}
+            </div>
             {client.description && (
               <p className="text-sm text-muted-foreground line-clamp-1">
                 {client.description}
@@ -107,7 +127,7 @@ function ClientCard({ client, events }: { client: Client; events: Event[] }) {
           <DropdownMenuContent align="end">
             <Dialog open={editOpen} onOpenChange={setEditOpen}>
               <DialogTrigger asChild>
-                <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+                <DropdownMenuItem onSelect={(e) => e.preventDefault()} disabled={client.locked && !isUserAdmin}>
                   <Pencil className="mr-2 h-4 w-4" />
                   Edit
                 </DropdownMenuItem>
@@ -163,9 +183,19 @@ function ClientCard({ client, events }: { client: Client; events: Event[] }) {
                 </Form>
               </DialogContent>
             </Dialog>
+            {isUserAdmin && (
+              <DropdownMenuItem onSelect={() => lockMutation.mutate(!client.locked)}>
+                {client.locked ? (
+                  <><Unlock className="mr-2 h-4 w-4" />Unlock</>
+                ) : (
+                  <><Lock className="mr-2 h-4 w-4" />Lock</>
+                )}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onSelect={() => deleteMutation.mutate()}
+              disabled={client.locked}
             >
               <Trash2 className="mr-2 h-4 w-4" />
               Delete

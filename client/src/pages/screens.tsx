@@ -57,8 +57,11 @@ import {
   Zap,
   Unlink,
   Grid3X3,
+  Lock,
+  Unlock,
 } from "lucide-react";
 import { useSiteContext } from "@/hooks/use-site-context";
+import { useAuth } from "@/hooks/use-auth";
 import type { Screen, DisplayProfile, LiveOverride, Event, LayoutTemplate, Client } from "@shared/schema";
 
 const screenFormSchema = z.object({
@@ -261,9 +264,23 @@ function ScreenCard({
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isUserAdmin = user?.role === "admin";
 
   const profile = profiles.find((p) => p.id === screen.displayProfileId);
   const siteProfiles = profiles.filter((p) => !p.clientId || p.clientId === screen.clientId);
+
+  const lockMutation = useMutation({
+    mutationFn: (locked: boolean) =>
+      apiRequest("POST", `/api/screens/${screen.id}/lock`, { locked }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
+      toast({ title: screen.locked ? "Screen unlocked" : "Screen locked" });
+    },
+    onError: () => {
+      toast({ title: "Failed to toggle lock", variant: "destructive" });
+    },
+  });
 
   const quickOverrideMutation = useMutation({
     mutationFn: (duration: number) => {
@@ -391,7 +408,7 @@ function ScreenCard({
   };
 
   return (
-    <Card className="hover-elevate transition-all">
+    <Card className={`hover-elevate transition-all ${screen.locked ? "ring-1 ring-amber-500/30" : ""}`}>
       <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3">
         <div className="flex items-center gap-3">
           <div
@@ -418,6 +435,9 @@ function ScreenCard({
               <CardTitle className="text-base" data-testid={`text-screen-name-${screen.id}`}>
                 {screen.name}
               </CardTitle>
+              {screen.locked && (
+                <Lock className="h-3.5 w-3.5 text-amber-500" />
+              )}
               {activeOverride && (
                 <Badge className="bg-amber-500/10 text-amber-600 gap-1">
                   <Zap className="h-3 w-3" />
@@ -461,7 +481,7 @@ function ScreenCard({
           <DropdownMenuContent align="end">
             <Dialog open={editOpen} onOpenChange={setEditOpen}>
               <DialogTrigger asChild>
-                <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+                <DropdownMenuItem onSelect={(e) => e.preventDefault()} disabled={screen.locked && !isUserAdmin}>
                   <Pencil className="mr-2 h-4 w-4" />
                   Edit
                 </DropdownMenuItem>
@@ -686,10 +706,23 @@ function ScreenCard({
                 </DropdownMenuItem>
               </>
             )}
+            {isUserAdmin && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => lockMutation.mutate(!screen.locked)}>
+                  {screen.locked ? (
+                    <><Unlock className="mr-2 h-4 w-4" />Unlock</>
+                  ) : (
+                    <><Lock className="mr-2 h-4 w-4" />Lock</>
+                  )}
+                </DropdownMenuItem>
+              </>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onSelect={() => deleteMutation.mutate()}
+              disabled={screen.locked}
             >
               <Trash2 className="mr-2 h-4 w-4" />
               Delete

@@ -554,12 +554,16 @@ export async function registerRoutes(
       if (!canAccessClient(req, req.params.id)) {
         return res.status(403).json({ error: "Access denied" });
       }
-      const data = insertClientSchema.partial().parse(req.body);
-      const client = await storage.updateClient(req.params.id, data);
-      if (!client) {
+      const existing = await storage.getClient(req.params.id);
+      if (!existing) {
         return res.status(404).json({ error: "Client not found" });
       }
-      logAudit(req, "update", "client", client.id, { name: client.name });
+      if (existing.locked && !isAdmin(req)) {
+        return res.status(403).json({ error: "This site is locked and cannot be modified" });
+      }
+      const data = insertClientSchema.partial().parse(req.body);
+      const client = await storage.updateClient(req.params.id, data);
+      logAudit(req, "update", "client", client!.id, { name: client!.name });
       res.json(client);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -570,16 +574,34 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/clients/:id/lock", requireAdmin, async (req, res) => {
+    try {
+      const { locked } = req.body;
+      const client = await storage.updateClient(req.params.id, { locked: !!locked });
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+      logAudit(req, locked ? "lock" : "unlock", "client", client.id, { name: client.name });
+      res.json(client);
+    } catch (error) {
+      console.error("Error toggling client lock:", error);
+      res.status(500).json({ error: "Failed to toggle lock" });
+    }
+  });
+
   app.delete("/api/clients/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
       if (!isAdmin(req)) {
         return res.status(403).json({ error: "Admin access required to delete sites" });
       }
       const clientToDelete = await storage.getClient(req.params.id);
-      const deleted = await storage.deleteClient(req.params.id);
-      if (!deleted) {
+      if (!clientToDelete) {
         return res.status(404).json({ error: "Client not found" });
       }
+      if (clientToDelete.locked) {
+        return res.status(403).json({ error: "This site is locked and cannot be deleted. Unlock it first." });
+      }
+      const deleted = await storage.deleteClient(req.params.id);
       logAudit(req, "delete", "client", req.params.id, { name: clientToDelete?.name });
       res.status(204).send();
     } catch (error) {
@@ -998,6 +1020,13 @@ export async function registerRoutes(
 
   app.patch("/api/screens/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
+      const existing = await storage.getScreen(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Screen not found" });
+      }
+      if (existing.locked && !isAdmin(req)) {
+        return res.status(403).json({ error: "This screen is locked and cannot be modified" });
+      }
       const body = {
         ...req.body,
         displayProfileId: req.body.displayProfileId || null,
@@ -1017,10 +1046,7 @@ export async function registerRoutes(
       }
       const data = insertScreenSchema.partial().parse(body);
       const screen = await storage.updateScreen(req.params.id, data);
-      if (!screen) {
-        return res.status(404).json({ error: "Screen not found" });
-      }
-      logAudit(req, "update", "screen", screen.id, { name: screen.name });
+      logAudit(req, "update", "screen", screen!.id, { name: screen!.name });
       res.json(screen);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -1077,12 +1103,31 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/screens/:id", requireAuth, async (req, res) => {
+  app.post("/api/screens/:id/lock", requireAdmin, async (req, res) => {
     try {
-      const deleted = await storage.deleteScreen(req.params.id);
-      if (!deleted) {
+      const { locked } = req.body;
+      const screen = await storage.updateScreen(req.params.id, { locked: !!locked });
+      if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
+      logAudit(req, locked ? "lock" : "unlock", "screen", screen.id, { name: screen.name });
+      res.json(screen);
+    } catch (error) {
+      console.error("Error toggling screen lock:", error);
+      res.status(500).json({ error: "Failed to toggle lock" });
+    }
+  });
+
+  app.delete("/api/screens/:id", requireAuth, async (req, res) => {
+    try {
+      const existing = await storage.getScreen(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Screen not found" });
+      }
+      if (existing.locked) {
+        return res.status(403).json({ error: "This screen is locked and cannot be deleted. Unlock it first." });
+      }
+      await storage.deleteScreen(req.params.id);
       logAudit(req, "delete", "screen", req.params.id);
       res.status(204).send();
     } catch (error) {
@@ -1427,6 +1472,9 @@ export async function registerRoutes(
       if (existing.clientId && !canAccessClient(req, existing.clientId)) {
         return res.status(403).json({ error: "Access denied" });
       }
+      if (existing.locked && !isAdmin(req)) {
+        return res.status(403).json({ error: "This layout is locked and cannot be modified" });
+      }
       const data = insertLayoutTemplateSchema.partial().parse(req.body);
       const layout = await storage.updateLayoutTemplate(req.params.id, data);
       logAudit(req, "update", "layout", layout!.id, { name: layout!.name });
@@ -1506,6 +1554,21 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/layouts/:id/lock", requireAdmin, async (req, res) => {
+    try {
+      const { locked } = req.body;
+      const layout = await storage.updateLayoutTemplate(req.params.id, { locked: !!locked });
+      if (!layout) {
+        return res.status(404).json({ error: "Layout not found" });
+      }
+      logAudit(req, locked ? "lock" : "unlock", "layout", layout.id, { name: layout.name });
+      res.json(layout);
+    } catch (error) {
+      console.error("Error toggling layout lock:", error);
+      res.status(500).json({ error: "Failed to toggle lock" });
+    }
+  });
+
   app.delete("/api/layouts/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
       const existing = await storage.getLayoutTemplate(req.params.id);
@@ -1514,6 +1577,9 @@ export async function registerRoutes(
       }
       if (existing.clientId && !canAccessClient(req, existing.clientId)) {
         return res.status(403).json({ error: "Access denied" });
+      }
+      if (existing.locked) {
+        return res.status(403).json({ error: "This layout is locked and cannot be deleted. Unlock it first." });
       }
       await storage.deleteLayoutTemplate(req.params.id);
       logAudit(req, "delete", "layout", req.params.id);
