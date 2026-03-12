@@ -28,6 +28,8 @@ import {
   AlertTriangle,
   Layers,
   RefreshCw,
+  ScanSearch,
+  Frame,
 } from "lucide-react";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
 import { ZoneRenderer, zoneTypeIcons, getAspectRatioDimensions } from "@/components/zone-renderer";
@@ -38,6 +40,7 @@ interface SimulatorState {
   currentDate: string;
   showZoneBorders: boolean;
   isFullscreen: boolean;
+  canvasViewMode: "aoi" | "fullcanvas";
 }
 
 function PlayerDisplay({
@@ -82,7 +85,6 @@ function PlayerDisplay({
     }
   }, [zones]);
 
-  // Use same 720p reference dimensions as layout editor for pixel-perfect match
   const REFERENCE_HEIGHT = 720;
   
   const layoutAspect = layout 
@@ -96,47 +98,59 @@ function PlayerDisplay({
   const aspectRatio = layoutAspect 
     ? layoutAspect.width / layoutAspect.height 
     : (profile ? (profile.width || 1920) / (profile.height || 1080) : 16 / 9);
-  
-  const trueWidth = Math.round(REFERENCE_HEIGHT * aspectRatio);
+
+  const canvasEnabled = screen?.canvasEnabled ?? false;
+  const canvasW = screen?.canvasWidth || 1920;
+  const canvasH = screen?.canvasHeight || 1080;
+  const canvasX = screen?.canvasX || 0;
+  const canvasY = screen?.canvasY || 0;
+  const screenW = profile?.width || 1920;
+  const screenH = profile?.height || 1080;
+
+  const isFullCanvasMode = canvasEnabled && state.canvasViewMode === "fullcanvas";
+  const isAoiMode = canvasEnabled && state.canvasViewMode === "aoi";
+
+  const displayAspect = isFullCanvasMode
+    ? canvasW / canvasH
+    : isAoiMode
+      ? screenW / screenH
+      : aspectRatio;
+
+  const trueWidth = Math.round(REFERENCE_HEIGHT * displayAspect);
   const trueHeight = REFERENCE_HEIGHT;
 
-  // Calculate scale to fit container while preserving true dimensions
   useEffect(() => {
     const updateScale = () => {
       if (!containerRef.current) return;
       const containerRect = containerRef.current.getBoundingClientRect();
-      
-      // Use actual container dimensions with small padding (no padding in fullscreen)
       const padding = state.isFullscreen ? 0 : 16;
       const availableWidth = containerRect.width - padding;
       const availableHeight = containerRect.height - padding;
-      
       if (availableWidth <= 0 || availableHeight <= 0) return;
-      
       const scaleX = availableWidth / trueWidth;
       const scaleY = availableHeight / trueHeight;
       const newScale = Math.min(scaleX, scaleY);
       setScale(Math.max(0.05, newScale));
     };
 
-    // Initial delay to allow container to render with proper height
     const timeoutId = setTimeout(updateScale, 50);
-    
-    // Use ResizeObserver to detect container size changes
     const resizeObserver = new ResizeObserver(updateScale);
     if (containerRef.current) {
       resizeObserver.observe(containerRef.current);
     }
-    
     return () => {
       clearTimeout(timeoutId);
       resizeObserver.disconnect();
     };
   }, [trueWidth, trueHeight, state.isFullscreen]);
 
-  // Scaled dimensions for the wrapper
   const scaledWidth = trueWidth * scale;
   const scaledHeight = trueHeight * scale;
+
+  const aoiLeftPct = isAoiMode ? -(canvasX / screenW) * 100 : 0;
+  const aoiTopPct = isAoiMode ? -(canvasY / screenH) * 100 : 0;
+  const aoiScaleW = isAoiMode ? canvasW / screenW : 1;
+  const aoiScaleH = isAoiMode ? canvasH / screenH : 1;
 
   return (
     <div 
@@ -151,7 +165,6 @@ function PlayerDisplay({
         }}
         data-testid="player-display"
       >
-        {/* Inner content at true pixel dimensions, scaled down */}
         <div
           style={{
             width: `${trueWidth}px`,
@@ -161,7 +174,22 @@ function PlayerDisplay({
           }}
           className="relative"
         >
-      {/* Live Override Banner */}
+          {isFullCanvasMode && (
+            <div
+              className="absolute border-2 border-amber-400 z-30 pointer-events-none"
+              style={{
+                left: `${(canvasX / canvasW) * 100}%`,
+                top: `${(canvasY / canvasH) * 100}%`,
+                width: `${(screenW / canvasW) * 100}%`,
+                height: `${(screenH / canvasH) * 100}%`,
+              }}
+              data-testid="aoi-overlay"
+            >
+              <span className="absolute -top-5 left-0 text-[10px] text-amber-400 whitespace-nowrap font-medium">
+                AOI: {screenW}×{screenH} at ({canvasX},{canvasY})
+              </span>
+            </div>
+          )}
       {hasLiveOverride && (
         <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white px-3 py-1.5 flex items-center justify-center gap-2 text-sm font-medium">
           <AlertTriangle className="h-4 w-4" />
@@ -169,8 +197,49 @@ function PlayerDisplay({
         </div>
       )}
 
-      {/* Zones */}
-      {zones.length > 0 ? (
+          {isAoiMode ? (
+            <div
+              className="absolute inset-0"
+              style={{ overflow: "hidden" }}
+            >
+              <div
+                className="absolute"
+                style={{
+                  width: `${aoiScaleW * 100}%`,
+                  height: `${aoiScaleH * 100}%`,
+                  left: `${aoiLeftPct}%`,
+                  top: `${aoiTopPct}%`,
+                }}
+              >
+                {zones.map((zone) => (
+                  <div
+                    key={zone.id}
+                    className="absolute"
+                    style={{
+                      left: `${zone.x}%`,
+                      top: `${zone.y}%`,
+                      width: `${zone.width}%`,
+                      height: `${zone.height}%`,
+                      zIndex: zone.zIndex || 1,
+                    }}
+                  >
+                    <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
+                      <ZoneRenderer
+                        zone={zone}
+                        media={getZoneMedia(zone.id)}
+                        mediaIndex={getZoneMediaIndex(zone.id)}
+                        isPlaying={state.isPlaying}
+                        showBorder={state.showZoneBorders}
+                        playlistName={getPlaylistName(zone.id)}
+                        timezone={weatherTimezone}
+                        fillContainer={true}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : zones.length > 0 ? (
         zones.map((zone) => (
           <div
             key={zone.id}
@@ -289,6 +358,7 @@ export default function SimulatorPage() {
     currentDate: "",
     showZoneBorders: true,
     isFullscreen: false,
+    canvasViewMode: "fullcanvas",
   });
 
   const screensQ = useSiteFilteredQuery<Screen[]>("/api/screens");
@@ -599,6 +669,46 @@ export default function SimulatorPage() {
               />
             </div>
 
+            {selectedScreen?.canvasEnabled && (
+              <div className="space-y-2 pt-2">
+                <Label className="text-sm font-medium flex items-center gap-1.5">
+                  <Frame className="h-3.5 w-3.5" />
+                  Canvas View
+                </Label>
+                <div className="flex rounded-lg border overflow-hidden">
+                  <button
+                    className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
+                      state.canvasViewMode === "fullcanvas"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted/30 text-muted-foreground hover:bg-muted/60"
+                    }`}
+                    onClick={() => setState((prev) => ({ ...prev, canvasViewMode: "fullcanvas" }))}
+                    data-testid="button-canvas-fullcanvas"
+                  >
+                    <Frame className="h-3 w-3" />
+                    Full Canvas
+                  </button>
+                  <button
+                    className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
+                      state.canvasViewMode === "aoi"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted/30 text-muted-foreground hover:bg-muted/60"
+                    }`}
+                    onClick={() => setState((prev) => ({ ...prev, canvasViewMode: "aoi" }))}
+                    data-testid="button-canvas-aoi"
+                  >
+                    <ScanSearch className="h-3 w-3" />
+                    Screen AOI
+                  </button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  {state.canvasViewMode === "fullcanvas"
+                    ? `Full canvas ${selectedScreen.canvasWidth}×${selectedScreen.canvasHeight} with AOI highlighted`
+                    : `Screen view ${selectedProfile?.width || 1920}×${selectedProfile?.height || 1080} at (${selectedScreen.canvasX || 0},${selectedScreen.canvasY || 0})`}
+                </p>
+              </div>
+            )}
+
             {/* Status Info */}
             <div className="space-y-2 pt-4 border-t">
               <div className="flex items-center justify-between text-sm">
@@ -640,6 +750,14 @@ export default function SimulatorPage() {
                   </span>
                 </div>
               )}
+              {selectedScreen?.canvasEnabled && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Canvas</span>
+                  <span className="font-medium">
+                    {selectedScreen.canvasWidth}×{selectedScreen.canvasHeight}
+                  </span>
+                </div>
+              )}
               {activeLiveOverride && (
                 <div className="flex items-center gap-2 text-sm text-red-500 pt-2">
                   <AlertTriangle className="h-4 w-4" />
@@ -658,6 +776,11 @@ export default function SimulatorPage() {
                 <CardTitle className="text-base font-semibold flex items-center gap-2">
                   <Tv2 className="h-4 w-4" />
                   Display Preview
+                  {selectedScreen?.canvasEnabled && (
+                    <Badge variant="outline" className="text-[10px] ml-1 font-normal" data-testid="badge-canvas-mode">
+                      {state.canvasViewMode === "fullcanvas" ? "Full Canvas" : "Screen AOI"}
+                    </Badge>
+                  )}
                 </CardTitle>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground">
                   <Clock className="h-4 w-4" />

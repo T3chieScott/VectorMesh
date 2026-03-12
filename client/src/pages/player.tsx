@@ -373,7 +373,13 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const aspectRatio = layoutAspect
     ? layoutAspect.width / layoutAspect.height
     : (content?.profile ? (content.profile.width || 1920) / (content.profile.height || 1080) : 16 / 9);
-  const trueWidth = Math.round(REFERENCE_HEIGHT * aspectRatio);
+
+  const canvasEnabled = content?.screen?.canvasEnabled ?? false;
+  const canvasW = content?.screen?.canvasWidth || 1920;
+  const canvasH = content?.screen?.canvasHeight || 1080;
+
+  const displayAspect = canvasEnabled ? canvasW / canvasH : aspectRatio;
+  const trueWidth = Math.round(REFERENCE_HEIGHT * displayAspect);
   const trueHeight = REFERENCE_HEIGHT;
 
   useEffect(() => {
