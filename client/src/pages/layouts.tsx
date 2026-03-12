@@ -8698,6 +8698,7 @@ function LayoutEditorPanel({
   onToggleLayoutList,
   onBackToList,
   selectedZoneIds,
+  onSelectedZoneIdsChange,
 }: { 
   layout: LayoutTemplate; 
   events: Event[];
@@ -8713,6 +8714,7 @@ function LayoutEditorPanel({
   onToggleLayoutList?: () => void;
   onBackToList?: () => void;
   selectedZoneIds?: Set<string>;
+  onSelectedZoneIdsChange?: (ids: Set<string>) => void;
 }) {
   const [zoneDialogOpen, setZoneDialogOpen] = useState(false);
   const [editingZoneId, setEditingZoneId] = useState<string | undefined>();
@@ -9629,6 +9631,7 @@ export default function LayoutsPage() {
                 setShowLayoutList(true);
               }}
               selectedZoneIds={selectedZoneIds}
+              onSelectedZoneIdsChange={setSelectedZoneIds}
             />
           </div>
           <div className="flex-1 min-w-0 overflow-hidden h-full">
