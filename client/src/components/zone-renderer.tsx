@@ -4044,6 +4044,9 @@ function PremierLeagueFixturesWidget({
   showVenue = false,
   compactMode = false,
   showCompleted = false,
+  displayMode = "list",
+  itemsPerPage = 6,
+  pageDuration = 8,
   limit = 20,
   deviceToken,
 }: {
@@ -4054,12 +4057,16 @@ function PremierLeagueFixturesWidget({
   showVenue?: boolean;
   compactMode?: boolean;
   showCompleted?: boolean;
+  displayMode?: string;
+  itemsPerPage?: number;
+  pageDuration?: number;
   limit?: number;
   deviceToken?: string;
 }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(0);
 
   useEffect(() => {
     const fetchFixtures = async () => {
@@ -4088,6 +4095,39 @@ function PremierLeagueFixturesWidget({
     return () => clearInterval(interval);
   }, [daysAhead, refreshInterval, deviceToken]);
 
+  const fixtures = useMemo(() => {
+    if (!data?.fixtures) return [];
+    return data.fixtures
+      .filter((f: any) => {
+        if (f.status === "cancelled") return false;
+        if (f.status === "completed" && !showCompleted) return false;
+        return true;
+      })
+      .slice(0, limit);
+  }, [data, showCompleted, limit]);
+
+  const totalPages = displayMode === "paged"
+    ? Math.max(1, Math.ceil(fixtures.length / (itemsPerPage || 6)))
+    : 1;
+
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [data, displayMode, itemsPerPage, limit, showCompleted]);
+
+  useEffect(() => {
+    if (currentPage >= totalPages && totalPages > 0) {
+      setCurrentPage(Math.max(0, totalPages - 1));
+    }
+  }, [currentPage, totalPages]);
+
+  useEffect(() => {
+    if (displayMode !== "paged" || totalPages <= 1) return;
+    const timer = setInterval(() => {
+      setCurrentPage((prev) => (prev + 1) % totalPages);
+    }, (pageDuration || 8) * 1000);
+    return () => clearInterval(timer);
+  }, [displayMode, totalPages, pageDuration]);
+
   if (loading) {
     return (
       <div className="h-full w-full flex items-center justify-center" data-testid="pl-fixtures-loading">
@@ -4104,36 +4144,249 @@ function PremierLeagueFixturesWidget({
     );
   }
 
-  const fixtures = data.fixtures
-    .filter((f: any) => {
-      if (f.status === "cancelled") return false;
-      if (f.status === "completed" && !showCompleted) return false;
-      return true;
-    })
-    .slice(0, limit);
+  if (fixtures.length === 0) {
+    return (
+      <div className="h-full w-full flex items-center justify-center" data-testid="pl-fixtures-empty">
+        <p style={{ fontSize: `${fontSize}px`, opacity: 0.5 }}>No upcoming fixtures</p>
+      </div>
+    );
+  }
 
   const badgeSize = compactMode ? Math.max(14, fontSize) : Math.max(18, fontSize * 1.3);
+  const fs = fontSize || 14;
 
-  let currentDate = "";
+  const renderBadge = (team: any) => {
+    if (!showBadges) return null;
+    const hasBadge = team.badge || team.espnLogo;
+    if (!hasBadge) return null;
+    return (
+      <img
+        src={team.badge ? `${team.badge}.png` : team.espnLogo}
+        alt={team.abbr}
+        style={{ width: `${badgeSize}px`, height: `${badgeSize}px`, objectFit: "contain", flexShrink: 0 }}
+        onError={(e) => {
+          const img = e.target as HTMLImageElement;
+          if (team.badge && team.espnLogo && img.src.includes("/assets/football/badges/")) {
+            img.src = team.espnLogo;
+          } else {
+            img.style.display = "none";
+          }
+        }}
+      />
+    );
+  };
 
-  return (
-    <div className="h-full w-full overflow-auto" data-testid="pl-fixtures-widget" style={{ fontSize: `${fontSize}px` }}>
-      {fixtures.map((fix: any) => {
+  const renderStatus = (fix: any, timeStr: string) => {
+    const isLive = fix.status === "live";
+    const isCompleted = fix.status === "completed";
+    const smallFs = `${Math.max(10, fs * 0.8)}px`;
+    if (isLive) return <span style={{ color: "#e53935", fontWeight: 700, fontSize: smallFs }}>{fix.matchMinute || "LIVE"}</span>;
+    if (isCompleted) return <span style={{ color: "rgba(128,128,128,0.6)", fontWeight: 600, fontSize: smallFs }}>FT</span>;
+    if (fix.status === "postponed") return <span style={{ color: "#f57c00", fontWeight: 600, fontSize: smallFs }}>PPD</span>;
+    if (fix.status === "cancelled") return <span style={{ color: "#9e9e9e", fontWeight: 600, fontSize: smallFs }}>CAN</span>;
+    return <span style={{ fontSize: `${Math.max(10, fs * 0.85)}px`, opacity: 0.8 }}>{timeStr}</span>;
+  };
+
+  const groupByDate = () => {
+    const groups: { date: string; fixtures: any[] }[] = [];
+    let curDate = "";
+    for (const fix of fixtures) {
+      const fixDate = new Date(fix.date);
+      const dateStr = fixDate.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+      if (dateStr !== curDate) {
+        groups.push({ date: dateStr, fixtures: [] });
+        curDate = dateStr;
+      }
+      groups[groups.length - 1].fixtures.push(fix);
+    }
+    return groups;
+  };
+
+  const renderListItem = (fix: any) => {
+    const fixDate = new Date(fix.date);
+    const timeStr = fixDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    const isLive = fix.status === "live";
+    const isCompleted = fix.status === "completed";
+
+    return (
+      <div key={fix.id} data-testid={`pl-fixture-${fix.id}`}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            padding: compactMode ? "4px 8px" : "8px 10px",
+            borderBottom: "1px solid rgba(128,128,128,0.12)",
+            gap: compactMode ? "6px" : "10px",
+            borderLeft: isLive ? "3px solid #e53935" : "3px solid transparent",
+          }}
+        >
+          <div style={{ minWidth: compactMode ? "36px" : "48px", textAlign: "center", flexShrink: 0 }}>
+            {renderStatus(fix, timeStr)}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
+              {renderBadge(fix.home)}
+              <span style={{ fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {compactMode ? fix.home.abbr : fix.home.shortName}
+              </span>
+              {(isLive || isCompleted) && (
+                <span style={{ fontWeight: 700, marginLeft: "auto", flexShrink: 0 }}>{fix.home.score ?? ""}</span>
+              )}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              {renderBadge(fix.away)}
+              <span style={{ fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {compactMode ? fix.away.abbr : fix.away.shortName}
+              </span>
+              {(isLive || isCompleted) && (
+                <span style={{ fontWeight: 700, marginLeft: "auto", flexShrink: 0 }}>{fix.away.score ?? ""}</span>
+              )}
+            </div>
+          </div>
+        </div>
+        {showVenue && fix.venue && !compactMode && (
+          <div style={{ padding: "0 10px 4px 61px", fontSize: `${Math.max(9, fs * 0.65)}px`, opacity: 0.4 }}>
+            {fix.venue}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderGridCard = (fix: any) => {
+    const fixDate = new Date(fix.date);
+    const timeStr = fixDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    const isLive = fix.status === "live";
+    const isCompleted = fix.status === "completed";
+    const cardBadgeSize = compactMode ? Math.max(16, fs * 1.2) : Math.max(24, fs * 1.8);
+
+    return (
+      <div
+        key={fix.id}
+        data-testid={`pl-fixture-${fix.id}`}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: compactMode ? "6px 8px" : "10px 12px",
+          border: isLive ? "2px solid #e53935" : "1px solid rgba(128,128,128,0.2)",
+          borderRadius: "8px",
+          minWidth: compactMode ? "80px" : "110px",
+          gap: compactMode ? "3px" : "6px",
+          background: isLive ? "rgba(229,57,53,0.06)" : "transparent",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: compactMode ? "4px" : "8px" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
+            {showBadges && (
+              <div style={{ width: `${cardBadgeSize}px`, height: `${cardBadgeSize}px` }}>
+                {renderBadge(fix.home)}
+              </div>
+            )}
+            <span style={{ fontSize: `${Math.max(9, fs * 0.75)}px`, fontWeight: 500, whiteSpace: "nowrap" }}>
+              {compactMode ? fix.home.abbr : fix.home.shortName}
+            </span>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: compactMode ? "28px" : "38px" }}>
+            {(isLive || isCompleted) ? (
+              <span style={{ fontWeight: 700, fontSize: `${Math.max(12, fs * 1)}px` }}>
+                {fix.home.score ?? 0} - {fix.away.score ?? 0}
+              </span>
+            ) : (
+              <span style={{ fontSize: `${Math.max(9, fs * 0.7)}px`, opacity: 0.7 }}>vs</span>
+            )}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
+            {showBadges && (
+              <div style={{ width: `${cardBadgeSize}px`, height: `${cardBadgeSize}px` }}>
+                {renderBadge(fix.away)}
+              </div>
+            )}
+            <span style={{ fontSize: `${Math.max(9, fs * 0.75)}px`, fontWeight: 500, whiteSpace: "nowrap" }}>
+              {compactMode ? fix.away.abbr : fix.away.shortName}
+            </span>
+          </div>
+        </div>
+
+        <div style={{ textAlign: "center" }}>
+          {renderStatus(fix, timeStr)}
+        </div>
+
+        {showVenue && fix.venue && !compactMode && (
+          <div style={{ fontSize: `${Math.max(8, fs * 0.55)}px`, opacity: 0.4, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "140px" }}>
+            {fix.venue}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  if (displayMode === "grid") {
+    const groups = groupByDate();
+    return (
+      <div className="h-full w-full overflow-auto" data-testid="pl-fixtures-widget" style={{ fontSize: `${fs}px` }}>
+        {groups.map((group) => (
+          <div key={group.date} style={{ marginBottom: compactMode ? "8px" : "14px" }}>
+            <div
+              style={{
+                padding: compactMode ? "3px 8px" : "6px 10px",
+                fontSize: `${Math.max(10, fs * 0.75)}px`,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                opacity: 0.5,
+                borderBottom: "1px solid rgba(128,128,128,0.2)",
+                marginBottom: compactMode ? "4px" : "8px",
+              }}
+            >
+              {group.date}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: compactMode ? "6px" : "10px",
+                padding: compactMode ? "0 6px" : "0 10px",
+              }}
+            >
+              {group.fixtures.map((fix: any) => renderGridCard(fix))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (displayMode === "paged") {
+    const perPage = itemsPerPage || 6;
+    const pageFixtures = fixtures.slice(currentPage * perPage, (currentPage + 1) * perPage);
+    const groups = (() => {
+      const g: { date: string; fixtures: any[] }[] = [];
+      let curDate = "";
+      for (const fix of pageFixtures) {
         const fixDate = new Date(fix.date);
         const dateStr = fixDate.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-        const timeStr = fixDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-        const showDateHeader = dateStr !== currentDate;
-        if (showDateHeader) currentDate = dateStr;
-        const isLive = fix.status === "live";
-        const isCompleted = fix.status === "completed";
+        if (dateStr !== curDate) {
+          g.push({ date: dateStr, fixtures: [] });
+          curDate = dateStr;
+        }
+        g[g.length - 1].fixtures.push(fix);
+      }
+      return g;
+    })();
 
-        return (
-          <div key={fix.id} data-testid={`pl-fixture-${fix.id}`}>
-            {showDateHeader && (
+    return (
+      <div className="h-full w-full flex flex-col" data-testid="pl-fixtures-widget" style={{ fontSize: `${fs}px` }}>
+        <div style={{ flex: 1, overflow: "hidden" }}>
+          {groups.map((group) => (
+            <div key={group.date}>
               <div
                 style={{
                   padding: compactMode ? "3px 8px" : "6px 10px",
-                  fontSize: `${Math.max(10, fontSize * 0.75)}px`,
+                  fontSize: `${Math.max(10, fs * 0.75)}px`,
                   fontWeight: 700,
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
@@ -4141,103 +4394,60 @@ function PremierLeagueFixturesWidget({
                   borderBottom: "1px solid rgba(128,128,128,0.2)",
                 }}
               >
-                {dateStr}
+                {group.date}
               </div>
-            )}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                padding: compactMode ? "4px 8px" : "8px 10px",
-                borderBottom: "1px solid rgba(128,128,128,0.12)",
-                gap: compactMode ? "6px" : "10px",
-                borderLeft: isLive ? "3px solid #e53935" : "3px solid transparent",
-              }}
-            >
-              <div style={{ minWidth: compactMode ? "36px" : "48px", textAlign: "center", flexShrink: 0 }}>
-                {isLive ? (
-                  <span style={{ color: "#e53935", fontWeight: 700, fontSize: `${Math.max(10, fontSize * 0.8)}px` }}>
-                    {fix.matchMinute || "LIVE"}
-                  </span>
-                ) : isCompleted ? (
-                  <span style={{ color: "rgba(128,128,128,0.6)", fontWeight: 600, fontSize: `${Math.max(10, fontSize * 0.8)}px` }}>FT</span>
-                ) : fix.status === "postponed" ? (
-                  <span style={{ color: "#f57c00", fontWeight: 600, fontSize: `${Math.max(10, fontSize * 0.8)}px` }}>PPD</span>
-                ) : fix.status === "cancelled" ? (
-                  <span style={{ color: "#9e9e9e", fontWeight: 600, fontSize: `${Math.max(10, fontSize * 0.8)}px` }}>CAN</span>
-                ) : (
-                  <span style={{ fontSize: `${Math.max(10, fontSize * 0.85)}px`, opacity: 0.8 }}>{timeStr}</span>
-                )}
-              </div>
-
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
-                  {showBadges && (fix.home.badge || fix.home.espnLogo) && (
-                    <img
-                      src={fix.home.badge ? `${fix.home.badge}.png` : fix.home.espnLogo}
-                      alt={fix.home.abbr}
-                      style={{ width: `${badgeSize}px`, height: `${badgeSize}px`, objectFit: "contain", flexShrink: 0 }}
-                      onError={(e) => {
-                        const img = e.target as HTMLImageElement;
-                        if (fix.home.badge && fix.home.espnLogo && img.src.includes("/assets/football/badges/")) {
-                          img.src = fix.home.espnLogo;
-                        } else {
-                          img.style.display = "none";
-                        }
-                      }}
-                    />
-                  )}
-                  <span style={{ fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {compactMode ? fix.home.abbr : fix.home.shortName}
-                  </span>
-                  {(isLive || isCompleted) && (
-                    <span style={{ fontWeight: 700, marginLeft: "auto", flexShrink: 0 }}>{fix.home.score ?? ""}</span>
-                  )}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  {showBadges && (fix.away.badge || fix.away.espnLogo) && (
-                    <img
-                      src={fix.away.badge ? `${fix.away.badge}.png` : fix.away.espnLogo}
-                      alt={fix.away.abbr}
-                      style={{ width: `${badgeSize}px`, height: `${badgeSize}px`, objectFit: "contain", flexShrink: 0 }}
-                      onError={(e) => {
-                        const img = e.target as HTMLImageElement;
-                        if (fix.away.badge && fix.away.espnLogo && img.src.includes("/assets/football/badges/")) {
-                          img.src = fix.away.espnLogo;
-                        } else {
-                          img.style.display = "none";
-                        }
-                      }}
-                    />
-                  )}
-                  <span style={{ fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {compactMode ? fix.away.abbr : fix.away.shortName}
-                  </span>
-                  {(isLive || isCompleted) && (
-                    <span style={{ fontWeight: 700, marginLeft: "auto", flexShrink: 0 }}>{fix.away.score ?? ""}</span>
-                  )}
-                </div>
-              </div>
+              {group.fixtures.map((fix: any) => renderListItem(fix))}
             </div>
-            {showVenue && fix.venue && !compactMode && (
-              <div
-                style={{
-                  padding: "0 10px 4px 61px",
-                  fontSize: `${Math.max(9, fontSize * 0.65)}px`,
-                  opacity: 0.4,
-                }}
-              >
-                {fix.venue}
-              </div>
-            )}
-          </div>
-        );
-      })}
-      {fixtures.length === 0 && (
-        <div className="h-full w-full flex items-center justify-center" data-testid="pl-fixtures-empty">
-          <p style={{ fontSize: `${fontSize}px`, opacity: 0.5 }}>No upcoming fixtures</p>
+          ))}
         </div>
-      )}
+        {totalPages > 1 && (
+          <div style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: "4px",
+            padding: "6px",
+            borderTop: "1px solid rgba(128,128,128,0.15)",
+          }}>
+            {Array.from({ length: totalPages }, (_, i) => (
+              <div
+                key={i}
+                style={{
+                  width: "6px",
+                  height: "6px",
+                  borderRadius: "50%",
+                  background: i === currentPage ? "currentColor" : "rgba(128,128,128,0.3)",
+                  transition: "background 0.3s",
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const groups = groupByDate();
+  return (
+    <div className="h-full w-full overflow-auto" data-testid="pl-fixtures-widget" style={{ fontSize: `${fs}px` }}>
+      {groups.map((group) => (
+        <div key={group.date}>
+          <div
+            style={{
+              padding: compactMode ? "3px 8px" : "6px 10px",
+              fontSize: `${Math.max(10, fs * 0.75)}px`,
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              opacity: 0.5,
+              borderBottom: "1px solid rgba(128,128,128,0.2)",
+            }}
+          >
+            {group.date}
+          </div>
+          {group.fixtures.map((fix: any) => renderListItem(fix))}
+        </div>
+      ))}
     </div>
   );
 }
@@ -5292,6 +5502,9 @@ export function ZoneRenderer({
             showVenue={zone.plFixturesShowVenue}
             compactMode={zone.plFixturesCompactMode}
             showCompleted={zone.plFixturesShowCompleted}
+            displayMode={zone.plFixturesDisplayMode}
+            itemsPerPage={zone.plFixturesItemsPerPage}
+            pageDuration={zone.plFixturesPageDuration}
             limit={zone.plFixturesLimit}
             deviceToken={deviceToken}
           />

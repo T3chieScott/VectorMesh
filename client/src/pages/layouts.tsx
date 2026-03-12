@@ -576,6 +576,9 @@ const zoneFormSchema = z.object({
   plFixturesShowVenue: z.boolean().optional(),
   plFixturesCompactMode: z.boolean().optional(),
   plFixturesShowCompleted: z.boolean().optional(),
+  plFixturesDisplayMode: z.enum(["list", "grid", "paged"]).optional(),
+  plFixturesItemsPerPage: z.number().min(1).max(20).optional(),
+  plFixturesPageDuration: z.number().min(3).max(30).optional(),
   plFixturesLimit: z.number().min(1).max(50).optional(),
   footballLeague: z.enum(["premier-league"]).optional(),
   footballSeason: z.string().optional(),
@@ -1360,6 +1363,9 @@ function ZoneEditorDialog({
       plFixturesShowVenue: false,
       plFixturesCompactMode: false,
       plFixturesShowCompleted: false,
+      plFixturesDisplayMode: "list",
+      plFixturesItemsPerPage: 6,
+      plFixturesPageDuration: 8,
       plFixturesLimit: 20,
       footballLeague: "premier-league",
       footballSeason: "auto",
@@ -1580,6 +1586,9 @@ function ZoneEditorDialog({
           plFixturesShowVenue: zone.plFixturesShowVenue ?? false,
           plFixturesCompactMode: zone.plFixturesCompactMode ?? false,
           plFixturesShowCompleted: zone.plFixturesShowCompleted ?? false,
+          plFixturesDisplayMode: zone.plFixturesDisplayMode || "list",
+          plFixturesItemsPerPage: zone.plFixturesItemsPerPage ?? 6,
+          plFixturesPageDuration: zone.plFixturesPageDuration ?? 8,
           plFixturesLimit: zone.plFixturesLimit ?? 20,
           footballLeague: zone.footballLeague || "premier-league",
           footballSeason: zone.footballSeason || "auto",
@@ -1791,6 +1800,9 @@ function ZoneEditorDialog({
           plFixturesShowVenue: false,
           plFixturesCompactMode: false,
           plFixturesShowCompleted: false,
+          plFixturesDisplayMode: "list",
+          plFixturesItemsPerPage: 6,
+          plFixturesPageDuration: 8,
           plFixturesLimit: 20,
           footballLeague: "premier-league",
           footballSeason: "auto",
@@ -5756,6 +5768,33 @@ function ZoneEditorDialog({
 
                 <FormField
                   control={form.control}
+                  name="plFixturesDisplayMode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Display Mode</FormLabel>
+                      <Select
+                        value={field.value || "list"}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-pl-fixtures-display-mode">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="list">List (vertical column)</SelectItem>
+                          <SelectItem value="grid">Grid (matchday cards)</SelectItem>
+                          <SelectItem value="paged">Paged (auto-rotating)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>How fixtures are arranged in the zone</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
                   name="plFixturesDaysAhead"
                   render={({ field }) => (
                     <FormItem>
@@ -5918,6 +5957,53 @@ function ZoneEditorDialog({
                     )}
                   />
                 </div>
+
+                {form.watch("plFixturesDisplayMode") === "paged" && (
+                  <div className="space-y-4 pt-2 border-t border-border/50">
+                    <div className="text-xs text-muted-foreground font-medium">Paged Mode Settings</div>
+                    <FormField
+                      control={form.control}
+                      name="plFixturesItemsPerPage"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Fixtures Per Page ({field.value ?? 6})</FormLabel>
+                          <FormControl>
+                            <Slider
+                              value={[field.value ?? 6]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={1}
+                              max={20}
+                              step={1}
+                              data-testid="slider-pl-fixtures-items-per-page"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="plFixturesPageDuration"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Page Duration ({field.value ?? 8}s)</FormLabel>
+                          <FormControl>
+                            <Slider
+                              value={[field.value ?? 8]}
+                              onValueChange={([val]) => field.onChange(val)}
+                              min={3}
+                              max={30}
+                              step={1}
+                              data-testid="slider-pl-fixtures-page-duration"
+                            />
+                          </FormControl>
+                          <FormDescription>Seconds before rotating to next page</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
               </div>
             )}
 

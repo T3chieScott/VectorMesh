@@ -425,6 +425,9 @@ export interface LayoutZone {
   plFixturesShowVenue?: boolean;
   plFixturesCompactMode?: boolean;
   plFixturesShowCompleted?: boolean;
+  plFixturesDisplayMode?: "list" | "grid" | "paged";
+  plFixturesItemsPerPage?: number;
+  plFixturesPageDuration?: number;
   plFixturesLimit?: number;
   heathrowTerminal?: string;
   heathrowAirline?: string;
