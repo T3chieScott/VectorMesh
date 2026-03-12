@@ -1,4 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { MapContainer, TileLayer, Marker, Tooltip, useMap } from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import { useQuery } from "@tanstack/react-query";
 import { WORLD_MAP_PATHS, WORLD_MAP_VIEWBOX } from "./world-map-paths";
 import {
@@ -2537,6 +2540,113 @@ function EarthquakesWidget({
   );
 }
 
+function createAircraftIcon(heading: number, onGround: boolean): L.DivIcon {
+  const color = onGround ? "#f59e0b" : "#22c55e";
+  const rotation = heading || 0;
+  return L.divIcon({
+    className: "",
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+    html: `<svg width="24" height="24" viewBox="-12 -12 24 24" style="transform:rotate(${rotation}deg)">
+      <polygon points="0,-10 -5,7 0,3 5,7" fill="${color}" opacity="0.9" stroke="${color === "#22c55e" ? "#166534" : "#92400e"}" stroke-width="0.5"/>
+    </svg>`,
+  });
+}
+
+function MapBoundsUpdater({ lamin, lomin, lamax, lomax }: { lamin: number; lomin: number; lamax: number; lomax: number }) {
+  const map = useMap();
+  useEffect(() => {
+    map.fitBounds([[lamin, lomin], [lamax, lomax]]);
+  }, [map, lamin, lomin, lamax, lomax]);
+  return null;
+}
+
+function AircraftMapView({
+  aircraft,
+  boundsLamin,
+  boundsLomin,
+  boundsLamax,
+  boundsLomax,
+  showCallsign,
+  showAltitude,
+  fontSize,
+  formatAlt,
+}: {
+  aircraft: any[];
+  boundsLamin: number;
+  boundsLomin: number;
+  boundsLamax: number;
+  boundsLomax: number;
+  showCallsign: boolean;
+  showAltitude: boolean;
+  fontSize: number;
+  formatAlt: (m: number | null) => string;
+}) {
+  const bounds = useMemo<L.LatLngBoundsExpression>(() => [
+    [boundsLamin, boundsLomin],
+    [boundsLamax, boundsLomax],
+  ], [boundsLamin, boundsLomin, boundsLamax, boundsLomax]);
+
+  const icons = useMemo(() => {
+    return aircraft.map((ac: any) =>
+      createAircraftIcon(ac.heading ?? 0, !!ac.onGround)
+    );
+  }, [aircraft]);
+
+  return (
+    <MapContainer
+      bounds={bounds}
+      style={{ width: "100%", height: "100%", background: "#0a1628" }}
+      zoomControl={false}
+      attributionControl={false}
+      data-testid="aircraft-map"
+    >
+      <TileLayer
+        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        maxZoom={19}
+      />
+      <MapBoundsUpdater lamin={boundsLamin} lomin={boundsLomin} lamax={boundsLamax} lomax={boundsLomax} />
+      {aircraft.map((ac: any, idx: number) => {
+        if (ac.latitude == null || ac.longitude == null) return null;
+        return (
+          <Marker
+            key={ac.icao24 || idx}
+            position={[ac.latitude, ac.longitude]}
+            icon={icons[idx]}
+          >
+            {(showCallsign || showAltitude) && (
+              <Tooltip
+                permanent
+                direction="right"
+                offset={[8, 0]}
+                className="aircraft-map-tooltip"
+              >
+                <span style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: Math.max(9, fontSize * 0.6),
+                  color: "#e2e8f0",
+                  background: "rgba(10,22,40,0.85)",
+                  padding: "1px 4px",
+                  borderRadius: 3,
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  whiteSpace: "nowrap",
+                }}>
+                  {showCallsign && ac.callsign ? ac.callsign : ac.icao24?.toUpperCase()}
+                  {showAltitude && !ac.onGround && ac.baroAltitude != null && (
+                    <span style={{ marginLeft: 4, color: "#94a3b8", fontSize: Math.max(8, fontSize * 0.5) }}>
+                      {formatAlt(ac.baroAltitude)}
+                    </span>
+                  )}
+                </span>
+              </Tooltip>
+            )}
+          </Marker>
+        );
+      })}
+    </MapContainer>
+  );
+}
+
 function AircraftRadarWidget({
   refreshInterval = 15,
   fontSize = 14,
@@ -2551,6 +2661,7 @@ function AircraftRadarWidget({
   showHeading = true,
   showCountry = false,
   displayMode = "radar",
+  showSweep = true,
   scrollSpeed = 30,
   itemsPerPage = 8,
   pageDuration = 8,
@@ -2569,6 +2680,7 @@ function AircraftRadarWidget({
   showHeading?: boolean;
   showCountry?: boolean;
   displayMode?: string;
+  showSweep?: boolean;
   scrollSpeed?: number;
   itemsPerPage?: number;
   pageDuration?: number;
@@ -2859,11 +2971,13 @@ function AircraftRadarWidget({
               <line x1="-141" y1="-141" x2="141" y2="141" stroke="rgba(34,197,94,0.05)" strokeWidth="0.5" />
               <line x1="-141" y1="141" x2="141" y2="-141" stroke="rgba(34,197,94,0.05)" strokeWidth="0.5" />
 
-              <g>
-                <animateTransform attributeName="transform" type="rotate" from="0 0 0" to="360 0 0" dur="4s" repeatCount="indefinite" />
-                <line x1="0" y1="0" x2="200" y2="0" stroke="rgba(34,197,94,0.6)" strokeWidth="1" />
-                <path d="M 0 0 L 200 0 A 200 200 0 0 0 190 -50 Z" fill="url(#radar-sweep-grad)" opacity="0.4" />
-              </g>
+              {showSweep && (
+                <g>
+                  <animateTransform attributeName="transform" type="rotate" from="0 0 0" to="360 0 0" dur="4s" repeatCount="indefinite" />
+                  <line x1="0" y1="0" x2="200" y2="0" stroke="rgba(34,197,94,0.6)" strokeWidth="1" />
+                  <path d="M 0 0 L 200 0 A 200 200 0 0 0 190 -50 Z" fill="url(#radar-sweep-grad)" opacity="0.4" />
+                </g>
+              )}
 
               <circle cx="0" cy="0" r="3" fill="#22c55e" opacity="0.8" />
 
@@ -2905,6 +3019,35 @@ function AircraftRadarWidget({
               </g>
             </svg>
           )}
+        </div>
+        {renderStaleBar()}
+      </div>
+    );
+  }
+
+  if (displayMode === "map") {
+    return (
+      <div className="h-full w-full overflow-hidden flex flex-col"
+        style={{
+          fontSize: fs,
+          background: "#0a1628",
+          color: "#e2e8f0",
+          fontFamily: "'Inter', 'Segoe UI', sans-serif",
+        }}
+        data-testid="aircraft-widget">
+        {renderHeader()}
+        <div className="flex-1 relative" style={{ minHeight: 0 }}>
+          <AircraftMapView
+            aircraft={aircraft}
+            boundsLamin={boundsLamin}
+            boundsLomin={boundsLomin}
+            boundsLamax={boundsLamax}
+            boundsLomax={boundsLomax}
+            showCallsign={showCallsign}
+            showAltitude={showAltitude}
+            fontSize={fs}
+            formatAlt={formatAlt}
+          />
         </div>
         {renderStaleBar()}
       </div>
@@ -5011,6 +5154,7 @@ export function ZoneRenderer({
             showHeading={zone.aircraftShowHeading}
             showCountry={zone.aircraftShowCountry}
             displayMode={zone.aircraftDisplayMode}
+            showSweep={zone.aircraftShowSweep}
             scrollSpeed={zone.aircraftScrollSpeed}
             itemsPerPage={zone.aircraftItemsPerPage}
             pageDuration={zone.aircraftPageDuration}

@@ -464,7 +464,8 @@ export interface LayoutZone {
   aircraftShowSpeed?: boolean;
   aircraftShowHeading?: boolean;
   aircraftShowCountry?: boolean;
-  aircraftDisplayMode?: "radar" | "list" | "auto_scroll";
+  aircraftDisplayMode?: "radar" | "list" | "auto_scroll" | "map";
+  aircraftShowSweep?: boolean;
   aircraftScrollSpeed?: number;
   aircraftItemsPerPage?: number;
   aircraftPageDuration?: number;

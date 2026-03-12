@@ -74,6 +74,7 @@ The system implements custom email/password authentication with bcryptjs for pas
 - **date-fns**: For efficient date manipulation.
 - **react-day-picker**: For calendar and date selection components.
 - **embla-carousel**: For creating flexible and touch-friendly carousels.
+- **Leaflet / react-leaflet v4**: Interactive map display for the aircraft radar "Map" display mode. Uses CartoDB dark tiles.
 
 ### Required Environment Variables
 - `DATABASE_URL`: Connection string for PostgreSQL.

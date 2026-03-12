@@ -619,7 +619,8 @@ const zoneFormSchema = z.object({
   aircraftShowSpeed: z.boolean().optional(),
   aircraftShowHeading: z.boolean().optional(),
   aircraftShowCountry: z.boolean().optional(),
-  aircraftDisplayMode: z.enum(["radar", "list", "auto_scroll"]).optional(),
+  aircraftDisplayMode: z.enum(["radar", "list", "auto_scroll", "map"]).optional(),
+  aircraftShowSweep: z.boolean().optional(),
   aircraftScrollSpeed: z.number().min(5).max(200).optional(),
   aircraftItemsPerPage: z.number().min(1).max(50).optional(),
   aircraftPageDuration: z.number().min(1).max(60).optional(),
@@ -1395,6 +1396,7 @@ function ZoneEditorDialog({
       aircraftShowHeading: true,
       aircraftShowCountry: false,
       aircraftDisplayMode: "radar",
+      aircraftShowSweep: true,
       aircraftScrollSpeed: 30,
       aircraftItemsPerPage: 8,
       aircraftPageDuration: 8,
@@ -1606,6 +1608,7 @@ function ZoneEditorDialog({
           aircraftShowHeading: zone.aircraftShowHeading ?? true,
           aircraftShowCountry: zone.aircraftShowCountry ?? false,
           aircraftDisplayMode: zone.aircraftDisplayMode || "radar",
+          aircraftShowSweep: zone.aircraftShowSweep ?? true,
           aircraftScrollSpeed: zone.aircraftScrollSpeed ?? 30,
           aircraftItemsPerPage: zone.aircraftItemsPerPage ?? 8,
           aircraftPageDuration: zone.aircraftPageDuration ?? 8,
@@ -1808,6 +1811,7 @@ function ZoneEditorDialog({
           aircraftShowHeading: true,
           aircraftShowCountry: false,
           aircraftDisplayMode: "radar",
+          aircraftShowSweep: true,
           aircraftScrollSpeed: 30,
           aircraftItemsPerPage: 8,
           aircraftPageDuration: 8,
@@ -6584,6 +6588,7 @@ function ZoneEditorDialog({
                         </FormControl>
                         <SelectContent>
                           <SelectItem value="radar">Radar View</SelectItem>
+                          <SelectItem value="map">Map View</SelectItem>
                           <SelectItem value="list">Paginated List</SelectItem>
                           <SelectItem value="auto_scroll">Auto-scroll List</SelectItem>
                         </SelectContent>
@@ -6591,6 +6596,24 @@ function ZoneEditorDialog({
                     </FormItem>
                   )}
                 />
+                {form.watch("aircraftDisplayMode") === "radar" && (
+                  <FormField
+                    control={form.control}
+                    name="aircraftShowSweep"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center gap-2">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value ?? true}
+                            onCheckedChange={field.onChange}
+                            data-testid="checkbox-aircraft-show-sweep"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Show radar sweep animation</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <FormField
                     control={form.control}

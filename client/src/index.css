@@ -387,3 +387,16 @@
     }
   }
 }
+
+.aircraft-map-tooltip {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+.aircraft-map-tooltip::before {
+  display: none !important;
+}
+[data-testid="aircraft-widget"] .leaflet-container {
+  background: #0a1628 !important;
+}
