@@ -8806,10 +8806,26 @@ function LayoutEditorPanel({
     handleDragEnd();
   };
 
-  const handleZoneItemClick = (zone: LayoutZone) => {
+  const handleZoneItemClick = (e: React.MouseEvent, zone: LayoutZone) => {
     if (justDraggedRef.current || draggedZoneId) return;
-    if (onSelectZone) {
-      onSelectZone(highlightedZoneId === zone.id ? null : zone.id);
+    if (e.shiftKey && selectedZoneIds) {
+      const newIds = new Set(selectedZoneIds);
+      if (newIds.has(zone.id)) {
+        newIds.delete(zone.id);
+      } else {
+        newIds.add(zone.id);
+      }
+      const idsArray = Array.from(newIds);
+      const primaryId = idsArray.length > 0 ? idsArray[idsArray.length - 1] : null;
+      if (onSelectZone) onSelectZone(primaryId);
+      if (onSelectedZoneIdsChange) onSelectedZoneIdsChange(newIds);
+    } else {
+      if (onSelectZone) {
+        onSelectZone(highlightedZoneId === zone.id ? null : zone.id);
+      }
+      if (onSelectedZoneIdsChange) {
+        onSelectedZoneIdsChange(highlightedZoneId === zone.id ? new Set() : new Set([zone.id]));
+      }
     }
   };
 
@@ -9068,7 +9084,7 @@ function LayoutEditorPanel({
                   } ${isDragOver ? "border-primary border-2 bg-primary/5" : ""} ${
                     isHighlighted ? "ring-2 ring-cyan-400 border-cyan-400 bg-cyan-400/10" : ""
                   }`}
-                  onClick={() => handleZoneItemClick(zone)}
+                  onClick={(e) => handleZoneItemClick(e, zone)}
                   onDoubleClick={() => handleZoneItemDoubleClick(zone)}
                   data-testid={`zone-item-${zone.id}`}
                 >
