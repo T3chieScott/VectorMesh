@@ -2632,7 +2632,7 @@ function AircraftMapView({
                   border: "1px solid rgba(255,255,255,0.1)",
                   whiteSpace: "nowrap",
                 }}>
-                  {showCallsign && ac.callsign ? ac.callsign : ac.icao24?.toUpperCase()}
+                  {showCallsign && (ac.callsign || ac.icao24?.toUpperCase())}
                   {showAltitude && (
                     <span style={{ marginLeft: 4, color: ac.onGround ? "#f59e0b" : "#94a3b8", fontSize: Math.max(8, fontSize * 0.5) }}>
                       {ac.onGround ? "GND" : formatAlt(ac.baroAltitude)}
