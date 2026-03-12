@@ -7773,6 +7773,7 @@ function InteractiveLayoutPreview({
         const Icon = zoneTypeIcons[zone.type] || Grid3X3;
         const isSelected = selectedZoneId === zone.id || selectedZoneIds.has(zone.id);
         const isMultiSelected = selectedZoneIds.size > 1 && selectedZoneIds.has(zone.id);
+        const isAnchor = isMultiSelected && Array.from(selectedZoneIds)[0] === zone.id;
         const isDragging = dragState?.zoneId === zone.id || (dragState?.multiDragStartZones && zone.id in dragState.multiDragStartZones);
         
         return (
@@ -7784,7 +7785,7 @@ function InteractiveLayoutPreview({
               top: `${zone.y}%`,
               width: `${zone.width}%`,
               height: `${zone.height}%`,
-              zIndex: isSelected ? 100 : zone.zIndex || 1,
+              zIndex: isMultiSelected ? (zone.zIndex || 1) : isSelected ? 100 : zone.zIndex || 1,
             }}
             data-testid={`draggable-zone-${zone.id}`}
           >
@@ -7802,14 +7803,16 @@ function InteractiveLayoutPreview({
               className={`absolute inset-0 transition-all pointer-events-auto ${
                 isSelected 
                   ? zone.type === "shape"
-                    ? "shadow-lg shadow-cyan-400/30"
-                    : "ring-2 ring-cyan-400 ring-inset shadow-lg shadow-cyan-400/30"
+                    ? isAnchor ? "shadow-lg shadow-amber-400/30" : "shadow-lg shadow-cyan-400/30"
+                    : isAnchor 
+                      ? "ring-2 ring-amber-400 ring-inset shadow-lg shadow-amber-400/30"
+                      : "ring-2 ring-cyan-400 ring-inset shadow-lg shadow-cyan-400/30"
                   : zone.type === "shape"
                     ? ""
                     : "ring-1 ring-transparent hover:ring-white/30"
               } ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
               style={isSelected && zone.type === "shape" 
-                ? { outline: "2px dashed rgba(34, 211, 238, 0.8)", outlineOffset: "-2px" } 
+                ? { outline: `2px dashed ${isAnchor ? "rgba(251, 191, 36, 0.8)" : "rgba(34, 211, 238, 0.8)"}`, outlineOffset: "-2px" } 
                 : !isSelected && zone.type === "shape" 
                   ? {} 
                   : undefined}
@@ -7828,9 +7831,9 @@ function InteractiveLayoutPreview({
               onMouseDown={(e) => handleMouseDown(e, zone.id, "move")}
             >
               {isSelected && (
-                <div className="absolute top-1 left-1 flex items-center gap-1 bg-cyan-500 text-white text-[10px] px-1.5 py-0.5 rounded pointer-events-none z-10">
+                <div className={`absolute top-1 left-1 flex items-center gap-1 ${isAnchor ? "bg-amber-500" : "bg-cyan-500"} text-white text-[10px] px-1.5 py-0.5 rounded pointer-events-none z-10`}>
                   <Icon className="h-3 w-3" />
-                  <span className="font-medium">{zone.name}</span>
+                  <span className="font-medium">{zone.name}{isAnchor ? " (anchor)" : ""}</span>
                 </div>
               )}
             </div>
@@ -9299,40 +9302,40 @@ function LivePreviewPanel({
 }) {
   const selectedZones = zones.filter(z => selectedZoneIds.has(z.id));
 
+  const anchorZoneId = selectedZoneIds.size > 0 ? Array.from(selectedZoneIds)[0] : null;
+  const anchorZone = anchorZoneId ? zones.find(z => z.id === anchorZoneId) : null;
+
   const alignZones = (alignment: "left" | "center-h" | "right" | "top" | "center-v" | "bottom" | "distribute-h" | "distribute-v") => {
-    if (selectedZones.length < 2) return;
+    if (selectedZones.length < 2 || !anchorZone) return;
+    const others = selectedZones.filter(z => z.id !== anchorZone.id);
 
     switch (alignment) {
       case "left": {
-        const minX = Math.min(...selectedZones.map(z => z.x));
-        selectedZones.forEach(z => onZoneUpdate(z.id, { x: minX }));
+        others.forEach(z => onZoneUpdate(z.id, { x: anchorZone.x }));
         break;
       }
       case "center-h": {
-        const centers = selectedZones.map(z => z.x + z.width / 2);
-        const avgCenter = centers.reduce((a, b) => a + b, 0) / centers.length;
-        selectedZones.forEach(z => onZoneUpdate(z.id, { x: Math.round((avgCenter - z.width / 2) * 10) / 10 }));
+        const anchorCenter = anchorZone.x + anchorZone.width / 2;
+        others.forEach(z => onZoneUpdate(z.id, { x: Math.round((anchorCenter - z.width / 2) * 10) / 10 }));
         break;
       }
       case "right": {
-        const maxRight = Math.max(...selectedZones.map(z => z.x + z.width));
-        selectedZones.forEach(z => onZoneUpdate(z.id, { x: Math.round((maxRight - z.width) * 10) / 10 }));
+        const anchorRight = anchorZone.x + anchorZone.width;
+        others.forEach(z => onZoneUpdate(z.id, { x: Math.round((anchorRight - z.width) * 10) / 10 }));
         break;
       }
       case "top": {
-        const minY = Math.min(...selectedZones.map(z => z.y));
-        selectedZones.forEach(z => onZoneUpdate(z.id, { y: minY }));
+        others.forEach(z => onZoneUpdate(z.id, { y: anchorZone.y }));
         break;
       }
       case "center-v": {
-        const centers = selectedZones.map(z => z.y + z.height / 2);
-        const avgCenter = centers.reduce((a, b) => a + b, 0) / centers.length;
-        selectedZones.forEach(z => onZoneUpdate(z.id, { y: Math.round((avgCenter - z.height / 2) * 10) / 10 }));
+        const anchorCenter = anchorZone.y + anchorZone.height / 2;
+        others.forEach(z => onZoneUpdate(z.id, { y: Math.round((anchorCenter - z.height / 2) * 10) / 10 }));
         break;
       }
       case "bottom": {
-        const maxBottom = Math.max(...selectedZones.map(z => z.y + z.height));
-        selectedZones.forEach(z => onZoneUpdate(z.id, { y: Math.round((maxBottom - z.height) * 10) / 10 }));
+        const anchorBottom = anchorZone.y + anchorZone.height;
+        others.forEach(z => onZoneUpdate(z.id, { y: Math.round((anchorBottom - z.height) * 10) / 10 }));
         break;
       }
       case "distribute-h": {
@@ -9380,7 +9383,7 @@ function LivePreviewPanel({
         </p>
         {selectedZones.length >= 2 && (
           <div className="flex items-center gap-1 mt-2 flex-wrap" data-testid="alignment-toolbar">
-            <span className="text-xs text-muted-foreground mr-1">{selectedZones.length} selected:</span>
+            <span className="text-xs text-muted-foreground mr-1">{selectedZones.length} selected (anchor: {anchorZone?.name || "—"}):</span>
             <Button variant="outline" size="icon" onClick={() => alignZones("left")} title="Align left" data-testid="button-align-left">
               <AlignHorizontalJustifyStart className="h-3.5 w-3.5" />
             </Button>
