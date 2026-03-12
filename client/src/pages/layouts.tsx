@@ -7442,7 +7442,10 @@ function InteractiveLayoutPreview({
     const zone = zonesToRender.find(z => z.id === zoneId);
     if (!zone || !containerRef.current) return;
 
-    if (!e.shiftKey) {
+    if (e.shiftKey) {
+      toggleZoneSelection(zoneId);
+      return;
+    } else {
       if (!selectedZoneIds.has(zoneId)) {
         setSelectedZoneId(zoneId);
       }
