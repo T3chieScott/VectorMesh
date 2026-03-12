@@ -2602,8 +2602,9 @@ function AircraftMapView({
       data-testid="aircraft-map"
     >
       <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         maxZoom={19}
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
       />
       <MapBoundsUpdater lamin={boundsLamin} lomin={boundsLomin} lamax={boundsLamax} lomax={boundsLomax} />
       {aircraft.map((ac: any, idx: number) => {
@@ -2632,9 +2633,9 @@ function AircraftMapView({
                   whiteSpace: "nowrap",
                 }}>
                   {showCallsign && ac.callsign ? ac.callsign : ac.icao24?.toUpperCase()}
-                  {showAltitude && !ac.onGround && ac.baroAltitude != null && (
-                    <span style={{ marginLeft: 4, color: "#94a3b8", fontSize: Math.max(8, fontSize * 0.5) }}>
-                      {formatAlt(ac.baroAltitude)}
+                  {showAltitude && (
+                    <span style={{ marginLeft: 4, color: ac.onGround ? "#f59e0b" : "#94a3b8", fontSize: Math.max(8, fontSize * 0.5) }}>
+                      {ac.onGround ? "GND" : formatAlt(ac.baroAltitude)}
                     </span>
                   )}
                 </span>
