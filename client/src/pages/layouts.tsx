@@ -332,6 +332,7 @@ function VariableInsertMenu({ onInsert, textareaRef }: { onInsert: (token: strin
 
 const layoutFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
+  clientId: z.string().optional(),
   eventId: z.string().optional(),
   aspectRatio: z.string().default("16:9"),
   customWidth: z.number().optional(),
@@ -7991,10 +7992,13 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
     setZoneDialogOpen(true);
   };
 
+  const { clients } = useSiteContext();
+
   const form = useForm<LayoutFormValues>({
     resolver: zodResolver(layoutFormSchema),
     defaultValues: {
       name: layout.name,
+      clientId: layout.clientId || "",
       eventId: layout.eventId || "",
       aspectRatio: layout.aspectRatio || "16:9",
       customWidth: layout.customWidth || undefined,
@@ -8008,6 +8012,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
     mutationFn: (data: LayoutFormValues) =>
       apiRequest("PATCH", `/api/layouts/${layout.id}`, {
         ...data,
+        clientId: data.clientId === "none" || !data.clientId ? null : data.clientId,
         eventId: data.eventId === "global" || !data.eventId ? null : data.eventId,
         customWidth: data.aspectRatio === "custom" ? data.customWidth : null,
         customHeight: data.aspectRatio === "custom" ? data.customHeight : null,
@@ -8153,6 +8158,31 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                             <FormControl>
                               <Input {...field} data-testid="input-edit-layout-name" />
                             </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="clientId"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Site</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl>
+                                <SelectTrigger data-testid="select-edit-layout-site">
+                                  <SelectValue placeholder="Not assigned" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="none">Not assigned</SelectItem>
+                                {clients.map((c) => (
+                                  <SelectItem key={c.id} value={c.id}>
+                                    {c.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -8386,12 +8416,13 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
 function CreateLayoutDialog({ events }: { events: Event[] }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const { selectedClientId, selectedClient } = useSiteContext();
+  const { selectedClientId, clients } = useSiteContext();
 
   const form = useForm<LayoutFormValues>({
     resolver: zodResolver(layoutFormSchema),
     defaultValues: {
       name: "",
+      clientId: selectedClientId || "",
       eventId: "",
       aspectRatio: "16:9",
       customWidth: undefined,
@@ -8405,7 +8436,7 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
     mutationFn: (data: LayoutFormValues) =>
       apiRequest("POST", "/api/layouts", {
         ...data,
-        clientId: selectedClientId || null,
+        clientId: data.clientId === "none" || !data.clientId ? null : data.clientId,
         eventId: data.eventId === "global" || !data.eventId ? null : data.eventId,
         zones: defaultZones,
         customWidth: data.aspectRatio === "custom" ? data.customWidth : null,
@@ -8434,16 +8465,6 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
         <DialogHeader>
           <DialogTitle>Create New Layout</DialogTitle>
         </DialogHeader>
-        {selectedClient && (
-          <p className="text-sm text-muted-foreground">
-            This layout will be created for <strong>{selectedClient.name}</strong>.
-          </p>
-        )}
-        {!selectedClient && (
-          <p className="text-sm text-muted-foreground">
-            Select a site from the top bar to assign this layout to a specific site.
-          </p>
-        )}
         <Form {...form}>
           <form
             onSubmit={form.handleSubmit((data) => createMutation.mutate(data))}
@@ -8458,6 +8479,31 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
                   <FormControl>
                     <Input placeholder="e.g., Main Stage Layout" {...field} data-testid="input-layout-name" />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="clientId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Site</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <FormControl>
+                      <SelectTrigger data-testid="select-create-layout-site">
+                        <SelectValue placeholder="Not assigned" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="none">Not assigned</SelectItem>
+                      {clients.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )}
