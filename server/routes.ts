@@ -2808,6 +2808,22 @@ export async function registerRoutes(
         storage.getEvents(),
       ]);
 
+      let diskUsage: { totalBytes: number; usedBytes: number; freeBytes: number; path: string } | null = null;
+      try {
+        const { execSync } = require("child_process");
+        const dfOutput = execSync("df -B1 /").toString().trim().split("\n");
+        if (dfOutput.length >= 2) {
+          const parts = dfOutput[1].split(/\s+/);
+          diskUsage = {
+            totalBytes: parseInt(parts[1], 10),
+            usedBytes: parseInt(parts[2], 10),
+            freeBytes: parseInt(parts[3], 10),
+            path: parts[5],
+          };
+        }
+      } catch (e) {
+      }
+
       const clients = allowed ? allClients.filter(c => allowed.includes(c.id)) : allClients;
       const clientIds = new Set(clients.map(c => c.id));
       const eventIds = new Set(allEvents.filter(e => clientIds.has(e.clientId)).map(e => e.id));
@@ -2831,6 +2847,7 @@ export async function registerRoutes(
         onlineScreens: screens.filter(s => s.isOnline).length,
         totalMedia: mediaAssets.length,
         activeOverrides,
+        diskUsage,
       });
     } catch (error) {
       console.error("Error fetching admin stats:", error);

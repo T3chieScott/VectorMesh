@@ -27,6 +27,7 @@ import {
   Key,
   Shield,
   LogOut,
+  HardDrive,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { Client, Event, Screen, MediaAsset, Programme, LiveOverride } from "@shared/schema";
@@ -306,6 +307,12 @@ interface AdminStats {
   onlineScreens: number;
   totalMedia: number;
   activeOverrides: number;
+  diskUsage: {
+    totalBytes: number;
+    usedBytes: number;
+    freeBytes: number;
+    path: string;
+  } | null;
 }
 
 interface AuditLogEntry {
@@ -435,6 +442,14 @@ function RecentActivityCard({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+}
+
 function AdminStatsCard({ isAdmin }: { isAdmin: boolean }) {
   const { data: stats, isLoading } = useQuery<AdminStats>({
     queryKey: ["/api/admin/stats"],
@@ -486,6 +501,36 @@ function AdminStatsCard({ isAdmin }: { isAdmin: boolean }) {
               </div>
               <span className="text-sm font-semibold" data-testid="text-changes-week-value">{stats.changesThisWeek}</span>
             </div>
+            {stats.diskUsage && (
+              <>
+                <div className="border-t pt-3 mt-1">
+                  <div className="flex items-center gap-2 mb-2">
+                    <HardDrive className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Disk Usage</span>
+                  </div>
+                  <div className="w-full bg-secondary rounded-full h-2.5 mb-2">
+                    <div
+                      className={`h-2.5 rounded-full transition-all ${
+                        (stats.diskUsage.usedBytes / stats.diskUsage.totalBytes) > 0.9
+                          ? "bg-red-500"
+                          : (stats.diskUsage.usedBytes / stats.diskUsage.totalBytes) > 0.75
+                            ? "bg-amber-500"
+                            : "bg-green-500"
+                      }`}
+                      style={{ width: `${Math.min(100, (stats.diskUsage.usedBytes / stats.diskUsage.totalBytes) * 100)}%` }}
+                      data-testid="disk-usage-bar"
+                    />
+                  </div>
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span data-testid="text-disk-used">{formatBytes(stats.diskUsage.usedBytes)} used</span>
+                    <span data-testid="text-disk-free">{formatBytes(stats.diskUsage.freeBytes)} free</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground text-center mt-0.5" data-testid="text-disk-total">
+                    {formatBytes(stats.diskUsage.totalBytes)} total
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         ) : null}
       </CardContent>
