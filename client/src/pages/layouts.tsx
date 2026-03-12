@@ -8717,6 +8717,7 @@ function LayoutEditorPanel({
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
   const editingZone = editingZoneId ? zones.find(z => z.id === editingZoneId) : undefined;
+  const { clients } = useSiteContext();
   const event = events.find((e) => e.id === layout.eventId);
 
   useEffect(() => {
@@ -8817,6 +8818,7 @@ function LayoutEditorPanel({
     resolver: zodResolver(layoutFormSchema),
     defaultValues: {
       name: layout.name,
+      clientId: layout.clientId || "",
       eventId: layout.eventId || "",
       aspectRatio: layout.aspectRatio || "16:9",
       customWidth: layout.customWidth || undefined,
@@ -8829,6 +8831,7 @@ function LayoutEditorPanel({
   useEffect(() => {
     form.reset({
       name: layout.name,
+      clientId: layout.clientId || "",
       eventId: layout.eventId || "",
       aspectRatio: layout.aspectRatio || "16:9",
       customWidth: layout.customWidth || undefined,
@@ -8840,6 +8843,7 @@ function LayoutEditorPanel({
     mutationFn: (data: LayoutFormValues) =>
       apiRequest("PATCH", `/api/layouts/${layout.id}`, {
         ...data,
+        clientId: data.clientId === "none" || !data.clientId ? null : data.clientId,
         eventId: data.eventId === "global" || !data.eventId ? null : data.eventId,
         customWidth: data.aspectRatio === "custom" ? data.customWidth : null,
         customHeight: data.aspectRatio === "custom" ? data.customHeight : null,
@@ -9136,6 +9140,31 @@ function LayoutEditorPanel({
                     <FormControl>
                       <Input {...field} data-testid="input-edit-layout-name-panel" />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="clientId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Site</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-edit-layout-site-panel">
+                          <SelectValue placeholder="Not assigned" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="none">Not assigned</SelectItem>
+                        {clients.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}
