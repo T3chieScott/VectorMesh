@@ -7379,7 +7379,25 @@ function InteractiveLayoutPreview({
       if (!arrowKeys.includes(e.key)) return;
 
       e.preventDefault();
-      const step = e.shiftKey ? 0.5 : 1;
+      let step: number;
+      if (e.shiftKey && containerSize) {
+        const pxStepX = (1 / containerSize.width) * 100;
+        const pxStepY = (1 / containerSize.height) * 100;
+        for (const zone of zonesToMove) {
+          let { x, y } = zone;
+          switch (e.key) {
+            case "ArrowUp":    y = Math.max(0, y - pxStepY); break;
+            case "ArrowDown":  y = Math.min(100 - zone.height, y + pxStepY); break;
+            case "ArrowLeft":  x = Math.max(0, x - pxStepX); break;
+            case "ArrowRight": x = Math.min(100 - zone.width, x + pxStepX); break;
+          }
+          if (x !== zone.x || y !== zone.y) {
+            onZoneUpdate(zone.id, { x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 });
+          }
+        }
+        return;
+      }
+      step = 1;
 
       for (const zone of zonesToMove) {
         let { x, y } = zone;
@@ -7396,7 +7414,7 @@ function InteractiveLayoutPreview({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedZoneId, selectedZoneIds, zones, onZoneUpdate]);
+  }, [selectedZoneId, selectedZoneIds, zones, onZoneUpdate, containerSize]);
 
   // Measure wrapper container to fit height
   useEffect(() => {

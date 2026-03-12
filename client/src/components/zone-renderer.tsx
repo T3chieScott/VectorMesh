@@ -3443,6 +3443,7 @@ function NewsWidget({
   const [news, setNews] = useState<{ title: string; link: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const knownTitlesRef = useRef<Set<string>>(new Set());
 
   const fontSize = textSize || 24;
 
@@ -3454,7 +3455,6 @@ function NewsWidget({
       }
 
       try {
-        setLoading(true);
         const baseEndpoint = deviceToken ? "/api/player/widgets/news" : "/api/widgets/news";
         const tokenParam = deviceToken ? `&token=${deviceToken}` : "";
         const response = await fetch(`${baseEndpoint}?url=${encodeURIComponent(rssUrl)}&count=${itemCount}${tokenParam}`);
@@ -3462,15 +3462,32 @@ function NewsWidget({
         
         const data = await response.json();
         if (data.items && data.items.length > 0) {
-          setNews(data.items.map((item: { title: string; link: string }) => ({
+          const incoming = data.items.map((item: { title: string; link: string }) => ({
             title: item.title,
             link: item.link,
-          })));
-        } else {
-          setNews([]);
+          }));
+
+          setNews(prev => {
+            if (prev.length === 0) {
+              const titles = new Set(incoming.map((i: { title: string }) => i.title));
+              knownTitlesRef.current = titles;
+              return incoming;
+            }
+
+            const newItems = incoming.filter((item: { title: string }) => !knownTitlesRef.current.has(item.title));
+            if (newItems.length === 0) return prev;
+
+            for (const item of newItems) {
+              knownTitlesRef.current.add(item.title);
+            }
+            const merged = [...prev, ...newItems];
+            const maxItems = Math.max(itemCount * 2, 30);
+            const trimmed = merged.length > maxItems ? merged.slice(merged.length - maxItems) : merged;
+            knownTitlesRef.current = new Set(trimmed.map(i => i.title));
+            return trimmed;
+          });
         }
       } catch (err) {
-        setNews([]);
       } finally {
         setLoading(false);
       }
@@ -3506,7 +3523,7 @@ function NewsWidget({
     );
   }
 
-  if (loading) {
+  if (loading && news.length === 0) {
     return (
       <div className="h-full w-full flex items-center justify-center">
         <Newspaper className="h-6 w-6 animate-pulse text-muted-foreground" />
