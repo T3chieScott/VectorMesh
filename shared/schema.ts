@@ -230,6 +230,7 @@ export type MediaShare = typeof mediaShares.$inferSelect;
 
 export const layoutTemplates = pgTable("layout_templates", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").references(() => clients.id, { onDelete: "cascade" }),
   eventId: varchar("event_id").references(() => events.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   version: integer("version").default(1),
@@ -243,6 +244,7 @@ export const layoutTemplates = pgTable("layout_templates", {
 });
 
 export const layoutTemplatesRelations = relations(layoutTemplates, ({ one }) => ({
+  client: one(clients, { fields: [layoutTemplates.clientId], references: [clients.id] }),
   event: one(events, { fields: [layoutTemplates.eventId], references: [events.id] }),
 }));
 

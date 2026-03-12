@@ -1367,19 +1367,16 @@ export async function registerRoutes(
     try {
       const layouts = await storage.getLayoutTemplates();
       const allowed = getAllowedClientIds(req);
-      const allEventsForLayouts = await storage.getEvents();
       let filtered = layouts;
       if (allowed) {
-        const allowedEventIds = new Set(allEventsForLayouts.filter(e => allowed.includes(e.clientId)).map(e => e.id));
-        filtered = layouts.filter(l => !l.eventId || allowedEventIds.has(l.eventId));
+        filtered = layouts.filter(l => !l.clientId || allowed.includes(l.clientId));
       }
       const clientId = req.query.clientId as string | undefined;
       if (clientId) {
         if (!canAccessClient(req, clientId)) {
           return res.status(403).json({ error: "Access denied to requested site" });
         }
-        const clientEventIds = new Set(allEventsForLayouts.filter(e => e.clientId === clientId).map(e => e.id));
-        filtered = filtered.filter(l => !l.eventId || clientEventIds.has(l.eventId));
+        filtered = filtered.filter(l => l.clientId === clientId);
       }
       res.json(filtered);
     } catch (error) {
@@ -1396,6 +1393,18 @@ export async function registerRoutes(
         if (event && !canAccessClient(req, event.clientId)) {
           return res.status(403).json({ error: "Access denied" });
         }
+        if (event && !data.clientId) {
+          data.clientId = event.clientId;
+        }
+      }
+      if (data.clientId && !canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to target site" });
+      }
+      if (data.eventId && data.clientId) {
+        const event = await storage.getEvent(data.eventId);
+        if (event && event.clientId !== data.clientId) {
+          return res.status(400).json({ error: "Event does not belong to the specified site" });
+        }
       }
       const layout = await storage.createLayoutTemplate(data);
       logAudit(req, "create", "layout", layout.id, { name: layout.name });
@@ -1409,14 +1418,18 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/layouts/:id", requireAuth, async (req, res) => {
+  app.patch("/api/layouts/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const data = insertLayoutTemplateSchema.partial().parse(req.body);
-      const layout = await storage.updateLayoutTemplate(req.params.id, data);
-      if (!layout) {
+      const existing = await storage.getLayoutTemplate(req.params.id);
+      if (!existing) {
         return res.status(404).json({ error: "Layout not found" });
       }
-      logAudit(req, "update", "layout", layout.id, { name: layout.name });
+      if (existing.clientId && !canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const data = insertLayoutTemplateSchema.partial().parse(req.body);
+      const layout = await storage.updateLayoutTemplate(req.params.id, data);
+      logAudit(req, "update", "layout", layout!.id, { name: layout!.name });
       res.json(layout);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -1427,12 +1440,82 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/layouts/:id", requireAuth, async (req, res) => {
+  app.post("/api/layouts/:id/copy-to-site", requireAdmin, async (req, res) => {
     try {
-      const deleted = await storage.deleteLayoutTemplate(req.params.id);
-      if (!deleted) {
+      const { targetClientId } = req.body;
+      if (!targetClientId) {
+        return res.status(400).json({ error: "targetClientId is required" });
+      }
+      const targetClient = await storage.getClient(targetClientId);
+      if (!targetClient) {
+        return res.status(400).json({ error: "Target site not found" });
+      }
+      const source = await storage.getLayoutTemplate(req.params.id);
+      if (!source) {
         return res.status(404).json({ error: "Layout not found" });
       }
+      const copy = await storage.createLayoutTemplate({
+        clientId: targetClientId,
+        eventId: null,
+        name: source.name,
+        version: source.version,
+        aspectRatio: source.aspectRatio,
+        customWidth: source.customWidth,
+        customHeight: source.customHeight,
+        zones: source.zones,
+        profileOverrides: source.profileOverrides,
+      });
+      logAudit(req, "copy", "layout", copy.id, { sourceId: source.id, targetClientId, name: copy.name });
+      res.status(201).json(copy);
+    } catch (error) {
+      console.error("Error copying layout:", error);
+      res.status(500).json({ error: "Failed to copy layout" });
+    }
+  });
+
+  app.post("/api/layouts/:id/move-to-site", requireAdmin, async (req, res) => {
+    try {
+      const { targetClientId } = req.body;
+      if (!targetClientId) {
+        return res.status(400).json({ error: "targetClientId is required" });
+      }
+      const targetClient = await storage.getClient(targetClientId);
+      if (!targetClient) {
+        return res.status(400).json({ error: "Target site not found" });
+      }
+      const source = await storage.getLayoutTemplate(req.params.id);
+      if (!source) {
+        return res.status(404).json({ error: "Layout not found" });
+      }
+      let clearEvent = false;
+      if (source.eventId) {
+        const event = await storage.getEvent(source.eventId);
+        if (event && event.clientId !== targetClientId) {
+          clearEvent = true;
+        }
+      }
+      const updated = await storage.updateLayoutTemplate(req.params.id, {
+        clientId: targetClientId,
+        ...(clearEvent ? { eventId: null } : {}),
+      });
+      logAudit(req, "move", "layout", req.params.id, { targetClientId, name: source.name });
+      res.json(updated);
+    } catch (error) {
+      console.error("Error moving layout:", error);
+      res.status(500).json({ error: "Failed to move layout" });
+    }
+  });
+
+  app.delete("/api/layouts/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const existing = await storage.getLayoutTemplate(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Layout not found" });
+      }
+      if (existing.clientId && !canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      await storage.deleteLayoutTemplate(req.params.id);
       logAudit(req, "delete", "layout", req.params.id);
       res.status(204).send();
     } catch (error) {

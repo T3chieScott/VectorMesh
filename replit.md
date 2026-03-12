@@ -19,6 +19,7 @@ Key capabilities include:
 - Event-specific color palettes for consistent branding.
 - Integration of signage icons with text labels for directional and informational purposes.
 - Global site context switcher for filtering UI content by client.
+- **Site-scoped layouts**: Layouts have a `clientId` column linking them to a site. The GET endpoint filters by clientId, and the Layouts/Screens/Programmes pages use site-filtered queries. Admin users can copy or move layouts between sites via the layout card dropdown menu. PATCH/DELETE routes enforce site-level access control.
 - **Site-specific display profiles**: Display profiles are scoped to a site (clientId) and managed from a dedicated Admin page (`/admin/display-profiles`). The Screens page profile dropdown is filtered to show only profiles from the same site.
 - **Screen groups with membership management**: Groups auto-inherit site from the current site context. Screens can be added/removed from groups via a management dialog, constrained to same-site screens only. Member counts displayed on group cards.
 - Secure device pairing for display nodes using unique tokens.

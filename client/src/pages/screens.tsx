@@ -962,9 +962,8 @@ export default function ScreensPage() {
   const eventsQueryConfig = useSiteFilteredQuery<Event[]>("/api/events");
   const { data: events = [] } = useQuery(eventsQueryConfig);
 
-  const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
-    queryKey: ["/api/layouts"],
-  });
+  const layoutsQueryConfig = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
+  const { data: layouts = [] } = useQuery(layoutsQueryConfig);
 
   const liveOverridesQueryConfig = useSiteFilteredQuery<LiveOverride[]>("/api/live-overrides");
   const { data: liveOverrides = [] } = useQuery({ ...liveOverridesQueryConfig, refetchInterval: 10000 });

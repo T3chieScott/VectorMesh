@@ -114,11 +114,14 @@ import {
   Globe,
   Radar,
 } from "lucide-react";
-import type { LayoutTemplate, Event, LayoutZone, MediaAsset } from "@shared/schema";
+import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { ZoneRenderer } from "@/components/zone-renderer";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useAuth } from "@/hooks/use-auth";
+import { useSiteContext } from "@/hooks/use-site-context";
+import { DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 
 const ASPECT_RATIO_OPTIONS = [
   { value: "16:9", label: "16:9 (Landscape)", description: "Standard widescreen" },
@@ -7889,13 +7892,74 @@ function InteractiveLayoutPreview({
   );
 }
 
+function CopyMoveDialog({ layout, mode, open, onOpenChange }: { layout: LayoutTemplate; mode: "copy" | "move"; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const [targetClientId, setTargetClientId] = useState<string>("");
+  const { clients } = useSiteContext();
+  const { toast } = useToast();
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", `/api/layouts/${layout.id}/${mode}-to-site`, { targetClientId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      onOpenChange(false);
+      setTargetClientId("");
+      toast({ title: `Layout ${mode === "copy" ? "copied" : "moved"} successfully` });
+    },
+    onError: () => {
+      toast({ title: `Failed to ${mode} layout`, variant: "destructive" });
+    },
+  });
+
+  const otherClients = clients.filter(c => c.id !== layout.clientId);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{mode === "copy" ? "Copy" : "Move"} Layout to Site</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            {mode === "copy" ? "Create a copy of" : "Move"} <strong>{layout.name}</strong> to another site.
+            {mode === "move" && layout.eventId && " The event association will be cleared if the event belongs to a different site."}
+          </p>
+          <Select value={targetClientId} onValueChange={setTargetClientId}>
+            <SelectTrigger data-testid={`select-${mode}-target-site`}>
+              <SelectValue placeholder="Select target site" />
+            </SelectTrigger>
+            <SelectContent>
+              {otherClients.map(c => (
+                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={!targetClientId || mutation.isPending}
+              data-testid={`button-confirm-${mode}-layout`}
+            >
+              {mutation.isPending ? (mode === "copy" ? "Copying..." : "Moving...") : (mode === "copy" ? "Copy" : "Move")}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[] }) {
   const [editOpen, setEditOpen] = useState(false);
   const [zonesOpen, setZonesOpen] = useState(false);
   const [zoneDialogOpen, setZoneDialogOpen] = useState(false);
   const [editingZoneId, setEditingZoneId] = useState<string | undefined>();
   const [highlightedZoneId, setHighlightedZoneId] = useState<string | null>(null);
+  const [copyMoveMode, setCopyMoveMode] = useState<"copy" | "move" | null>(null);
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
 
   const event = events.find((e) => e.id === layout.eventId);
   const savedZones = (layout.zones as LayoutZone[]) || [];
@@ -8211,6 +8275,26 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                 <Copy className="mr-2 h-4 w-4" />
                 {duplicateMutation.isPending ? "Duplicating..." : "Duplicate"}
               </DropdownMenuItem>
+              {isAdmin && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onSelect={() => setCopyMoveMode("copy")}
+                    data-testid={`button-copy-to-site-${layout.id}`}
+                  >
+                    <Copy className="mr-2 h-4 w-4" />
+                    Copy to Site
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => setCopyMoveMode("move")}
+                    data-testid={`button-move-to-site-${layout.id}`}
+                  >
+                    <Move className="mr-2 h-4 w-4" />
+                    Move to Site
+                  </DropdownMenuItem>
+                </>
+              )}
+              <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onSelect={() => {
@@ -8227,6 +8311,14 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
             </DropdownMenuContent>
           </DropdownMenu>
         </CardHeader>
+        {isAdmin && copyMoveMode && (
+          <CopyMoveDialog
+            layout={layout}
+            mode={copyMoveMode}
+            open={!!copyMoveMode}
+            onOpenChange={(v) => { if (!v) setCopyMoveMode(null); }}
+          />
+        )}
 
         {/* Zone Management Section */}
         <Collapsible open={zonesOpen} onOpenChange={setZonesOpen}>
@@ -8294,6 +8386,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
 function CreateLayoutDialog({ events }: { events: Event[] }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
+  const { selectedClientId } = useSiteContext();
 
   const form = useForm<LayoutFormValues>({
     resolver: zodResolver(layoutFormSchema),
@@ -8312,6 +8405,7 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
     mutationFn: (data: LayoutFormValues) =>
       apiRequest("POST", "/api/layouts", {
         ...data,
+        clientId: selectedClientId || null,
         eventId: data.eventId === "global" || !data.eventId ? null : data.eventId,
         zones: defaultZones,
         customWidth: data.aspectRatio === "custom" ? data.customWidth : null,

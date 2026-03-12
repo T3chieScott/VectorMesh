@@ -1065,9 +1065,8 @@ export default function ProgrammesPage() {
     queryKey: ["/api/programme-versions"],
   });
 
-  const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
-    queryKey: ["/api/layouts"],
-  });
+  const layoutsQ = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
+  const { data: layouts = [] } = useQuery(layoutsQ);
 
   const { data: screens = [] } = useQuery<Screen[]>({
     queryKey: ["/api/screens"],
