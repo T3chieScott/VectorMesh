@@ -1,0 +1,129 @@
+root@mail:/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs# npm run build
+
+> rest-express@1.0.0 build
+> tsx script/build.ts
+
+building client...
+vite v7.3.0 building client environment for production...
+
+A PostCSS plugin did not pass the `from` option to `postcss.parse`. This may cause imported assets to be incorrectly transformed. If you've recently added a PostCSS plugin that raised this warning, please contact the package author to fix the issue.
+✓ 1990 modules transformed.
+✗ Build failed in 9.57s
+[vite]: Rollup failed to resolve import "react-leaflet" from "/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/zone-renderer.tsx".
+This is most likely unintended because it can break your application at runtime.
+If you do want to externalize this module explicitly add it to
+`build.rollupOptions.external`
+    at viteLog (/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/vite/dist/node/chunks/config.js:33634:57)
+    at <anonymous> (/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/vite/dist/node/chunks/config.js:33668:73)
+    at onwarn (/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/@vitejs/plugin-react/dist/index.js:90:7)
+    at <anonymous> (/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/vite/dist/node/chunks/config.js:33668:28)
+    at onRollupLog (/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/vite/dist/node/chunks/config.js:33663:63)
+    at onLog (/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/vite/dist/node/chunks/config.js:33466:4)
+    at <anonymous> (/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/rollup/dist/es/shared/node-entry.js:20981:32)
+    at Object.logger (/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/rollup/dist/es/shared/node-entry.js:22968:9)
+    at ModuleLoader.handleInvalidResolvedId (/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/rollup/dist/es/shared/node-entry.js:21712:26)
+    at <anonymous> (/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/rollup/dist/es/shared/node-entry.js:21670:26) {
+  watchFiles: [
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/index.html',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/main.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/package.json',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/react/jsx-runtime.js',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/react-dom/client.js',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/App.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/index.css',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/react/cjs/react-jsx-runtime.production.min.js',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/react-dom/index.js',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/react/index.js',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/react-dom/cjs/react-dom.production.min.js',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/wouter/esm/index.js',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/@tanstack/react-query/build/modern/index.js',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/lib/queryClient.ts',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/toaster.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/tooltip.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ThemeProvider.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ThemeToggle.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/sidebar.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/app-sidebar.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/hooks/use-auth.ts',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/hooks/use-site-context.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/not-found.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/forgot-password.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/login.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/reset-password.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/change-password.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/setup-2fa.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/dashboard.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/setup.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/events.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/clients.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/screens.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/media.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/layouts.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/playlists.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/screen-groups.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/programmes.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/live-override.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/diagnostics.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/simulator.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/schedule.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/settings.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/admin-users.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/admin-display-profiles.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/activity-log.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/pages/player.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/node_modules/react/cjs/react.production.min.js',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/world-map-paths.ts',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/hooks/use-toast.ts',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/hooks/use-upload.ts',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/lib/auth-utils.ts',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/lib/utils.ts',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ObjectUploader.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/accordion.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/alert-dialog.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/alert.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/aspect-ratio.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/avatar.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/badge.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/breadcrumb.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/button.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/calendar.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/card.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/carousel.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/chart.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/checkbox.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/collapsible.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/command.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/context-menu.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/dialog.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/drawer.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/dropdown-menu.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/form.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/hover-card.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/input-otp.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/input.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/label.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/menubar.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/navigation-menu.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/pagination.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/popover.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/progress.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/radio-group.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/resizable.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/scroll-area.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/select.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/separator.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/sheet.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/skeleton.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/slider.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/switch.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/table.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/tabs.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/textarea.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/toast.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/toggle-group.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/ui/toggle.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/components/zone-renderer.tsx',
+    '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/client/src/hooks/use-mobile.tsx',
+    ... 1894 more items
+  ]
+}
