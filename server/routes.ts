@@ -574,7 +574,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/clients/:id/lock", requireAdmin, async (req, res) => {
+  app.post("/api/clients/:id/lock", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { locked } = req.body;
       const client = await storage.updateClient(req.params.id, { locked: !!locked });
@@ -1103,7 +1103,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/screens/:id/lock", requireAdmin, async (req, res) => {
+  app.post("/api/screens/:id/lock", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { locked } = req.body;
       const screen = await storage.updateScreen(req.params.id, { locked: !!locked });
@@ -1242,7 +1242,7 @@ export async function registerRoutes(
   });
 
   // Media sharing (admin only)
-  app.get("/api/media/:id/shares", requireAdmin, async (req, res) => {
+  app.get("/api/media/:id/shares", requireAuth, requireAdmin, async (req, res) => {
     try {
       const asset = await storage.getMediaAsset(req.params.id);
       if (!asset) {
@@ -1256,7 +1256,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/media/:id/share", requireAdmin, async (req, res) => {
+  app.post("/api/media/:id/share", requireAuth, requireAdmin, async (req, res) => {
     try {
       const asset = await storage.getMediaAsset(req.params.id);
       if (!asset) {
@@ -1286,7 +1286,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/media/:id/share/:clientId", requireAdmin, async (req, res) => {
+  app.delete("/api/media/:id/share/:clientId", requireAuth, requireAdmin, async (req, res) => {
     try {
       const deleted = await storage.deleteMediaShare(req.params.id, req.params.clientId);
       if (!deleted) {
@@ -1488,7 +1488,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/layouts/:id/copy-to-site", requireAdmin, async (req, res) => {
+  app.post("/api/layouts/:id/copy-to-site", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { targetClientId } = req.body;
       if (!targetClientId) {
@@ -1521,7 +1521,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/layouts/:id/move-to-site", requireAdmin, async (req, res) => {
+  app.post("/api/layouts/:id/move-to-site", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { targetClientId } = req.body;
       if (!targetClientId) {
@@ -1554,7 +1554,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/layouts/:id/lock", requireAdmin, async (req, res) => {
+  app.post("/api/layouts/:id/lock", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { locked } = req.body;
       const layout = await storage.updateLayoutTemplate(req.params.id, { locked: !!locked });
