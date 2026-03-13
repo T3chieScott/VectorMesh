@@ -1804,6 +1804,33 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/playlists/usage", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const allVersions = await storage.getProgrammeVersions();
+      const allBlocksNested = await Promise.all(
+        allVersions.map(v => storage.getScheduleBlocks(v.id))
+      );
+      const allBlocks = allBlocksNested.flat();
+      const usage: Record<string, Array<{ blockId: string; blockName: string }>> = {};
+      for (const block of allBlocks) {
+        const zoneSources = (block.zoneSources as any[]) || [];
+        for (const zs of zoneSources) {
+          if (zs.playlistId) {
+            if (!usage[zs.playlistId]) usage[zs.playlistId] = [];
+            const already = usage[zs.playlistId].some(u => u.blockId === block.id);
+            if (!already) {
+              usage[zs.playlistId].push({ blockId: block.id, blockName: block.name });
+            }
+          }
+        }
+      }
+      res.json(usage);
+    } catch (error) {
+      console.error("Error fetching playlist usage:", error);
+      res.status(500).json({ error: "Failed to fetch playlist usage" });
+    }
+  });
+
   // ============ PLAYLIST ITEMS ============
   app.get("/api/playlists/:playlistId/items", requireAuth, async (req, res) => {
     try {
@@ -1840,6 +1867,23 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error updating playlist item:", error);
       res.status(500).json({ error: "Failed to update playlist item" });
+    }
+  });
+
+  app.post("/api/playlists/:playlistId/reorder", requireAuth, async (req, res) => {
+    try {
+      const { itemIds } = req.body;
+      if (!Array.isArray(itemIds)) {
+        return res.status(400).json({ error: "itemIds must be an array" });
+      }
+      for (let i = 0; i < itemIds.length; i++) {
+        await storage.updatePlaylistItem(itemIds[i], { order: i });
+      }
+      const items = await storage.getPlaylistItems(req.params.playlistId);
+      res.json(items);
+    } catch (error) {
+      console.error("Error reordering playlist items:", error);
+      res.status(500).json({ error: "Failed to reorder playlist items" });
     }
   });
 
@@ -2142,6 +2186,7 @@ export async function registerRoutes(
       const now = new Date();
       let layout: any = null;
       let liveOverride: any = null;
+      let activeZoneSources: any[] = [];
 
       const overrides = await storage.getLiveOverrides();
       const activeOverride = overrides.find(o => {
@@ -2155,6 +2200,7 @@ export async function registerRoutes(
       if (activeOverride && activeOverride.layoutTemplateId) {
         layout = await storage.getLayoutTemplate(activeOverride.layoutTemplateId);
         liveOverride = activeOverride;
+        activeZoneSources = (activeOverride.zoneSources as any[]) || [];
       }
 
       if (!layout && screen.currentEventId) {
@@ -2212,6 +2258,7 @@ export async function registerRoutes(
 
           if (timeMatch && block.layoutTemplateId) {
             layout = await storage.getLayoutTemplate(block.layoutTemplateId);
+            activeZoneSources = (block.zoneSources as any[]) || [];
             break;
           }
         }
@@ -2253,6 +2300,7 @@ export async function registerRoutes(
         media: mediaAssets,
         playlists: allPlaylists,
         playlistItems: playlistItemsMap,
+        zoneSources: activeZoneSources,
         liveOverride,
         event,
         timestamp: now.toISOString(),

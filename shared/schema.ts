@@ -585,6 +585,7 @@ export interface TimeRule {
 export interface ZoneSource {
   zoneId: string;
   type: "playlist" | "widget";
+  playlistId?: string;
   mediaAssetIds?: string[];
   widgetType?: "weather" | "clock" | "date" | "html";
   widgetConfig?: Record<string, unknown>;

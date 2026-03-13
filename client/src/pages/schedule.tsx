@@ -74,6 +74,7 @@ import {
   Pencil,
   Image,
   Copy,
+  PlayCircle,
 } from "lucide-react";
 import type {
   ScheduleBlock,
@@ -405,6 +406,34 @@ function ScheduleBlockEditor({
   const selectedLayoutId = form.watch("layoutTemplateId");
   const selectedLayout = layouts.find((l) => l.id === selectedLayoutId);
   
+  const [zoneMappings, setZoneMappings] = useState<Record<string, string>>(() => {
+    const mappings: Record<string, string> = {};
+    if (block?.zoneSources) {
+      for (const zs of block.zoneSources as ZoneSource[]) {
+        if (zs.playlistId) mappings[zs.zoneId] = zs.playlistId;
+      }
+    }
+    return mappings;
+  });
+  
+  useEffect(() => {
+    if (open) {
+      const mappings: Record<string, string> = {};
+      if (block?.zoneSources) {
+        for (const zs of block.zoneSources as ZoneSource[]) {
+          if (zs.playlistId) mappings[zs.zoneId] = zs.playlistId;
+        }
+      }
+      setZoneMappings(mappings);
+    }
+  }, [open, block]);
+  
+  const mediaPlayerZones = useMemo(() => {
+    if (!selectedLayout) return [];
+    const zones = (selectedLayout.zones as any[]) || [];
+    return zones.filter((z: any) => z.type === "media_player");
+  }, [selectedLayout]);
+  
   const createMutation = useMutation({
     mutationFn: async (data: BlockFormValues) => {
       const timeRules: TimeRule[] = [{
@@ -419,6 +448,14 @@ function ScheduleBlockEditor({
         ? [{ type: data.targetType, id: data.targetId }]
         : [];
       
+      const zoneSources: ZoneSource[] = Object.entries(zoneMappings)
+        .filter(([_, playlistId]) => playlistId && playlistId !== "none")
+        .map(([zoneId, playlistId]) => ({
+          zoneId,
+          type: "playlist" as const,
+          playlistId,
+        }));
+      
       const payload = {
         programmeVersionId: versionId,
         name: data.name,
@@ -426,7 +463,7 @@ function ScheduleBlockEditor({
         layoutTemplateId: data.layoutTemplateId || null,
         timeRules,
         targets,
-        zoneSources: [],
+        zoneSources,
       };
       
       if (isEditing && block) {
@@ -694,17 +731,44 @@ function ScheduleBlockEditor({
             />
             
             {selectedLayout && (
-              <div className="p-3 rounded-lg border bg-muted/30">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
+              <div className="p-3 rounded-lg border bg-muted/30 space-y-3">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Layers className="h-4 w-4" />
-                  Layout Preview
-                </div>
-                <div className="text-sm">
-                  <span className="font-medium">{selectedLayout.name}</span>
-                  <span className="text-muted-foreground ml-2">
+                  <span className="font-medium text-foreground">{selectedLayout.name}</span>
+                  <span>
                     ({((selectedLayout.zones as any[])?.length || 0)} zones)
                   </span>
                 </div>
+                {mediaPlayerZones.length > 0 && (
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Playlist Zone Mapping</Label>
+                    <p className="text-xs text-muted-foreground">Assign playlists to media player zones in this layout</p>
+                    {mediaPlayerZones.map((zone: any) => (
+                      <div key={zone.id} className="flex items-center gap-3" data-testid={`zone-mapping-${zone.id}`}>
+                        <div className="flex items-center gap-2 min-w-[120px]">
+                          <PlayCircle className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-sm truncate">{zone.name || "Media Player"}</span>
+                        </div>
+                        <Select
+                          value={zoneMappings[zone.id] || "none"}
+                          onValueChange={(v) => setZoneMappings(prev => ({ ...prev, [zone.id]: v === "none" ? "" : v }))}
+                        >
+                          <SelectTrigger className="flex-1" data-testid={`select-zone-playlist-${zone.id}`}>
+                            <SelectValue placeholder="No playlist" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">No playlist assigned</SelectItem>
+                            {playlists.map((pl) => (
+                              <SelectItem key={pl.id} value={pl.id}>
+                                {pl.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             

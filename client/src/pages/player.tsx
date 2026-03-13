@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
 import { ZoneRenderer, getAspectRatioDimensions } from "@/components/zone-renderer";
 
@@ -9,6 +9,7 @@ interface PlayerContentData {
   media: MediaAsset[];
   playlists: Playlist[];
   playlistItems: Record<string, PlaylistItem[]>;
+  zoneSources?: Array<{ zoneId: string; type: string; playlistId?: string }>;
   liveOverride: LiveOverride | null;
   event: any;
   timestamp: string;
@@ -243,14 +244,14 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       }
       if (zone.mediaPlayerItems) {
         for (const item of zone.mediaPlayerItems) {
-          if (item.mediaId) addMediaUrl(item.mediaId);
+          if (item.mediaAssetId) addMediaUrl(item.mediaAssetId);
         }
       }
     }
 
     for (const items of Object.values(data.playlistItems || {})) {
       for (const item of items) {
-        if (item.mediaId) addMediaUrl(item.mediaId);
+        if (item.mediaAssetId) addMediaUrl(item.mediaAssetId);
       }
     }
 
@@ -277,6 +278,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         liveOverrideActive: data.liveOverride?.isActive,
         mediaIds: data.media.map((m: any) => m.id).sort(),
         playlistItems: data.playlistItems,
+        zoneSources: data.zoneSources,
       });
 
       if (data.refreshRequested) {
@@ -337,7 +339,25 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   }, [screenId, token]);
 
   const layout = content?.layout || null;
-  const zones = (layout?.zones as LayoutZone[]) || [];
+  const rawZones = (layout?.zones as LayoutZone[]) || [];
+  
+  const zones = useMemo(() => {
+    if (!content?.zoneSources || content.zoneSources.length === 0) return rawZones;
+    return rawZones.map(zone => {
+      const source = content.zoneSources?.find(zs => zs.zoneId === zone.id);
+      if (!source || source.type !== "playlist" || !source.playlistId) return zone;
+      const playlistItemsList = content.playlistItems?.[source.playlistId] || [];
+      if (playlistItemsList.length === 0) return zone;
+      const mediaPlayerItems = playlistItemsList
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        .map(pi => ({
+          id: pi.id,
+          mediaAssetId: pi.mediaAssetId,
+          duration: pi.duration ?? 10,
+        }));
+      return { ...zone, mediaPlayerItems };
+    });
+  }, [rawZones, content?.zoneSources, content?.playlistItems]);
 
   useEffect(() => {
     const weatherZone = zones.find(z => z.type === "weather" && z.weatherLat && z.weatherLng);
