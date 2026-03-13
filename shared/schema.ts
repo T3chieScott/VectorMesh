@@ -24,6 +24,7 @@ export const clients = pgTable("clients", {
   description: text("description"),
   logoUrl: text("logo_url"),
   locked: boolean("locked").default(false),
+  maxUploadSizeMb: integer("max_upload_size_mb").default(100),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

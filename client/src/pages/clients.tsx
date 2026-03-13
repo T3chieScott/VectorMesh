@@ -40,6 +40,7 @@ import type { Client, Event } from "@shared/schema";
 const clientFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().optional(),
+  maxUploadSizeMb: z.coerce.number().min(1).max(2048).optional(),
 });
 
 type ClientFormValues = z.infer<typeof clientFormSchema>;
@@ -58,6 +59,7 @@ function ClientCard({ client, events }: { client: Client; events: Event[] }) {
     defaultValues: {
       name: client.name,
       description: client.description || "",
+      maxUploadSizeMb: client.maxUploadSizeMb ?? 100,
     },
   });
 
@@ -167,6 +169,20 @@ function ClientCard({ client, events }: { client: Client; events: Event[] }) {
                         </FormItem>
                       )}
                     />
+                    <FormField
+                      control={form.control}
+                      name="maxUploadSizeMb"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Max Upload Size (MB)</FormLabel>
+                          <FormControl>
+                            <Input type="number" min={1} max={2048} {...field} data-testid="input-edit-client-max-upload" />
+                          </FormControl>
+                          <p className="text-xs text-muted-foreground">Maximum file size allowed for uploads (1–2048 MB)</p>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
                     <div className="flex justify-end gap-2">
                       <Button
                         type="button"
@@ -214,6 +230,9 @@ function ClientCard({ client, events }: { client: Client; events: Event[] }) {
               {activeEvents.length} active
             </Badge>
           )}
+          <Badge variant="outline" className="text-xs">
+            {client.maxUploadSizeMb ?? 100}MB max upload
+          </Badge>
         </div>
       </CardContent>
     </Card>
@@ -229,6 +248,7 @@ function CreateClientDialog() {
     defaultValues: {
       name: "",
       description: "",
+      maxUploadSizeMb: 100,
     },
   });
 
@@ -288,6 +308,20 @@ function CreateClientDialog() {
                       data-testid="input-client-description"
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="maxUploadSizeMb"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Max Upload Size (MB)</FormLabel>
+                  <FormControl>
+                    <Input type="number" min={1} max={2048} {...field} data-testid="input-client-max-upload" />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">Maximum file size allowed for uploads (1–2048 MB)</p>
                   <FormMessage />
                 </FormItem>
               )}

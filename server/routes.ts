@@ -1388,6 +1388,15 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Access denied to this client" });
       }
 
+      const client = await storage.getClient(clientId);
+      if (client) {
+        const maxSizeMb = client.maxUploadSizeMb ?? 100;
+        const maxSizeBytes = maxSizeMb * 1024 * 1024;
+        if (req.file.size > maxSizeBytes) {
+          return res.status(413).json({ error: `File size exceeds the ${maxSizeMb}MB limit for this site` });
+        }
+      }
+
       const filePath = await fileStorage.saveFile(
         req.file.buffer,
         req.file.originalname,

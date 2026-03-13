@@ -578,6 +578,8 @@ export default function MediaPage() {
   };
 
   const needsSiteSelection = clients.length > 1 && !selectedClientId;
+  const activeClient = selectedClientId ? clients.find(c => c.id === selectedClientId) : (clients.length === 1 ? clients[0] : null);
+  const maxUploadBytes = (activeClient?.maxUploadSizeMb ?? 100) * 1024 * 1024;
 
   const saveMediaRecords = async (result: any, clientId: string) => {
     if (result.successful?.length > 0) {
@@ -649,7 +651,7 @@ export default function MediaPage() {
         ) : (
           <ObjectUploader
             maxNumberOfFiles={10}
-            maxFileSize={104857600}
+            maxFileSize={maxUploadBytes}
             clientId={resolveUploadClientId() || (clients.length > 0 ? clients[0].id : "")}
             onComplete={handleUploadComplete}
             buttonTestId="button-upload-media"
@@ -774,7 +776,7 @@ export default function MediaPage() {
               ) : (
                 <ObjectUploader
                   maxNumberOfFiles={10}
-                  maxFileSize={104857600}
+                  maxFileSize={maxUploadBytes}
                   clientId={resolveUploadClientId() || (clients.length > 0 ? clients[0].id : "")}
                   onComplete={handleUploadComplete}
                   buttonTestId="button-upload-media-empty"
