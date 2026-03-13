@@ -1,0 +1,55 @@
+root@mail:/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs# cd /var/www/vhosts/vectormesh.4wallcloud.com/httpdocs
+git pull
+npm install
+npm run build
+npm run db:push
+fatal: not a git repository (or any of the parent directories): .git
+npm warn EBADENGINE Unsupported engine {
+npm warn EBADENGINE   package: '@noble/hashes@2.0.1',
+npm warn EBADENGINE   required: { node: '>= 20.19.0' },
+npm warn EBADENGINE   current: { node: 'v18.19.1', npm: '10.9.6' }
+npm warn EBADENGINE }
+npm warn EBADENGINE Unsupported engine {
+npm warn EBADENGINE   package: 'vite@7.3.0',
+npm warn EBADENGINE   required: { node: '^20.19.0 || >=22.12.0' },
+npm warn EBADENGINE   current: { node: 'v18.19.1', npm: '10.9.6' }
+npm warn EBADENGINE }
+
+added 43 packages, removed 33 packages, changed 172 packages, and audited 635 packages in 5s
+
+103 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+
+> rest-express@1.0.0 build
+> tsx script/build.ts
+
+building client...
+vite v7.3.0 building client environment for production...
+transforming (5) ../node_modules/@tanstack/react-query/build/modern/index.js
+A PostCSS plugin did not pass the `from` option to `postcss.parse`. This may cause imported assets to be incorrectly transformed. If you've recently added a PostCSS plugin that raised this warning, please contact the package author to fix the issue.
+✓ 2839 modules transformed.
+../dist/public/index.html                     2.04 kB │ gzip:   0.78 kB
+../dist/public/assets/index-DTy2hPlt.css    171.72 kB │ gzip:  31.65 kB
+../dist/public/assets/index-CKngcK3z.js   1,947.77 kB │ gzip: 579.49 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 13.14s
+building server...
+
+  dist/index.cjs  1.3mb ⚠️
+
+⚡ Done in 79ms
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/var/www/vhosts/vectormesh.4wallcloud.com/httpdocs/drizzle.config.ts'
+Using 'pg' driver for database querying
+[✓] Pulling schema from database...
+[✓] Changes applied
