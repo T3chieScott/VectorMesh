@@ -111,10 +111,11 @@ function ItemEditorDialog({
 
   const saveMutation = useMutation({
     mutationFn: (data: ItemFormValues) => {
+      const payload = { ...data, duration: data.duration ?? null };
       if (isEditing) {
-        return apiRequest("PATCH", `/api/playlist-items/${item.id}`, data);
+        return apiRequest("PATCH", `/api/playlist-items/${item.id}`, payload);
       }
-      return apiRequest("POST", `/api/playlists/${playlistId}/items`, data);
+      return apiRequest("POST", `/api/playlists/${playlistId}/items`, payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/playlists", playlistId, "items"] });

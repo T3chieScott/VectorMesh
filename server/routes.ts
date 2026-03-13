@@ -1933,6 +1933,9 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Access denied" });
       }
       const data = insertPlaylistItemSchema.partial().parse(req.body);
+      if ("duration" in req.body && req.body.duration === null) {
+        (data as any).duration = null;
+      }
       const item = await storage.updatePlaylistItem(req.params.id, data);
       res.json(item);
     } catch (error) {
