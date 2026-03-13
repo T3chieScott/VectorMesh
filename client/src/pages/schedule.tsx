@@ -427,6 +427,22 @@ function ScheduleBlockEditor({
       setZoneMappings(mappings);
     }
   }, [open, block]);
+
+  useEffect(() => {
+    if (!selectedLayout) return;
+    const validZoneIds = new Set(
+      ((selectedLayout.zones as any[]) || [])
+        .filter((z: any) => z.type === "media_player")
+        .map((z: any) => z.id)
+    );
+    setZoneMappings(prev => {
+      const pruned: Record<string, string> = {};
+      for (const [zoneId, playlistId] of Object.entries(prev)) {
+        if (validZoneIds.has(zoneId)) pruned[zoneId] = playlistId;
+      }
+      return pruned;
+    });
+  }, [selectedLayoutId]);
   
   const mediaPlayerZones = useMemo(() => {
     if (!selectedLayout) return [];
