@@ -643,7 +643,6 @@ function PlaylistCard({ playlist, event, mediaAssets, usedIn }: { playlist: Play
           size="sm"
           className="w-full mt-2"
           onClick={() => navigate(`/simulator?playlistId=${playlist.id}`)}
-          disabled={cardItems.length === 0}
           data-testid={`button-preview-playlist-${playlist.id}`}
         >
           <Play className="mr-2 h-3.5 w-3.5" />
