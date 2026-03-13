@@ -2028,13 +2028,25 @@ export async function registerRoutes(
 
       const deviceToken = crypto.randomBytes(32).toString("hex");
       
+      const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || null;
+      const reverseDns = await (async () => {
+        try {
+          const dns = await import("dns");
+          if (clientIp) {
+            const hostnames = await dns.promises.reverse(clientIp);
+            return hostnames[0] || null;
+          }
+        } catch {}
+        return null;
+      })();
+      
       await storage.updateScreen(screen.id, {
         isPaired: true,
         isOnline: true,
         lastSeen: new Date(),
         hardwareClass: hardwareInfo?.class || "raspberry_pi",
-        hostname: hardwareInfo?.hostname || null,
-        ipAddress: req.ip,
+        hostname: hardwareInfo?.hostname || reverseDns || null,
+        ipAddress: clientIp,
         deviceToken,
       });
       
@@ -2053,12 +2065,10 @@ export async function registerRoutes(
       const screen = await storage.getScreen(data.screenId);
       const wasOffline = screen && !screen.isOnline;
 
+      const heartbeatClientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || null;
       const heartbeatUpdate: any = { isOnline: true, lastSeen: new Date() };
-      if (req.body.hostname) {
-        heartbeatUpdate.hostname = req.body.hostname;
-      }
-      if (req.ip) {
-        heartbeatUpdate.ipAddress = req.ip;
+      if (heartbeatClientIp) {
+        heartbeatUpdate.ipAddress = heartbeatClientIp;
       }
       await storage.updateScreen(data.screenId, heartbeatUpdate);
 

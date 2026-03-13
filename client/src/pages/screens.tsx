@@ -458,19 +458,23 @@ function ScreenCard({
                 <Badge variant="secondary">Unpaired</Badge>
               )}
             </div>
-            {(screen.location || client || screen.hostname) && (
-              <div className="flex items-center gap-1 text-sm text-muted-foreground">
+            {(screen.location || client || screen.hostname || (screen.isPaired && screen.ipAddress)) && (
+              <div className="flex items-center gap-1 text-sm text-muted-foreground flex-wrap">
                 {client && <span>{client.name}</span>}
-                {client && (screen.location || screen.hostname) && <span>·</span>}
+                {client && (screen.location || screen.hostname || screen.ipAddress) && <span>·</span>}
                 {screen.location && (
                   <>
                     <MapPin className="h-3 w-3" />
                     <span>{screen.location}</span>
                   </>
                 )}
-                {screen.location && screen.hostname && <span>·</span>}
-                {screen.hostname && (
-                  <span className="font-mono text-xs">{screen.hostname}</span>
+                {screen.isPaired && (screen.hostname || screen.ipAddress) && (
+                  <>
+                    {screen.location && <span>·</span>}
+                    <span className="font-mono text-xs">
+                      {screen.hostname || screen.ipAddress}
+                    </span>
+                  </>
                 )}
               </div>
             )}
