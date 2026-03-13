@@ -611,6 +611,19 @@ export default function MediaPage() {
   };
 
   const handleUploadComplete = async (result: any) => {
+    if (result.failed?.length > 0) {
+      const errorMessages = result.failed.map((f: any) => {
+        const serverError = f.response?.body?.error;
+        return serverError || f.error || "Upload failed";
+      });
+      toast({ 
+        title: `${result.failed.length} file(s) failed to upload`, 
+        description: errorMessages.join("; "),
+        variant: "destructive" 
+      });
+    }
+    if (!result.successful?.length) return;
+
     const clientId = resolveUploadClientId();
     if (!clientId) {
       if (needsSiteSelection) {

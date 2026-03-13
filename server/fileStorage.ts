@@ -59,6 +59,25 @@ export async function saveFile(
   return relativePath;
 }
 
+export async function saveFileFromDisk(
+  tempPath: string,
+  originalName: string,
+  contentType: string,
+  clientId: string,
+): Promise<string> {
+  await ensureDirectories(clientId);
+  const root = await getUploadRoot();
+  const ext = path.extname(originalName) || "";
+  const filename = `${randomUUID()}${ext}`;
+  const relativePath = path.join(clientId, "uploads", filename);
+  const absolutePath = path.join(root, relativePath);
+  await fs.rename(tempPath, absolutePath).catch(async () => {
+    await fs.copyFile(tempPath, absolutePath);
+    await fs.unlink(tempPath);
+  });
+  return relativePath;
+}
+
 export async function saveThumbnail(
   buffer: Buffer,
   filename: string,

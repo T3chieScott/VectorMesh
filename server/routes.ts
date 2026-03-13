@@ -10,6 +10,7 @@ import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDispla
 import { generateVideoThumbnail } from "./thumbnail";
 import { setupAuth, isAuthenticated } from "./auth";
 import multer from "multer";
+import path from "path";
 import * as fileStorage from "./fileStorage";
 import { find as findTimezone } from "geo-tz";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert } from "./email";
@@ -434,7 +435,10 @@ export async function registerRoutes(
     }
   });
 
-  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
+  const os = await import("os");
+  const uploadTmpDir = path.join(os.tmpdir(), "vectormesh-uploads");
+  await import("fs").then(f => f.promises.mkdir(uploadTmpDir, { recursive: true }));
+  const upload = multer({ storage: multer.diskStorage({ destination: uploadTmpDir }), limits: { fileSize: 500 * 1024 * 1024 } });
 
   const STALE_THRESHOLD_MS = 60000;
   setInterval(async () => {
@@ -1376,15 +1380,23 @@ export async function registerRoutes(
 
   // ============ FILE UPLOAD ============
   app.post("/api/uploads", requireAuth, loadUserContext, upload.single("file"), async (req, res) => {
+    const tempPath = req.file?.path;
+    const cleanupTemp = async () => {
+      if (tempPath) {
+        try { await import("fs").then(f => f.promises.unlink(tempPath)); } catch {}
+      }
+    };
     try {
-      if (!req.file) {
+      if (!req.file || !tempPath) {
         return res.status(400).json({ error: "No file provided" });
       }
       const clientId = req.body.clientId;
       if (!clientId) {
+        await cleanupTemp();
         return res.status(400).json({ error: "clientId is required" });
       }
       if (!canAccessClient(req, clientId)) {
+        await cleanupTemp();
         return res.status(403).json({ error: "Access denied to this client" });
       }
 
@@ -1393,12 +1405,13 @@ export async function registerRoutes(
         const maxSizeMb = client.maxUploadSizeMb ?? 100;
         const maxSizeBytes = maxSizeMb * 1024 * 1024;
         if (req.file.size > maxSizeBytes) {
+          await cleanupTemp();
           return res.status(413).json({ error: `File size exceeds the ${maxSizeMb}MB limit for this site` });
         }
       }
 
-      const filePath = await fileStorage.saveFile(
-        req.file.buffer,
+      const filePath = await fileStorage.saveFileFromDisk(
+        tempPath,
         req.file.originalname,
         req.file.mimetype,
         clientId,
@@ -1411,6 +1424,7 @@ export async function registerRoutes(
         size: req.file.size,
       });
     } catch (error) {
+      await cleanupTemp();
       console.error("Error uploading file:", error);
       res.status(500).json({ error: "Failed to upload file" });
     }

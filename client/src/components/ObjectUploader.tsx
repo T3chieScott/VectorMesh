@@ -59,6 +59,7 @@ export function ObjectUploader({
         allowedMetaFields: ["clientId"],
         bundle: false,
         withCredentials: true,
+        timeout: 300000,
       })
       .on("complete", (result) => {
         onCompleteRef.current?.(result);
@@ -66,7 +67,11 @@ export function ObjectUploader({
       .on("error", (error) => {
         onErrorRef.current?.(error);
       })
-      .on("upload-error", (_file, error) => {
+      .on("upload-error", (_file, error, response) => {
+        const serverMessage = (response?.body as any)?.error;
+        if (serverMessage) {
+          uppy.info(serverMessage, "error", 5000);
+        }
         onErrorRef.current?.(error);
       })
   );
@@ -74,6 +79,15 @@ export function ObjectUploader({
   useEffect(() => {
     uppy.setMeta({ clientId });
   }, [clientId, uppy]);
+
+  useEffect(() => {
+    uppy.setOptions({
+      restrictions: {
+        maxNumberOfFiles,
+        maxFileSize,
+      },
+    });
+  }, [maxFileSize, maxNumberOfFiles, uppy]);
 
   return (
     <div>
@@ -90,6 +104,7 @@ export function ObjectUploader({
         open={showModal}
         onRequestClose={() => setShowModal(false)}
         proudlyDisplayPoweredByUppy={false}
+        note={`Max file size: ${Math.round(maxFileSize / (1024 * 1024))}MB`}
       />
     </div>
   );
