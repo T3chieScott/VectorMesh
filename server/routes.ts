@@ -1915,6 +1915,13 @@ export async function registerRoutes(
       if (!Array.isArray(itemIds)) {
         return res.status(400).json({ error: "itemIds must be an array" });
       }
+      const existingItems = await storage.getPlaylistItems(req.params.playlistId);
+      const existingIds = new Set(existingItems.map(i => i.id));
+      for (const id of itemIds) {
+        if (!existingIds.has(id)) {
+          return res.status(400).json({ error: "Item does not belong to this playlist" });
+        }
+      }
       for (let i = 0; i < itemIds.length; i++) {
         await storage.updatePlaylistItem(itemIds[i], { order: i });
       }

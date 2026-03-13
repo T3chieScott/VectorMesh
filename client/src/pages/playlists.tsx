@@ -142,7 +142,7 @@ function ItemEditorDialog({
                     <SelectContent>
                       {mediaAssets.map((asset) => (
                         <SelectItem key={asset.id} value={asset.id}>
-                          {asset.filename} ({asset.type})
+                          {asset.name} ({asset.mediaType})
                         </SelectItem>
                       ))}
                     </SelectContent>
