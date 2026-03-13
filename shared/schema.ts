@@ -628,7 +628,11 @@ export const playlistItemsRelations = relations(playlistItems, ({ one }) => ({
 }));
 
 export const insertPlaylistItemSchema = createInsertSchema(playlistItems).omit({ id: true });
+export const updatePlaylistItemSchema = insertPlaylistItemSchema.partial().extend({
+  duration: z.number().int().nullable().optional(),
+});
 export type InsertPlaylistItem = z.infer<typeof insertPlaylistItemSchema>;
+export type UpdatePlaylistItem = z.infer<typeof updatePlaylistItemSchema>;
 export type PlaylistItem = typeof playlistItems.$inferSelect;
 
 // ============ LIVE OVERRIDES ============

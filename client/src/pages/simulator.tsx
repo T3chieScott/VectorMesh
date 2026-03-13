@@ -444,7 +444,7 @@ export default function SimulatorPage() {
     return sorted.map(item => ({
       id: item.id,
       mediaAssetId: item.mediaAssetId,
-      duration: item.duration ?? 10,
+      duration: item.duration ?? null,
     }));
   }, [previewPlaylistId, previewPlaylistItems]);
 

@@ -353,7 +353,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         .map(pi => ({
           id: pi.id,
           mediaAssetId: pi.mediaAssetId,
-          duration: pi.duration ?? 10,
+          duration: pi.duration ?? null,
         }));
       return { ...zone, mediaPlayerItems };
     });

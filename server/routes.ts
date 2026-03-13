@@ -6,7 +6,7 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
-import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, insertScheduleBlockSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
+import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
 import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
 import { setupAuth, isAuthenticated } from "./auth";
 import multer from "multer";
@@ -1932,10 +1932,7 @@ export async function registerRoutes(
       if (!(await canAccessPlaylist(req, existing.playlistId))) {
         return res.status(403).json({ error: "Access denied" });
       }
-      const data = insertPlaylistItemSchema.partial().parse(req.body);
-      if ("duration" in req.body && req.body.duration === null) {
-        (data as any).duration = null;
-      }
+      const data = updatePlaylistItemSchema.parse(req.body);
       const item = await storage.updatePlaylistItem(req.params.id, data);
       res.json(item);
     } catch (error) {
