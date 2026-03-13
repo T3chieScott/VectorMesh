@@ -3503,9 +3503,9 @@ function NewsWidget({
     const scrollWidth = el ? el.scrollWidth : 500;
     const halfWidth = scrollWidth / 2;
     const clampedSpeed = Math.max(1, Math.min(200, scrollSpeed));
-    const pixelsPerSecond = 10 + (clampedSpeed - 1) * 1.45;
+    const pixelsPerSecond = 3 + (clampedSpeed - 1) * 1.5;
     const rawDuration = halfWidth / pixelsPerSecond;
-    return Math.max(5, Math.min(180, rawDuration));
+    return Math.max(5, Math.min(600, rawDuration));
   }, [scrollSpeed]);
 
   useEffect(() => {
