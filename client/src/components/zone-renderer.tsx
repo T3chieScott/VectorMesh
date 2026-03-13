@@ -5005,6 +5005,7 @@ function MediaPlayerWidget({
   muted = true,
   shuffle = false,
   isPlaying = true,
+  skipNonce = 0,
   providedMedia,
   mediaBaseUrl,
   deviceToken,
@@ -5018,6 +5019,7 @@ function MediaPlayerWidget({
   muted?: boolean;
   shuffle?: boolean;
   isPlaying?: boolean;
+  skipNonce?: number;
   providedMedia?: MediaAsset[];
   mediaBaseUrl?: string;
   deviceToken?: string;
@@ -5159,6 +5161,14 @@ function MediaPlayerWidget({
     };
   }, [autoPlay, stopped, isPlaying, currentIndex, advanceToNext, getMediaType]);
 
+  const skipNonceRef = useRef(skipNonce);
+  useEffect(() => {
+    if (skipNonce !== skipNonceRef.current) {
+      skipNonceRef.current = skipNonce;
+      advanceToNext();
+    }
+  }, [skipNonce, advanceToNext]);
+
   const handleVideoEnded = useCallback(() => {
     if (!autoPlay || stopped) return;
     advanceToNext();
@@ -5283,6 +5293,7 @@ export interface ZoneRendererProps {
   media?: MediaAsset[];
   mediaIndex?: number;
   isPlaying?: boolean;
+  skipNonce?: number;
   showBorder?: boolean;
   playlistName?: string;
   timezone?: string;
@@ -5296,6 +5307,7 @@ export function ZoneRenderer({
   media = [],
   mediaIndex = 0,
   isPlaying = true,
+  skipNonce = 0,
   showBorder = false,
   playlistName,
   timezone,
@@ -5494,6 +5506,7 @@ export function ZoneRenderer({
             muted={zone.mediaPlayerMuted}
             shuffle={zone.mediaPlayerShuffle}
             isPlaying={isPlaying}
+            skipNonce={skipNonce}
             providedMedia={media}
             mediaBaseUrl={mediaBaseUrl}
             deviceToken={deviceToken}

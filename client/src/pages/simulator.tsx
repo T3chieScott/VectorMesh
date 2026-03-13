@@ -55,6 +55,7 @@ function PlayerDisplay({
   getZoneMedia,
   getZoneMediaIndex,
   getPlaylistName,
+  skipNonce = 0,
 }: {
   screen: Screen | null;
   profile: DisplayProfile | null;
@@ -64,6 +65,7 @@ function PlayerDisplay({
   getZoneMedia: (zoneId: string) => MediaAsset[];
   getZoneMediaIndex: (zoneId: string) => number;
   getPlaylistName: (zoneId: string) => string | undefined;
+  skipNonce?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0.5);
@@ -209,6 +211,7 @@ function PlayerDisplay({
                         media={getZoneMedia(zone.id)}
                         mediaIndex={getZoneMediaIndex(zone.id)}
                         isPlaying={state.isPlaying}
+                        skipNonce={skipNonce}
                         showBorder={state.showZoneBorders}
                         playlistName={getPlaylistName(zone.id)}
                         timezone={weatherTimezone}
@@ -252,6 +255,7 @@ function PlayerDisplay({
                 media={getZoneMedia(zone.id)}
                 mediaIndex={getZoneMediaIndex(zone.id)}
                 isPlaying={state.isPlaying}
+                skipNonce={skipNonce}
                 showBorder={state.showZoneBorders}
                 playlistName={getPlaylistName(zone.id)}
                 timezone={weatherTimezone}
@@ -351,6 +355,7 @@ export default function SimulatorPage() {
   const [zoneMediaIndices, setZoneMediaIndices] = useState<Record<string, number>>({});
   const [zonePlaylistAssignments, setZonePlaylistAssignments] = useState<Record<string, string>>({});
   const [previewPlaylistId, setPreviewPlaylistId] = useState<string>(initialPlaylistId);
+  const [mediaPlayerSkipNonce, setMediaPlayerSkipNonce] = useState(0);
   const [state, setState] = useState<SimulatorState>({
     isPlaying: true,
     currentTime: "",
@@ -568,7 +573,11 @@ export default function SimulatorPage() {
   };
 
   const handleNext = () => {
-    setMediaIndex((prev) => (prev + 1) % (media.length || 1));
+    if (isPlaylistPreview) {
+      setMediaPlayerSkipNonce(prev => prev + 1);
+    } else {
+      setMediaIndex((prev) => (prev + 1) % (media.length || 1));
+    }
   };
 
   const handleFullscreen = () => {
@@ -908,6 +917,7 @@ export default function SimulatorPage() {
                   getZoneMedia={getZoneMedia}
                   getZoneMediaIndex={getZoneMediaIndex}
                   getPlaylistName={getPlaylistName}
+                  skipNonce={mediaPlayerSkipNonce}
                 />
               )}
             </CardContent>
