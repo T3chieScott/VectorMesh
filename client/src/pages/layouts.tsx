@@ -364,8 +364,8 @@ function getAspectRatioDimensions(aspectRatio: string, customWidth?: number | nu
 const defaultZones: LayoutZone[] = [
   { id: "main", name: "Main Content", type: "media", x: 0, y: 0, width: 100, height: 85, zIndex: 1 },
   { id: "ticker", name: "Ticker", type: "ticker", x: 0, y: 85, width: 70, height: 15, zIndex: 2 },
-  { id: "clock", name: "Clock", type: "clock", x: 70, y: 85, width: 15, height: 15, zIndex: 2 },
-  { id: "logo", name: "Logo", type: "logo", x: 85, y: 85, width: 15, height: 15, zIndex: 2 },
+  { id: "clock", name: "Clock", type: "clock", x: 70, y: 85, width: 15, height: 15, zIndex: 3 },
+  { id: "logo", name: "Logo", type: "logo", x: 85, y: 85, width: 15, height: 15, zIndex: 4 },
 ];
 
 const zoneTypeIcons: Record<string, React.ElementType> = {
@@ -9490,16 +9490,26 @@ export default function LayoutsPage() {
   const [showLayoutList, setShowLayoutList] = useState(true);
   const [selectedZoneIds, setSelectedZoneIds] = useState<Set<string>>(new Set());
   
+  const normalizeZIndexes = (zones: LayoutZone[]): LayoutZone[] => {
+    const sorted = [...zones].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+    const hasDuplicates = sorted.some((z, i) => i > 0 && (z.zIndex || 0) === (sorted[i - 1].zIndex || 0));
+    if (!hasDuplicates) return zones;
+    return zones.map(zone => {
+      const rank = sorted.findIndex(z => z.id === zone.id) + 1;
+      return { ...zone, zIndex: rank };
+    });
+  };
+
   // Sync draft zones when layout selection changes or server data updates
   useEffect(() => {
     if (!hasUnsavedChanges) {
-      setDraftZones(savedZones);
+      setDraftZones(normalizeZIndexes(savedZones));
     }
   }, [savedZones, hasUnsavedChanges]);
   
   // Reset draft when switching layouts
   useEffect(() => {
-    setDraftZones(savedZones);
+    setDraftZones(normalizeZIndexes(savedZones));
     setHasUnsavedChanges(false);
     setHighlightedZoneId(null);
     setSelectedZoneIds(new Set());
@@ -9542,7 +9552,6 @@ export default function LayoutsPage() {
   useEffect(() => {
     if (layouts.length > 0 && !selectedLayoutId) {
       setSelectedLayoutId(layouts[0].id);
-      setShowLayoutList(false);
     }
     if (selectedLayoutId && !layouts.find(l => l.id === selectedLayoutId)) {
       setSelectedLayoutId(layouts.length > 0 ? layouts[0].id : null);
