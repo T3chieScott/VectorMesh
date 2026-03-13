@@ -1806,9 +1806,16 @@ export async function registerRoutes(
 
   app.get("/api/playlists/usage", requireAuth, loadUserContext, async (req, res) => {
     try {
+      const allowed = getAllowedClientIds(req);
       const allVersions = await storage.getProgrammeVersions();
+      let filteredVersions = allVersions;
+      if (allowed) {
+        const events = await storage.getEvents();
+        const allowedEventIds = new Set(events.filter(e => allowed.includes(e.clientId)).map(e => e.id));
+        filteredVersions = allVersions.filter(v => allowedEventIds.has(v.eventId));
+      }
       const allBlocksNested = await Promise.all(
-        allVersions.map(v => storage.getScheduleBlocks(v.id))
+        filteredVersions.map(v => storage.getScheduleBlocks(v.id))
       );
       const allBlocks = allBlocksNested.flat();
       const usage: Record<string, Array<{ blockId: string; blockName: string }>> = {};

@@ -1,9 +1,12 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,7 +48,7 @@ import {
 } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
 import { useSiteFilteredQuery } from "@/hooks/use-site-context";
-import { Plus, MoreHorizontal, Pencil, Trash2, FolderOpen, Image, Calendar, ChevronDown, ChevronUp, ListVideo, Clock, Layers } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil, Trash2, FolderOpen, Image, Calendar, ChevronDown, ChevronUp, ListVideo, Clock, Layers, GripVertical } from "lucide-react";
 import type { Playlist, Event, MediaAsset, PlaylistItem } from "@shared/schema";
 
 const playlistFormSchema = z.object({
@@ -202,40 +205,35 @@ function ItemEditorDialog({
   );
 }
 
-function PlaylistItemRow({
+function SortablePlaylistItem({
   item,
   mediaAsset,
   onEdit,
   onDelete,
-  onMoveUp,
-  onMoveDown,
-  isFirst,
-  isLast,
 }: {
   item: PlaylistItem;
   mediaAsset?: MediaAsset;
   onEdit: () => void;
   onDelete: () => void;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
-  isFirst: boolean;
-  isLast: boolean;
 }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
   const thumbnailUrl = mediaAsset?.thumbnailPath
     ? `/api/media/${mediaAsset.id}/file?thumbnail=true`
     : null;
 
   return (
-    <div className="flex items-center justify-between gap-3 p-2 rounded-md bg-muted/50" data-testid={`playlist-item-row-${item.id}`}>
+    <div ref={setNodeRef} style={style} className="flex items-center justify-between gap-3 p-2 rounded-md bg-muted/50" data-testid={`playlist-item-row-${item.id}`}>
       <div className="flex items-center gap-3">
-        <div className="flex flex-col gap-0.5">
-          <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onMoveUp} disabled={isFirst} data-testid={`button-move-up-${item.id}`}>
-            <ChevronUp className="h-3 w-3" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onMoveDown} disabled={isLast} data-testid={`button-move-down-${item.id}`}>
-            <ChevronDown className="h-3 w-3" />
-          </Button>
-        </div>
+        <button {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing p-1 text-muted-foreground hover:text-foreground" data-testid={`drag-handle-${item.id}`}>
+          <GripVertical className="h-4 w-4" />
+        </button>
         <div className="w-10 h-10 rounded bg-muted flex items-center justify-center overflow-hidden flex-shrink-0">
           {thumbnailUrl ? (
             <img src={thumbnailUrl} alt="" className="w-full h-full object-contain" />
@@ -284,6 +282,11 @@ function PlaylistItemsSection({
   const [editingItem, setEditingItem] = useState<PlaylistItem | undefined>();
   const { toast } = useToast();
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
   const { data: items = [] } = useQuery<PlaylistItem[]>({
     queryKey: ["/api/playlists", playlist.id, "items"],
     queryFn: () => fetch(`/api/playlists/${playlist.id}/items`, { credentials: "include" }).then((r) => {
@@ -293,7 +296,7 @@ function PlaylistItemsSection({
     enabled: itemsOpen,
   });
 
-  const sortedItems = [...items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const sortedItems = useMemo(() => [...items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)), [items]);
 
   const deleteMutation = useMutation({
     mutationFn: (itemId: string) => apiRequest("DELETE", `/api/playlist-items/${itemId}`),
@@ -318,18 +321,14 @@ function PlaylistItemsSection({
     },
   });
 
-  const handleMoveUp = (index: number) => {
-    if (index <= 0) return;
-    const ids = sortedItems.map(i => i.id);
-    [ids[index - 1], ids[index]] = [ids[index], ids[index - 1]];
-    reorderMutation.mutate(ids);
-  };
-
-  const handleMoveDown = (index: number) => {
-    if (index >= sortedItems.length - 1) return;
-    const ids = sortedItems.map(i => i.id);
-    [ids[index], ids[index + 1]] = [ids[index + 1], ids[index]];
-    reorderMutation.mutate(ids);
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = sortedItems.findIndex(i => i.id === active.id);
+    const newIndex = sortedItems.findIndex(i => i.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = arrayMove(sortedItems, oldIndex, newIndex);
+    reorderMutation.mutate(reordered.map(i => i.id));
   };
 
   const mediaMap = new Map(mediaAssets.map((m) => [m.id, m]));
@@ -367,21 +366,21 @@ function PlaylistItemsSection({
                 No items yet. Add media to this playlist.
               </p>
             ) : (
-              <div className="space-y-2">
-                {sortedItems.map((item, index) => (
-                  <PlaylistItemRow
-                    key={item.id}
-                    item={item}
-                    mediaAsset={mediaMap.get(item.mediaAssetId)}
-                    onEdit={() => handleEditItem(item)}
-                    onDelete={() => deleteMutation.mutate(item.id)}
-                    onMoveUp={() => handleMoveUp(index)}
-                    onMoveDown={() => handleMoveDown(index)}
-                    isFirst={index === 0}
-                    isLast={index === sortedItems.length - 1}
-                  />
-                ))}
-              </div>
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={sortedItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
+                  <div className="space-y-2">
+                    {sortedItems.map((item) => (
+                      <SortablePlaylistItem
+                        key={item.id}
+                        item={item}
+                        mediaAsset={mediaMap.get(item.mediaAssetId)}
+                        onEdit={() => handleEditItem(item)}
+                        onDelete={() => deleteMutation.mutate(item.id)}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
             )}
             <Button
               variant="outline"
@@ -415,6 +414,21 @@ function PlaylistItemsSection({
 function PlaylistCard({ playlist, event, mediaAssets, usedIn }: { playlist: Playlist; event?: Event; mediaAssets: MediaAsset[]; usedIn?: Array<{ blockId: string; blockName: string }> }) {
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
+
+  const { data: cardItems = [] } = useQuery<PlaylistItem[]>({
+    queryKey: ["/api/playlists", playlist.id, "items"],
+    queryFn: () => fetch(`/api/playlists/${playlist.id}/items`, { credentials: "include" }).then((r) => {
+      if (!r.ok) throw new Error("Failed to fetch items");
+      return r.json();
+    }),
+  });
+
+  const previewItems = useMemo(() => {
+    const sorted = [...cardItems].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    return sorted.slice(0, 4);
+  }, [cardItems]);
+
+  const mediaMap = new Map(mediaAssets.map((m) => [m.id, m]));
 
   const eventsQuery = useSiteFilteredQuery<Event[]>("/api/events");
   const { data: events = [] } = useQuery<Event[]>({
@@ -582,10 +596,32 @@ function PlaylistCard({ playlist, event, mediaAssets, usedIn }: { playlist: Play
         </DropdownMenu>
       </CardHeader>
       <CardContent className="pt-0 space-y-2">
+        {previewItems.length > 0 && (
+          <div className="flex items-center gap-1.5 mb-2" data-testid={`playlist-thumbnails-${playlist.id}`}>
+            {previewItems.map((item) => {
+              const asset = mediaMap.get(item.mediaAssetId);
+              const thumbUrl = asset?.thumbnailPath ? `/api/media/${asset.id}/file?thumbnail=true` : null;
+              return (
+                <div key={item.id} className="w-10 h-10 rounded bg-muted flex items-center justify-center overflow-hidden flex-shrink-0 border">
+                  {thumbUrl ? (
+                    <img src={thumbUrl} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <Image className="h-3 w-3 text-muted-foreground" />
+                  )}
+                </div>
+              );
+            })}
+            {cardItems.length > 4 && (
+              <div className="w-10 h-10 rounded bg-muted flex items-center justify-center text-xs text-muted-foreground border">
+                +{cardItems.length - 4}
+              </div>
+            )}
+          </div>
+        )}
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
           <div className="flex items-center gap-1.5">
-            <Image className="h-4 w-4" />
-            <span>Media playlist</span>
+            <ListVideo className="h-4 w-4" />
+            <span>{cardItems.length} {cardItems.length === 1 ? "item" : "items"}</span>
           </div>
           {event && (
             <div className="flex items-center gap-1.5">
