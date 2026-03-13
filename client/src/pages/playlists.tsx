@@ -68,6 +68,12 @@ const itemFormSchema = z.object({
 
 type ItemFormValues = z.infer<typeof itemFormSchema>;
 
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `${s}s`;
+}
+
 function ItemEditorDialog({
   playlistId,
   item,
@@ -89,15 +95,19 @@ function ItemEditorDialog({
     defaultValues: item
       ? {
           mediaAssetId: item.mediaAssetId,
-          duration: item.duration ?? 10,
+          duration: item.duration ?? undefined,
           order: item.order ?? 0,
         }
       : {
           mediaAssetId: "",
-          duration: 10,
+          duration: undefined,
           order: 0,
         },
   });
+
+  const selectedAssetId = form.watch("mediaAssetId");
+  const selectedAsset = mediaAssets.find(a => a.id === selectedAssetId);
+  const isVideo = selectedAsset?.mediaType === "video";
 
   const saveMutation = useMutation({
     mutationFn: (data: ItemFormValues) => {
@@ -158,15 +168,23 @@ function ItemEditorDialog({
               name="duration"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Duration (seconds)</FormLabel>
+                  <FormLabel>Duration (seconds){isVideo ? " — optional" : ""}</FormLabel>
                   <FormControl>
                     <Input
                       type="number"
+                      placeholder={isVideo ? (selectedAsset?.duration ? `Video length: ${formatDuration(selectedAsset.duration)}` : "Full video length") : "10"}
                       {...field}
-                      onChange={(e) => field.onChange(parseInt(e.target.value) || 10)}
+                      value={field.value ?? ""}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        field.onChange(val === "" ? undefined : (parseInt(val) || undefined));
+                      }}
                       data-testid="input-item-duration"
                     />
                   </FormControl>
+                  {isVideo && !field.value && (
+                    <p className="text-xs text-muted-foreground">Leave empty to play the full video</p>
+                  )}
                   <FormMessage />
                 </FormItem>
               )}
@@ -226,7 +244,7 @@ function SortablePlaylistItem({
   };
 
   const thumbnailUrl = mediaAsset?.thumbnailPath
-    ? `/api/media/${mediaAsset.id}/file?thumbnail=true`
+    ? `/api/media/${mediaAsset.id}/thumbnail`
     : null;
 
   return (
@@ -247,10 +265,12 @@ function SortablePlaylistItem({
             {mediaAsset?.name || "Unknown media"}
           </p>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            {item.duration && (
+            {(item.duration || (mediaAsset?.mediaType === "video" && mediaAsset?.duration)) && (
               <span className="flex items-center gap-1">
                 <Clock className="h-3 w-3" />
-                {item.duration}s
+                {item.duration ? `${item.duration}s` : ""}
+                {item.duration && mediaAsset?.mediaType === "video" && mediaAsset?.duration ? " / " : ""}
+                {mediaAsset?.mediaType === "video" && mediaAsset?.duration ? formatDuration(mediaAsset.duration) : ""}
               </span>
             )}
             {mediaAsset?.mediaType && (
@@ -602,7 +622,7 @@ function PlaylistCard({ playlist, event, mediaAssets, usedIn }: { playlist: Play
           <div className="flex items-center gap-1.5 mb-2" data-testid={`playlist-thumbnails-${playlist.id}`}>
             {previewItems.map((item) => {
               const asset = mediaMap.get(item.mediaAssetId);
-              const thumbUrl = asset?.thumbnailPath ? `/api/media/${asset.id}/file?thumbnail=true` : null;
+              const thumbUrl = asset?.thumbnailPath ? `/api/media/${asset.id}/thumbnail` : null;
               return (
                 <div key={item.id} className="w-10 h-10 rounded bg-muted flex items-center justify-center overflow-hidden flex-shrink-0 border">
                   {thumbUrl ? (

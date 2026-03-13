@@ -5,6 +5,42 @@ import path from "path";
 import os from "os";
 import * as fileStorage from "./fileStorage";
 
+export async function getVideoDuration(
+  videoStoragePath: string,
+): Promise<number | null> {
+  if (!videoStoragePath || videoStoragePath.startsWith("http")) {
+    return null;
+  }
+
+  const tmpDir = os.tmpdir();
+  const videoTmp = path.join(tmpDir, `probe-${randomUUID()}`);
+
+  try {
+    const absoluteVideoPath = await fileStorage.getAbsolutePath(videoStoragePath);
+    await fs.copyFile(absoluteVideoPath, videoTmp);
+
+    const durationStr = await new Promise<string>((resolve, reject) => {
+      exec(
+        `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoTmp}"`,
+        { timeout: 30000 },
+        (err, stdout) => {
+          if (err) reject(err);
+          else resolve(stdout.trim());
+        },
+      );
+    });
+
+    const seconds = parseFloat(durationStr);
+    if (isNaN(seconds) || seconds <= 0) return null;
+    return Math.round(seconds);
+  } catch (err) {
+    console.error("Video duration extraction failed:", err);
+    return null;
+  } finally {
+    await fs.unlink(videoTmp).catch(() => {});
+  }
+}
+
 export async function generateVideoThumbnail(
   videoStoragePath: string,
   clientId: string,

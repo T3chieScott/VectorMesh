@@ -5157,7 +5157,7 @@ function MediaPlayerWidget({
     const mediaType = getMediaType(currentItem.mediaAssetId);
     const isVideo = mediaType === "video";
 
-    if (isVideo) return;
+    if (isVideo && !currentItem.duration) return;
 
     const displayDuration = (currentItem.duration || 10) * 1000;
     timerRef.current = setTimeout(() => {

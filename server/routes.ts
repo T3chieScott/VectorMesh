@@ -7,7 +7,7 @@ import bcrypt from "bcryptjs";
 import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
 import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, insertScheduleBlockSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
-import { generateVideoThumbnail } from "./thumbnail";
+import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
 import { setupAuth, isAuthenticated } from "./auth";
 import multer from "multer";
 import path from "path";
@@ -1208,12 +1208,18 @@ export async function registerRoutes(
 
       if (data.mediaType === "video" && data.originalPath) {
         try {
-          const thumbnailPath = await generateVideoThumbnail(data.originalPath, data.clientId);
-          if (thumbnailPath) {
-            await storage.updateMediaAsset(asset.id, { thumbnailPath });
+          const [thumbnailPath, videoDuration] = await Promise.all([
+            generateVideoThumbnail(data.originalPath, data.clientId),
+            getVideoDuration(data.originalPath),
+          ]);
+          const updates: Record<string, any> = {};
+          if (thumbnailPath) updates.thumbnailPath = thumbnailPath;
+          if (videoDuration) updates.duration = videoDuration;
+          if (Object.keys(updates).length > 0) {
+            await storage.updateMediaAsset(asset.id, updates);
           }
         } catch (thumbErr) {
-          console.error("Background thumbnail generation failed:", thumbErr);
+          console.error("Background video processing failed:", thumbErr);
         }
       }
     } catch (error) {
@@ -1376,6 +1382,32 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error generating thumbnail:", error);
       res.status(500).json({ error: "Failed to generate thumbnail" });
+    }
+  });
+
+  app.post("/api/media/backfill-durations", requireAuth, loadUserContext, requireAdmin, async (req, res) => {
+    try {
+      const allAssets = await storage.getMediaAssets();
+      const videos = allAssets.filter(a => a.mediaType === "video" && !a.duration && a.originalPath && !a.originalPath.startsWith("http"));
+      let updated = 0;
+      let failed = 0;
+      for (const asset of videos) {
+        try {
+          const dur = await getVideoDuration(asset.originalPath);
+          if (dur) {
+            await storage.updateMediaAsset(asset.id, { duration: dur });
+            updated++;
+          } else {
+            failed++;
+          }
+        } catch {
+          failed++;
+        }
+      }
+      res.json({ total: videos.length, updated, failed });
+    } catch (error) {
+      console.error("Error backfilling durations:", error);
+      res.status(500).json({ error: "Failed to backfill durations" });
     }
   });
 
