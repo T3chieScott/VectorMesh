@@ -5180,6 +5180,7 @@ function MediaPlayerWidget({
 
   const handleVideoEnded = useCallback(() => {
     if (!autoPlay || stopped) return;
+    if (timerRef.current) clearTimeout(timerRef.current);
     advanceToNext();
   }, [autoPlay, stopped, advanceToNext]);
 
