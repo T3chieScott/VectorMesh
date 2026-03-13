@@ -3444,6 +3444,7 @@ function NewsWidget({
   const [loading, setLoading] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const knownTitlesRef = useRef<Set<string>>(new Set());
+  const [animDuration, setAnimDuration] = useState(30);
 
   const fontSize = textSize || 24;
 
@@ -3498,19 +3499,27 @@ function NewsWidget({
     return () => clearInterval(interval);
   }, [rssUrl, itemCount]);
 
+  const calcDuration = useCallback((el: HTMLDivElement | null) => {
+    const scrollWidth = el ? el.scrollWidth : 500;
+    const halfWidth = scrollWidth / 2;
+    const clampedSpeed = Math.max(1, Math.min(200, scrollSpeed));
+    const pixelsPerSecond = 10 + (clampedSpeed - 1) * 1.45;
+    const rawDuration = halfWidth / pixelsPerSecond;
+    return Math.max(5, Math.min(180, rawDuration));
+  }, [scrollSpeed]);
+
   useEffect(() => {
-    if (!scrollRef.current || news.length === 0) return;
-    
-    // Use half the scroll width since we have 2 identical copies and animate 50%
-    // Speed affects pixels-per-second: Speed 1 = 10px/s, Speed 100 = 300px/s
-    const clampedSpeed = Math.max(1, Math.min(100, scrollSpeed));
-    const pixelsPerSecond = 10 + (clampedSpeed - 1) * 2.9; // Linear scale from 10 to 300 px/s
-    const scrollWidth = (scrollRef.current.scrollWidth || 500) / 2; // Half width for one copy
-    const rawDuration = scrollWidth / pixelsPerSecond;
-    // Clamp between 5s minimum and 180s maximum for readability
-    const duration = Math.max(5, Math.min(180, rawDuration));
-    scrollRef.current.style.animationDuration = `${duration}s`;
-  }, [scrollSpeed, news]);
+    const el = scrollRef.current;
+    if (!el || news.length === 0) return;
+
+    setAnimDuration(calcDuration(el));
+
+    const observer = new ResizeObserver(() => {
+      setAnimDuration(calcDuration(el));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [news, calcDuration]);
 
   if (!rssUrl) {
     return (
@@ -3538,7 +3547,7 @@ function NewsWidget({
       <div 
         ref={scrollRef}
         className="marquee-container whitespace-nowrap" 
-        style={{ fontSize: `${fontSize}px` }}
+        style={{ fontSize: `${fontSize}px`, animationDuration: `${animDuration}s` }}
       >
         <span className="pr-8">{newsText} •</span>
         <span className="pr-8">{newsText} •</span>

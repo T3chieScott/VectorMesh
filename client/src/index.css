@@ -350,8 +350,7 @@
     width: max-content;
     -webkit-animation: marquee-seamless linear infinite;
     animation: marquee-seamless linear infinite;
-    -webkit-animation-duration: 30s;
-    animation-duration: 30s; /* default, overridden by JS */
+    animation-duration: var(--marquee-duration, 30s);
     will-change: transform;
     -webkit-backface-visibility: hidden;
     backface-visibility: hidden;
