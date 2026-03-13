@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useSearch } from "wouter";
 import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,8 @@ import {
   RefreshCw,
   ScanSearch,
   Frame,
+  ListVideo,
+  X,
 } from "lucide-react";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
 import { ZoneRenderer, zoneTypeIcons, getAspectRatioDimensions } from "@/components/zone-renderer";
@@ -338,11 +341,16 @@ interface ResolvedContent {
 }
 
 export default function SimulatorPage() {
+  const searchString = useSearch();
+  const searchParams = useMemo(() => new URLSearchParams(searchString), [searchString]);
+  const initialPlaylistId = searchParams.get("playlistId") || "";
+
   const [selectedScreenId, setSelectedScreenId] = useState<string>("none");
   const [selectedLayoutId, setSelectedLayoutId] = useState<string>("auto");
   const [mediaIndex, setMediaIndex] = useState(0);
   const [zoneMediaIndices, setZoneMediaIndices] = useState<Record<string, number>>({});
   const [zonePlaylistAssignments, setZonePlaylistAssignments] = useState<Record<string, string>>({});
+  const [previewPlaylistId, setPreviewPlaylistId] = useState<string>(initialPlaylistId);
   const [state, setState] = useState<SimulatorState>({
     isPlaying: true,
     currentTime: "",
@@ -411,6 +419,51 @@ export default function SimulatorPage() {
     },
     enabled: assignedPlaylistIds.length > 0,
   });
+
+  const isPlaylistPreview = !!previewPlaylistId;
+  const previewPlaylist = previewPlaylistId ? playlists.find(p => p.id === previewPlaylistId) : null;
+
+  const { data: previewPlaylistItems = [] } = useQuery<PlaylistItem[]>({
+    queryKey: ["/api/playlists", previewPlaylistId, "items"],
+    queryFn: async () => {
+      const res = await fetch(`/api/playlists/${previewPlaylistId}/items`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+    enabled: !!previewPlaylistId,
+  });
+
+  const previewMediaPlayerItems = useMemo(() => {
+    if (!previewPlaylistId || previewPlaylistItems.length === 0) return [];
+    const sorted = [...previewPlaylistItems].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    return sorted.map(item => ({
+      id: item.id,
+      mediaAssetId: item.mediaAssetId,
+      duration: item.duration ?? 10,
+    }));
+  }, [previewPlaylistId, previewPlaylistItems]);
+
+  const previewSyntheticZone: LayoutZone | null = useMemo(() => {
+    if (!isPlaylistPreview || previewMediaPlayerItems.length === 0) return null;
+    return {
+      id: "playlist-preview-zone",
+      name: previewPlaylist?.name || "Playlist Preview",
+      type: "media_player",
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      zIndex: 1,
+      mediaPlayerItems: previewMediaPlayerItems,
+      mediaPlayerTransition: "fade",
+      mediaPlayerTransitionDuration: 800,
+      mediaPlayerLoop: true,
+      mediaPlayerFitMode: "contain",
+      mediaPlayerAutoPlay: true,
+      mediaPlayerMuted: true,
+      mediaPlayerShuffle: false,
+    } as LayoutZone;
+  }, [isPlaylistPreview, previewMediaPlayerItems, previewPlaylist]);
 
   const selectedScreen = selectedScreenId !== "none" ? screens.find((s) => s.id === selectedScreenId) : null;
   const selectedProfile = selectedScreen
@@ -613,6 +666,48 @@ export default function SimulatorPage() {
               )}
             </div>
 
+            {/* Playlist Preview */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium flex items-center gap-1.5">
+                <ListVideo className="h-3.5 w-3.5" />
+                Preview Playlist
+              </Label>
+              <div className="flex items-center gap-2">
+                <Select
+                  value={previewPlaylistId || "none"}
+                  onValueChange={(value) => setPreviewPlaylistId(value === "none" ? "" : value)}
+                >
+                  <SelectTrigger data-testid="select-preview-playlist" className="flex-1">
+                    <SelectValue placeholder="Select a playlist" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Off</SelectItem>
+                    {playlists.map((playlist) => (
+                      <SelectItem key={playlist.id} value={playlist.id}>
+                        {playlist.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {isPlaylistPreview && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="shrink-0"
+                    onClick={() => setPreviewPlaylistId("")}
+                    data-testid="button-exit-playlist-preview"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              {isPlaylistPreview && (
+                <div className="text-xs text-muted-foreground">
+                  {previewMediaPlayerItems.length} item{previewMediaPlayerItems.length !== 1 ? "s" : ""} in playlist
+                </div>
+              )}
+            </div>
+
             {/* Playback Controls */}
             <div className="space-y-2">
               <Label className="text-sm font-medium">Playback</Label>
@@ -703,19 +798,27 @@ export default function SimulatorPage() {
             {/* Status Info */}
             <div className="space-y-2 pt-4 border-t">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Status</span>
+                <span className="text-muted-foreground">Mode</span>
                 <Badge
                   variant="secondary"
                   className={
-                    state.isPlaying
-                      ? "bg-green-500/10 text-green-600"
-                      : "bg-amber-500/10 text-amber-600"
+                    isPlaylistPreview
+                      ? "bg-violet-500/10 text-violet-600"
+                      : state.isPlaying
+                        ? "bg-green-500/10 text-green-600"
+                        : "bg-amber-500/10 text-amber-600"
                   }
                 >
-                  {state.isPlaying ? "Playing" : "Paused"}
+                  {isPlaylistPreview ? "Playlist Preview" : state.isPlaying ? "Playing" : "Paused"}
                 </Badge>
               </div>
-              {selectedLayout && (
+              {isPlaylistPreview && previewPlaylist && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Playlist</span>
+                  <span className="font-medium truncate max-w-[140px]" data-testid="text-preview-playlist-name">{previewPlaylist.name}</span>
+                </div>
+              )}
+              {!isPlaylistPreview && selectedLayout && (
                 <>
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">Layout</span>
@@ -766,8 +869,13 @@ export default function SimulatorPage() {
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base font-semibold flex items-center gap-2">
                   <Tv2 className="h-4 w-4" />
-                  Display Preview
-                  {selectedScreen?.canvasEnabled && (
+                  {isPlaylistPreview ? "Playlist Preview" : "Display Preview"}
+                  {isPlaylistPreview && previewPlaylist && (
+                    <Badge variant="secondary" className="text-[10px] ml-1 font-normal" data-testid="badge-playlist-preview">
+                      {previewPlaylist.name}
+                    </Badge>
+                  )}
+                  {!isPlaylistPreview && selectedScreen?.canvasEnabled && (
                     <Badge variant="outline" className="text-[10px] ml-1 font-normal" data-testid="badge-canvas-mode">
                       {state.canvasViewMode === "fullcanvas" ? "Full Canvas" : "Screen AOI"}
                     </Badge>
@@ -780,23 +888,35 @@ export default function SimulatorPage() {
               </div>
             </CardHeader>
             <CardContent className="p-4 player-container bg-muted/30 flex-1 min-h-0">
-              <PlayerDisplay
-                screen={selectedScreen || null}
-                profile={selectedProfile || null}
-                layout={selectedLayout || null}
-                state={state}
-                liveOverride={activeLiveOverride || null}
-                getZoneMedia={getZoneMedia}
-                getZoneMediaIndex={getZoneMediaIndex}
-                getPlaylistName={getPlaylistName}
-              />
+              {isPlaylistPreview && previewMediaPlayerItems.length === 0 ? (
+                <div className="w-full h-full flex items-center justify-center">
+                  <div className="text-center text-muted-foreground">
+                    <ListVideo className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                    <p className="text-lg font-medium">No items in playlist</p>
+                    <p className="text-sm">Add media items to this playlist to preview it</p>
+                  </div>
+                </div>
+              ) : (
+                <PlayerDisplay
+                  screen={isPlaylistPreview ? null : (selectedScreen || null)}
+                  profile={isPlaylistPreview ? null : (selectedProfile || null)}
+                  layout={isPlaylistPreview && previewSyntheticZone
+                    ? ({ zones: [previewSyntheticZone], aspectRatio: "16:9", name: previewPlaylist?.name || "Playlist Preview" } as LayoutTemplate)
+                    : (selectedLayout || null)}
+                  state={state}
+                  liveOverride={isPlaylistPreview ? null : (activeLiveOverride || null)}
+                  getZoneMedia={getZoneMedia}
+                  getZoneMediaIndex={getZoneMediaIndex}
+                  getPlaylistName={getPlaylistName}
+                />
+              )}
             </CardContent>
           </Card>
         </div>
       </div>
 
       {/* Zone Legend */}
-      {selectedLayout && ((selectedLayout.zones as LayoutZone[])?.length || 0) > 0 && (
+      {!isPlaylistPreview && selectedLayout && ((selectedLayout.zones as LayoutZone[])?.length || 0) > 0 && (
         <Card>
           <CardHeader className="py-3">
             <CardTitle className="text-base font-semibold flex items-center gap-2">

@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -48,7 +49,7 @@ import {
 } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
 import { useSiteFilteredQuery } from "@/hooks/use-site-context";
-import { Plus, MoreHorizontal, Pencil, Trash2, FolderOpen, Image, Calendar, ChevronDown, ChevronUp, ListVideo, Clock, Layers, GripVertical } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil, Trash2, FolderOpen, Image, Calendar, ChevronDown, ChevronUp, ListVideo, Clock, Layers, GripVertical, Play } from "lucide-react";
 import type { Playlist, Event, MediaAsset, PlaylistItem } from "@shared/schema";
 
 const playlistFormSchema = z.object({
@@ -413,6 +414,7 @@ function PlaylistItemsSection({
 
 function PlaylistCard({ playlist, event, mediaAssets, usedIn }: { playlist: Playlist; event?: Event; mediaAssets: MediaAsset[]; usedIn?: Array<{ blockId: string; blockName: string; layoutName?: string }> }) {
   const [editOpen, setEditOpen] = useState(false);
+  const [, navigate] = useLocation();
   const { toast } = useToast();
 
   const { data: cardItems = [] } = useQuery<PlaylistItem[]>({
@@ -636,6 +638,17 @@ function PlaylistCard({ playlist, event, mediaAssets, usedIn }: { playlist: Play
             <span>Used in: {usedIn.map(u => u.layoutName ? `${u.blockName} (${u.layoutName})` : u.blockName).join(", ")}</span>
           </div>
         )}
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full mt-2"
+          onClick={() => navigate(`/simulator?playlistId=${playlist.id}`)}
+          disabled={cardItems.length === 0}
+          data-testid={`button-preview-playlist-${playlist.id}`}
+        >
+          <Play className="mr-2 h-3.5 w-3.5" />
+          Preview in Simulator
+        </Button>
       </CardContent>
       <PlaylistItemsSection playlist={playlist} mediaAssets={mediaAssets} />
     </Card>
