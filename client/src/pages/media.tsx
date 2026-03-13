@@ -384,7 +384,7 @@ function MediaCard({
                 <img
                   src={getMediaPreviewUrl(asset)}
                   alt={asset.name}
-                  className="h-12 w-12 rounded-lg object-cover"
+                  className="h-12 w-12 rounded-lg object-contain"
                 />
               ) : (
                 getMediaIcon()
@@ -463,7 +463,7 @@ function MediaCard({
             <img
               src={getMediaPreviewUrl(asset)}
               alt={asset.name}
-              className="h-full w-full object-cover"
+              className="h-full w-full object-contain"
             />
           ) : (
             <div className="flex h-full items-center justify-center">
