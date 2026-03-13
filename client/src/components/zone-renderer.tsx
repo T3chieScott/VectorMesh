@@ -5004,6 +5004,7 @@ function MediaPlayerWidget({
   autoPlay = true,
   muted = true,
   shuffle = false,
+  isPlaying = true,
   providedMedia,
   mediaBaseUrl,
   deviceToken,
@@ -5016,6 +5017,7 @@ function MediaPlayerWidget({
   autoPlay?: boolean;
   muted?: boolean;
   shuffle?: boolean;
+  isPlaying?: boolean;
   providedMedia?: MediaAsset[];
   mediaBaseUrl?: string;
   deviceToken?: string;
@@ -5134,7 +5136,7 @@ function MediaPlayerWidget({
   }, [loop, transition, transitionDuration, getMediaType]);
 
   useEffect(() => {
-    if (!autoPlay || stopped) return;
+    if (!autoPlay || stopped || !isPlaying) return;
     const order = playOrder.current;
     if (order.length === 0) return;
 
@@ -5155,7 +5157,7 @@ function MediaPlayerWidget({
       if (timerRef.current) clearTimeout(timerRef.current);
       if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
     };
-  }, [autoPlay, stopped, currentIndex, advanceToNext, getMediaType]);
+  }, [autoPlay, stopped, isPlaying, currentIndex, advanceToNext, getMediaType]);
 
   const handleVideoEnded = useCallback(() => {
     if (!autoPlay || stopped) return;
@@ -5491,6 +5493,7 @@ export function ZoneRenderer({
             autoPlay={zone.mediaPlayerAutoPlay}
             muted={zone.mediaPlayerMuted}
             shuffle={zone.mediaPlayerShuffle}
+            isPlaying={isPlaying}
             providedMedia={media}
             mediaBaseUrl={mediaBaseUrl}
             deviceToken={deviceToken}

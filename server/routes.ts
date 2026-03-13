@@ -1852,8 +1852,11 @@ export async function registerRoutes(
   });
 
   // ============ PLAYLIST ITEMS ============
-  app.get("/api/playlists/:playlistId/items", requireAuth, async (req, res) => {
+  app.get("/api/playlists/:playlistId/items", requireAuth, loadUserContext, async (req, res) => {
     try {
+      if (!(await canAccessPlaylist(req, req.params.playlistId))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const items = await storage.getPlaylistItems(req.params.playlistId);
       res.json(items);
     } catch (error) {
