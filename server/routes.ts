@@ -2995,5 +2995,23 @@ export async function registerRoutes(
     }
   });
 
+  // Temporary endpoint to serve deployment files
+  app.get("/api/deploy-package", async (_req, res) => {
+    try {
+      const tarPath = path.join(os.tmpdir(), "upload-fix.tar.gz");
+      const exists = await fs.promises.access(tarPath).then(() => true).catch(() => false);
+      if (exists) {
+        res.setHeader("Content-Type", "application/gzip");
+        res.setHeader("Content-Disposition", "attachment; filename=upload-fix.tar.gz");
+        const stream = fs.createReadStream(tarPath);
+        stream.pipe(res);
+      } else {
+        res.status(404).json({ error: "Package not found" });
+      }
+    } catch (e) {
+      res.status(500).json({ error: "Failed to serve package" });
+    }
+  });
+
   return httpServer;
 }
