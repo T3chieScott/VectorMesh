@@ -1810,15 +1810,18 @@ export async function registerRoutes(
       const allVersions = await storage.getProgrammeVersions();
       let filteredVersions = allVersions;
       if (allowed) {
+        const programmes = await storage.getProgrammes();
         const events = await storage.getEvents();
         const allowedEventIds = new Set(events.filter(e => allowed.includes(e.clientId)).map(e => e.id));
-        filteredVersions = allVersions.filter(v => allowedEventIds.has(v.eventId));
+        const allowedProgrammeIds = new Set(programmes.filter(p => allowedEventIds.has(p.eventId)).map(p => p.id));
+        filteredVersions = allVersions.filter(v => allowedProgrammeIds.has(v.programmeId));
       }
       const allBlocksNested = await Promise.all(
         filteredVersions.map(v => storage.getScheduleBlocks(v.id))
       );
       const allBlocks = allBlocksNested.flat();
-      const usage: Record<string, Array<{ blockId: string; blockName: string }>> = {};
+      const layoutCache = new Map<string, string>();
+      const usage: Record<string, Array<{ blockId: string; blockName: string; layoutName?: string }>> = {};
       for (const block of allBlocks) {
         const zoneSources = (block.zoneSources as any[]) || [];
         for (const zs of zoneSources) {
@@ -1826,7 +1829,17 @@ export async function registerRoutes(
             if (!usage[zs.playlistId]) usage[zs.playlistId] = [];
             const already = usage[zs.playlistId].some(u => u.blockId === block.id);
             if (!already) {
-              usage[zs.playlistId].push({ blockId: block.id, blockName: block.name });
+              let layoutName: string | undefined;
+              if (block.layoutTemplateId) {
+                if (layoutCache.has(block.layoutTemplateId)) {
+                  layoutName = layoutCache.get(block.layoutTemplateId);
+                } else {
+                  const layout = await storage.getLayoutTemplate(block.layoutTemplateId);
+                  layoutName = layout?.name;
+                  if (layoutName) layoutCache.set(block.layoutTemplateId, layoutName);
+                }
+              }
+              usage[zs.playlistId].push({ blockId: block.id, blockName: block.name, layoutName });
             }
           }
         }
@@ -1849,8 +1862,22 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/playlists/:playlistId/items", requireAuth, async (req, res) => {
+  async function canAccessPlaylist(req: Request, playlistId: string): Promise<boolean> {
+    if (isAdmin(req)) return true;
+    const allowed = getAllowedClientIds(req);
+    if (!allowed) return false;
+    const playlist = await storage.getPlaylist(playlistId);
+    if (!playlist) return false;
+    if (!playlist.eventId) return true;
+    const event = await storage.getEvent(playlist.eventId);
+    return event ? allowed.includes(event.clientId) : false;
+  }
+
+  app.post("/api/playlists/:playlistId/items", requireAuth, loadUserContext, async (req, res) => {
     try {
+      if (!(await canAccessPlaylist(req, req.params.playlistId))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const data = insertPlaylistItemSchema.parse({
         ...req.body,
         playlistId: req.params.playlistId,
@@ -1863,13 +1890,15 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/playlist-items/:id", requireAuth, async (req, res) => {
+  app.patch("/api/playlist-items/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
+      const existing = await storage.getPlaylistItem(req.params.id);
+      if (!existing) return res.status(404).json({ error: "Playlist item not found" });
+      if (!(await canAccessPlaylist(req, existing.playlistId))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const data = insertPlaylistItemSchema.partial().parse(req.body);
       const item = await storage.updatePlaylistItem(req.params.id, data);
-      if (!item) {
-        return res.status(404).json({ error: "Playlist item not found" });
-      }
       res.json(item);
     } catch (error) {
       console.error("Error updating playlist item:", error);
@@ -1877,8 +1906,11 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/playlists/:playlistId/reorder", requireAuth, async (req, res) => {
+  app.post("/api/playlists/:playlistId/reorder", requireAuth, loadUserContext, async (req, res) => {
     try {
+      if (!(await canAccessPlaylist(req, req.params.playlistId))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const { itemIds } = req.body;
       if (!Array.isArray(itemIds)) {
         return res.status(400).json({ error: "itemIds must be an array" });
@@ -1894,8 +1926,13 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/playlist-items/:id", requireAuth, async (req, res) => {
+  app.delete("/api/playlist-items/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
+      const existing = await storage.getPlaylistItem(req.params.id);
+      if (!existing) return res.status(404).json({ error: "Playlist item not found" });
+      if (!(await canAccessPlaylist(req, existing.playlistId))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const deleted = await storage.deletePlaylistItem(req.params.id);
       if (!deleted) {
         return res.status(404).json({ error: "Playlist item not found" });

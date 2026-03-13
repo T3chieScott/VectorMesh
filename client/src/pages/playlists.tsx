@@ -411,7 +411,7 @@ function PlaylistItemsSection({
   );
 }
 
-function PlaylistCard({ playlist, event, mediaAssets, usedIn }: { playlist: Playlist; event?: Event; mediaAssets: MediaAsset[]; usedIn?: Array<{ blockId: string; blockName: string }> }) {
+function PlaylistCard({ playlist, event, mediaAssets, usedIn }: { playlist: Playlist; event?: Event; mediaAssets: MediaAsset[]; usedIn?: Array<{ blockId: string; blockName: string; layoutName?: string }> }) {
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
 
@@ -633,7 +633,7 @@ function PlaylistCard({ playlist, event, mediaAssets, usedIn }: { playlist: Play
         {usedIn && usedIn.length > 0 && (
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground" data-testid={`text-playlist-usage-${playlist.id}`}>
             <Layers className="h-3 w-3" />
-            <span>Used in: {usedIn.map(u => u.blockName).join(", ")}</span>
+            <span>Used in: {usedIn.map(u => u.layoutName ? `${u.blockName} (${u.layoutName})` : u.blockName).join(", ")}</span>
           </div>
         )}
       </CardContent>
@@ -787,7 +787,7 @@ export default function PlaylistsPage() {
     ...mediaQuery,
   });
 
-  const { data: usageData = {} } = useQuery<Record<string, Array<{ blockId: string; blockName: string }>>>({
+  const { data: usageData = {} } = useQuery<Record<string, Array<{ blockId: string; blockName: string; layoutName?: string }>>>({
     queryKey: ["/api/playlists/usage"],
   });
 
