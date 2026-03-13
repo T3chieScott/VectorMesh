@@ -11,6 +11,8 @@ import { generateVideoThumbnail } from "./thumbnail";
 import { setupAuth, isAuthenticated } from "./auth";
 import multer from "multer";
 import path from "path";
+import os from "os";
+import fs from "fs";
 import * as fileStorage from "./fileStorage";
 import { find as findTimezone } from "geo-tz";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert } from "./email";
@@ -435,9 +437,8 @@ export async function registerRoutes(
     }
   });
 
-  const os = await import("os");
   const uploadTmpDir = path.join(os.tmpdir(), "vectormesh-uploads");
-  await import("fs").then(f => f.promises.mkdir(uploadTmpDir, { recursive: true }));
+  await fs.promises.mkdir(uploadTmpDir, { recursive: true });
   const upload = multer({ storage: multer.diskStorage({ destination: uploadTmpDir }), limits: { fileSize: 500 * 1024 * 1024 } });
 
   const STALE_THRESHOLD_MS = 60000;
@@ -1383,13 +1384,16 @@ export async function registerRoutes(
     const tempPath = req.file?.path;
     const cleanupTemp = async () => {
       if (tempPath) {
-        try { await import("fs").then(f => f.promises.unlink(tempPath)); } catch {}
+        try { await fs.promises.unlink(tempPath); } catch {}
       }
     };
     try {
       if (!req.file || !tempPath) {
+        console.log("[upload] No file received in request");
         return res.status(400).json({ error: "No file provided" });
       }
+      console.log(`[upload] Received file: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(1)}MB) -> ${tempPath}`);
+
       const clientId = req.body.clientId;
       if (!clientId) {
         await cleanupTemp();
@@ -1405,6 +1409,7 @@ export async function registerRoutes(
         const maxSizeMb = client.maxUploadSizeMb ?? 100;
         const maxSizeBytes = maxSizeMb * 1024 * 1024;
         if (req.file.size > maxSizeBytes) {
+          console.log(`[upload] File ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(1)}MB) exceeds ${maxSizeMb}MB limit`);
           await cleanupTemp();
           return res.status(413).json({ error: `File size exceeds the ${maxSizeMb}MB limit for this site` });
         }
@@ -1417,6 +1422,7 @@ export async function registerRoutes(
         clientId,
       );
 
+      console.log(`[upload] File saved: ${req.file.originalname} -> ${filePath}`);
       res.json({
         filePath,
         originalName: req.file.originalname,
@@ -1425,7 +1431,7 @@ export async function registerRoutes(
       });
     } catch (error) {
       await cleanupTemp();
-      console.error("Error uploading file:", error);
+      console.error("[upload] Error uploading file:", error);
       res.status(500).json({ error: "Failed to upload file" });
     }
   });
