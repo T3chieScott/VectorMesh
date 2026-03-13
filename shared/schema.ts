@@ -141,6 +141,7 @@ export const screens = pgTable("screens", {
   isOnline: boolean("is_online").default(false),
   lastSeen: timestamp("last_seen"),
   ipAddress: text("ip_address"),
+  hostname: text("hostname"),
   hardwareClass: text("hardware_class"),
   currentEventId: varchar("current_event_id").references(() => events.id),
   fallbackLayoutId: varchar("fallback_layout_id").references(() => layoutTemplates.id, { onDelete: "set null" }),

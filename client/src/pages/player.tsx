@@ -111,7 +111,10 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
       const res = await fetch("/api/player/pair", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pairingCode: pairingCode.toUpperCase().trim() }),
+        body: JSON.stringify({ 
+          pairingCode: pairingCode.toUpperCase().trim(),
+          hardwareInfo: { hostname: window.location.hostname },
+        }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
@@ -317,6 +320,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             screenId,
+            hostname: window.location.hostname,
             temperature: null,
             storageFree: null,
             uptime: Math.floor(performance.now() / 1000),

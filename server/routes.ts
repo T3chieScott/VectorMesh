@@ -2033,6 +2033,7 @@ export async function registerRoutes(
         isOnline: true,
         lastSeen: new Date(),
         hardwareClass: hardwareInfo?.class || "raspberry_pi",
+        hostname: hardwareInfo?.hostname || null,
         ipAddress: req.ip,
         deviceToken,
       });
@@ -2052,7 +2053,14 @@ export async function registerRoutes(
       const screen = await storage.getScreen(data.screenId);
       const wasOffline = screen && !screen.isOnline;
 
-      await storage.updateScreen(data.screenId, { isOnline: true, lastSeen: new Date() });
+      const heartbeatUpdate: any = { isOnline: true, lastSeen: new Date() };
+      if (req.body.hostname) {
+        heartbeatUpdate.hostname = req.body.hostname;
+      }
+      if (req.ip) {
+        heartbeatUpdate.ipAddress = req.ip;
+      }
+      await storage.updateScreen(data.screenId, heartbeatUpdate);
 
       if (wasOffline && screen) {
         storage.deleteAlertHistory("screen_offline", screen.id).catch((err) =>
