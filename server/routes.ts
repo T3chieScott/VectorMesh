@@ -133,6 +133,7 @@ function logAudit(req: Request, action: string, entityType: string, entityId?: s
 }
 
 const pendingPlayerRefreshes = new Map<string, number>();
+const pendingScreenshotRequests = new Map<string, number>();
 const REFRESH_SIGNAL_TTL = 60_000;
 
 export async function registerRoutes(
@@ -1089,6 +1090,20 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error sending refresh signal:", error);
       res.status(500).json({ error: "Failed to send refresh signal" });
+    }
+  });
+
+  app.post("/api/screens/:id/request-screenshot", requireAuth, async (req, res) => {
+    try {
+      const screen = await storage.getScreen(req.params.id);
+      if (!screen) {
+        return res.status(404).json({ error: "Screen not found" });
+      }
+      pendingScreenshotRequests.set(screen.id, Date.now());
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error requesting screenshot:", error);
+      res.status(500).json({ error: "Failed to request screenshot" });
     }
   });
 
@@ -2418,6 +2433,15 @@ export async function registerRoutes(
         pendingPlayerRefreshes.delete(screen.id);
       }
 
+      let screenshotRequested = false;
+      const ssTs = pendingScreenshotRequests.get(screen.id);
+      if (ssTs && (Date.now() - ssTs) < REFRESH_SIGNAL_TTL) {
+        screenshotRequested = true;
+        pendingScreenshotRequests.delete(screen.id);
+      } else if (ssTs) {
+        pendingScreenshotRequests.delete(screen.id);
+      }
+
       res.json({
         screen,
         profile,
@@ -2431,6 +2455,7 @@ export async function registerRoutes(
         timestamp: now.toISOString(),
         refreshRequested,
         screenshotEnabled: screen.screenshotEnabled || false,
+        screenshotRequested,
       });
     } catch (error) {
       console.error("Error fetching player content:", error);

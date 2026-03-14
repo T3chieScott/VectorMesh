@@ -60,6 +60,7 @@ import {
   Lock,
   Unlock,
   Camera,
+  LayoutGrid,
 } from "lucide-react";
 import { useSiteContext } from "@/hooks/use-site-context";
 import { useAuth } from "@/hooks/use-auth";
@@ -420,6 +421,20 @@ function ScreenCard({
     },
   });
 
+  const requestScreenshotMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", `/api/screens/${screen.id}/request-screenshot`),
+    onSuccess: () => {
+      toast({ title: "Screenshot requested", description: "The player will capture within a few seconds." });
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/screens", screen.id, "screenshot"] });
+      }, 10000);
+    },
+    onError: () => {
+      toast({ title: "Failed to request screenshot", variant: "destructive" });
+    },
+  });
+
   const screenshotQuery = useQuery<{ screenshot: string | null; screenshotAt: string | null }>({
     queryKey: ["/api/screens", screen.id, "screenshot"],
     queryFn: async () => {
@@ -502,6 +517,24 @@ function ScreenCard({
                 )}
               </div>
             )}
+            {(() => {
+              const overrideLayout = activeOverride?.layoutTemplateId
+                ? layouts.find(l => l.id === activeOverride.layoutTemplateId)
+                : null;
+              const fallbackLayout = screen.fallbackLayoutId
+                ? layouts.find(l => l.id === screen.fallbackLayoutId)
+                : null;
+              const currentLayout = overrideLayout || fallbackLayout;
+              if (!currentLayout) return null;
+              return (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <LayoutGrid className="h-3 w-3" />
+                  <span>{currentLayout.name}</span>
+                  {overrideLayout && <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 text-amber-600 border-amber-600/30">Override</Badge>}
+                  {!overrideLayout && fallbackLayout && <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">Fallback</Badge>}
+                </div>
+              );
+            })()}
           </div>
         </div>
         <DropdownMenu>
@@ -803,11 +836,26 @@ function ScreenCard({
               <Camera className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Live Screenshot</span>
             </div>
-            <Switch
-              checked={screen.screenshotEnabled || false}
-              onCheckedChange={(checked) => toggleScreenshotMutation.mutate(checked)}
-              data-testid={`switch-screenshot-${screen.id}`}
-            />
+            <div className="flex items-center gap-2">
+              {screen.screenshotEnabled && screen.isOnline && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => requestScreenshotMutation.mutate()}
+                  disabled={requestScreenshotMutation.isPending}
+                  data-testid={`button-capture-screenshot-${screen.id}`}
+                >
+                  <Camera className="h-3 w-3 mr-1" />
+                  Capture Now
+                </Button>
+              )}
+              <Switch
+                checked={screen.screenshotEnabled || false}
+                onCheckedChange={(checked) => toggleScreenshotMutation.mutate(checked)}
+                data-testid={`switch-screenshot-${screen.id}`}
+              />
+            </div>
           </div>
         )}
         {screen.screenshotEnabled && (
