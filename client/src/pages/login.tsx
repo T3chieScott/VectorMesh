@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,13 @@ export default function LoginPage() {
   const [requiresTwoFactor, setRequiresTwoFactor] = useState(false);
   const [totpCode, setTotpCode] = useState("");
   const [verifying, setVerifying] = useState(false);
+  const verifyButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (totpCode.length === 6) {
+      verifyButtonRef.current?.focus();
+    }
+  }, [totpCode]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -183,6 +190,7 @@ export default function LoginPage() {
                       maxLength={6}
                       value={totpCode}
                       onChange={(val) => setTotpCode(val)}
+                      autoFocus
                       data-testid="input-2fa-login-code"
                     >
                       <InputOTPGroup>
@@ -196,7 +204,7 @@ export default function LoginPage() {
                     </InputOTP>
                   </div>
 
-                  <Button type="submit" className="w-full" disabled={verifying || totpCode.length !== 6} data-testid="button-verify-2fa-login">
+                  <Button ref={verifyButtonRef} type="submit" className="w-full" disabled={verifying || totpCode.length !== 6} data-testid="button-verify-2fa-login">
                     {verifying ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />

@@ -7499,7 +7499,6 @@ function InteractiveLayoutPreview({
     if (!zone || !containerRef.current) return;
 
     if (e.shiftKey) {
-      toggleZoneSelection(zoneId);
       return;
     } else {
       if (!selectedZoneIds.has(zoneId)) {
@@ -7867,7 +7866,7 @@ function InteractiveLayoutPreview({
             </div>
             
             <div
-              className={`absolute inset-0 transition-all pointer-events-auto ${
+              className={`absolute inset-0 transition-all pointer-events-auto zone-crosshatch ${
                 isSelected 
                   ? zone.type === "shape"
                     ? isAnchor ? "shadow-lg shadow-amber-400/30" : "shadow-lg shadow-cyan-400/30"
@@ -7885,7 +7884,10 @@ function InteractiveLayoutPreview({
                   : undefined}
               onClick={(e) => {
                 e.stopPropagation();
-                if (e.shiftKey) return;
+                if (e.shiftKey) {
+                  toggleZoneSelection(zone.id);
+                  return;
+                }
                 setSelectedZoneId(zone.id);
               }}
               onDoubleClick={(e) => {

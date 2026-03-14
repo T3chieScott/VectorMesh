@@ -3179,12 +3179,14 @@ function YouTubeLiveWidget({ url, mute = true }: { url?: string; mute?: boolean 
     if (!parsed) return null;
     const params = new URLSearchParams({
       autoplay: "1",
-      mute: mute ? "1" : "0",
+      mute: "1",
       controls: "0",
       rel: "0",
       modestbranding: "1",
       playsinline: "1",
       loop: "1",
+      enablejsapi: "1",
+      origin: window.location.origin,
     });
     if (parsed.type === "channel") {
       return `https://www.youtube.com/embed/live_stream?channel=${parsed.id}&${params.toString()}`;
@@ -3203,13 +3205,20 @@ function YouTubeLiveWidget({ url, mute = true }: { url?: string; mute?: boolean 
   }
 
   return (
-    <iframe
-      src={embedSrc}
-      className="w-full h-full border-0"
-      allow="autoplay; encrypted-media; picture-in-picture"
-      allowFullScreen
-      data-testid="iframe-youtube-live"
-    />
+    <div className="relative w-full h-full">
+      <iframe
+        src={embedSrc}
+        className="w-full h-full border-0"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allowFullScreen
+        data-testid="iframe-youtube-live"
+      />
+      {!mute && (
+        <div className="absolute bottom-2 left-2 right-2 bg-black/70 text-white/80 text-xs px-2 py-1 rounded text-center" data-testid="text-youtube-mute-notice">
+          Browsers require videos to be muted for autoplay. Video will start muted.
+        </div>
+      )}
+    </div>
   );
 }
 
