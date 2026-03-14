@@ -115,6 +115,7 @@ import {
   Radar,
   Lock,
   Unlock,
+  MonitorPlay,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -418,11 +419,12 @@ const zoneTypeLabels: Record<string, string> = {
   spacex_launch: "SpaceX Launch Countdown",
   earthquakes: "Global Earthquakes",
   aircraft_radar: "Aircraft Overhead Radar",
+  youtube_live: "YouTube Live",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar", "youtube_live"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(0.01).max(100),
@@ -643,6 +645,8 @@ const zoneFormSchema = z.object({
   aircraftScrollSpeed: z.number().min(5).max(200).optional(),
   aircraftItemsPerPage: z.number().min(1).max(50).optional(),
   aircraftPageDuration: z.number().min(1).max(60).optional(),
+  youtubeUrl: z.string().optional(),
+  youtubeMute: z.boolean().optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
     id: z.string(),
@@ -1273,6 +1277,8 @@ function ZoneEditorDialog({
       newsScrollSpeed: 50,
       newsItemCount: 10,
       newsTextSize: 24,
+      youtubeUrl: "",
+      youtubeMute: true,
       textContent: "",
       textFontSize: 24,
       textAlign: "center",
@@ -1493,6 +1499,8 @@ function ZoneEditorDialog({
           newsItemCount: zone.newsItemCount || 10,
           newsTextSize: typeof zone.newsTextSize === 'number' ? zone.newsTextSize : 
             (zone.newsTextSize === 'small' ? 14 : zone.newsTextSize === 'large' ? 36 : 24),
+          youtubeUrl: zone.youtubeUrl || "",
+          youtubeMute: zone.youtubeMute !== false,
           textContent: zone.textContent || "",
           textFontSize: typeof zone.textFontSize === 'number' ? zone.textFontSize :
             (zone.textFontSize === 'small' ? 14 : zone.textFontSize === 'large' ? 36 : zone.textFontSize === 'xlarge' ? 48 : 24),
@@ -1710,6 +1718,8 @@ function ZoneEditorDialog({
           newsScrollSpeed: 50,
           newsItemCount: 10,
           newsTextSize: 24,
+          youtubeUrl: "",
+          youtubeMute: true,
           textContent: "",
           textFontSize: 24,
           textAlign: "center",
@@ -7107,6 +7117,51 @@ function ZoneEditorDialog({
                     )}
                   />
                 )}
+              </div>
+            )}
+
+            {form.watch("type") === "youtube_live" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <MonitorPlay className="h-4 w-4" />
+                  YouTube Live Settings
+                </div>
+                <FormField
+                  control={form.control}
+                  name="youtubeUrl"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>YouTube URL or Video ID</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="https://www.youtube.com/watch?v=... or video ID"
+                          {...field}
+                          data-testid="input-youtube-url"
+                        />
+                      </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        Paste a YouTube URL (watch, live, or short link) or just the video ID
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="youtubeMute"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-3 space-y-0">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value !== false}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-youtube-mute"
+                        />
+                      </FormControl>
+                      <FormLabel className="font-normal">Mute audio</FormLabel>
+                    </FormItem>
+                  )}
+                />
               </div>
             )}
 

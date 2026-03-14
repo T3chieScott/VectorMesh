@@ -38,6 +38,7 @@ import {
   Rocket,
   Globe,
   Radar,
+  MonitorPlay,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
@@ -83,6 +84,7 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   spacex_launch: Rocket,
   earthquakes: Globe,
   aircraft_radar: Radar,
+  youtube_live: MonitorPlay,
 };
 
 function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
@@ -3137,6 +3139,57 @@ function AircraftRadarWidget({
   );
 }
 
+function extractYouTubeVideoId(input?: string): string | null {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    if (url.hostname === "youtu.be") return url.pathname.slice(1) || null;
+    if (url.hostname.includes("youtube.com")) {
+      const v = url.searchParams.get("v");
+      if (v) return v;
+      const pathParts = url.pathname.split("/").filter(Boolean);
+      if (pathParts[0] === "live" || pathParts[0] === "embed" || pathParts[0] === "shorts") {
+        return pathParts[1] || null;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function YouTubeLiveWidget({ url, mute = true }: { url?: string; mute?: boolean }) {
+  const videoId = useMemo(() => extractYouTubeVideoId(url), [url]);
+
+  if (!videoId) {
+    return (
+      <div className="h-full w-full bg-black/90 flex flex-col items-center justify-center gap-2 text-white/60">
+        <MonitorPlay className="h-8 w-8" />
+        <span className="text-sm">No YouTube URL configured</span>
+      </div>
+    );
+  }
+
+  const params = new URLSearchParams({
+    autoplay: "1",
+    mute: mute ? "1" : "0",
+    controls: "0",
+    rel: "0",
+    modestbranding: "1",
+    playsinline: "1",
+  });
+
+  return (
+    <iframe
+      src={`https://www.youtube.com/embed/${videoId}?${params.toString()}`}
+      className="w-full h-full border-0"
+      allow="autoplay; encrypted-media; picture-in-picture"
+      allowFullScreen
+      data-testid="iframe-youtube-live"
+    />
+  );
+}
+
 function SpaceXLaunchWidget({
   refreshInterval = 60,
   fontSize = 14,
@@ -5649,6 +5702,13 @@ export function ZoneRenderer({
             showLinks={zone.spacexShowLinks}
             showLaunchpad={zone.spacexShowLaunchpad}
             deviceToken={deviceToken}
+          />
+        );
+      case "youtube_live":
+        return (
+          <YouTubeLiveWidget
+            url={zone.youtubeUrl}
+            mute={zone.youtubeMute}
           />
         );
       default:
