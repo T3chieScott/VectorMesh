@@ -7867,7 +7867,7 @@ function InteractiveLayoutPreview({
             </div>
             
             <div
-              className={`absolute inset-0 transition-all pointer-events-auto zone-crosshatch ${
+              className={`absolute inset-0 transition-all pointer-events-auto ${
                 isSelected 
                   ? zone.type === "shape"
                     ? isAnchor ? "shadow-lg shadow-amber-400/30" : "shadow-lg shadow-cyan-400/30"
