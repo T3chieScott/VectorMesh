@@ -1121,8 +1121,9 @@ export default function ScreensPage() {
     const now = new Date();
     return liveOverrides.find(o => {
       if (!o.isActive || new Date(o.endTime) <= now) return false;
+      if (new Date(o.startTime) > now) return false;
       const targets = o.targets as any[] | undefined;
-      if (!targets || targets.length === 0) return false;
+      if (!targets || targets.length === 0) return true;
       return targets.some(t => 
         t.type === "screen" && t.id === screenId
       );
