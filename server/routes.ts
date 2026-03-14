@@ -1093,11 +1093,14 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/screens/:id/request-screenshot", requireAuth, async (req, res) => {
+  app.post("/api/screens/:id/request-screenshot", requireAuth, loadUserContext, async (req, res) => {
     try {
       const screen = await storage.getScreen(req.params.id);
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
+      }
+      if (screen.clientId && !canAccessClient(req, screen.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
       }
       pendingScreenshotRequests.set(screen.id, Date.now());
       res.json({ success: true });

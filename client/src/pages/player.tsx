@@ -221,6 +221,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const [scale, setScale] = useState(1);
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previousMediaUrlsRef = useRef<string[]>([]);
+  const captureScreenshotRef = useRef<(() => Promise<void>) | null>(null);
 
   useEffect(() => {
     const goOffline = () => setIsOffline(true);
@@ -287,6 +288,10 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       if (data.refreshRequested) {
         window.location.reload();
         return;
+      }
+
+      if (data.screenshotRequested && containerRef.current && captureScreenshotRef.current) {
+        captureScreenshotRef.current();
       }
 
       if (newHash !== contentHashRef.current) {
@@ -363,17 +368,15 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   }, [screenId, token]);
 
   useEffect(() => {
+    captureScreenshotRef.current = captureScreenshot;
+  }, [captureScreenshot]);
+
+  useEffect(() => {
     if (!content?.screenshotEnabled || !containerRef.current) return;
     captureScreenshot();
     const interval = setInterval(captureScreenshot, 60000);
     return () => clearInterval(interval);
   }, [content?.screenshotEnabled, captureScreenshot]);
-
-  useEffect(() => {
-    if (content?.screenshotRequested) {
-      captureScreenshot();
-    }
-  }, [content?.screenshotRequested, captureScreenshot]);
 
   const layout = content?.layout || null;
   const rawZones = (layout?.zones as LayoutZone[]) || [];
