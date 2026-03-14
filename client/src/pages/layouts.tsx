@@ -393,6 +393,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   spacex_launch: Rocket,
   earthquakes: Globe,
   aircraft_radar: Radar,
+  youtube_live: MonitorPlay,
 };
 
 const zoneTypeLabels: Record<string, string> = {
