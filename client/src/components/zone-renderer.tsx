@@ -3175,16 +3175,8 @@ function parseYouTubeInput(input?: string): { type: "video"; id: string } | { ty
 function YouTubeLiveWidget({ url, mute = true }: { url?: string; mute?: boolean }) {
   const parsed = useMemo(() => parseYouTubeInput(url), [url]);
 
-  if (!parsed) {
-    return (
-      <div className="h-full w-full bg-black/90 flex flex-col items-center justify-center gap-2 text-white/60">
-        <MonitorPlay className="h-8 w-8" />
-        <span className="text-sm">No YouTube URL configured</span>
-      </div>
-    );
-  }
-
   const embedSrc = useMemo(() => {
+    if (!parsed) return null;
     const params = new URLSearchParams({
       autoplay: "1",
       mute: mute ? "1" : "0",
@@ -3192,15 +3184,23 @@ function YouTubeLiveWidget({ url, mute = true }: { url?: string; mute?: boolean 
       rel: "0",
       modestbranding: "1",
       playsinline: "1",
+      loop: "1",
     });
     if (parsed.type === "channel") {
-      params.set("loop", "1");
       return `https://www.youtube.com/embed/live_stream?channel=${parsed.id}&${params.toString()}`;
     }
-    params.set("loop", "1");
     params.set("playlist", parsed.id);
     return `https://www.youtube.com/embed/${parsed.id}?${params.toString()}`;
   }, [parsed, mute]);
+
+  if (!embedSrc) {
+    return (
+      <div className="h-full w-full bg-black/90 flex flex-col items-center justify-center gap-2 text-white/60">
+        <MonitorPlay className="h-8 w-8" />
+        <span className="text-sm">No YouTube URL configured</span>
+      </div>
+    );
+  }
 
   return (
     <iframe
