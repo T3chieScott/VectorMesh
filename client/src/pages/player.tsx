@@ -290,7 +290,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         return;
       }
 
-      if (data.screenshotRequested && containerRef.current && captureScreenshotRef.current) {
+      if (data.screenshotRequested && data.screenshotEnabled && containerRef.current && captureScreenshotRef.current) {
         captureScreenshotRef.current();
       }
 
