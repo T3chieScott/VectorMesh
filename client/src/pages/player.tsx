@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
 import { ZoneRenderer, getAspectRatioDimensions } from "@/components/zone-renderer";
+import html2canvas from "html2canvas";
 
 interface PlayerContentData {
   screen: Screen;
@@ -13,6 +14,7 @@ interface PlayerContentData {
   liveOverride: LiveOverride | null;
   event: any;
   timestamp: string;
+  screenshotEnabled?: boolean;
 }
 
 const TOKEN_KEY = "signage_device_token";
@@ -338,6 +340,36 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     };
   }, [screenId, token]);
 
+  useEffect(() => {
+    const screenshotEnabled = content?.screenshotEnabled;
+    if (!screenshotEnabled || !containerRef.current) return;
+
+    const captureScreenshot = async () => {
+      try {
+        if (!containerRef.current) return;
+        const canvas = await html2canvas(containerRef.current, {
+          scale: 0.3,
+          useCORS: true,
+          allowTaint: true,
+          logging: false,
+          backgroundColor: "#000000",
+        });
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.6);
+        await playerFetch(`/api/player/${screenId}/screenshot`, token, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: dataUrl }),
+        });
+      } catch (err) {
+        console.warn("Screenshot capture failed:", err);
+      }
+    };
+
+    captureScreenshot();
+    const interval = setInterval(captureScreenshot, 60000);
+    return () => clearInterval(interval);
+  }, [content?.screenshotEnabled, screenId, token]);
+
   const layout = content?.layout || null;
   const rawZones = (layout?.zones as LayoutZone[]) || [];
   
@@ -520,6 +552,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         }}
       >
         <div
+          ref={containerRef}
           style={{
             width: `${trueWidth}px`,
             height: `${trueHeight}px`,

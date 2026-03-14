@@ -151,6 +151,9 @@ export const screens = pgTable("screens", {
   canvasX: integer("canvas_x").default(0),
   canvasY: integer("canvas_y").default(0),
   locked: boolean("locked").default(false),
+  screenshotEnabled: boolean("screenshot_enabled").default(false),
+  lastScreenshot: text("last_screenshot"),
+  lastScreenshotAt: timestamp("last_screenshot_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

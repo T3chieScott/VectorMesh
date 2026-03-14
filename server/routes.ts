@@ -962,7 +962,7 @@ export async function registerRoutes(
         }
         filtered = filtered.filter(s => s.clientId === clientId);
       }
-      res.json(filtered.map(({ deviceToken, ...s }) => s));
+      res.json(filtered.map(({ deviceToken, lastScreenshot, ...s }) => s));
     } catch (error) {
       console.error("Error fetching screens:", error);
       res.status(500).json({ error: "Failed to fetch screens" });
@@ -2236,6 +2236,45 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/player/:screenId/screenshot", validateDeviceToken, async (req, res) => {
+    try {
+      const { screenId } = req.params;
+      const { image } = req.body;
+      if (!image || typeof image !== "string") {
+        return res.status(400).json({ error: "Missing image data" });
+      }
+      const maxSize = 500 * 1024;
+      if (image.length > maxSize) {
+        return res.status(400).json({ error: "Screenshot too large" });
+      }
+      await storage.updateScreen(screenId, {
+        lastScreenshot: image,
+        lastScreenshotAt: new Date(),
+      });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error saving screenshot:", error);
+      res.status(500).json({ error: "Failed to save screenshot" });
+    }
+  });
+
+  app.get("/api/screens/:id/screenshot", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const screen = await storage.getScreen(req.params.id);
+      if (!screen) return res.status(404).json({ error: "Screen not found" });
+      if (screen.clientId && !canAccessClient(req, screen.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      res.json({
+        screenshot: screen.lastScreenshot || null,
+        screenshotAt: screen.lastScreenshotAt || null,
+      });
+    } catch (error) {
+      console.error("Error fetching screenshot:", error);
+      res.status(500).json({ error: "Failed to fetch screenshot" });
+    }
+  });
+
   app.get("/api/player/:screenId/manifest", validateDeviceToken, async (req, res) => {
     try {
       const screen = await storage.getScreen(req.params.screenId);
@@ -2391,6 +2430,7 @@ export async function registerRoutes(
         event,
         timestamp: now.toISOString(),
         refreshRequested,
+        screenshotEnabled: screen.screenshotEnabled || false,
       });
     } catch (error) {
       console.error("Error fetching player content:", error);

@@ -59,6 +59,8 @@ import {
   Grid3X3,
   Lock,
   Unlock,
+  Camera,
+  Eye,
 } from "lucide-react";
 import { useSiteContext } from "@/hooks/use-site-context";
 import { useAuth } from "@/hooks/use-auth";
@@ -406,6 +408,31 @@ function ScreenCard({
       toast({ title: "Pairing code copied to clipboard" });
     }
   };
+
+  const [screenshotViewOpen, setScreenshotViewOpen] = useState(false);
+
+  const toggleScreenshotMutation = useMutation({
+    mutationFn: (enabled: boolean) =>
+      apiRequest("PATCH", `/api/screens/${screen.id}`, { screenshotEnabled: enabled }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
+      toast({ title: screen.screenshotEnabled ? "Screenshots disabled" : "Screenshots enabled" });
+    },
+    onError: () => {
+      toast({ title: "Failed to toggle screenshots", variant: "destructive" });
+    },
+  });
+
+  const screenshotQuery = useQuery<{ screenshot: string | null; screenshotAt: string | null }>({
+    queryKey: ["/api/screens", screen.id, "screenshot"],
+    queryFn: async () => {
+      const res = await fetch(`/api/screens/${screen.id}/screenshot`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch screenshot");
+      return res.json();
+    },
+    enabled: screenshotViewOpen && !!screen.screenshotEnabled,
+    refetchInterval: screenshotViewOpen ? 30000 : false,
+  });
 
   return (
     <Card className={`hover-elevate transition-all ${screen.locked ? "ring-1 ring-amber-500/30" : ""}`}>
@@ -771,6 +798,56 @@ function ScreenCard({
             >
               <Copy className="h-4 w-4" />
             </Button>
+          </div>
+        )}
+        {screen.isPaired && (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Camera className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Live Screenshot</span>
+            </div>
+            <div className="flex items-center gap-2">
+              {screen.screenshotEnabled && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setScreenshotViewOpen(!screenshotViewOpen)}
+                  data-testid={`button-view-screenshot-${screen.id}`}
+                >
+                  <Eye className="h-3 w-3 mr-1" />
+                  {screenshotViewOpen ? "Hide" : "View"}
+                </Button>
+              )}
+              <Switch
+                checked={screen.screenshotEnabled || false}
+                onCheckedChange={(checked) => toggleScreenshotMutation.mutate(checked)}
+                data-testid={`switch-screenshot-${screen.id}`}
+              />
+            </div>
+          </div>
+        )}
+        {screenshotViewOpen && screen.screenshotEnabled && (
+          <div className="rounded-lg overflow-hidden border border-border bg-black">
+            {screenshotQuery.data?.screenshot ? (
+              <div>
+                <img
+                  src={screenshotQuery.data.screenshot}
+                  alt={`${screen.name} live screenshot`}
+                  className="w-full aspect-video object-contain"
+                  data-testid={`img-screenshot-${screen.id}`}
+                />
+                {screenshotQuery.data.screenshotAt && (
+                  <p className="text-[10px] text-muted-foreground px-2 py-1 bg-muted/50">
+                    Captured {formatDistanceToNow(new Date(screenshotQuery.data.screenshotAt), { addSuffix: true })}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="w-full aspect-video flex items-center justify-center text-xs text-muted-foreground">
+                {screenshotQuery.isLoading ? "Loading..." : "No screenshot available yet"}
+              </div>
+            )}
           </div>
         )}
         {screen.lastSeen && (
