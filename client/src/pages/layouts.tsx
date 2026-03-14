@@ -7262,7 +7262,7 @@ function ZoneListItem({
 
 function LayoutPreview({ zones }: { zones: LayoutZone[] }) {
   return (
-    <div className="relative w-full aspect-video bg-slate-900 rounded-lg overflow-hidden">
+    <div className="relative w-full aspect-video bg-slate-900 rounded-lg overflow-hidden border-2 border-gray-300 dark:border-gray-500">
       {zones.map((zone) => {
         const Icon = zoneTypeIcons[zone.type] || Grid3X3;
         return (
@@ -7803,6 +7803,7 @@ function InteractiveLayoutPreview({
       >
         {/* Outer container sized to the scaled dimensions */}
         <div 
+          className="border-2 border-gray-300 dark:border-gray-500 shadow-lg"
           style={{ 
             width: scaleInfo.displayWidth, 
             height: scaleInfo.displayHeight,
