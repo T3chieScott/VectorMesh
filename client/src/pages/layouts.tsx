@@ -7141,7 +7141,7 @@ function ZoneEditorDialog({
                         />
                       </FormControl>
                       <p className="text-xs text-muted-foreground">
-                        Paste a YouTube URL (watch, live, or short link) or just the video ID
+                        Paste a YouTube URL (watch, live, or short link) or just the video ID. For channels, use youtube.com/channel/UC... or a direct live video URL.
                       </p>
                       <FormMessage />
                     </FormItem>
