@@ -102,6 +102,8 @@ import {
   AlignVerticalJustifyEnd,
   AlignHorizontalSpaceAround,
   AlignVerticalSpaceAround,
+  AlignCenterHorizontal,
+  AlignCenterVertical,
   AlignLeft,
   AlignCenter,
   AlignRight,
@@ -9456,6 +9458,17 @@ function LivePreviewPanel({
     }
   };
 
+  const centreToScreen = (direction: "center-screen-h" | "center-screen-v") => {
+    if (selectedZones.length < 1) return;
+    selectedZones.forEach(z => {
+      if (direction === "center-screen-h") {
+        onZoneUpdate(z.id, { x: Math.round((50 - z.width / 2) * 10) / 10 });
+      } else {
+        onZoneUpdate(z.id, { y: Math.round((50 - z.height / 2) * 10) / 10 });
+      }
+    });
+  };
+
   return (
     <div className="h-full flex flex-col">
       <div className="p-4 border-b">
@@ -9466,28 +9479,41 @@ function LivePreviewPanel({
         <p className="text-xs text-muted-foreground mt-1">
           Click to select, drag to move, Shift+click to multi-select, double-click to edit
         </p>
-        {selectedZones.length >= 2 && (
+        {selectedZones.length >= 1 && (
           <div className="flex items-center gap-1 mt-2 flex-wrap" data-testid="alignment-toolbar">
-            <span className="text-xs text-muted-foreground mr-1">{selectedZones.length} selected (anchor: {anchorZone?.name || "—"}):</span>
-            <Button variant="outline" size="icon" onClick={() => alignZones("left")} title="Align left" data-testid="button-align-left">
-              <AlignHorizontalJustifyStart className="h-3.5 w-3.5" />
+            <span className="text-xs text-muted-foreground mr-1">
+              {selectedZones.length} selected{selectedZones.length >= 2 ? ` (anchor: ${anchorZone?.name || "—"})` : ""}:
+            </span>
+            <Button variant="outline" size="icon" onClick={() => centreToScreen("center-screen-h")} title="Centre on screen horizontally" data-testid="button-center-screen-h">
+              <AlignCenterHorizontal className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="outline" size="icon" onClick={() => alignZones("center-h")} title="Align center horizontally" data-testid="button-align-center-h">
-              <AlignHorizontalJustifyCenter className="h-3.5 w-3.5" />
+            <Button variant="outline" size="icon" onClick={() => centreToScreen("center-screen-v")} title="Centre on screen vertically" data-testid="button-center-screen-v">
+              <AlignCenterVertical className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="outline" size="icon" onClick={() => alignZones("right")} title="Align right" data-testid="button-align-right">
-              <AlignHorizontalJustifyEnd className="h-3.5 w-3.5" />
-            </Button>
-            <div className="w-px h-5 bg-border mx-0.5" />
-            <Button variant="outline" size="icon" onClick={() => alignZones("top")} title="Align top" data-testid="button-align-top">
-              <AlignVerticalJustifyStart className="h-3.5 w-3.5" />
-            </Button>
-            <Button variant="outline" size="icon" onClick={() => alignZones("center-v")} title="Align center vertically" data-testid="button-align-center-v">
-              <AlignVerticalJustifyCenter className="h-3.5 w-3.5" />
-            </Button>
-            <Button variant="outline" size="icon" onClick={() => alignZones("bottom")} title="Align bottom" data-testid="button-align-bottom">
-              <AlignVerticalJustifyEnd className="h-3.5 w-3.5" />
-            </Button>
+            {selectedZones.length >= 2 && (
+              <>
+                <div className="w-px h-5 bg-border mx-0.5" />
+                <Button variant="outline" size="icon" onClick={() => alignZones("left")} title="Align left" data-testid="button-align-left">
+                  <AlignHorizontalJustifyStart className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant="outline" size="icon" onClick={() => alignZones("center-h")} title="Align center horizontally" data-testid="button-align-center-h">
+                  <AlignHorizontalJustifyCenter className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant="outline" size="icon" onClick={() => alignZones("right")} title="Align right" data-testid="button-align-right">
+                  <AlignHorizontalJustifyEnd className="h-3.5 w-3.5" />
+                </Button>
+                <div className="w-px h-5 bg-border mx-0.5" />
+                <Button variant="outline" size="icon" onClick={() => alignZones("top")} title="Align top" data-testid="button-align-top">
+                  <AlignVerticalJustifyStart className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant="outline" size="icon" onClick={() => alignZones("center-v")} title="Align center vertically" data-testid="button-align-center-v">
+                  <AlignVerticalJustifyCenter className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant="outline" size="icon" onClick={() => alignZones("bottom")} title="Align bottom" data-testid="button-align-bottom">
+                  <AlignVerticalJustifyEnd className="h-3.5 w-3.5" />
+                </Button>
+              </>
+            )}
             {selectedZones.length >= 3 && (
               <>
                 <div className="w-px h-5 bg-border mx-0.5" />
