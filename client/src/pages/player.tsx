@@ -347,43 +347,42 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   }, [screenId, token]);
 
   const captureScreenshot = useCallback(async () => {
-    const overlays: HTMLDivElement[] = [];
     try {
       if (!containerRef.current) return;
-
-      const iframes = containerRef.current.querySelectorAll('iframe[src*="youtube.com/embed"]');
-      iframes.forEach((iframe) => {
-        const parent = iframe.parentElement;
-        if (!parent) return;
-        const overlay = document.createElement("div");
-        overlay.style.cssText = `
-          position: absolute; inset: 0; z-index: 9999;
-          background: #282828;
-          display: flex; flex-direction: column;
-          align-items: center; justify-content: center; gap: 8px;
-        `;
-        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        svg.setAttribute("viewBox", "0 0 68 48");
-        svg.setAttribute("width", "68");
-        svg.setAttribute("height", "48");
-        svg.innerHTML = '<path d="M66.52 7.74c-.78-2.93-2.49-5.41-5.42-6.19C55.79.13 34 0 34 0S12.21.13 6.9 1.55C3.97 2.33 2.27 4.81 1.48 7.74.06 13.05 0 24 0 24s.06 10.95 1.48 16.26c.78 2.93 2.49 5.41 5.42 6.19C12.21 47.87 34 48 34 48s21.79-.13 27.1-1.55c2.93-.78 4.64-3.26 5.42-6.19C67.94 34.95 68 24 68 24s-.06-10.95-1.48-16.26z" fill="#FF0000"/><path d="M45 24L27 14v20" fill="#fff"/>';
-        overlay.appendChild(svg);
-        const label = document.createElement("div");
-        label.style.cssText = "color: #aaa; font-size: 14px; font-family: sans-serif;";
-        label.textContent = "YouTube Live";
-        overlay.appendChild(label);
-        const computed = window.getComputedStyle(parent);
-        if (computed.position === "static") parent.style.position = "relative";
-        parent.appendChild(overlay);
-        overlays.push(overlay);
-      });
-
       const canvas = await html2canvas(containerRef.current, {
         scale: 0.3,
         useCORS: true,
         allowTaint: true,
         logging: false,
         backgroundColor: "#000000",
+        onclone: (clonedDoc: Document) => {
+          const iframes = clonedDoc.querySelectorAll('iframe[src*="youtube.com/embed"]');
+          iframes.forEach((iframe) => {
+            const parent = iframe.parentElement;
+            if (!parent) return;
+            const overlay = clonedDoc.createElement("div");
+            overlay.style.cssText = `
+              position: absolute; inset: 0; z-index: 9999;
+              background: #282828;
+              display: flex; flex-direction: column;
+              align-items: center; justify-content: center; gap: 8px;
+            `;
+            const svg = clonedDoc.createElementNS("http://www.w3.org/2000/svg", "svg");
+            svg.setAttribute("viewBox", "0 0 68 48");
+            svg.setAttribute("width", "68");
+            svg.setAttribute("height", "48");
+            svg.innerHTML = '<path d="M66.52 7.74c-.78-2.93-2.49-5.41-5.42-6.19C55.79.13 34 0 34 0S12.21.13 6.9 1.55C3.97 2.33 2.27 4.81 1.48 7.74.06 13.05 0 24 0 24s.06 10.95 1.48 16.26c.78 2.93 2.49 5.41 5.42 6.19C12.21 47.87 34 48 34 48s21.79-.13 27.1-1.55c2.93-.78 4.64-3.26 5.42-6.19C67.94 34.95 68 24 68 24s-.06-10.95-1.48-16.26z" fill="#FF0000"/><path d="M45 24L27 14v20" fill="#fff"/>';
+            overlay.appendChild(svg);
+            const label = clonedDoc.createElement("div");
+            label.style.cssText = "color: #aaa; font-size: 14px; font-family: sans-serif;";
+            label.textContent = "YouTube Live";
+            overlay.appendChild(label);
+            if (parent.style.position === "" || parent.style.position === "static") {
+              parent.style.position = "relative";
+            }
+            parent.appendChild(overlay);
+          });
+        },
       });
       const dataUrl = canvas.toDataURL("image/jpeg", 0.6);
       await playerFetch(`/api/player/${screenId}/screenshot`, token, {
@@ -393,8 +392,6 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       });
     } catch (err) {
       console.warn("Screenshot capture failed:", err);
-    } finally {
-      overlays.forEach((o) => o.remove());
     }
   }, [screenId, token]);
 
