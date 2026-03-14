@@ -60,7 +60,6 @@ import {
   Lock,
   Unlock,
   Camera,
-  Eye,
 } from "lucide-react";
 import { useSiteContext } from "@/hooks/use-site-context";
 import { useAuth } from "@/hooks/use-auth";
@@ -409,8 +408,6 @@ function ScreenCard({
     }
   };
 
-  const [screenshotViewOpen, setScreenshotViewOpen] = useState(false);
-
   const toggleScreenshotMutation = useMutation({
     mutationFn: (enabled: boolean) =>
       apiRequest("PATCH", `/api/screens/${screen.id}`, { screenshotEnabled: enabled }),
@@ -430,8 +427,8 @@ function ScreenCard({
       if (!res.ok) throw new Error("Failed to fetch screenshot");
       return res.json();
     },
-    enabled: screenshotViewOpen && !!screen.screenshotEnabled,
-    refetchInterval: screenshotViewOpen ? 30000 : false,
+    enabled: !!screen.screenshotEnabled,
+    refetchInterval: screen.screenshotEnabled ? 30000 : false,
   });
 
   return (
@@ -806,28 +803,14 @@ function ScreenCard({
               <Camera className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Live Screenshot</span>
             </div>
-            <div className="flex items-center gap-2">
-              {screen.screenshotEnabled && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => setScreenshotViewOpen(!screenshotViewOpen)}
-                  data-testid={`button-view-screenshot-${screen.id}`}
-                >
-                  <Eye className="h-3 w-3 mr-1" />
-                  {screenshotViewOpen ? "Hide" : "View"}
-                </Button>
-              )}
-              <Switch
-                checked={screen.screenshotEnabled || false}
-                onCheckedChange={(checked) => toggleScreenshotMutation.mutate(checked)}
-                data-testid={`switch-screenshot-${screen.id}`}
-              />
-            </div>
+            <Switch
+              checked={screen.screenshotEnabled || false}
+              onCheckedChange={(checked) => toggleScreenshotMutation.mutate(checked)}
+              data-testid={`switch-screenshot-${screen.id}`}
+            />
           </div>
         )}
-        {screenshotViewOpen && screen.screenshotEnabled && (
+        {screen.screenshotEnabled && (
           <div className="rounded-lg overflow-hidden border border-border bg-black">
             {screenshotQuery.data?.screenshot ? (
               <div>
