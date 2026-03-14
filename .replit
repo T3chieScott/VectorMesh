@@ -54,3 +54,7 @@ integrations = ["javascript_object_storage:2.0.0", "javascript_log_in_with_repli
 [userenv.shared]
 OPENSKY_CLIENT_ID = "scott@treetops.me-api-client"
 OPENSKY_CLIENT_SECRET = "OajgltiLKEKxmHpgHeNuLZVwAKLCmlnr"
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000
