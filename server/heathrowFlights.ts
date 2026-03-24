@@ -286,6 +286,25 @@ function normaliseAeroDataBoxFlight(raw: any, direction: "arrival" | "departure"
   const rawStatus = safeString(raw.status);
   const callSign = safeString(raw.callSign) || null;
 
+  let status = normaliseStatus(rawStatus);
+
+  if (status.code === "delayed") {
+    if (actualTime) {
+      status = direction === "departure"
+        ? { code: "departed", label: "Departed" }
+        : { code: "arrived", label: "Landed" };
+    } else if (scheduledTime) {
+      const bestEstimate = revisedTime || predictedTime;
+      if (bestEstimate) {
+        const delayMs = new Date(bestEstimate).getTime() - new Date(scheduledTime).getTime();
+        const delayMins = delayMs / 60000;
+        if (delayMins < 15) {
+          status = { code: "scheduled", label: "Expected" };
+        }
+      }
+    }
+  }
+
   return {
     id: `${flightNumber}-${scheduledTime || Date.now()}`,
     flightNumber,
@@ -309,7 +328,7 @@ function normaliseAeroDataBoxFlight(raw: any, direction: "arrival" | "departure"
     estimatedTime,
     predictedTime,
     actualTime,
-    status: normaliseStatus(rawStatus),
+    status,
     rawStatus,
     codeshareStatus: safeString(raw.codeshareStatus) || null,
     aircraftModel: safeString(raw.aircraft?.model) || null,
