@@ -1166,7 +1166,55 @@ function ZoneEditorDialog({
   const { toast } = useToast();
   const isEditing = !!zone;
   const [isGeocoding, setIsGeocoding] = useState(false);
+  const [geocodeResults, setGeocodeResults] = useState<Array<{ name: string; country: string; admin1?: string; lat: number; lng: number }>>([]);
+  const [geocodeTarget, setGeocodeTarget] = useState<"weather" | "forecast" | "qr" | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+
+  const doGeocodeSearch = async (location: string, target: "weather" | "forecast" | "qr") => {
+    if (!location?.trim()) {
+      toast({ title: "Enter a location first", variant: "destructive" });
+      return;
+    }
+    setIsGeocoding(true);
+    setGeocodeResults([]);
+    setGeocodeTarget(target);
+    try {
+      const res = await fetch(`/api/widgets/geocode?q=${encodeURIComponent(location)}`);
+      if (!res.ok) throw new Error("Geocoding failed");
+      const data = await res.json();
+      if (!data.results || data.results.length === 0) {
+        throw new Error("No results found");
+      }
+      if (data.results.length === 1) {
+        selectGeocodeResult(data.results[0], target);
+      } else {
+        setGeocodeResults(data.results);
+      }
+    } catch {
+      toast({ title: "Could not find location", variant: "destructive" });
+      setGeocodeTarget(null);
+    } finally {
+      setIsGeocoding(false);
+    }
+  };
+
+  const selectGeocodeResult = (result: { name: string; country: string; admin1?: string; lat: number; lng: number }, target: "weather" | "forecast" | "qr") => {
+    const displayName = result.admin1
+      ? `${result.name}, ${result.admin1}, ${result.country}`
+      : `${result.name}, ${result.country}`;
+    if (target === "weather" || target === "forecast") {
+      form.setValue("weatherLocation", displayName);
+      form.setValue("weatherLat", result.lat);
+      form.setValue("weatherLng", result.lng);
+    } else if (target === "qr") {
+      form.setValue("qrLocationName", displayName);
+      form.setValue("qrLocationLat", result.lat);
+      form.setValue("qrLocationLng", result.lng);
+    }
+    toast({ title: `Found: ${displayName}` });
+    setGeocodeResults([]);
+    setGeocodeTarget(null);
+  };
 
   const mediaQuery = useSiteFilteredQuery<MediaAsset[]>("/api/media");
   const eventsQuery = useSiteFilteredQuery<Event[]>("/api/events");
@@ -2817,37 +2865,10 @@ function ZoneEditorDialog({
                             variant="outline"
                             size="icon"
                             disabled={isGeocoding || !field.value?.trim()}
-                            onClick={async () => {
-                              const location = field.value;
-                              if (!location?.trim()) {
-                                toast({ title: "Enter a location first", variant: "destructive" });
-                                return;
-                              }
-                              setIsGeocoding(true);
-                              try {
-                                const res = await fetch(`/api/widgets/geocode?q=${encodeURIComponent(location)}`);
-                                if (!res.ok) throw new Error("Geocoding failed");
-                                const data = await res.json();
-                                if (!data.results || data.results.length === 0) {
-                                  throw new Error("No results found");
-                                }
-                                const result = data.results[0];
-                                const displayName = result.admin1 
-                                  ? `${result.name}, ${result.admin1}, ${result.country}` 
-                                  : `${result.name}, ${result.country}`;
-                                form.setValue("weatherLocation", displayName);
-                                form.setValue("weatherLat", result.lat);
-                                form.setValue("weatherLng", result.lng);
-                                toast({ title: `Found: ${displayName}` });
-                              } catch {
-                                toast({ title: "Could not find location", variant: "destructive" });
-                              } finally {
-                                setIsGeocoding(false);
-                              }
-                            }}
+                            onClick={() => doGeocodeSearch(field.value, "weather")}
                             data-testid="button-geocode"
                           >
-                            {isGeocoding ? (
+                            {isGeocoding && geocodeTarget === "weather" ? (
                               <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                             ) : (
                               <MapPin className="h-4 w-4" />
@@ -2855,6 +2876,24 @@ function ZoneEditorDialog({
                           </Button>
                         </div>
                       </FormControl>
+                      {geocodeResults.length > 0 && geocodeTarget === "weather" && (
+                        <div className="mt-1 border rounded-md bg-popover shadow-md max-h-48 overflow-y-auto" data-testid="geocode-results-weather">
+                          {geocodeResults.map((r, i) => {
+                            const label = r.admin1 ? `${r.name}, ${r.admin1}, ${r.country}` : `${r.name}, ${r.country}`;
+                            return (
+                              <button
+                                key={i}
+                                type="button"
+                                className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors border-b last:border-b-0"
+                                onClick={() => selectGeocodeResult(r, "weather")}
+                                data-testid={`geocode-result-weather-${i}`}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                       <FormMessage />
                     </FormItem>
                   )}
@@ -3898,37 +3937,10 @@ function ZoneEditorDialog({
                                 variant="outline"
                                 size="icon"
                                 disabled={isGeocoding || !field.value?.trim()}
-                                onClick={async () => {
-                                  const location = field.value;
-                                  if (!location?.trim()) {
-                                    toast({ title: "Enter a location first", variant: "destructive" });
-                                    return;
-                                  }
-                                  setIsGeocoding(true);
-                                  try {
-                                    const res = await fetch(`/api/widgets/geocode?q=${encodeURIComponent(location)}`);
-                                    if (!res.ok) throw new Error("Geocoding failed");
-                                    const data = await res.json();
-                                    if (!data.results || data.results.length === 0) {
-                                      throw new Error("No results found");
-                                    }
-                                    const result = data.results[0];
-                                    const displayName = result.admin1 
-                                      ? `${result.name}, ${result.admin1}, ${result.country}` 
-                                      : `${result.name}, ${result.country}`;
-                                    form.setValue("qrLocationName", displayName);
-                                    form.setValue("qrLocationLat", result.lat);
-                                    form.setValue("qrLocationLng", result.lng);
-                                    toast({ title: `Found: ${displayName}` });
-                                  } catch {
-                                    toast({ title: "Could not find location", variant: "destructive" });
-                                  } finally {
-                                    setIsGeocoding(false);
-                                  }
-                                }}
+                                onClick={() => doGeocodeSearch(field.value, "qr")}
                                 data-testid="button-qr-location-geocode"
                               >
-                                {isGeocoding ? (
+                                {isGeocoding && geocodeTarget === "qr" ? (
                                   <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                                 ) : (
                                   <MapPin className="h-4 w-4" />
@@ -3936,6 +3948,24 @@ function ZoneEditorDialog({
                               </Button>
                             </div>
                           </FormControl>
+                          {geocodeResults.length > 0 && geocodeTarget === "qr" && (
+                            <div className="mt-1 border rounded-md bg-popover shadow-md max-h-48 overflow-y-auto" data-testid="geocode-results-qr">
+                              {geocodeResults.map((r, i) => {
+                                const label = r.admin1 ? `${r.name}, ${r.admin1}, ${r.country}` : `${r.name}, ${r.country}`;
+                                return (
+                                  <button
+                                    key={i}
+                                    type="button"
+                                    className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors border-b last:border-b-0"
+                                    onClick={() => selectGeocodeResult(r, "qr")}
+                                    data-testid={`geocode-result-qr-${i}`}
+                                  >
+                                    {label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                           <FormDescription>
                             Type a location and click the pin to find coordinates
                           </FormDescription>
@@ -6254,37 +6284,10 @@ function ZoneEditorDialog({
                             variant="outline"
                             size="icon"
                             disabled={isGeocoding || !field.value?.trim()}
-                            onClick={async () => {
-                              const location = field.value;
-                              if (!location?.trim()) {
-                                toast({ title: "Enter a location first", variant: "destructive" });
-                                return;
-                              }
-                              setIsGeocoding(true);
-                              try {
-                                const res = await fetch(`/api/widgets/geocode?q=${encodeURIComponent(location)}`);
-                                if (!res.ok) throw new Error("Geocoding failed");
-                                const data = await res.json();
-                                if (!data.results || data.results.length === 0) {
-                                  throw new Error("No results found");
-                                }
-                                const result = data.results[0];
-                                const displayName = result.admin1
-                                  ? `${result.name}, ${result.admin1}, ${result.country}`
-                                  : `${result.name}, ${result.country}`;
-                                form.setValue("weatherLocation", displayName);
-                                form.setValue("weatherLat", result.lat);
-                                form.setValue("weatherLng", result.lng);
-                                toast({ title: `Found: ${displayName}` });
-                              } catch {
-                                toast({ title: "Could not find location", variant: "destructive" });
-                              } finally {
-                                setIsGeocoding(false);
-                              }
-                            }}
+                            onClick={() => doGeocodeSearch(field.value, "forecast")}
                             data-testid="button-forecast-geocode"
                           >
-                            {isGeocoding ? (
+                            {isGeocoding && geocodeTarget === "forecast" ? (
                               <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                             ) : (
                               <MapPin className="h-4 w-4" />
@@ -6292,6 +6295,24 @@ function ZoneEditorDialog({
                           </Button>
                         </div>
                       </FormControl>
+                      {geocodeResults.length > 0 && geocodeTarget === "forecast" && (
+                        <div className="mt-1 border rounded-md bg-popover shadow-md max-h-48 overflow-y-auto" data-testid="geocode-results-forecast">
+                          {geocodeResults.map((r, i) => {
+                            const label = r.admin1 ? `${r.name}, ${r.admin1}, ${r.country}` : `${r.name}, ${r.country}`;
+                            return (
+                              <button
+                                key={i}
+                                type="button"
+                                className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors border-b last:border-b-0"
+                                onClick={() => selectGeocodeResult(r, "forecast")}
+                                data-testid={`geocode-result-forecast-${i}`}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                       <FormMessage />
                     </FormItem>
                   )}
