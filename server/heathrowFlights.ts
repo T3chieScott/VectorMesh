@@ -301,7 +301,11 @@ function normaliseAeroDataBoxFlight(raw: any, direction: "arrival" | "departure"
         if (delayMins < 15) {
           status = { code: "scheduled", label: "Expected" };
         }
+      } else {
+        status = { code: "scheduled", label: "Expected" };
       }
+    } else {
+      status = { code: "scheduled", label: "Expected" };
     }
   }
 
