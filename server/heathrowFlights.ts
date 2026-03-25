@@ -301,16 +301,16 @@ function normaliseAeroDataBoxFlight(raw: any, direction: "arrival" | "departure"
       const elapsedMins = (nowMs - schedMs) / 60000;
       const bestEstimate = revisedTime || predictedTime;
 
-      if (elapsedMins > 90) {
-        status = terminalStatus;
-      } else if (bestEstimate) {
+      if (bestEstimate) {
         const delayMs = new Date(bestEstimate).getTime() - schedMs;
         const delayMins = delayMs / 60000;
         if (delayMins >= 15) {
-          // keep "Delayed"
+          // keep "Delayed" — confirmed significant delay
         } else {
           status = { code: "scheduled", label: "Expected" };
         }
+      } else if (elapsedMins > 90) {
+        status = terminalStatus;
       } else {
         status = { code: "scheduled", label: "Expected" };
       }
