@@ -8075,8 +8075,8 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
       ...JSON.parse(JSON.stringify(clipboard)),
       id: crypto.randomUUID(),
       name: `${clipboard.name} (copy)`,
-      x: Math.min(clipboard.x + 2, 100 - clipboard.width),
-      y: Math.min(clipboard.y + 2, 100 - clipboard.height),
+      x: (clipboard.x + clipboard.width <= 100) ? clipboard.x : Math.max(0, (100 - clipboard.width) / 2),
+      y: (clipboard.y + clipboard.height <= 100) ? clipboard.y : Math.max(0, (100 - clipboard.height) / 2),
     };
     const updated = [...zones, newZone];
     setDraftZones(updated);
