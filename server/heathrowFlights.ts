@@ -289,16 +289,26 @@ function normaliseAeroDataBoxFlight(raw: any, direction: "arrival" | "departure"
   let status = normaliseStatus(rawStatus);
 
   if (status.code === "delayed") {
+    const terminalStatus = direction === "departure"
+      ? { code: "departed", label: "Departed" } as FlightStatus
+      : { code: "arrived", label: "Landed" } as FlightStatus;
+
     if (actualTime) {
-      status = direction === "departure"
-        ? { code: "departed", label: "Departed" }
-        : { code: "arrived", label: "Landed" };
+      status = terminalStatus;
     } else if (scheduledTime) {
+      const nowMs = Date.now();
+      const schedMs = new Date(scheduledTime).getTime();
+      const elapsedMins = (nowMs - schedMs) / 60000;
       const bestEstimate = revisedTime || predictedTime;
-      if (bestEstimate) {
-        const delayMs = new Date(bestEstimate).getTime() - new Date(scheduledTime).getTime();
+
+      if (elapsedMins > 90) {
+        status = terminalStatus;
+      } else if (bestEstimate) {
+        const delayMs = new Date(bestEstimate).getTime() - schedMs;
         const delayMins = delayMs / 60000;
-        if (delayMins < 15) {
+        if (delayMins >= 15) {
+          // keep "Delayed"
+        } else {
           status = { code: "scheduled", label: "Expected" };
         }
       } else {
