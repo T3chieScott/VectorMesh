@@ -332,52 +332,48 @@ function SortablePlaylistItem({
     ? `/api/media/${mediaAsset.id}/thumbnail`
     : null;
 
+  const displayDuration = item.duration
+    || (!isLayout && mediaAsset?.mediaType === "video" && mediaAsset?.duration ? mediaAsset.duration : null);
+
   return (
-    <div ref={setNodeRef} style={style} className="flex items-center gap-2 px-2 py-2 rounded-lg border bg-card hover:bg-muted/40 transition-colors" data-testid={`playlist-item-row-${item.id}`}>
-      <button {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing p-1 text-muted-foreground hover:text-foreground flex-shrink-0" data-testid={`drag-handle-${item.id}`}>
-        <GripVertical className="h-4 w-4" />
+    <div ref={setNodeRef} style={style} className="flex items-center gap-2 px-2.5 py-1.5 rounded-md border bg-card/60 hover:bg-muted/40 transition-colors" data-testid={`playlist-item-row-${item.id}`}>
+      <button {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:text-muted-foreground flex-shrink-0" data-testid={`drag-handle-${item.id}`}>
+        <GripVertical className="h-3.5 w-3.5" />
       </button>
-      <div className={`w-9 h-9 rounded-md flex items-center justify-center overflow-hidden flex-shrink-0 ${isLayout ? "bg-primary/10 border border-primary/20" : "bg-muted border"}`}>
+      <div className={`w-8 h-8 rounded flex items-center justify-center overflow-hidden flex-shrink-0 ${isLayout ? "bg-primary/10" : "bg-muted"}`}>
         {isLayout ? (
-          <LayoutGrid className="h-4 w-4 text-primary" />
+          <LayoutGrid className="h-3.5 w-3.5 text-primary" />
         ) : thumbnailUrl ? (
           <img src={thumbnailUrl} alt="" className="w-full h-full object-cover" />
         ) : (
-          <Image className="h-4 w-4 text-muted-foreground" />
+          <Image className="h-3.5 w-3.5 text-muted-foreground" />
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate" data-testid={`text-item-name-${item.id}`}>
+        <p className="text-sm font-medium leading-tight truncate" data-testid={`text-item-name-${item.id}`}>
           {isLayout ? (layoutTemplate?.name || "Unknown layout") : (mediaAsset?.name || "Unknown media")}
         </p>
-        <div className="flex items-center gap-1.5 mt-0.5">
+        <div className="flex items-center gap-1.5">
           {isLayout ? (
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-normal">Layout</Badge>
+            <span className="text-[10px] text-muted-foreground">Layout{layoutTemplate?.aspectRatio ? ` · ${layoutTemplate.aspectRatio}` : ""}</span>
           ) : mediaAsset?.mediaType ? (
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-normal capitalize">{mediaAsset.mediaType}</Badge>
+            <span className="text-[10px] text-muted-foreground capitalize">{mediaAsset.mediaType}</span>
           ) : null}
-          {isLayout && layoutTemplate?.aspectRatio && (
-            <span className="text-[10px] text-muted-foreground">{layoutTemplate.aspectRatio}</span>
+          {displayDuration && (
+            <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
+              · <Clock className="h-2.5 w-2.5" />
+              {formatDuration(displayDuration)}
+              {!item.duration && mediaAsset?.mediaType === "video" ? " (full)" : ""}
+            </span>
           )}
-          {item.duration ? (
-            <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
-              <Clock className="h-3 w-3" />
-              {formatDuration(item.duration)}
-            </span>
-          ) : !isLayout && mediaAsset?.mediaType === "video" && mediaAsset?.duration ? (
-            <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
-              <Clock className="h-3 w-3" />
-              {formatDuration(mediaAsset.duration)}
-            </span>
-          ) : null}
         </div>
       </div>
-      <div className="flex items-center gap-0.5 flex-shrink-0">
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onEdit} data-testid={`button-edit-item-${item.id}`}>
-          <Pencil className="h-3.5 w-3.5" />
+      <div className="flex items-center flex-shrink-0">
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit} data-testid={`button-edit-item-${item.id}`}>
+          <Pencil className="h-3 w-3" />
         </Button>
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onDelete} data-testid={`button-delete-item-${item.id}`}>
-          <Trash2 className="h-3.5 w-3.5 text-destructive" />
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onDelete} data-testid={`button-delete-item-${item.id}`}>
+          <Trash2 className="h-3 w-3 text-destructive" />
         </Button>
       </div>
     </div>
@@ -480,7 +476,7 @@ function PlaylistItemsSection({
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="p-4 space-y-3 border-t bg-muted/30">
+          <div className="px-3 py-3 space-y-2 border-t bg-muted/20">
             {sortedItems.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-2">
                 No items yet. Add media or layouts to this playlist.
@@ -488,7 +484,7 @@ function PlaylistItemsSection({
             ) : (
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                 <SortableContext items={sortedItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
-                  <div className="space-y-2">
+                  <div className="space-y-1">
                     {sortedItems.map((item) => (
                       <SortablePlaylistItem
                         key={item.id}

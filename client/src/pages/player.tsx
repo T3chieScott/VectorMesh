@@ -450,14 +450,19 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     if (!isLayoutRotation || layoutRotationItems.length <= 1) return;
     if (layoutRotationTimerRef.current) clearTimeout(layoutRotationTimerRef.current);
     const currentItem = layoutRotationItems[layoutRotationIndex % layoutRotationItems.length];
-    const duration = (currentItem?.duration || 30) * 1000;
+    let durationSec = currentItem?.duration || 0;
+    if (!durationSec && currentItem?.mediaAssetId) {
+      const asset = content?.media?.find((m: MediaAsset) => m.id === currentItem.mediaAssetId);
+      if (asset?.duration) durationSec = asset.duration;
+    }
+    if (!durationSec) durationSec = 30;
     layoutRotationTimerRef.current = setTimeout(() => {
       setLayoutRotationIndex(prev => (prev + 1) % layoutRotationItems.length);
-    }, duration);
+    }, durationSec * 1000);
     return () => {
       if (layoutRotationTimerRef.current) clearTimeout(layoutRotationTimerRef.current);
     };
-  }, [isLayoutRotation, layoutRotationIndex, layoutRotationItems]);
+  }, [isLayoutRotation, layoutRotationIndex, layoutRotationItems, content?.media]);
 
   const zones = useMemo(() => {
     if (isLayoutRotation) return rawZones;
