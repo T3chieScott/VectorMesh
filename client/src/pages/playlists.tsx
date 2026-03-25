@@ -268,17 +268,31 @@ function ItemEditorDialog({
                     {itemType === "layout" ? " — how long to show this layout" : ""}
                   </FormLabel>
                   <FormControl>
-                    <Input
-                      type="number"
-                      placeholder={itemType === "layout" ? "30" : (isVideo ? (selectedAsset?.duration ? `Video length: ${formatDuration(selectedAsset.duration)}` : "Full video length") : "10")}
-                      {...field}
-                      value={field.value ?? ""}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        field.onChange(val === "" ? undefined : (parseInt(val) || undefined));
-                      }}
-                      data-testid="input-item-duration"
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        type="number"
+                        placeholder={itemType === "layout" ? "30" : (isVideo ? (selectedAsset?.duration ? `Video length: ${formatDuration(selectedAsset.duration)}` : "Full video length") : "10")}
+                        {...field}
+                        value={field.value ?? ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          field.onChange(val === "" ? undefined : (parseInt(val) || undefined));
+                        }}
+                        data-testid="input-item-duration"
+                      />
+                      {field.value != null && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="shrink-0 text-muted-foreground"
+                          onClick={() => field.onChange(undefined)}
+                          data-testid="button-clear-duration"
+                        >
+                          Clear
+                        </Button>
+                      )}
+                    </div>
                   </FormControl>
                   {itemType === "media" && isVideo && !field.value && (
                     <p className="text-xs text-muted-foreground">Leave empty to play the full video</p>
