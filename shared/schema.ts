@@ -623,7 +623,8 @@ export type Playlist = typeof playlists.$inferSelect;
 export const playlistItems = pgTable("playlist_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   playlistId: varchar("playlist_id").notNull().references(() => playlists.id, { onDelete: "cascade" }),
-  mediaAssetId: varchar("media_asset_id").notNull().references(() => mediaAssets.id, { onDelete: "cascade" }),
+  mediaAssetId: varchar("media_asset_id").references(() => mediaAssets.id, { onDelete: "cascade" }),
+  layoutTemplateId: varchar("layout_template_id").references(() => layoutTemplates.id, { onDelete: "cascade" }),
   order: integer("order").default(0),
   duration: integer("duration"),
 });
@@ -631,9 +632,13 @@ export const playlistItems = pgTable("playlist_items", {
 export const playlistItemsRelations = relations(playlistItems, ({ one }) => ({
   playlist: one(playlists, { fields: [playlistItems.playlistId], references: [playlists.id] }),
   mediaAsset: one(mediaAssets, { fields: [playlistItems.mediaAssetId], references: [mediaAssets.id] }),
+  layoutTemplate: one(layoutTemplates, { fields: [playlistItems.layoutTemplateId], references: [layoutTemplates.id] }),
 }));
 
-export const insertPlaylistItemSchema = createInsertSchema(playlistItems).omit({ id: true });
+export const insertPlaylistItemSchema = createInsertSchema(playlistItems).omit({ id: true }).extend({
+  mediaAssetId: z.string().nullable().optional(),
+  layoutTemplateId: z.string().nullable().optional(),
+});
 export const updatePlaylistItemSchema = insertPlaylistItemSchema.partial().extend({
   duration: z.number().int().nullable().optional(),
 });

@@ -10,6 +10,7 @@ interface PlayerContentData {
   media: MediaAsset[];
   playlists: Playlist[];
   playlistItems: Record<string, PlaylistItem[]>;
+  layoutTemplates?: Record<string, LayoutTemplate>;
   zoneSources?: Array<{ zoneId: string; type: string; playlistId?: string }>;
   liveOverride: LiveOverride | null;
   event: any;
@@ -216,6 +217,8 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const [zoneMediaIndices, setZoneMediaIndices] = useState<Record<string, number>>({});
   const [weatherTimezone, setWeatherTimezone] = useState<string | undefined>(undefined);
   const [authError, setAuthError] = useState(false);
+  const [layoutRotationIndex, setLayoutRotationIndex] = useState(0);
+  const layoutRotationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentHashRef = useRef<string>("");
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
@@ -259,6 +262,18 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       }
     }
 
+    if (data.layoutTemplates) {
+      for (const lt of Object.values(data.layoutTemplates)) {
+        const ltZones = (lt.zones as LayoutZone[]) || [];
+        for (const zone of ltZones) {
+          if (zone.mediaId) addMediaUrl(zone.mediaId);
+          if (zone.montageMediaIds) {
+            for (const id of zone.montageMediaIds) addMediaUrl(id);
+          }
+        }
+      }
+    }
+
     return [...new Set(urls)];
   }, [token]);
 
@@ -282,6 +297,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         liveOverrideActive: data.liveOverride?.isActive,
         mediaIds: data.media.map((m: any) => m.id).sort(),
         playlistItems: data.playlistItems,
+        layoutTemplates: data.layoutTemplates,
         zoneSources: data.zoneSources,
       });
 
@@ -406,26 +422,63 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     return () => clearInterval(interval);
   }, [content?.screenshotEnabled, captureScreenshot]);
 
-  const layout = content?.layout || null;
+  const layoutRotationItems = useMemo(() => {
+    if (!content?.playlistItems || !content?.layoutTemplates) return [];
+    if (!content?.zoneSources || content.zoneSources.length === 0) return [];
+    for (const source of content.zoneSources) {
+      if (source.type !== "playlist" || !source.playlistId) continue;
+      const items = content.playlistItems[source.playlistId] || [];
+      const layoutItems = items
+        .filter(pi => pi.layoutTemplateId && content.layoutTemplates?.[pi.layoutTemplateId])
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      if (layoutItems.length > 0) return layoutItems;
+    }
+    return [];
+  }, [content?.zoneSources, content?.playlistItems, content?.layoutTemplates]);
+
+  const isLayoutRotation = layoutRotationItems.length > 0;
+
+  const activeLayoutItem = isLayoutRotation ? layoutRotationItems[layoutRotationIndex % layoutRotationItems.length] : null;
+  const activeRotationLayout = activeLayoutItem?.layoutTemplateId && content?.layoutTemplates?.[activeLayoutItem.layoutTemplateId]
+    ? content.layoutTemplates[activeLayoutItem.layoutTemplateId]
+    : null;
+
+  const layout = isLayoutRotation ? (activeRotationLayout || content?.layout || null) : (content?.layout || null);
   const rawZones = (layout?.zones as LayoutZone[]) || [];
-  
+
+  useEffect(() => {
+    if (!isLayoutRotation || layoutRotationItems.length <= 1) return;
+    if (layoutRotationTimerRef.current) clearTimeout(layoutRotationTimerRef.current);
+    const currentItem = layoutRotationItems[layoutRotationIndex % layoutRotationItems.length];
+    const duration = (currentItem?.duration || 30) * 1000;
+    layoutRotationTimerRef.current = setTimeout(() => {
+      setLayoutRotationIndex(prev => (prev + 1) % layoutRotationItems.length);
+    }, duration);
+    return () => {
+      if (layoutRotationTimerRef.current) clearTimeout(layoutRotationTimerRef.current);
+    };
+  }, [isLayoutRotation, layoutRotationIndex, layoutRotationItems]);
+
   const zones = useMemo(() => {
+    if (isLayoutRotation) return rawZones;
     if (!content?.zoneSources || content.zoneSources.length === 0) return rawZones;
     return rawZones.map(zone => {
       const source = content.zoneSources?.find(zs => zs.zoneId === zone.id);
       if (!source || source.type !== "playlist" || !source.playlistId) return zone;
       const playlistItemsList = content.playlistItems?.[source.playlistId] || [];
       if (playlistItemsList.length === 0) return zone;
-      const mediaPlayerItems = playlistItemsList
+      const mediaOnlyItems = playlistItemsList.filter(pi => pi.mediaAssetId && !pi.layoutTemplateId);
+      if (mediaOnlyItems.length === 0) return zone;
+      const mediaPlayerItems = mediaOnlyItems
         .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
         .map(pi => ({
           id: pi.id,
-          mediaAssetId: pi.mediaAssetId,
+          mediaAssetId: pi.mediaAssetId!,
           duration: pi.duration ?? null,
         }));
       return { ...zone, mediaPlayerItems };
     });
-  }, [rawZones, content?.zoneSources, content?.playlistItems]);
+  }, [rawZones, isLayoutRotation, content?.zoneSources, content?.playlistItems]);
 
   useEffect(() => {
     const weatherZone = zones.find(z => z.type === "weather" && z.weatherLat && z.weatherLng);

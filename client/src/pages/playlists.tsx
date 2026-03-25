@@ -49,8 +49,8 @@ import {
 } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
 import { useSiteFilteredQuery } from "@/hooks/use-site-context";
-import { Plus, MoreHorizontal, Pencil, Trash2, FolderOpen, Image, Calendar, ChevronDown, ChevronUp, ListVideo, Clock, Layers, GripVertical, Play } from "lucide-react";
-import type { Playlist, Event, MediaAsset, PlaylistItem } from "@shared/schema";
+import { Plus, MoreHorizontal, Pencil, Trash2, FolderOpen, Image, Calendar, ChevronDown, ChevronUp, ListVideo, Clock, Layers, GripVertical, Play, LayoutGrid } from "lucide-react";
+import type { Playlist, Event, MediaAsset, PlaylistItem, LayoutTemplate } from "@shared/schema";
 
 const playlistFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -60,11 +60,23 @@ const playlistFormSchema = z.object({
 
 type PlaylistFormValues = z.infer<typeof playlistFormSchema>;
 
-const itemFormSchema = z.object({
+const mediaItemFormSchema = z.object({
+  itemType: z.literal("media"),
   mediaAssetId: z.string().min(1, "Media is required"),
+  layoutTemplateId: z.string().optional(),
   duration: z.number().min(1, "Duration must be at least 1 second").optional(),
   order: z.number().min(0).optional(),
 });
+
+const layoutItemFormSchema = z.object({
+  itemType: z.literal("layout"),
+  mediaAssetId: z.string().optional(),
+  layoutTemplateId: z.string().min(1, "Layout is required"),
+  duration: z.number().min(1, "Duration must be at least 1 second").optional(),
+  order: z.number().min(0).optional(),
+});
+
+const itemFormSchema = z.discriminatedUnion("itemType", [mediaItemFormSchema, layoutItemFormSchema]);
 
 type ItemFormValues = z.infer<typeof itemFormSchema>;
 
@@ -78,40 +90,60 @@ function ItemEditorDialog({
   playlistId,
   item,
   mediaAssets,
+  layouts,
   open,
   onOpenChange,
+  defaultType,
 }: {
   playlistId: string;
   item?: PlaylistItem;
   mediaAssets: MediaAsset[];
+  layouts: LayoutTemplate[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  defaultType?: "media" | "layout";
 }) {
   const { toast } = useToast();
   const isEditing = !!item;
+  const initialType = item ? (item.layoutTemplateId ? "layout" : "media") : (defaultType || "media");
 
   const form = useForm<ItemFormValues>({
     resolver: zodResolver(itemFormSchema),
     defaultValues: item
       ? {
-          mediaAssetId: item.mediaAssetId,
+          itemType: initialType as "media" | "layout",
+          mediaAssetId: item.mediaAssetId ?? "",
+          layoutTemplateId: item.layoutTemplateId ?? "",
           duration: item.duration ?? undefined,
           order: item.order ?? 0,
         }
       : {
+          itemType: (defaultType || "media") as "media" | "layout",
           mediaAssetId: "",
+          layoutTemplateId: "",
           duration: undefined,
           order: 0,
         },
   });
 
+  const itemType = form.watch("itemType");
   const selectedAssetId = form.watch("mediaAssetId");
   const selectedAsset = mediaAssets.find(a => a.id === selectedAssetId);
   const isVideo = selectedAsset?.mediaType === "video";
 
   const saveMutation = useMutation({
     mutationFn: (data: ItemFormValues) => {
-      const payload = { ...data, duration: data.duration ?? null };
+      const payload: Record<string, any> = {
+        duration: data.duration ?? null,
+        order: data.order ?? 0,
+      };
+      if (data.itemType === "media") {
+        payload.mediaAssetId = data.mediaAssetId;
+        payload.layoutTemplateId = null;
+      } else {
+        payload.layoutTemplateId = data.layoutTemplateId;
+        payload.mediaAssetId = null;
+      }
       if (isEditing) {
         return apiRequest("PATCH", `/api/playlist-items/${item.id}`, payload);
       }
@@ -141,39 +173,104 @@ function ItemEditorDialog({
           >
             <FormField
               control={form.control}
-              name="mediaAssetId"
+              name="itemType"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Media</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl>
-                      <SelectTrigger data-testid="select-item-media">
-                        <SelectValue placeholder="Select media" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {mediaAssets.map((asset) => (
-                        <SelectItem key={asset.id} value={asset.id}>
-                          {asset.name} ({asset.mediaType})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
+                  <FormLabel>Item Type</FormLabel>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant={field.value === "media" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => field.onChange("media")}
+                      data-testid="button-type-media"
+                    >
+                      <Image className="mr-2 h-4 w-4" />
+                      Media
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={field.value === "layout" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => field.onChange("layout")}
+                      data-testid="button-type-layout"
+                    >
+                      <LayoutGrid className="mr-2 h-4 w-4" />
+                      Layout
+                    </Button>
+                  </div>
                 </FormItem>
               )}
             />
+
+            {itemType === "media" && (
+              <FormField
+                control={form.control}
+                name="mediaAssetId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Media</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-item-media">
+                          <SelectValue placeholder="Select media" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {mediaAssets.map((asset) => (
+                          <SelectItem key={asset.id} value={asset.id}>
+                            {asset.name} ({asset.mediaType})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            {itemType === "layout" && (
+              <FormField
+                control={form.control}
+                name="layoutTemplateId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Layout</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-item-layout">
+                          <SelectValue placeholder="Select layout" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {layouts.map((layout) => (
+                          <SelectItem key={layout.id} value={layout.id}>
+                            {layout.name} ({layout.aspectRatio})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
             <FormField
               control={form.control}
               name="duration"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Duration (seconds){isVideo ? " — optional" : ""}</FormLabel>
+                  <FormLabel>
+                    Duration (seconds)
+                    {itemType === "media" && isVideo ? " — optional" : ""}
+                    {itemType === "layout" ? " — how long to show this layout" : ""}
+                  </FormLabel>
                   <FormControl>
                     <Input
                       type="number"
-                      placeholder={isVideo ? (selectedAsset?.duration ? `Video length: ${formatDuration(selectedAsset.duration)}` : "Full video length") : "10"}
+                      placeholder={itemType === "layout" ? "30" : (isVideo ? (selectedAsset?.duration ? `Video length: ${formatDuration(selectedAsset.duration)}` : "Full video length") : "10")}
                       {...field}
                       value={field.value ?? ""}
                       onChange={(e) => {
@@ -183,28 +280,12 @@ function ItemEditorDialog({
                       data-testid="input-item-duration"
                     />
                   </FormControl>
-                  {isVideo && !field.value && (
+                  {itemType === "media" && isVideo && !field.value && (
                     <p className="text-xs text-muted-foreground">Leave empty to play the full video</p>
                   )}
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="order"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Order</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="number"
-                      {...field}
-                      onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
-                      data-testid="input-item-order"
-                    />
-                  </FormControl>
+                  {itemType === "layout" && (
+                    <p className="text-xs text-muted-foreground">How many seconds to display this layout before rotating to the next item</p>
+                  )}
                   <FormMessage />
                 </FormItem>
               )}
@@ -228,15 +309,18 @@ function ItemEditorDialog({
 function SortablePlaylistItem({
   item,
   mediaAsset,
+  layoutTemplate,
   onEdit,
   onDelete,
 }: {
   item: PlaylistItem;
   mediaAsset?: MediaAsset;
+  layoutTemplate?: LayoutTemplate;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
+  const isLayout = !!item.layoutTemplateId;
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -254,8 +338,10 @@ function SortablePlaylistItem({
         <button {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing p-1 text-muted-foreground hover:text-foreground" data-testid={`drag-handle-${item.id}`}>
           <GripVertical className="h-4 w-4" />
         </button>
-        <div className="w-10 h-10 rounded bg-muted flex items-center justify-center overflow-hidden flex-shrink-0">
-          {thumbnailUrl ? (
+        <div className={`w-10 h-10 rounded flex items-center justify-center overflow-hidden flex-shrink-0 ${isLayout ? "bg-primary/10" : "bg-muted"}`}>
+          {isLayout ? (
+            <LayoutGrid className="h-4 w-4 text-primary" />
+          ) : thumbnailUrl ? (
             <img src={thumbnailUrl} alt="" className="w-full h-full object-contain" />
           ) : (
             <Image className="h-4 w-4 text-primary" />
@@ -263,19 +349,28 @@ function SortablePlaylistItem({
         </div>
         <div>
           <p className="text-sm font-medium" data-testid={`text-item-name-${item.id}`}>
-            {mediaAsset?.name || "Unknown media"}
+            {isLayout ? (layoutTemplate?.name || "Unknown layout") : (mediaAsset?.name || "Unknown media")}
           </p>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            {(item.duration || (mediaAsset?.mediaType === "video" && mediaAsset?.duration)) && (
+            {item.duration && (
               <span className="flex items-center gap-1">
                 <Clock className="h-3 w-3" />
-                {item.duration ? `${item.duration}s` : ""}
-                {item.duration && mediaAsset?.mediaType === "video" && mediaAsset?.duration ? " / " : ""}
-                {mediaAsset?.mediaType === "video" && mediaAsset?.duration ? formatDuration(mediaAsset.duration) : ""}
+                {formatDuration(item.duration)}
               </span>
             )}
-            {mediaAsset?.mediaType && (
+            {!item.duration && !isLayout && mediaAsset?.mediaType === "video" && mediaAsset?.duration && (
+              <span className="flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                {formatDuration(mediaAsset.duration)}
+              </span>
+            )}
+            {isLayout ? (
+              <Badge variant="outline" className="text-[10px] px-1 py-0">layout</Badge>
+            ) : mediaAsset?.mediaType ? (
               <Badge variant="outline" className="text-[10px] px-1 py-0">{mediaAsset.mediaType}</Badge>
+            ) : null}
+            {isLayout && layoutTemplate?.aspectRatio && (
+              <span className="text-[10px]">{layoutTemplate.aspectRatio}</span>
             )}
           </div>
         </div>
@@ -295,13 +390,16 @@ function SortablePlaylistItem({
 function PlaylistItemsSection({
   playlist,
   mediaAssets,
+  layouts,
 }: {
   playlist: Playlist;
   mediaAssets: MediaAsset[];
+  layouts: LayoutTemplate[];
 }) {
   const [itemsOpen, setItemsOpen] = useState(false);
   const [itemDialogOpen, setItemDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<PlaylistItem | undefined>();
+  const [defaultItemType, setDefaultItemType] = useState<"media" | "layout">("media");
   const { toast } = useToast();
 
   const sensors = useSensors(
@@ -355,8 +453,11 @@ function PlaylistItemsSection({
 
   const mediaMap = new Map(mediaAssets.map((m) => [m.id, m]));
 
-  const handleAddItem = () => {
+  const layoutMap = new Map(layouts.map((l) => [l.id, l]));
+
+  const handleAddItem = (type: "media" | "layout" = "media") => {
     setEditingItem(undefined);
+    setDefaultItemType(type);
     setItemDialogOpen(true);
   };
 
@@ -385,7 +486,7 @@ function PlaylistItemsSection({
           <div className="p-4 space-y-3 border-t bg-muted/30">
             {sortedItems.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-2">
-                No items yet. Add media to this playlist.
+                No items yet. Add media or layouts to this playlist.
               </p>
             ) : (
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -395,7 +496,8 @@ function PlaylistItemsSection({
                       <SortablePlaylistItem
                         key={item.id}
                         item={item}
-                        mediaAsset={mediaMap.get(item.mediaAssetId)}
+                        mediaAsset={item.mediaAssetId ? mediaMap.get(item.mediaAssetId) : undefined}
+                        layoutTemplate={item.layoutTemplateId ? layoutMap.get(item.layoutTemplateId) : undefined}
                         onEdit={() => handleEditItem(item)}
                         onDelete={() => deleteMutation.mutate(item.id)}
                       />
@@ -404,17 +506,32 @@ function PlaylistItemsSection({
                 </SortableContext>
               </DndContext>
             )}
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full"
-              onClick={handleAddItem}
-              disabled={mediaAssets.length === 0}
-              data-testid={`button-add-item-${playlist.id}`}
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              {mediaAssets.length === 0 ? "Upload media first" : "Add Item"}
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                onClick={() => handleAddItem("media")}
+                disabled={mediaAssets.length === 0}
+                data-testid={`button-add-item-${playlist.id}`}
+              >
+                <Plus className="mr-1 h-4 w-4" />
+                <Image className="mr-1 h-3.5 w-3.5" />
+                Add Media
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                onClick={() => handleAddItem("layout")}
+                disabled={layouts.length === 0}
+                data-testid={`button-add-layout-item-${playlist.id}`}
+              >
+                <Plus className="mr-1 h-4 w-4" />
+                <LayoutGrid className="mr-1 h-3.5 w-3.5" />
+                Add Layout
+              </Button>
+            </div>
           </div>
         </CollapsibleContent>
       </Collapsible>
@@ -423,7 +540,9 @@ function PlaylistItemsSection({
         playlistId={playlist.id}
         item={editingItem}
         mediaAssets={mediaAssets}
+        layouts={layouts}
         open={itemDialogOpen}
+        defaultType={defaultItemType}
         onOpenChange={(open) => {
           setItemDialogOpen(open);
           if (!open) setEditingItem(undefined);
@@ -433,7 +552,7 @@ function PlaylistItemsSection({
   );
 }
 
-function PlaylistCard({ playlist, event, mediaAssets, usedIn }: { playlist: Playlist; event?: Event; mediaAssets: MediaAsset[]; usedIn?: Array<{ blockId: string; blockName: string; layoutName?: string }> }) {
+function PlaylistCard({ playlist, event, mediaAssets, layouts, usedIn }: { playlist: Playlist; event?: Event; mediaAssets: MediaAsset[]; layouts: LayoutTemplate[]; usedIn?: Array<{ blockId: string; blockName: string; layoutName?: string }> }) {
   const [editOpen, setEditOpen] = useState(false);
   const [, navigate] = useLocation();
   const { toast } = useToast();
@@ -622,11 +741,14 @@ function PlaylistCard({ playlist, event, mediaAssets, usedIn }: { playlist: Play
         {previewItems.length > 0 && (
           <div className="flex items-center gap-1.5 mb-2" data-testid={`playlist-thumbnails-${playlist.id}`}>
             {previewItems.map((item) => {
-              const asset = mediaMap.get(item.mediaAssetId);
+              const isLayoutItem = !!item.layoutTemplateId;
+              const asset = item.mediaAssetId ? mediaMap.get(item.mediaAssetId) : undefined;
               const thumbUrl = asset?.thumbnailPath ? `/api/media/${asset.id}/thumbnail` : null;
               return (
-                <div key={item.id} className="w-10 h-10 rounded bg-muted flex items-center justify-center overflow-hidden flex-shrink-0 border">
-                  {thumbUrl ? (
+                <div key={item.id} className={`w-10 h-10 rounded flex items-center justify-center overflow-hidden flex-shrink-0 border ${isLayoutItem ? "bg-primary/10" : "bg-muted"}`}>
+                  {isLayoutItem ? (
+                    <LayoutGrid className="h-3 w-3 text-primary" />
+                  ) : thumbUrl ? (
                     <img src={thumbUrl} alt="" className="w-full h-full object-cover" />
                   ) : (
                     <Image className="h-3 w-3 text-muted-foreground" />
@@ -670,7 +792,7 @@ function PlaylistCard({ playlist, event, mediaAssets, usedIn }: { playlist: Play
           Preview in Simulator
         </Button>
       </CardContent>
-      <PlaylistItemsSection playlist={playlist} mediaAssets={mediaAssets} />
+      <PlaylistItemsSection playlist={playlist} mediaAssets={mediaAssets} layouts={layouts} />
     </Card>
   );
 }
@@ -820,6 +942,11 @@ export default function PlaylistsPage() {
     ...mediaQuery,
   });
 
+  const layoutsQuery = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
+  const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
+    ...layoutsQuery,
+  });
+
   const { data: usageData = {} } = useQuery<Record<string, Array<{ blockId: string; blockName: string; layoutName?: string }>>>({
     queryKey: ["/api/playlists/usage"],
   });
@@ -879,6 +1006,7 @@ export default function PlaylistsPage() {
               playlist={playlist}
               event={playlist.eventId ? eventMap.get(playlist.eventId) : undefined}
               mediaAssets={mediaAssets}
+              layouts={layouts}
               usedIn={usageData[playlist.id]}
             />
           ))}

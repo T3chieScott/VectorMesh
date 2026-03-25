@@ -1935,6 +1935,9 @@ export async function registerRoutes(
         ...req.body,
         playlistId: req.params.playlistId,
       });
+      if (!data.mediaAssetId && !data.layoutTemplateId) {
+        return res.status(400).json({ error: "Either mediaAssetId or layoutTemplateId is required" });
+      }
       const item = await storage.createPlaylistItem(data);
       res.status(201).json(item);
     } catch (error) {
@@ -2417,9 +2420,16 @@ export async function registerRoutes(
       const mediaAssets = await storage.getMediaAssets();
       const allPlaylists = await storage.getPlaylists();
       const playlistItemsMap: Record<string, any[]> = {};
+      const layoutTemplatesMap: Record<string, any> = {};
       for (const pl of allPlaylists) {
         const items = await storage.getPlaylistItems(pl.id);
         playlistItemsMap[pl.id] = items;
+        for (const item of items) {
+          if (item.layoutTemplateId && !layoutTemplatesMap[item.layoutTemplateId]) {
+            const lt = await storage.getLayoutTemplate(item.layoutTemplateId);
+            if (lt) layoutTemplatesMap[item.layoutTemplateId] = lt;
+          }
+        }
       }
 
       let event = null;
@@ -2452,6 +2462,7 @@ export async function registerRoutes(
         media: mediaAssets,
         playlists: allPlaylists,
         playlistItems: playlistItemsMap,
+        layoutTemplates: layoutTemplatesMap,
         zoneSources: activeZoneSources,
         liveOverride,
         event,
