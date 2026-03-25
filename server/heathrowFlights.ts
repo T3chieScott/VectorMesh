@@ -182,13 +182,17 @@ function buildAirportFlightsUrl(
   return url.toString();
 }
 
+function toLocalLondon(date: Date): string {
+  return date.toLocaleString("sv-SE", { timeZone: "Europe/London" }).replace(" ", "T").slice(0, 16);
+}
+
 function buildDefaultTimeWindow(): { fromLocal: string; toLocal: string } {
   const now = new Date();
   const from = new Date(now.getTime() - DEFAULT_WINDOW_BACK_HOURS * 60 * 60 * 1000);
   const to = new Date(now.getTime() + DEFAULT_WINDOW_AHEAD_HOURS * 60 * 60 * 1000);
   return {
-    fromLocal: from.toISOString().slice(0, 16),
-    toLocal: to.toISOString().slice(0, 16),
+    fromLocal: toLocalLondon(from),
+    toLocal: toLocalLondon(to),
   };
 }
 

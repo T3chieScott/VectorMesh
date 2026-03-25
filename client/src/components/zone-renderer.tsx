@@ -1475,7 +1475,7 @@ function HeathrowFlightsWidget({
     if (!iso) return "-";
     try {
       const d = new Date(iso);
-      return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+      return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
     } catch {
       return "-";
     }
