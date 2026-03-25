@@ -1938,6 +1938,9 @@ export async function registerRoutes(
       if (!data.mediaAssetId && !data.layoutTemplateId) {
         return res.status(400).json({ error: "Either mediaAssetId or layoutTemplateId is required" });
       }
+      if (data.mediaAssetId && data.layoutTemplateId) {
+        return res.status(400).json({ error: "Cannot set both mediaAssetId and layoutTemplateId" });
+      }
       const item = await storage.createPlaylistItem(data);
       res.status(201).json(item);
     } catch (error) {
@@ -1954,6 +1957,14 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Access denied" });
       }
       const data = updatePlaylistItemSchema.parse(req.body);
+      const finalMediaAssetId = data.mediaAssetId !== undefined ? data.mediaAssetId : existing.mediaAssetId;
+      const finalLayoutTemplateId = data.layoutTemplateId !== undefined ? data.layoutTemplateId : existing.layoutTemplateId;
+      if (!finalMediaAssetId && !finalLayoutTemplateId) {
+        return res.status(400).json({ error: "Either mediaAssetId or layoutTemplateId is required" });
+      }
+      if (finalMediaAssetId && finalLayoutTemplateId) {
+        return res.status(400).json({ error: "Cannot set both mediaAssetId and layoutTemplateId" });
+      }
       const item = await storage.updatePlaylistItem(req.params.id, data);
       res.json(item);
     } catch (error) {
