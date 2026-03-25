@@ -210,7 +210,7 @@ function ItemEditorDialog({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Media</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger data-testid="select-item-media">
                           <SelectValue placeholder="Select media" />
@@ -237,7 +237,7 @@ function ItemEditorDialog({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Layout</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger data-testid="select-item-layout">
                           <SelectValue placeholder="Select layout" />
@@ -333,54 +333,51 @@ function SortablePlaylistItem({
     : null;
 
   return (
-    <div ref={setNodeRef} style={style} className="flex items-center justify-between gap-3 p-2 rounded-md bg-muted/50" data-testid={`playlist-item-row-${item.id}`}>
-      <div className="flex items-center gap-3">
-        <button {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing p-1 text-muted-foreground hover:text-foreground" data-testid={`drag-handle-${item.id}`}>
-          <GripVertical className="h-4 w-4" />
-        </button>
-        <div className={`w-10 h-10 rounded flex items-center justify-center overflow-hidden flex-shrink-0 ${isLayout ? "bg-primary/10" : "bg-muted"}`}>
+    <div ref={setNodeRef} style={style} className="flex items-center gap-2 px-2 py-2 rounded-lg border bg-card hover:bg-muted/40 transition-colors" data-testid={`playlist-item-row-${item.id}`}>
+      <button {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing p-1 text-muted-foreground hover:text-foreground flex-shrink-0" data-testid={`drag-handle-${item.id}`}>
+        <GripVertical className="h-4 w-4" />
+      </button>
+      <div className={`w-9 h-9 rounded-md flex items-center justify-center overflow-hidden flex-shrink-0 ${isLayout ? "bg-primary/10 border border-primary/20" : "bg-muted border"}`}>
+        {isLayout ? (
+          <LayoutGrid className="h-4 w-4 text-primary" />
+        ) : thumbnailUrl ? (
+          <img src={thumbnailUrl} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <Image className="h-4 w-4 text-muted-foreground" />
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate" data-testid={`text-item-name-${item.id}`}>
+          {isLayout ? (layoutTemplate?.name || "Unknown layout") : (mediaAsset?.name || "Unknown media")}
+        </p>
+        <div className="flex items-center gap-1.5 mt-0.5">
           {isLayout ? (
-            <LayoutGrid className="h-4 w-4 text-primary" />
-          ) : thumbnailUrl ? (
-            <img src={thumbnailUrl} alt="" className="w-full h-full object-contain" />
-          ) : (
-            <Image className="h-4 w-4 text-primary" />
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-normal">Layout</Badge>
+          ) : mediaAsset?.mediaType ? (
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-normal capitalize">{mediaAsset.mediaType}</Badge>
+          ) : null}
+          {isLayout && layoutTemplate?.aspectRatio && (
+            <span className="text-[10px] text-muted-foreground">{layoutTemplate.aspectRatio}</span>
           )}
-        </div>
-        <div>
-          <p className="text-sm font-medium" data-testid={`text-item-name-${item.id}`}>
-            {isLayout ? (layoutTemplate?.name || "Unknown layout") : (mediaAsset?.name || "Unknown media")}
-          </p>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            {item.duration && (
-              <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />
-                {formatDuration(item.duration)}
-              </span>
-            )}
-            {!item.duration && !isLayout && mediaAsset?.mediaType === "video" && mediaAsset?.duration && (
-              <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />
-                {formatDuration(mediaAsset.duration)}
-              </span>
-            )}
-            {isLayout ? (
-              <Badge variant="outline" className="text-[10px] px-1 py-0">layout</Badge>
-            ) : mediaAsset?.mediaType ? (
-              <Badge variant="outline" className="text-[10px] px-1 py-0">{mediaAsset.mediaType}</Badge>
-            ) : null}
-            {isLayout && layoutTemplate?.aspectRatio && (
-              <span className="text-[10px]">{layoutTemplate.aspectRatio}</span>
-            )}
-          </div>
+          {item.duration ? (
+            <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
+              <Clock className="h-3 w-3" />
+              {formatDuration(item.duration)}
+            </span>
+          ) : !isLayout && mediaAsset?.mediaType === "video" && mediaAsset?.duration ? (
+            <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
+              <Clock className="h-3 w-3" />
+              {formatDuration(mediaAsset.duration)}
+            </span>
+          ) : null}
         </div>
       </div>
-      <div className="flex items-center gap-1">
-        <Button variant="ghost" size="icon" onClick={onEdit} data-testid={`button-edit-item-${item.id}`}>
-          <Pencil className="h-4 w-4" />
+      <div className="flex items-center gap-0.5 flex-shrink-0">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onEdit} data-testid={`button-edit-item-${item.id}`}>
+          <Pencil className="h-3.5 w-3.5" />
         </Button>
-        <Button variant="ghost" size="icon" onClick={onDelete} data-testid={`button-delete-item-${item.id}`}>
-          <Trash2 className="h-4 w-4 text-destructive" />
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onDelete} data-testid={`button-delete-item-${item.id}`}>
+          <Trash2 className="h-3.5 w-3.5 text-destructive" />
         </Button>
       </div>
     </div>
@@ -537,6 +534,7 @@ function PlaylistItemsSection({
       </Collapsible>
 
       <ItemEditorDialog
+        key={editingItem?.id ?? `new-${defaultItemType}`}
         playlistId={playlist.id}
         item={editingItem}
         mediaAssets={mediaAssets}

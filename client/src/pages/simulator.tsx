@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearch } from "wouter";
 import { useSiteFilteredQuery } from "@/hooks/use-site-context";
@@ -438,28 +438,83 @@ export default function SimulatorPage() {
     enabled: !!previewPlaylistId,
   });
 
-  const previewMediaPlayerItems = useMemo(() => {
+  const previewSortedItems = useMemo(() => {
     if (!previewPlaylistId || previewPlaylistItems.length === 0) return [];
-    const sorted = [...previewPlaylistItems].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    return sorted.map(item => ({
-      id: item.id,
-      mediaAssetId: item.mediaAssetId,
-      duration: item.duration ?? null,
-    }));
+    return [...previewPlaylistItems].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }, [previewPlaylistId, previewPlaylistItems]);
 
+  const previewHasLayoutItems = previewSortedItems.some(item => !!item.layoutTemplateId);
+  const previewMediaOnlyItems = useMemo(() => {
+    return previewSortedItems
+      .filter(item => !!item.mediaAssetId)
+      .map(item => ({
+        id: item.id,
+        mediaAssetId: item.mediaAssetId,
+        duration: item.duration ?? null,
+      }));
+  }, [previewSortedItems]);
+
+  const [previewRotationIndex, setPreviewRotationIndex] = useState(0);
+
+  useEffect(() => {
+    setPreviewRotationIndex(0);
+  }, [previewPlaylistId]);
+
+  useEffect(() => {
+    if (!isPlaylistPreview || !previewHasLayoutItems || previewSortedItems.length <= 1 || !state.isPlaying) return;
+    const currentItem = previewSortedItems[previewRotationIndex % previewSortedItems.length];
+    let durationSec = currentItem?.duration || 30;
+    if (!currentItem?.duration && currentItem?.mediaAssetId) {
+      const asset = media.find(m => m.id === currentItem.mediaAssetId);
+      if (asset?.duration) durationSec = asset.duration;
+    }
+    const timer = setTimeout(() => {
+      setPreviewRotationIndex(prev => (prev + 1) % previewSortedItems.length);
+    }, durationSec * 1000);
+    return () => clearTimeout(timer);
+  }, [isPlaylistPreview, previewHasLayoutItems, previewSortedItems, previewRotationIndex, state.isPlaying, media]);
+
+  const currentPreviewItem = previewHasLayoutItems
+    ? previewSortedItems[previewRotationIndex % previewSortedItems.length] || null
+    : null;
+  const currentPreviewIsLayout = !!currentPreviewItem?.layoutTemplateId;
+  const currentPreviewLayout = currentPreviewIsLayout
+    ? layouts.find(l => l.id === currentPreviewItem.layoutTemplateId) || null
+    : null;
+  const currentPreviewMediaAsset = currentPreviewItem?.mediaAssetId
+    ? media.find(m => m.id === currentPreviewItem.mediaAssetId) || null
+    : null;
+
   const previewSyntheticZone: LayoutZone | null = useMemo(() => {
-    if (!isPlaylistPreview || previewMediaPlayerItems.length === 0) return null;
+    if (!isPlaylistPreview) return null;
+    if (previewHasLayoutItems) {
+      if (!currentPreviewItem || currentPreviewIsLayout) return null;
+      return {
+        id: "playlist-preview-zone",
+        name: previewPlaylist?.name || "Playlist Preview",
+        type: "media_player",
+        x: 0, y: 0, width: 100, height: 100, zIndex: 1,
+        mediaPlayerItems: [{
+          id: currentPreviewItem.id,
+          mediaAssetId: currentPreviewItem.mediaAssetId,
+          duration: currentPreviewItem.duration ?? null,
+        }],
+        mediaPlayerTransition: "fade",
+        mediaPlayerTransitionDuration: 800,
+        mediaPlayerLoop: true,
+        mediaPlayerFitMode: "contain",
+        mediaPlayerAutoPlay: true,
+        mediaPlayerMuted: true,
+        mediaPlayerShuffle: false,
+      } as LayoutZone;
+    }
+    if (previewMediaOnlyItems.length === 0) return null;
     return {
       id: "playlist-preview-zone",
       name: previewPlaylist?.name || "Playlist Preview",
       type: "media_player",
-      x: 0,
-      y: 0,
-      width: 100,
-      height: 100,
-      zIndex: 1,
-      mediaPlayerItems: previewMediaPlayerItems,
+      x: 0, y: 0, width: 100, height: 100, zIndex: 1,
+      mediaPlayerItems: previewMediaOnlyItems,
       mediaPlayerTransition: "fade",
       mediaPlayerTransitionDuration: 800,
       mediaPlayerLoop: true,
@@ -468,7 +523,7 @@ export default function SimulatorPage() {
       mediaPlayerMuted: true,
       mediaPlayerShuffle: false,
     } as LayoutZone;
-  }, [isPlaylistPreview, previewMediaPlayerItems, previewPlaylist]);
+  }, [isPlaylistPreview, previewHasLayoutItems, previewMediaOnlyItems, previewPlaylist, currentPreviewItem, currentPreviewIsLayout]);
 
   const selectedScreen = selectedScreenId !== "none" ? screens.find((s) => s.id === selectedScreenId) : null;
   const selectedProfile = selectedScreen
@@ -498,16 +553,15 @@ export default function SimulatorPage() {
       new Date(o.startTime) <= new Date()
   );
 
-  // Helper to get zone-specific media based on playlist assignment
   const getZoneMedia = (zoneId: string): MediaAsset[] => {
     const playlistId = zonePlaylistAssignments[zoneId];
     if (!playlistId || playlistId === "none") {
-      return media; // Fall back to all media
+      return media;
     }
     const playlistItems = playlistItemsMap[playlistId] || [];
-    // Sort by order and get media assets
     const sortedItems = [...playlistItems].sort((a, b) => (a.order || 0) - (b.order || 0));
     return sortedItems
+      .filter(item => !!item.mediaAssetId)
       .map(item => media.find(m => m.id === item.mediaAssetId))
       .filter((m): m is MediaAsset => m !== undefined);
   };
@@ -574,7 +628,11 @@ export default function SimulatorPage() {
 
   const handleNext = () => {
     if (isPlaylistPreview) {
-      setMediaPlayerSkipNonce(prev => prev + 1);
+      if (previewHasLayoutItems) {
+        setPreviewRotationIndex(prev => (prev + 1) % (previewSortedItems.length || 1));
+      } else {
+        setMediaPlayerSkipNonce(prev => prev + 1);
+      }
     } else {
       setMediaIndex((prev) => (prev + 1) % (media.length || 1));
     }
@@ -712,7 +770,10 @@ export default function SimulatorPage() {
               </div>
               {isPlaylistPreview && (
                 <div className="text-xs text-muted-foreground">
-                  {previewMediaPlayerItems.length} item{previewMediaPlayerItems.length !== 1 ? "s" : ""} in playlist
+                  {previewSortedItems.length} item{previewSortedItems.length !== 1 ? "s" : ""} in playlist
+                  {previewHasLayoutItems && (
+                    <span className="ml-1">(includes layouts)</span>
+                  )}
                 </div>
               )}
             </div>
@@ -884,6 +945,12 @@ export default function SimulatorPage() {
                       {previewPlaylist.name}
                     </Badge>
                   )}
+                  {isPlaylistPreview && previewHasLayoutItems && previewSortedItems.length > 0 && (
+                    <Badge variant="outline" className="text-[10px] ml-1 font-normal tabular-nums" data-testid="badge-rotation-index">
+                      {(previewRotationIndex % previewSortedItems.length) + 1}/{previewSortedItems.length}
+                      {currentPreviewIsLayout ? " (layout)" : " (media)"}
+                    </Badge>
+                  )}
                   {!isPlaylistPreview && selectedScreen?.canvasEnabled && (
                     <Badge variant="outline" className="text-[10px] ml-1 font-normal" data-testid="badge-canvas-mode">
                       {state.canvasViewMode === "fullcanvas" ? "Full Canvas" : "Screen AOI"}
@@ -897,20 +964,24 @@ export default function SimulatorPage() {
               </div>
             </CardHeader>
             <CardContent className="p-4 player-container bg-muted/30 flex-1 min-h-0">
-              {isPlaylistPreview && previewMediaPlayerItems.length === 0 ? (
+              {isPlaylistPreview && previewSortedItems.length === 0 ? (
                 <div className="w-full h-full flex items-center justify-center">
                   <div className="text-center text-muted-foreground">
                     <ListVideo className="h-12 w-12 mx-auto mb-3 opacity-50" />
                     <p className="text-lg font-medium">No items in playlist</p>
-                    <p className="text-sm">Add media items to this playlist to preview it</p>
+                    <p className="text-sm">Add media or layout items to this playlist to preview it</p>
                   </div>
                 </div>
               ) : (
                 <PlayerDisplay
                   screen={isPlaylistPreview ? null : (selectedScreen || null)}
                   profile={isPlaylistPreview ? null : (selectedProfile || null)}
-                  layout={isPlaylistPreview && previewSyntheticZone
-                    ? ({ zones: [previewSyntheticZone], aspectRatio: "16:9", name: previewPlaylist?.name || "Playlist Preview" } as LayoutTemplate)
+                  layout={isPlaylistPreview
+                    ? (currentPreviewIsLayout && currentPreviewLayout
+                      ? currentPreviewLayout
+                      : previewSyntheticZone
+                        ? ({ zones: [previewSyntheticZone], aspectRatio: "16:9", name: previewPlaylist?.name || "Playlist Preview" } as LayoutTemplate)
+                        : null)
                     : (selectedLayout || null)}
                   state={state}
                   liveOverride={isPlaylistPreview ? null : (activeLiveOverride || null)}
