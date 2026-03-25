@@ -271,13 +271,23 @@ function ItemEditorDialog({
                     <div className="flex gap-2">
                       <Input
                         type="number"
+                        min={1}
                         placeholder={itemType === "layout" ? "30" : (isVideo ? (selectedAsset?.duration ? `Video length: ${formatDuration(selectedAsset.duration)}` : "Full video length") : "10")}
-                        {...field}
-                        value={field.value ?? ""}
+                        value={field.value != null ? String(field.value) : ""}
                         onChange={(e) => {
-                          const val = e.target.value;
-                          field.onChange(val === "" ? undefined : (parseInt(val) || undefined));
+                          const val = e.target.value.trim();
+                          if (val === "") {
+                            field.onChange(undefined);
+                          } else {
+                            const num = parseInt(val, 10);
+                            if (!isNaN(num) && num > 0) {
+                              field.onChange(num);
+                            }
+                          }
                         }}
+                        onBlur={field.onBlur}
+                        name={field.name}
+                        ref={field.ref}
                         data-testid="input-item-duration"
                       />
                       {field.value != null && (
