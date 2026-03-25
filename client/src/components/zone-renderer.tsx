@@ -5914,10 +5914,18 @@ function djb2Hash(str: string): string {
   return (hash >>> 0).toString(36);
 }
 
+function deepSortedStringify(value: unknown): string {
+  if (value === null || value === undefined) return String(value);
+  if (typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(deepSortedStringify).join(",") + "]";
+  const obj = value as Record<string, unknown>;
+  const sortedKeys = Object.keys(obj).sort();
+  return "{" + sortedKeys.map(k => JSON.stringify(k) + ":" + deepSortedStringify(obj[k])).join(",") + "}";
+}
+
 export function getZoneFingerprint(zone: LayoutZone): string {
-  const { id, name, ...rest } = zone as any;
-  const configStr = JSON.stringify(rest, Object.keys(rest).sort());
-  return `zfp_${zone.type}_${zone.x}_${zone.y}_${zone.width}_${zone.height}_${djb2Hash(configStr)}`;
+  const { id, name, ...rest } = zone;
+  return `zfp_${zone.type}_${zone.x}_${zone.y}_${zone.width}_${zone.height}_${djb2Hash(deepSortedStringify(rest))}`;
 }
 
 export function getAspectRatioDimensions(aspectRatio: string, customWidth?: number | null, customHeight?: number | null): { width: number; height: number } {
