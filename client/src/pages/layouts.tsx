@@ -81,6 +81,7 @@ import {
   Palette,
   Sparkles,
   Copy,
+  ClipboardPaste,
   Images,
   Monitor,
   AlertTriangle,
@@ -127,6 +128,22 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/hooks/use-auth";
 import { useSiteContext } from "@/hooks/use-site-context";
 import { DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+
+let zoneClipboard: LayoutZone | null = null;
+const clipboardListeners = new Set<() => void>();
+function setZoneClipboard(zone: LayoutZone) {
+  zoneClipboard = JSON.parse(JSON.stringify(zone));
+  clipboardListeners.forEach(fn => fn());
+}
+function useZoneClipboard() {
+  const [, setVersion] = useState(0);
+  useEffect(() => {
+    const listener = () => setVersion(v => v + 1);
+    clipboardListeners.add(listener);
+    return () => { clipboardListeners.delete(listener); };
+  }, []);
+  return zoneClipboard;
+}
 
 const ASPECT_RATIO_OPTIONS = [
   { value: "16:9", label: "16:9 (Landscape)", description: "Standard widescreen" },
@@ -7233,12 +7250,14 @@ function ZoneListItem({
   zone,
   onEdit,
   onDelete,
+  onCopy,
   isHighlighted,
   onSelect,
 }: {
   zone: LayoutZone;
   onEdit: () => void;
   onDelete: () => void;
+  onCopy: () => void;
   isHighlighted?: boolean;
   onSelect?: () => void;
 }) {
@@ -7267,6 +7286,9 @@ function ZoneListItem({
         </div>
       </div>
       <div className="flex items-center gap-1">
+        <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onCopy(); }} title="Copy zone" data-testid={`button-copy-zone-${zone.id}`}>
+          <Copy className="h-4 w-4" />
+        </Button>
         <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onEdit(); }} data-testid={`button-edit-zone-${zone.id}`}>
           <Pencil className="h-4 w-4" />
         </Button>
@@ -8012,6 +8034,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
   const [editingZoneId, setEditingZoneId] = useState<string | undefined>();
   const [highlightedZoneId, setHighlightedZoneId] = useState<string | null>(null);
   const [copyMoveMode, setCopyMoveMode] = useState<"copy" | "move" | null>(null);
+  const clipboard = useZoneClipboard();
   const { toast } = useToast();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -8044,6 +8067,21 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
   const handleAddZone = () => {
     setEditingZoneId(undefined);
     setZoneDialogOpen(true);
+  };
+
+  const handlePasteZone = () => {
+    if (!clipboard) return;
+    const newZone: LayoutZone = {
+      ...JSON.parse(JSON.stringify(clipboard)),
+      id: crypto.randomUUID(),
+      name: `${clipboard.name} (copy)`,
+      x: Math.min(clipboard.x + 2, 100 - clipboard.width),
+      y: Math.min(clipboard.y + 2, 100 - clipboard.height),
+    };
+    const updated = [...zones, newZone];
+    setDraftZones(updated);
+    setHasUnsavedChanges(true);
+    toast({ title: "Zone pasted", description: `"${newZone.name}" added` });
   };
 
   const { clients } = useSiteContext();
@@ -8463,22 +8501,40 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                         setHasUnsavedChanges(true);
                         if (highlightedZoneId === zone.id) setHighlightedZoneId(null);
                       }}
+                      onCopy={() => {
+                        setZoneClipboard(zone);
+                        toast({ title: "Zone copied", description: `"${zone.name}" copied to clipboard` });
+                      }}
                       isHighlighted={highlightedZoneId === zone.id}
                       onSelect={() => setHighlightedZoneId(highlightedZoneId === zone.id ? null : zone.id)}
                     />
                   ))}
                 </div>
               )}
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full"
-                onClick={handleAddZone}
-                data-testid={`button-add-zone-${layout.id}`}
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                Add Zone
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={handleAddZone}
+                  data-testid={`button-add-zone-${layout.id}`}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Zone
+                </Button>
+                {clipboard && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={handlePasteZone}
+                    data-testid={`button-paste-zone-${layout.id}`}
+                  >
+                    <ClipboardPaste className="mr-2 h-4 w-4" />
+                    Paste Zone
+                  </Button>
+                )}
+              </div>
             </div>
           </CollapsibleContent>
         </Collapsible>
