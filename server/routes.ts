@@ -2425,6 +2425,17 @@ export async function registerRoutes(
         layout = await storage.getLayoutTemplate(screen.fallbackLayoutId);
       }
 
+      if (!layout && screen.fallbackPlaylistId) {
+        const fbPlaylist = await storage.getPlaylist(screen.fallbackPlaylistId);
+        if (fbPlaylist) {
+          activeZoneSources = [{
+            zoneId: "__fallback__",
+            type: "playlist",
+            playlistId: screen.fallbackPlaylistId,
+          }];
+        }
+      }
+
       const profile = screen.displayProfileId 
         ? await storage.getDisplayProfile(screen.displayProfileId) 
         : null;
@@ -2588,10 +2599,16 @@ export async function registerRoutes(
         layoutSourceDetail = "Fallback Layout";
       }
 
+      if (!layout && screen.fallbackPlaylistId) {
+        layoutSource = "fallback";
+        layoutSourceDetail = "Fallback Playlist";
+      }
+
       res.json({
         layoutId: layout?.id || null,
         layoutSource,
         layoutSourceDetail,
+        fallbackPlaylistId: (!layout && screen.fallbackPlaylistId) ? screen.fallbackPlaylistId : null,
         timestamp: now.toISOString(),
       });
     } catch (error) {

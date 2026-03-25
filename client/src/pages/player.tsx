@@ -444,7 +444,34 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     : null;
 
   const layout = isLayoutRotation ? (activeRotationLayout || content?.layout || null) : (content?.layout || null);
-  const rawZones = (layout?.zones as LayoutZone[]) || [];
+  const isFallbackPlaylist = !layout && content?.zoneSources?.some(zs => zs.zoneId === "__fallback__" && zs.type === "playlist");
+  const rawZones: LayoutZone[] = useMemo(() => {
+    if (layout) return (layout.zones as LayoutZone[]) || [];
+    if (isFallbackPlaylist) {
+      const source = content!.zoneSources!.find(zs => zs.zoneId === "__fallback__");
+      if (source?.playlistId) {
+        const playlistItemsList = content!.playlistItems?.[source.playlistId] || [];
+        const mediaOnlyItems = playlistItemsList.filter(pi => pi.mediaAssetId && !pi.layoutTemplateId);
+        if (mediaOnlyItems.length > 0) {
+          const mediaPlayerItems = mediaOnlyItems
+            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+            .map(pi => ({
+              id: pi.id,
+              mediaAssetId: pi.mediaAssetId!,
+              duration: pi.duration ?? null,
+            }));
+          return [{
+            id: "__fallback__",
+            type: "media_player",
+            x: 0, y: 0, width: 100, height: 100,
+            zIndex: 1,
+            mediaPlayerItems,
+          }] as LayoutZone[];
+        }
+      }
+    }
+    return [];
+  }, [layout, isFallbackPlaylist, content?.zoneSources, content?.playlistItems]);
 
   useEffect(() => {
     if (!isLayoutRotation || layoutRotationItems.length <= 1) return;

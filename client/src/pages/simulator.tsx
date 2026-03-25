@@ -56,6 +56,7 @@ function PlayerDisplay({
   getZoneMediaIndex,
   getPlaylistName,
   skipNonce = 0,
+  fallbackZones,
 }: {
   screen: Screen | null;
   profile: DisplayProfile | null;
@@ -66,11 +67,12 @@ function PlayerDisplay({
   getZoneMediaIndex: (zoneId: string) => number;
   getPlaylistName: (zoneId: string) => string | undefined;
   skipNonce?: number;
+  fallbackZones?: LayoutZone[];
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0.5);
   const [weatherTimezone, setWeatherTimezone] = useState<string | undefined>(undefined);
-  const zones = (layout?.zones as LayoutZone[]) || [];
+  const zones = layout ? ((layout.zones as LayoutZone[]) || []) : (fallbackZones || []);
   const hasLiveOverride = liveOverride && liveOverride.isActive && new Date(liveOverride.endTime) > new Date();
 
   // Find weather zone and fetch its timezone
@@ -342,6 +344,7 @@ interface ResolvedContent {
   layoutId: string | null;
   layoutSource: "none" | "live_override" | "scheduled" | "fallback";
   layoutSourceDetail: string | null;
+  fallbackPlaylistId: string | null;
 }
 
 export default function SimulatorPage() {
@@ -541,7 +544,7 @@ export default function SimulatorPage() {
   const layoutSourceLabel = isAutoMode && resolvedContent
     ? resolvedContent.layoutSource === "live_override" ? "Live Override"
       : resolvedContent.layoutSource === "scheduled" ? `Scheduled: ${resolvedContent.layoutSourceDetail || "Block"}`
-      : resolvedContent.layoutSource === "fallback" ? "Fallback Layout"
+      : resolvedContent.layoutSource === "fallback" ? (resolvedContent.layoutSourceDetail === "Fallback Playlist" ? "Fallback Playlist" : "Fallback Layout")
       : "No Layout Resolved"
     : null;
 
@@ -592,8 +595,29 @@ export default function SimulatorPage() {
     return () => clearInterval(interval);
   }, []);
 
+  const simulatorFallbackZones: LayoutZone[] = useMemo(() => {
+    if (selectedLayout || !isAutoMode || !resolvedContent?.fallbackPlaylistId) return [];
+    const playlistItems = playlistItemsMap[resolvedContent.fallbackPlaylistId] || [];
+    const mediaOnlyItems = playlistItems.filter(pi => pi.mediaAssetId && !pi.layoutTemplateId);
+    if (mediaOnlyItems.length === 0) return [];
+    const mediaPlayerItems = mediaOnlyItems
+      .sort((a, b) => (a.order || 0) - (b.order || 0))
+      .map(pi => ({
+        id: pi.id,
+        mediaAssetId: pi.mediaAssetId!,
+        duration: pi.duration ?? null,
+      }));
+    return [{
+      id: "__fallback__",
+      type: "media_player",
+      x: 0, y: 0, width: 100, height: 100,
+      zIndex: 1,
+      mediaPlayerItems,
+    }] as LayoutZone[];
+  }, [selectedLayout, isAutoMode, resolvedContent?.fallbackPlaylistId, playlistItemsMap]);
+
   // Auto-advance media zones (both global and per-zone)
-  const zones = (selectedLayout?.zones as LayoutZone[]) || [];
+  const zones = selectedLayout ? ((selectedLayout.zones as LayoutZone[]) || []) : simulatorFallbackZones;
   useEffect(() => {
     if (!state.isPlaying) return;
 
@@ -989,6 +1013,7 @@ export default function SimulatorPage() {
                   getZoneMediaIndex={getZoneMediaIndex}
                   getPlaylistName={getPlaylistName}
                   skipNonce={mediaPlayerSkipNonce}
+                  fallbackZones={isPlaylistPreview ? undefined : simulatorFallbackZones}
                 />
               )}
             </CardContent>

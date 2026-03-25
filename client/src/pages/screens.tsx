@@ -64,7 +64,7 @@ import {
 } from "lucide-react";
 import { useSiteContext } from "@/hooks/use-site-context";
 import { useAuth } from "@/hooks/use-auth";
-import type { Screen, DisplayProfile, LiveOverride, Event, LayoutTemplate, Client } from "@shared/schema";
+import type { Screen, DisplayProfile, LiveOverride, Event, LayoutTemplate, Client, Playlist } from "@shared/schema";
 
 const screenFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -73,6 +73,7 @@ const screenFormSchema = z.object({
   displayProfileId: z.string().optional(),
   currentEventId: z.string().nullable().optional(),
   fallbackLayoutId: z.string().nullable().optional(),
+  fallbackPlaylistId: z.string().nullable().optional(),
   canvasEnabled: z.boolean().default(false),
   canvasWidth: z.number().min(1, "Canvas width is required").optional(),
   canvasHeight: z.number().min(1, "Canvas height is required").optional(),
@@ -254,6 +255,7 @@ function ScreenCard({
   profiles,
   events,
   layouts,
+  playlists,
   clients,
   activeOverride,
 }: {
@@ -261,6 +263,7 @@ function ScreenCard({
   profiles: DisplayProfile[];
   events: Event[];
   layouts: LayoutTemplate[];
+  playlists: Playlist[];
   clients: Client[];
   activeOverride: LiveOverride | null;
 }) {
@@ -328,6 +331,7 @@ function ScreenCard({
       displayProfileId: screen.displayProfileId || "",
       currentEventId: screen.currentEventId || "",
       fallbackLayoutId: screen.fallbackLayoutId || "",
+      fallbackPlaylistId: screen.fallbackPlaylistId || "",
       canvasEnabled: screen.canvasEnabled || false,
       canvasWidth: screen.canvasWidth || undefined,
       canvasHeight: screen.canvasHeight || undefined,
@@ -343,6 +347,7 @@ function ScreenCard({
         clientId: data.clientId || null,
         currentEventId: data.currentEventId || null,
         fallbackLayoutId: data.fallbackLayoutId || null,
+        fallbackPlaylistId: data.fallbackPlaylistId || null,
         canvasEnabled: data.canvasEnabled || false,
         canvasWidth: data.canvasEnabled ? data.canvasWidth : null,
         canvasHeight: data.canvasEnabled ? data.canvasHeight : null,
@@ -695,6 +700,35 @@ function ScreenCard({
                               ))}
                             </SelectContent>
                           </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="fallbackPlaylistId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Fallback Playlist</FormLabel>
+                          <Select
+                            onValueChange={(val) => field.onChange(val === "__none__" ? null : val)}
+                            defaultValue={field.value || "__none__"}
+                          >
+                            <FormControl>
+                              <SelectTrigger data-testid="select-edit-screen-fallback-playlist">
+                                <SelectValue placeholder="No fallback playlist" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="__none__">No fallback playlist</SelectItem>
+                              {playlists.map((p) => (
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground">Used when no scheduled layout or fallback layout is active</p>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -1114,6 +1148,9 @@ export default function ScreensPage() {
   const layoutsQueryConfig = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
   const { data: layouts = [] } = useQuery(layoutsQueryConfig);
 
+  const playlistsQueryConfig = useSiteFilteredQuery<Playlist[]>("/api/playlists");
+  const { data: playlists = [] } = useQuery(playlistsQueryConfig);
+
   const liveOverridesQueryConfig = useSiteFilteredQuery<LiveOverride[]>("/api/live-overrides");
   const { data: liveOverrides = [] } = useQuery({ ...liveOverridesQueryConfig, refetchInterval: 10000 });
 
@@ -1205,6 +1242,7 @@ export default function ScreensPage() {
               profiles={profiles}
               events={events}
               layouts={layouts}
+              playlists={playlists}
               clients={clients}
               activeOverride={getActiveOverrideForScreen(screen.id)}
             />

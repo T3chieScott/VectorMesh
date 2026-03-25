@@ -145,6 +145,7 @@ export const screens = pgTable("screens", {
   hardwareClass: text("hardware_class"),
   currentEventId: varchar("current_event_id").references(() => events.id),
   fallbackLayoutId: varchar("fallback_layout_id").references(() => layoutTemplates.id, { onDelete: "set null" }),
+  fallbackPlaylistId: varchar("fallback_playlist_id").references(() => playlists.id, { onDelete: "set null" }),
   canvasEnabled: boolean("canvas_enabled").default(false),
   canvasWidth: integer("canvas_width"),
   canvasHeight: integer("canvas_height"),
@@ -163,6 +164,7 @@ export const screensRelations = relations(screens, ({ one, many }) => ({
   displayProfile: one(displayProfiles, { fields: [screens.displayProfileId], references: [displayProfiles.id] }),
   currentEvent: one(events, { fields: [screens.currentEventId], references: [events.id] }),
   fallbackLayout: one(layoutTemplates, { fields: [screens.fallbackLayoutId], references: [layoutTemplates.id] }),
+  fallbackPlaylist: one(playlists, { fields: [screens.fallbackPlaylistId], references: [playlists.id] }),
   groupMemberships: many(screenGroupMemberships),
   heartbeats: many(playerHeartbeats),
 }));
