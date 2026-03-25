@@ -8858,6 +8858,7 @@ function LayoutEditorPanel({
   const [editingZoneId, setEditingZoneId] = useState<string | undefined>();
   const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
+  const clipboard = useZoneClipboard();
   const editingZone = editingZoneId ? zones.find(z => z.id === editingZoneId) : undefined;
   const { clients } = useSiteContext();
   const { user } = useAuth();
@@ -9070,27 +9071,6 @@ function LayoutEditorPanel({
     }
   };
 
-  const cloneZoneMutation = useMutation({
-    mutationFn: (zoneToClone: LayoutZone) => {
-      const clonedZone: LayoutZone = {
-        ...zoneToClone,
-        id: `zone-${Date.now()}`,
-        name: `${zoneToClone.name} (Copy)`,
-        x: Math.min(zoneToClone.x + 5, 100 - zoneToClone.width),
-        y: Math.min(zoneToClone.y + 5, 100 - zoneToClone.height),
-      };
-      const updatedZones = [...zones, clonedZone];
-      return apiRequest("PATCH", `/api/layouts/${layout.id}`, { zones: updatedZones });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
-      toast({ title: "Zone cloned" });
-    },
-    onError: () => {
-      toast({ title: "Failed to clone zone", variant: "destructive" });
-    },
-  });
-
   const handleEditZone = (zone: LayoutZone) => {
     setEditingZoneId(zone.id);
     setZoneDialogOpen(true);
@@ -9187,6 +9167,28 @@ function LayoutEditorPanel({
             <Plus className="h-4 w-4 mr-1" />
             Add Zone
           </Button>
+          {clipboard && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              onClick={() => {
+                const newZone: LayoutZone = {
+                  ...JSON.parse(JSON.stringify(clipboard)),
+                  id: `zone-${Date.now()}`,
+                  name: `${clipboard.name} (copy)`,
+                  x: (clipboard.x + clipboard.width <= 100) ? clipboard.x : Math.max(0, (100 - clipboard.width) / 2),
+                  y: (clipboard.y + clipboard.height <= 100) ? clipboard.y : Math.max(0, (100 - clipboard.height) / 2),
+                };
+                onZonesChange([...zones, newZone]);
+                toast({ title: "Zone pasted", description: `"${newZone.name}" added` });
+              }}
+              data-testid="button-paste-zone-editor"
+            >
+              <ClipboardPaste className="h-4 w-4 mr-1" />
+              Paste Zone
+            </Button>
+          )}
         </div>
       </div>
 
@@ -9253,11 +9255,13 @@ function LayoutEditorPanel({
                     variant="ghost"
                     size="icon"
                     className="flex-shrink-0"
+                    title="Copy zone"
                     onClick={(e) => {
                       e.stopPropagation();
-                      cloneZoneMutation.mutate(zone);
+                      setZoneClipboard(zone);
+                      toast({ title: "Zone copied", description: `"${zone.name}" ready to paste` });
                     }}
-                    data-testid={`button-clone-zone-${zone.id}`}
+                    data-testid={`button-copy-zone-${zone.id}`}
                   >
                     <Copy className="h-4 w-4 text-muted-foreground" />
                   </Button>
