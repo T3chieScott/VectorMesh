@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
-import { ZoneRenderer, getAspectRatioDimensions } from "@/components/zone-renderer";
+import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
 import html2canvas from "html2canvas";
 
 interface PlayerContentData {
@@ -701,7 +701,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
             >
               {zones.map((zone) => (
                 <div
-                  key={zone.id}
+                  key={isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
                   className="absolute"
                   style={{
                     left: `${zone.x}%`,
@@ -730,7 +730,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
           ) : (
             zones.map((zone) => (
               <div
-                key={zone.id}
+                key={isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
                 className="absolute"
                 style={{
                   left: `${zone.x}%`,

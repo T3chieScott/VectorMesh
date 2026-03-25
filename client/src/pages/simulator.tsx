@@ -35,7 +35,7 @@ import {
   X,
 } from "lucide-react";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
-import { ZoneRenderer, zoneTypeIcons, getAspectRatioDimensions } from "@/components/zone-renderer";
+import { ZoneRenderer, zoneTypeIcons, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
 
 interface SimulatorState {
   isPlaying: boolean;
@@ -57,6 +57,7 @@ function PlayerDisplay({
   getPlaylistName,
   skipNonce = 0,
   fallbackZones,
+  useStableKeys = false,
 }: {
   screen: Screen | null;
   profile: DisplayProfile | null;
@@ -68,6 +69,7 @@ function PlayerDisplay({
   getPlaylistName: (zoneId: string) => string | undefined;
   skipNonce?: number;
   fallbackZones?: LayoutZone[];
+  useStableKeys?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0.5);
@@ -197,7 +199,7 @@ function PlayerDisplay({
               >
                 {zones.map((zone) => (
                   <div
-                    key={zone.id}
+                    key={useStableKeys ? getZoneFingerprint(zone) : zone.id}
                     className="absolute"
                     style={{
                       left: `${zone.x}%`,
@@ -241,7 +243,7 @@ function PlayerDisplay({
           ) : zones.length > 0 ? (
         zones.map((zone) => (
           <div
-            key={zone.id}
+            key={useStableKeys ? getZoneFingerprint(zone) : zone.id}
             className="absolute"
             style={{
               left: `${zone.x}%`,
@@ -1014,6 +1016,7 @@ export default function SimulatorPage() {
                   getPlaylistName={getPlaylistName}
                   skipNonce={mediaPlayerSkipNonce}
                   fallbackZones={isPlaylistPreview ? undefined : simulatorFallbackZones}
+                  useStableKeys={isPlaylistPreview && previewHasLayoutItems}
                 />
               )}
             </CardContent>

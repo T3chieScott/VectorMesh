@@ -5905,6 +5905,21 @@ export function ZoneRenderer({
   );
 }
 
+function djb2Hash(str: string): string {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) + str.charCodeAt(i);
+    hash = hash & hash;
+  }
+  return (hash >>> 0).toString(36);
+}
+
+export function getZoneFingerprint(zone: LayoutZone): string {
+  const { id, name, ...rest } = zone as any;
+  const configStr = JSON.stringify(rest, Object.keys(rest).sort());
+  return `zfp_${zone.type}_${zone.x}_${zone.y}_${zone.width}_${zone.height}_${djb2Hash(configStr)}`;
+}
+
 export function getAspectRatioDimensions(aspectRatio: string, customWidth?: number | null, customHeight?: number | null): { width: number; height: number } {
   switch (aspectRatio) {
     case "16:9": return { width: 16, height: 9 };
