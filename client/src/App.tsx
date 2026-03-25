@@ -62,6 +62,7 @@ function AuthenticatedRouter() {
       <Route path="/simulator" component={SimulatorPage} />
       <Route path="/schedule" component={SchedulePage} />
       <Route path="/settings" component={SettingsPage} />
+      <Route path="/change-password" component={ChangePasswordPage} />
       <Route path="/admin/users">{() => <AdminRoute component={AdminUsersPage} />}</Route>
       <Route path="/admin/display-profiles">{() => <AdminRoute component={AdminDisplayProfilesPage} />}</Route>
       <Route path="/admin/activity">{() => <AdminRoute component={ActivityLogPage} />}</Route>
