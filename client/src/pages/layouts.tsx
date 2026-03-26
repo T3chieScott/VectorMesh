@@ -9560,9 +9560,9 @@ function LivePreviewPanel({
         <p className="text-xs text-muted-foreground mt-1">
           Click to select, drag to move, Shift+click to multi-select, double-click to edit
         </p>
-        <div className="h-8 mt-2" data-testid="alignment-toolbar">
+        <div className="h-8 mt-2 overflow-hidden" data-testid="alignment-toolbar">
           {selectedZones.length >= 1 && (
-            <div className="flex items-center gap-1 flex-wrap">
+            <div className="flex items-center gap-1 flex-nowrap">
               <span className="text-xs text-muted-foreground mr-1">
                 {selectedZones.length} selected{selectedZones.length >= 2 ? ` (anchor: ${anchorZone?.name || "—"})` : ""}:
               </span>
