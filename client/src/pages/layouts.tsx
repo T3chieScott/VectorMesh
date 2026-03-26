@@ -9560,10 +9560,10 @@ function LivePreviewPanel({
         <p className="text-xs text-muted-foreground mt-1">
           Click to select, drag to move, Shift+click to multi-select, double-click to edit
         </p>
-        <div className="h-8 mt-2 overflow-hidden" data-testid="alignment-toolbar">
+        <div className="h-8 mt-2 overflow-x-auto overflow-y-hidden" data-testid="alignment-toolbar">
           {selectedZones.length >= 1 && (
             <div className="flex items-center gap-1 flex-nowrap">
-              <span className="text-xs text-muted-foreground mr-1">
+              <span className="text-xs text-muted-foreground mr-1 shrink-0 max-w-[180px] truncate">
                 {selectedZones.length} selected{selectedZones.length >= 2 ? ` (anchor: ${anchorZone?.name || "—"})` : ""}:
               </span>
               <Button variant="outline" size="icon" onClick={() => centreToScreen("center-screen-h")} title="Centre on screen horizontally" data-testid="button-center-screen-h">
