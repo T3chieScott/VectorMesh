@@ -136,6 +136,25 @@ const pendingPlayerRefreshes = new Map<string, number>();
 const pendingScreenshotRequests = new Map<string, number>();
 const REFRESH_SIGNAL_TTL = 60_000;
 
+async function refreshScreensForVersion(versionId: string) {
+  try {
+    const version = await storage.getProgrammeVersion(versionId);
+    if (!version || version.status !== "published") return;
+    const programmes = await storage.getProgrammes();
+    const programme = programmes.find(p => p.id === version.programmeId);
+    if (!programme?.eventId) return;
+    const allScreens = await storage.getScreens();
+    const now = Date.now();
+    for (const s of allScreens) {
+      if (s.currentEventId === programme.eventId) {
+        pendingPlayerRefreshes.set(s.id, now);
+      }
+    }
+  } catch (err) {
+    console.error("Error signalling screen refresh for version:", err);
+  }
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -1741,6 +1760,7 @@ export async function registerRoutes(
       
       if (draftVersion) {
         await storage.updateProgrammeVersion(draftVersion.id, { status: "published", publishedAt: new Date() });
+        refreshScreensForVersion(draftVersion.id);
       }
       logAudit(req, "publish", "programme", req.params.id);
       res.json({ success: true });
@@ -2036,6 +2056,7 @@ export async function registerRoutes(
         programmeVersionId: req.params.versionId,
       });
       const block = await storage.createScheduleBlock(data);
+      refreshScreensForVersion(req.params.versionId);
       res.status(201).json(block);
     } catch (error) {
       console.error("Error creating schedule block:", error);
@@ -2050,6 +2071,7 @@ export async function registerRoutes(
       if (!block) {
         return res.status(404).json({ error: "Schedule block not found" });
       }
+      refreshScreensForVersion(block.programmeVersionId);
       res.json(block);
     } catch (error) {
       console.error("Error updating schedule block:", error);
@@ -2059,10 +2081,12 @@ export async function registerRoutes(
 
   app.delete("/api/schedule-blocks/:id", requireAuth, async (req, res) => {
     try {
+      const existing = await storage.getScheduleBlock(req.params.id);
       const deleted = await storage.deleteScheduleBlock(req.params.id);
       if (!deleted) {
         return res.status(404).json({ error: "Schedule block not found" });
       }
+      if (existing) refreshScreensForVersion(existing.programmeVersionId);
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting schedule block:", error);

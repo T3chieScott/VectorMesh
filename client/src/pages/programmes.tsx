@@ -50,6 +50,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import {
   Plus,
@@ -68,6 +69,7 @@ import {
   Layers,
   Clock,
   Monitor,
+  AlertTriangle,
 } from "lucide-react";
 import type { Programme, Event, ProgrammeVersion, ScheduleBlock, LayoutTemplate, Playlist, Screen, ScreenGroup, TimeRule, ScheduleTarget } from "@shared/schema";
 
@@ -114,6 +116,8 @@ type BlockFormValues = z.infer<typeof blockFormSchema>;
 
 function BlockEditorDialog({
   versionId,
+  versionStatus,
+  programmeId,
   block,
   layouts,
   screens,
@@ -122,6 +126,8 @@ function BlockEditorDialog({
   onOpenChange,
 }: {
   versionId: string;
+  versionStatus?: string;
+  programmeId?: string;
   block?: ScheduleBlock;
   layouts: LayoutTemplate[];
   screens: Screen[];
@@ -204,7 +210,31 @@ function BlockEditorDialog({
       queryClient.invalidateQueries({ queryKey: ["/api/programme-versions", versionId, "blocks"] });
       onOpenChange(false);
       form.reset();
-      toast({ title: isEditing ? "Block updated" : "Block added" });
+      if (versionStatus === "draft" && programmeId) {
+        toast({
+          title: isEditing ? "Block updated" : "Block added",
+          description: "This is a draft. Publish to update screens.",
+          action: (
+            <ToastAction
+              altText="Publish now"
+              data-testid="button-publish-from-programmes-toast"
+              onClick={() => {
+                apiRequest("POST", `/api/programmes/${programmeId}/publish`).then(() => {
+                  queryClient.invalidateQueries({ queryKey: ["/api/programmes"] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/programme-versions"] });
+                  toast({ title: "Programme published" });
+                }).catch(() => {
+                  toast({ title: "Failed to publish", variant: "destructive" });
+                });
+              }}
+            >
+              Publish now
+            </ToastAction>
+          ),
+        });
+      } else {
+        toast({ title: isEditing ? "Block updated" : "Block added" });
+      }
     },
     onError: () => {
       toast({ title: "Failed to save block", variant: "destructive" });
@@ -599,7 +629,31 @@ function ScheduleBlocksSection({
     mutationFn: (blockId: string) => apiRequest("DELETE", `/api/schedule-blocks/${blockId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/programme-versions", version.id, "blocks"] });
-      toast({ title: "Block deleted" });
+      if (version.status === "draft") {
+        toast({
+          title: "Block deleted",
+          description: "This is a draft. Publish to update screens.",
+          action: (
+            <ToastAction
+              altText="Publish now"
+              data-testid="button-publish-from-delete-programmes-toast"
+              onClick={() => {
+                apiRequest("POST", `/api/programmes/${version.programmeId}/publish`).then(() => {
+                  queryClient.invalidateQueries({ queryKey: ["/api/programmes"] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/programme-versions"] });
+                  toast({ title: "Programme published" });
+                }).catch(() => {
+                  toast({ title: "Failed to publish", variant: "destructive" });
+                });
+              }}
+            >
+              Publish now
+            </ToastAction>
+          ),
+        });
+      } else {
+        toast({ title: "Block deleted" });
+      }
     },
     onError: () => {
       toast({ title: "Failed to delete block", variant: "destructive" });
@@ -670,6 +724,8 @@ function ScheduleBlocksSection({
 
       <BlockEditorDialog
         versionId={version.id}
+        versionStatus={version.status}
+        programmeId={version.programmeId}
         block={editingBlock}
         layouts={layouts}
         screens={screens}
@@ -915,14 +971,19 @@ function ProgrammeCard({
             </span>
           )}
         </div>
-        {/* Schedule blocks for draft or published version */}
-        {(draftVersion || publishedVersion) && (
+        {(publishedVersion || draftVersion) && (
           <ScheduleBlocksSection
-            version={draftVersion || publishedVersion!}
+            version={publishedVersion || draftVersion!}
             layouts={layouts}
             screens={screens}
             screenGroups={screenGroups}
           />
+        )}
+        {!publishedVersion && draftVersion && (
+          <div className="flex items-center gap-2 p-2 rounded-md bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 text-xs" data-testid="warning-draft-blocks">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span>This programme is unpublished. Schedule blocks won't appear on screens until you publish.</span>
+          </div>
         )}
       </CardContent>
     </Card>

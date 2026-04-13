@@ -60,6 +60,7 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import {
   ChevronLeft,
   ChevronRight,
@@ -334,6 +335,8 @@ function ScheduleBlockEditor({
   onOpenChange,
   block,
   versionId,
+  versionStatus,
+  programmeId,
   initialDate,
   initialHour,
   droppedItem,
@@ -347,6 +350,8 @@ function ScheduleBlockEditor({
   onOpenChange: (open: boolean) => void;
   block?: ScheduleBlock;
   versionId: string;
+  versionStatus?: string;
+  programmeId?: string;
   initialDate?: Date;
   initialHour?: number;
   droppedItem?: { type: string; id: string; name: string } | null;
@@ -488,12 +493,36 @@ function ScheduleBlockEditor({
       return apiRequest("POST", `/api/programme-versions/${versionId}/blocks`, payload);
     },
     onSuccess: () => {
-      toast({
-        title: isEditing ? "Block updated" : "Block created",
-        description: `Schedule block "${form.getValues().name}" has been ${isEditing ? "updated" : "created"}.`,
-      });
       queryClient.invalidateQueries({ queryKey: ["/api/programme-versions", versionId, "blocks"] });
       onOpenChange(false);
+      if (versionStatus === "draft" && programmeId) {
+        toast({
+          title: isEditing ? "Block updated" : "Block created",
+          description: "This is a draft. Publish to update screens.",
+          action: (
+            <ToastAction
+              altText="Publish now"
+              data-testid="button-publish-from-toast"
+              onClick={() => {
+                apiRequest("POST", `/api/programmes/${programmeId}/publish`).then(() => {
+                  queryClient.invalidateQueries({ queryKey: ["/api/programmes"] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/programme-versions"] });
+                  toast({ title: "Programme published" });
+                }).catch(() => {
+                  toast({ title: "Failed to publish", variant: "destructive" });
+                });
+              }}
+            >
+              Publish now
+            </ToastAction>
+          ),
+        });
+      } else {
+        toast({
+          title: isEditing ? "Block updated" : "Block created",
+          description: `Schedule block "${form.getValues().name}" has been ${isEditing ? "updated" : "created"}.`,
+        });
+      }
     },
     onError: (error) => {
       toast({
@@ -510,9 +539,33 @@ function ScheduleBlockEditor({
       return apiRequest("DELETE", `/api/schedule-blocks/${block.id}`);
     },
     onSuccess: () => {
-      toast({ title: "Block deleted" });
       queryClient.invalidateQueries({ queryKey: ["/api/programme-versions", versionId, "blocks"] });
       onOpenChange(false);
+      if (versionStatus === "draft" && programmeId) {
+        toast({
+          title: "Block deleted",
+          description: "This is a draft. Publish to update screens.",
+          action: (
+            <ToastAction
+              altText="Publish now"
+              data-testid="button-publish-from-delete-toast"
+              onClick={() => {
+                apiRequest("POST", `/api/programmes/${programmeId}/publish`).then(() => {
+                  queryClient.invalidateQueries({ queryKey: ["/api/programmes"] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/programme-versions"] });
+                  toast({ title: "Programme published" });
+                }).catch(() => {
+                  toast({ title: "Failed to publish", variant: "destructive" });
+                });
+              }}
+            >
+              Publish now
+            </ToastAction>
+          ),
+        });
+      } else {
+        toast({ title: "Block deleted" });
+      }
     },
   });
   
@@ -955,10 +1008,16 @@ export default function SchedulePage() {
   const { data: playlists = [] } = useQuery<Playlist[]>(playlistsQ);
   const { data: media = [] } = useQuery<MediaAsset[]>(mediaQ);
   
-  // Show all versions (both draft and published) for scheduling
   const activeVersions = allVersions;
+
+  useEffect(() => {
+    if (selectedVersionId || allVersions.length === 0) return;
+    const published = allVersions.find((v) => v.status === "published");
+    if (published) setSelectedVersionId(published.id);
+  }, [allVersions, selectedVersionId]);
   
   const selectedVersion = allVersions.find((v) => v.id === selectedVersionId);
+  const isSelectedDraft = selectedVersion?.status === "draft";
   const selectedProgramme = selectedVersion
     ? programmes.find((p) => p.id === selectedVersion.programmeId)
     : null;
@@ -1170,6 +1229,12 @@ export default function SchedulePage() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
+              {isSelectedDraft && (
+                <div className="flex items-center gap-2 m-3 p-2 rounded-md bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 text-xs" data-testid="warning-draft-schedule">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  <span>Editing a draft version. Changes won't appear on screens until you publish this programme.</span>
+                </div>
+              )}
               {!selectedVersionId ? (
                 <div className="flex items-center justify-center h-[400px] text-muted-foreground">
                   <div className="text-center">
@@ -1273,6 +1338,8 @@ export default function SchedulePage() {
         onOpenChange={handleEditorClose}
         block={selectedBlock}
         versionId={selectedVersionId}
+        versionStatus={selectedVersion?.status}
+        programmeId={selectedProgramme?.id}
         initialDate={clickedSlot?.date}
         initialHour={clickedSlot?.hour}
         droppedItem={droppedItem}
