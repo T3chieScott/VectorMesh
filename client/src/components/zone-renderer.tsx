@@ -39,6 +39,7 @@ import {
   Globe,
   Radar,
   MonitorPlay,
+  Radio,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
@@ -85,6 +86,7 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   earthquakes: Globe,
   aircraft_radar: Radar,
   youtube_live: MonitorPlay,
+  srt_feed: Radio,
 };
 
 function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
@@ -3222,6 +3224,157 @@ function YouTubeLiveWidget({ url, mute = true }: { url?: string; mute?: boolean 
   );
 }
 
+function SrtFeedWidget({ url, latency = 200, mute = true }: { url?: string; latency?: number; mute?: boolean }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const playerRef = useRef<any>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const [status, setStatus] = useState<"idle" | "connecting" | "live" | "error" | "offline">("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const destroyPlayer = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    if (playerRef.current) {
+      try {
+        playerRef.current.pause();
+        playerRef.current.unload();
+        playerRef.current.detachMediaElement();
+        playerRef.current.destroy();
+      } catch {}
+      playerRef.current = null;
+    }
+  }, []);
+
+  const initPlayer = useCallback(async () => {
+    if (!url || !videoRef.current) return;
+    destroyPlayer();
+    setStatus("connecting");
+    setErrorMsg("");
+
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    try {
+      const mpegts = (await import("mpegts.js")).default;
+      if (!mpegts.isSupported()) {
+        setStatus("error");
+        setErrorMsg("Browser does not support MPEG-TS playback");
+        return;
+      }
+
+      const player = mpegts.createPlayer({
+        type: "mpegts",
+        isLive: true,
+        url,
+      }, {
+        liveBufferLatencyChasing: true,
+        liveBufferLatencyMaxLatency: (latency * 2) / 1000,
+        liveBufferLatencyMinRemain: latency / 1000 / 4,
+        enableWorker: true,
+        enableStashBuffer: false,
+        autoCleanupSourceBuffer: true,
+      });
+
+      player.attachMediaElement(videoRef.current);
+
+      player.on(mpegts.Events.ERROR, (errorType: string, errorDetail: string) => {
+        console.warn("[SRT] Player error:", errorType, errorDetail);
+        setStatus("error");
+        setErrorMsg(`${errorType}: ${errorDetail}`);
+        reconnectTimerRef.current = setTimeout(() => initPlayer(), 5000);
+      });
+
+      player.on(mpegts.Events.STATISTICS_INFO, () => {
+        if (status !== "live") setStatus("live");
+      });
+
+      player.load();
+      player.play().catch(() => {});
+      playerRef.current = player;
+
+      if (videoRef.current) {
+        videoRef.current.addEventListener("playing", () => setStatus("live"), { once: true, signal: ac.signal });
+        videoRef.current.addEventListener("stalled", () => {
+          setStatus("connecting");
+        }, { signal: ac.signal });
+        videoRef.current.addEventListener("error", () => {
+          setStatus("error");
+          setErrorMsg("Video playback error");
+          reconnectTimerRef.current = setTimeout(() => initPlayer(), 5000);
+        }, { signal: ac.signal });
+      }
+    } catch (err: any) {
+      console.error("[SRT] Init error:", err);
+      setStatus("error");
+      setErrorMsg(err.message || "Failed to initialise player");
+      reconnectTimerRef.current = setTimeout(() => initPlayer(), 5000);
+    }
+  }, [url, latency, destroyPlayer]);
+
+  useEffect(() => {
+    initPlayer();
+    return destroyPlayer;
+  }, [initPlayer, destroyPlayer]);
+
+  if (!url) {
+    return (
+      <div className="h-full w-full bg-black/90 flex flex-col items-center justify-center gap-2 text-white/60">
+        <Radio className="h-8 w-8" />
+        <span className="text-sm">No SRT URL configured</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative w-full h-full bg-black">
+      <video
+        ref={videoRef}
+        className="w-full h-full object-contain"
+        autoPlay
+        playsInline
+        muted={mute}
+        data-testid="video-srt-feed"
+      />
+      {status !== "live" && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80">
+          {status === "connecting" && (
+            <>
+              <div className="w-8 h-8 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+              <span className="text-white/70 text-sm" data-testid="text-srt-connecting">Connecting to stream...</span>
+            </>
+          )}
+          {status === "error" && (
+            <>
+              <Radio className="h-8 w-8 text-red-400" />
+              <span className="text-red-400 text-sm" data-testid="text-srt-error">{errorMsg || "Stream error"}</span>
+              <span className="text-white/40 text-xs">Reconnecting...</span>
+            </>
+          )}
+          {status === "idle" && (
+            <>
+              <Radio className="h-8 w-8 text-white/40" />
+              <span className="text-white/40 text-sm">Initialising...</span>
+            </>
+          )}
+        </div>
+      )}
+      {status === "live" && (
+        <div className="absolute top-2 right-2 flex items-center gap-1 bg-black/60 px-2 py-0.5 rounded" data-testid="badge-srt-live">
+          <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+          <span className="text-white text-[10px] font-medium uppercase">Live</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SpaceXLaunchWidget({
   refreshInterval = 60,
   fontSize = 14,
@@ -5741,6 +5894,14 @@ export function ZoneRenderer({
           <YouTubeLiveWidget
             url={zone.youtubeUrl}
             mute={zone.youtubeMute}
+          />
+        );
+      case "srt_feed":
+        return (
+          <SrtFeedWidget
+            url={zone.srtUrl}
+            latency={zone.srtLatency}
+            mute={zone.srtMute}
           />
         );
       default:

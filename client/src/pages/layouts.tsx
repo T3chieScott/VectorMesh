@@ -119,6 +119,7 @@ import {
   Lock,
   Unlock,
   MonitorPlay,
+  Radio,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -413,6 +414,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   earthquakes: Globe,
   aircraft_radar: Radar,
   youtube_live: MonitorPlay,
+  srt_feed: Radio,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -440,11 +442,12 @@ const zoneTypeLabels: Record<string, string> = {
   earthquakes: "Global Earthquakes",
   aircraft_radar: "Aircraft Overhead Radar",
   youtube_live: "YouTube Live",
+  srt_feed: "SRT Feed (live stream)",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar", "youtube_live"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar", "youtube_live", "srt_feed"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(0.01).max(100),
@@ -667,6 +670,9 @@ const zoneFormSchema = z.object({
   aircraftPageDuration: z.number().min(1).max(60).optional(),
   youtubeUrl: z.string().optional(),
   youtubeMute: z.boolean().optional(),
+  srtUrl: z.string().optional(),
+  srtLatency: z.number().min(20).max(5000).optional(),
+  srtMute: z.boolean().optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
     id: z.string(),
@@ -1347,6 +1353,9 @@ function ZoneEditorDialog({
       newsTextSize: 24,
       youtubeUrl: "",
       youtubeMute: true,
+      srtUrl: "",
+      srtLatency: 200,
+      srtMute: true,
       textContent: "",
       textFontSize: 24,
       textAlign: "center",
@@ -1569,6 +1578,9 @@ function ZoneEditorDialog({
             (zone.newsTextSize === 'small' ? 14 : zone.newsTextSize === 'large' ? 36 : 24),
           youtubeUrl: zone.youtubeUrl || "",
           youtubeMute: zone.youtubeMute !== false,
+          srtUrl: zone.srtUrl || "",
+          srtLatency: zone.srtLatency || 200,
+          srtMute: zone.srtMute !== false,
           textContent: zone.textContent || "",
           textFontSize: typeof zone.textFontSize === 'number' ? zone.textFontSize :
             (zone.textFontSize === 'small' ? 14 : zone.textFontSize === 'large' ? 36 : zone.textFontSize === 'xlarge' ? 48 : 24),
@@ -1788,6 +1800,9 @@ function ZoneEditorDialog({
           newsTextSize: 24,
           youtubeUrl: "",
           youtubeMute: true,
+          srtUrl: "",
+          srtLatency: 200,
+          srtMute: true,
           textContent: "",
           textFontSize: 24,
           textAlign: "center",
@@ -7197,6 +7212,74 @@ function ZoneEditorDialog({
                           checked={field.value !== false}
                           onCheckedChange={field.onChange}
                           data-testid="checkbox-youtube-mute"
+                        />
+                      </FormControl>
+                      <FormLabel className="font-normal">Mute audio</FormLabel>
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+
+            {form.watch("type") === "srt_feed" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Radio className="h-4 w-4" />
+                  SRT Feed Settings
+                </div>
+                <FormField
+                  control={form.control}
+                  name="srtUrl"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Stream URL</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="http://server:port/path or ws://server:port/path"
+                          {...field}
+                          data-testid="input-srt-url"
+                        />
+                      </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        Enter the HTTP-FLV, WebSocket, or MPEG-TS stream URL. SRT streams must be re-muxed to HTTP-TS or WebSocket by a media relay for browser playback.
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="srtLatency"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Buffer Latency (ms)</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          min={20}
+                          max={5000}
+                          {...field}
+                          onChange={(e) => field.onChange(Number(e.target.value))}
+                          data-testid="input-srt-latency"
+                        />
+                      </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        Target buffer latency in milliseconds. Lower = less delay but more risk of stutter. Default: 200ms.
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="srtMute"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-3 space-y-0">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value !== false}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-srt-mute"
                         />
                       </FormControl>
                       <FormLabel className="font-normal">Mute audio</FormLabel>
