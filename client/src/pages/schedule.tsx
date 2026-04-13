@@ -1456,6 +1456,39 @@ export default function SchedulePage() {
           }];
         } else {
           const matchedRule = existingRules[bestMatchIdx];
+          const days = matchedRule.daysOfWeek;
+          const isDateBounded = !!(matchedRule.startDate && matchedRule.endDate);
+          const isSingleDay = isDateBounded && matchedRule.startDate === matchedRule.endDate;
+          const isGeneral = !isDateBounded && (!days || days.length === 0);
+          const dateChanged = !!(newDate && ruleDateStr !== targetDateStr);
+
+          const hasGeneralRule = existingRules.some((r) => {
+            const d = r.daysOfWeek;
+            return !r.startDate && !r.endDate && (!d || d.length === 0);
+          });
+
+          const destDateHasOverride = dateChanged && existingRules.some((r, i) =>
+            i !== bestMatchIdx && !staleIndices.has(i) &&
+            r.startDate === ruleDateStr && r.endDate === ruleDateStr &&
+            r.startDate === r.endDate
+          );
+          if (destDateHasOverride) {
+            existingRules.forEach((r, i) => {
+              if (i !== bestMatchIdx && !staleIndices.has(i) &&
+                  r.startDate === ruleDateStr && r.endDate === ruleDateStr &&
+                  r.startDate === r.endDate) {
+                staleIndices.add(i);
+              }
+            });
+          }
+
+          if (hasGeneralRule && dateChanged && isSingleDay) {
+            const isSuppressionRule = !matchedRule.startTime && !matchedRule.endTime;
+            if (isSuppressionRule) {
+              staleIndices.add(bestMatchIdx);
+            }
+          }
+
           updatedRules = [];
 
           for (let i = 0; i < existingRules.length; i++) {
@@ -1465,11 +1498,6 @@ export default function SchedulePage() {
               updatedRules.push(existingRules[i]);
               continue;
             }
-
-            const days = matchedRule.daysOfWeek;
-            const isDateBounded = !!(matchedRule.startDate && matchedRule.endDate);
-            const isGeneral = !isDateBounded && (!days || days.length === 0);
-            const dateChanged = newDate && ruleDateStr !== targetDateStr;
 
             if (days && days.length > 0) {
               const remaining = days.filter((d: number) => d !== targetDow);
@@ -1494,6 +1522,16 @@ export default function SchedulePage() {
               endTime: newEndTime,
             });
           }
+
+          if (hasGeneralRule && !dateChanged) {
+            updatedRules = updatedRules.filter((r) => {
+              const tr = r as TimeRule;
+              if (!tr.startDate || !tr.endDate) return true;
+              if (tr.startDate !== targetDateStr || tr.endDate !== targetDateStr) return true;
+              if (!tr.startTime && !tr.endTime) return false;
+              return true;
+            });
+          }
         }
       } else if (existingRules.length > 0) {
         updatedRules = existingRules.map((rule) => ({
@@ -1504,18 +1542,21 @@ export default function SchedulePage() {
       }
 
       const deduped: Array<TimeRule | null> = [];
-      const seenDateKeys = new Map<string, number>();
+      const seenSingleDay = new Map<string, number>();
+      const seenRange = new Map<string, number>();
       for (let i = 0; i < updatedRules.length; i++) {
         const r = updatedRules[i] as TimeRule;
         const sd = r.startDate || "";
         const ed = r.endDate || "";
-        if (sd || ed) {
+        if (sd && ed) {
+          const isSingle = sd === ed;
           const key = `${sd}|${ed}`;
-          if (seenDateKeys.has(key)) {
-            const prevIdx = seenDateKeys.get(key)!;
+          const bucket = isSingle ? seenSingleDay : seenRange;
+          if (bucket.has(key)) {
+            const prevIdx = bucket.get(key)!;
             deduped[prevIdx] = null;
           }
-          seenDateKeys.set(key, i);
+          bucket.set(key, i);
         }
         deduped.push(r);
       }
