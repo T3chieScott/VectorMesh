@@ -18,6 +18,7 @@ import {
   setHours,
   setMinutes,
   differenceInMinutes,
+  differenceInDays,
   isWithinInterval,
 } from "date-fns";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -176,10 +177,14 @@ function normaliseRuleDates(rule: TimeRule): TimeRule {
 function ruleSpecificity(rule: TimeRule): number {
   const hasStart = !!rule.startDate;
   const hasEnd = !!rule.endDate;
-  if (hasStart && hasEnd && rule.startDate === rule.endDate) return 3;
-  if (hasStart && hasEnd) return 2;
-  if (hasStart || hasEnd) return 2;
-  return 0;
+  if (!hasStart && !hasEnd) return 0;
+  if (hasStart && hasEnd) {
+    const sd = parseISO(rule.startDate!);
+    const ed = parseISO(rule.endDate!);
+    const spanDays = Math.max(0, differenceInDays(ed, sd));
+    return 1000 - Math.min(spanDays, 999);
+  }
+  return 1;
 }
 
 function getBestRuleForDay(timeRules: TimeRule[], date: Date): TimeRule | null {
@@ -1414,7 +1419,7 @@ export default function SchedulePage() {
           if (r.endDate && singleDayDate > endOfDay(parseISO(r.endDate))) return;
           const spec = ruleSpecificity(r);
           matchingIndices.push(i);
-          if (bestMatchIdx === -1 || spec > bestSpec || (spec === bestSpec && spec > 0)) {
+          if (bestMatchIdx === -1 || spec > bestSpec || spec === bestSpec) {
             bestMatchIdx = i;
             bestSpec = spec;
           }
