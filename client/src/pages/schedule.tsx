@@ -1472,11 +1472,15 @@ export default function SchedulePage() {
             r.startDate === ruleDateStr && r.endDate === ruleDateStr &&
             r.startDate === r.endDate
           );
+          let removedDestSuppression = false;
           if (destDateHasOverride) {
             existingRules.forEach((r, i) => {
               if (i !== bestMatchIdx && !staleIndices.has(i) &&
                   r.startDate === ruleDateStr && r.endDate === ruleDateStr &&
                   r.startDate === r.endDate) {
+                if (!r.startTime && !r.endTime) {
+                  removedDestSuppression = true;
+                }
                 staleIndices.add(i);
               }
             });
@@ -1517,12 +1521,15 @@ export default function SchedulePage() {
               updatedRules.push(matchedRule);
             }
 
-            updatedRules.push({
-              startDate: ruleDateStr,
-              endDate: ruleDateStr,
-              startTime: newStartTime,
-              endTime: newEndTime,
-            });
+            const isRevertToGeneral = hasGeneralRule && dateChanged && removedDestSuppression;
+            if (!isRevertToGeneral) {
+              updatedRules.push({
+                startDate: ruleDateStr,
+                endDate: ruleDateStr,
+                startTime: newStartTime,
+                endTime: newEndTime,
+              });
+            }
           }
 
           if (hasGeneralRule && !dateChanged) {
