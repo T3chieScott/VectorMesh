@@ -212,8 +212,14 @@ function TimeBlockRenderer({
   }
 
   const isDraggingThis = timelineDrag?.blockId === block.id;
-  const displayStartMin = isDraggingThis ? timelineDrag.currentStartMin : origStartMinutes;
-  const displayEndMin = isDraggingThis ? timelineDrag.currentEndMin : origEndMinutes;
+  const isResizeMode = isDraggingThis && (timelineDrag.mode === "resize-top" || timelineDrag.mode === "resize-bottom");
+  const shouldAnimateThis = isDraggingThis && (
+    !isResizeMode ||
+    timelineDrag.shiftKey ||
+    isSameDay(date, timelineDrag.origDate)
+  );
+  const displayStartMin = shouldAnimateThis ? timelineDrag!.currentStartMin : origStartMinutes;
+  const displayEndMin = shouldAnimateThis ? timelineDrag!.currentEndMin : origEndMinutes;
   const durationMinutes = displayEndMin - displayStartMin;
 
   if (durationMinutes <= 0 && !isDraggingThis) return null;
@@ -228,10 +234,11 @@ function TimeBlockRenderer({
     onDragInit(block.id, mode, e, origStartMinutes, origEndMinutes, date, color, block.name);
   };
 
-  const isDragging = isDraggingThis && timelineDrag.hasMoved;
-  const dayShift = isDraggingThis ? timelineDrag.dayOffset : 0;
-  const cursor = isDragging
-    ? timelineDrag.mode === "move" ? "grabbing" : "ns-resize"
+  const isDragging = shouldAnimateThis && timelineDrag!.hasMoved;
+  const isOrigDay = isDraggingThis && isSameDay(date, timelineDrag.origDate);
+  const dayShift = shouldAnimateThis ? timelineDrag!.dayOffset : 0;
+  const cursor = (isOrigDay && timelineDrag!.hasMoved)
+    ? timelineDrag!.mode === "move" ? "grabbing" : "ns-resize"
     : "pointer";
 
   return (
@@ -261,12 +268,12 @@ function TimeBlockRenderer({
         data-testid={`resize-bottom-${block.id}`}
       />
 
-      {isDragging && (
+      {isOrigDay && isDragging && (
         <div className="absolute -top-6 left-0 bg-foreground text-background text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap z-40 flex items-center gap-1">
           {minutesToTimeStr(displayStartMin)} – {minutesToTimeStr(displayEndMin)}
-          {isDraggingThis && (timelineDrag.mode === "resize-top" || timelineDrag.mode === "resize-bottom") && (
-            <span className={`ml-1 px-1 rounded ${timelineDrag.shiftKey ? "bg-blue-500/80 text-white" : "bg-muted text-muted-foreground"}`}>
-              {timelineDrag.shiftKey ? "All days" : "This day"}
+          {isResizeMode && (
+            <span className={`ml-1 px-1 rounded ${timelineDrag!.shiftKey ? "bg-blue-500/80 text-white" : "bg-muted text-muted-foreground"}`}>
+              {timelineDrag!.shiftKey ? "All days" : "This day"}
             </span>
           )}
         </div>
