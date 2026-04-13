@@ -200,14 +200,12 @@ function TimeBlockRenderer({
     origEndMinutes = 24 * 60;
   }
 
-  const isDraggingThisBlock = timelineDrag?.blockId === block.id;
-  const isOrigDay = isDraggingThisBlock && isSameDay(date, timelineDrag.origDate);
-  const isOrigInstance = isOrigDay && origStartMinutes === timelineDrag!.origStartMin && origEndMinutes === timelineDrag!.origEndMin;
-  const isDraggingThis = isDraggingThisBlock && (isOrigInstance || !isOrigDay);
+  const isDraggingThis = timelineDrag?.blockId === block.id;
+  const isOrigDay = isDraggingThis && isSameDay(date, timelineDrag.origDate);
   const isResizeMode = isDraggingThis && (timelineDrag.mode === "resize-top" || timelineDrag.mode === "resize-bottom");
   const isMoveMode = isDraggingThis && timelineDrag.mode === "move";
   const shouldAnimateThis = isDraggingThis && (
-    isOrigInstance ||
+    isOrigDay ||
     (isResizeMode && timelineDrag.shiftKey) ||
     (isMoveMode && timelineDrag.shiftKey)
   );
@@ -215,7 +213,7 @@ function TimeBlockRenderer({
   let displayStartMin = origStartMinutes;
   let displayEndMin = origEndMinutes;
   if (shouldAnimateThis) {
-    if (isOrigInstance) {
+    if (isOrigDay) {
       displayStartMin = timelineDrag!.currentStartMin;
       displayEndMin = timelineDrag!.currentEndMin;
     } else if (isMoveMode) {
@@ -243,9 +241,9 @@ function TimeBlockRenderer({
   };
 
   const isDragging = shouldAnimateThis && timelineDrag!.hasMoved;
-  const isStaticDuringDrag = isDraggingThis && !isOrigInstance && isMoveMode && timelineDrag?.hasMoved && !isDragging;
-  const dayShift = isOrigInstance ? (timelineDrag?.dayOffset || 0) : 0;
-  const cursor = (isOrigInstance && timelineDrag?.hasMoved)
+  const isStaticDuringDrag = isDraggingThis && !isOrigDay && isMoveMode && timelineDrag?.hasMoved && !isDragging;
+  const dayShift = isOrigDay ? (timelineDrag?.dayOffset || 0) : 0;
+  const cursor = (isOrigDay && timelineDrag?.hasMoved)
     ? timelineDrag.mode === "move" ? "grabbing" : "ns-resize"
     : "pointer";
 
@@ -276,7 +274,7 @@ function TimeBlockRenderer({
         data-testid={`resize-bottom-${block.id}-${rule.startTime}`}
       />
 
-      {isDragging && isOrigInstance && (
+      {isDragging && isOrigDay && (
         <div className="absolute -top-6 left-0 bg-foreground text-background text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap z-40 flex items-center gap-1">
           {minutesToTimeStr(displayStartMin)} – {minutesToTimeStr(displayEndMin)}
           <span className={`ml-1 px-1 rounded ${timelineDrag!.shiftKey ? "bg-blue-500/80 text-white" : "bg-muted text-muted-foreground"}`}>
@@ -1357,27 +1355,43 @@ export default function SchedulePage() {
         const targetDow = singleDayDate.getDay();
         const targetDateStr = format(singleDayDate, "yyyy-MM-dd");
 
-        const matchIdx = existingRules.findIndex((r) => {
+        const matchingIndices: number[] = [];
+        let bestMatchIdx = -1;
+        let bestIsDateSpecific = false;
+        existingRules.forEach((r, i) => {
           const days = r.daysOfWeek;
-          if (days && days.length > 0 && !days.includes(targetDow)) return false;
-          if (r.startDate && singleDayDate < startOfDay(parseISO(r.startDate))) return false;
-          if (r.endDate && singleDayDate > endOfDay(parseISO(r.endDate))) return false;
-          return true;
+          if (days && days.length > 0 && !days.includes(targetDow)) return;
+          if (r.startDate && singleDayDate < startOfDay(parseISO(r.startDate))) return;
+          if (r.endDate && singleDayDate > endOfDay(parseISO(r.endDate))) return;
+          const isDateSpecific = !!(r.startDate || r.endDate);
+          matchingIndices.push(i);
+          if (bestMatchIdx === -1 || (isDateSpecific && !bestIsDateSpecific) || (isDateSpecific === bestIsDateSpecific)) {
+            bestMatchIdx = i;
+            bestIsDateSpecific = isDateSpecific;
+          }
         });
+
+        const staleIndices = new Set(matchingIndices.filter((i) => {
+          if (i === bestMatchIdx) return false;
+          const r = existingRules[i];
+          return !!(r.startDate || r.endDate);
+        }));
 
         const ruleDateStr = newDate ? format(newDate, "yyyy-MM-dd") : targetDateStr;
 
-        if (matchIdx === -1) {
+        if (bestMatchIdx === -1) {
           updatedRules = [...existingRules, {
             startDate: ruleDateStr, endDate: ruleDateStr,
             startTime: newStartTime, endTime: newEndTime,
           }];
         } else {
-          const matchedRule = existingRules[matchIdx];
+          const matchedRule = existingRules[bestMatchIdx];
           updatedRules = [];
 
           for (let i = 0; i < existingRules.length; i++) {
-            if (i !== matchIdx) {
+            if (staleIndices.has(i)) continue;
+
+            if (i !== bestMatchIdx) {
               updatedRules.push(existingRules[i]);
               continue;
             }
@@ -1389,23 +1403,13 @@ export default function SchedulePage() {
                 updatedRules.push({ ...matchedRule, daysOfWeek: remaining });
               }
             } else if (matchedRule.startDate && matchedRule.endDate) {
-              const dayBefore = format(addDays(singleDayDate, -1), "yyyy-MM-dd");
-              const dayAfter = format(addDays(singleDayDate, 1), "yyyy-MM-dd");
-              if (matchedRule.startDate < targetDateStr) {
-                updatedRules.push({ ...matchedRule, endDate: dayBefore });
-              }
-              if (matchedRule.endDate > targetDateStr) {
-                updatedRules.push({ ...matchedRule, startDate: dayAfter });
-              }
             } else {
               updatedRules.push(matchedRule);
             }
 
             updatedRules.push({
-              ...matchedRule,
               startDate: ruleDateStr,
               endDate: ruleDateStr,
-              daysOfWeek: undefined,
               startTime: newStartTime,
               endTime: newEndTime,
             });
