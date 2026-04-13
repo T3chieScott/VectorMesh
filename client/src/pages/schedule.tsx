@@ -212,11 +212,11 @@ function TimeBlockRenderer({
   }
 
   const isDraggingThis = timelineDrag?.blockId === block.id;
+  const isOrigDay = isDraggingThis && isSameDay(date, timelineDrag.origDate);
   const isResizeMode = isDraggingThis && (timelineDrag.mode === "resize-top" || timelineDrag.mode === "resize-bottom");
   const shouldAnimateThis = isDraggingThis && (
-    !isResizeMode ||
-    timelineDrag.shiftKey ||
-    isSameDay(date, timelineDrag.origDate)
+    isOrigDay ||
+    (isResizeMode && timelineDrag.shiftKey)
   );
   const displayStartMin = shouldAnimateThis ? timelineDrag!.currentStartMin : origStartMinutes;
   const displayEndMin = shouldAnimateThis ? timelineDrag!.currentEndMin : origEndMinutes;
@@ -235,12 +235,8 @@ function TimeBlockRenderer({
   };
 
   const isDragging = shouldAnimateThis && timelineDrag!.hasMoved;
-  const isOrigDay = isDraggingThis && isSameDay(date, timelineDrag.origDate);
-  const dayShift = shouldAnimateThis ? timelineDrag!.dayOffset : 0;
-  const showDragCursor = isDraggingThis && timelineDrag.hasMoved && (
-    isOrigDay || timelineDrag.mode === "move"
-  );
-  const cursor = showDragCursor
+  const dayShift = isOrigDay ? (timelineDrag?.dayOffset || 0) : 0;
+  const cursor = (isOrigDay && timelineDrag?.hasMoved)
     ? timelineDrag.mode === "move" ? "grabbing" : "ns-resize"
     : "pointer";
 
@@ -1380,27 +1376,9 @@ export default function SchedulePage() {
           }
         }
       } else if (existingRules.length > 0) {
-        const targetDate = newDate || singleDayDate;
-        const matchIdx = targetDate
-          ? existingRules.findIndex((r) => {
-              const days = r.daysOfWeek;
-              if (days && days.length > 0 && !days.includes(targetDate.getDay())) return false;
-              if (r.startDate && targetDate < startOfDay(parseISO(r.startDate))) return false;
-              if (r.endDate && targetDate > endOfDay(parseISO(r.endDate))) return false;
-              return true;
-            })
-          : 0;
-        const ruleIdx = matchIdx >= 0 ? matchIdx : 0;
-        updatedRules = existingRules.map((rule, i) => {
-          if (i !== ruleIdx) return rule;
-          const updated: Record<string, unknown> = { ...rule, startTime: newStartTime, endTime: newEndTime };
-          if (newDate) {
-            const dateStr = format(newDate, "yyyy-MM-dd");
-            updated.startDate = dateStr;
-            updated.endDate = dateStr;
-          }
-          return updated;
-        });
+        updatedRules = existingRules.map((rule) => ({
+          ...rule, startTime: newStartTime, endTime: newEndTime,
+        }));
       } else {
         updatedRules = [{ startTime: newStartTime, endTime: newEndTime, ...(newDate ? { startDate: format(newDate, "yyyy-MM-dd"), endDate: format(newDate, "yyyy-MM-dd") } : {}) }];
       }
