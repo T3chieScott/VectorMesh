@@ -2519,36 +2519,33 @@ export async function registerRoutes(
           );
           if (!targetMatch) continue;
 
-          const timeRules = block.timeRules as any[] || [];
-          const timeMatch = timeRules.length === 0 || timeRules.some((rule: any) => {
-            if (rule.startDate && new Date(rule.startDate) > now) return false;
-            if (rule.endDate && new Date(rule.endDate) < now) return false;
-            if (rule.daysOfWeek && rule.daysOfWeek.length > 0) {
-              if (!rule.daysOfWeek.includes(now.getDay())) return false;
+          const rule = ((block.timeRules as any[]) || [])[0] as { startDate?: string; endDate?: string; startTime?: string; endTime?: string; daysOfWeek?: number[] } | undefined;
+          let timeMatch = true;
+          if (rule) {
+            if (rule.startDate) {
+              const sd = new Date(rule.startDate + "T00:00:00");
+              if (now < sd) timeMatch = false;
             }
-            if (rule.startTime && rule.endTime) {
+            if (rule.endDate) {
+              const ed = new Date(rule.endDate + "T23:59:59");
+              if (now > ed) timeMatch = false;
+            }
+            if (timeMatch && rule.daysOfWeek && rule.daysOfWeek.length > 0) {
+              if (!rule.daysOfWeek.includes(now.getDay())) timeMatch = false;
+            }
+            if (timeMatch && rule.startTime && rule.endTime) {
               const [sh, sm] = rule.startTime.split(":").map(Number);
               const [eh, em] = rule.endTime.split(":").map(Number);
               const startMins = sh * 60 + sm;
               const endMins = eh * 60 + em;
               const nowMins = now.getHours() * 60 + now.getMinutes();
               if (endMins <= startMins) {
-                if (nowMins < startMins && nowMins > endMins) return false;
+                if (nowMins < startMins && nowMins > endMins) timeMatch = false;
               } else {
-                if (nowMins < startMins || nowMins > endMins) return false;
-              }
-            } else {
-              if (rule.startTime) {
-                const [h, m] = rule.startTime.split(":").map(Number);
-                if (now.getHours() < h || (now.getHours() === h && now.getMinutes() < m)) return false;
-              }
-              if (rule.endTime) {
-                const [h, m] = rule.endTime.split(":").map(Number);
-                if (now.getHours() > h || (now.getHours() === h && now.getMinutes() > m)) return false;
+                if (nowMins < startMins || nowMins > endMins) timeMatch = false;
               }
             }
-            return true;
-          });
+          }
 
           if (timeMatch) {
             if (block.layoutTemplateId) {
@@ -2698,36 +2695,33 @@ export async function registerRoutes(
           );
           if (!targetMatch) continue;
 
-          const timeRules = block.timeRules as any[] || [];
-          const timeMatch = timeRules.length === 0 || timeRules.some((rule: any) => {
-            if (rule.startDate && new Date(rule.startDate) > now) return false;
-            if (rule.endDate && new Date(rule.endDate) < now) return false;
-            if (rule.daysOfWeek && rule.daysOfWeek.length > 0) {
-              if (!rule.daysOfWeek.includes(now.getDay())) return false;
+          const rule2 = ((block.timeRules as any[]) || [])[0] as { startDate?: string; endDate?: string; startTime?: string; endTime?: string; daysOfWeek?: number[] } | undefined;
+          let timeMatch = true;
+          if (rule2) {
+            if (rule2.startDate) {
+              const sd = new Date(rule2.startDate + "T00:00:00");
+              if (now < sd) timeMatch = false;
             }
-            if (rule.startTime && rule.endTime) {
-              const [sh, sm] = rule.startTime.split(":").map(Number);
-              const [eh, em] = rule.endTime.split(":").map(Number);
+            if (rule2.endDate) {
+              const ed = new Date(rule2.endDate + "T23:59:59");
+              if (now > ed) timeMatch = false;
+            }
+            if (timeMatch && rule2.daysOfWeek && rule2.daysOfWeek.length > 0) {
+              if (!rule2.daysOfWeek.includes(now.getDay())) timeMatch = false;
+            }
+            if (timeMatch && rule2.startTime && rule2.endTime) {
+              const [sh, sm] = rule2.startTime.split(":").map(Number);
+              const [eh, em] = rule2.endTime.split(":").map(Number);
               const startMins = sh * 60 + sm;
               const endMins = eh * 60 + em;
               const nowMins = now.getHours() * 60 + now.getMinutes();
               if (endMins <= startMins) {
-                if (nowMins < startMins && nowMins > endMins) return false;
+                if (nowMins < startMins && nowMins > endMins) timeMatch = false;
               } else {
-                if (nowMins < startMins || nowMins > endMins) return false;
-              }
-            } else {
-              if (rule.startTime) {
-                const [h, m] = rule.startTime.split(":").map(Number);
-                if (now.getHours() < h || (now.getHours() === h && now.getMinutes() < m)) return false;
-              }
-              if (rule.endTime) {
-                const [h, m] = rule.endTime.split(":").map(Number);
-                if (now.getHours() > h || (now.getHours() === h && now.getMinutes() > m)) return false;
+                if (nowMins < startMins || nowMins > endMins) timeMatch = false;
               }
             }
-            return true;
-          });
+          }
 
           if (timeMatch && block.layoutTemplateId) {
             layout = await storage.getLayoutTemplate(block.layoutTemplateId);

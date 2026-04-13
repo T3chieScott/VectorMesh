@@ -19,6 +19,7 @@ import {
   setMinutes,
   differenceInMinutes,
   differenceInDays,
+  eachDayOfInterval,
   isWithinInterval,
 } from "date-fns";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -622,18 +623,6 @@ function ScheduleBlockEditor({
   
   const createMutation = useMutation({
     mutationFn: async (data: BlockFormValues) => {
-      const ruleStartDate = data.startDate ? format(data.startDate, "yyyy-MM-dd") : undefined;
-      const ruleEndDate = data.endDate ? format(data.endDate, "yyyy-MM-dd") : undefined;
-      const effectiveStart = ruleStartDate || ruleEndDate;
-      const effectiveEnd = ruleEndDate || ruleStartDate;
-      const timeRules: TimeRule[] = [{
-        startDate: effectiveStart,
-        endDate: effectiveEnd,
-        startTime: data.startTime,
-        endTime: data.endTime,
-        daysOfWeek: data.isRecurring ? data.daysOfWeek : undefined,
-      }];
-      
       const targets: ScheduleTarget[] = data.targetType !== "all" && data.targetId
         ? [{ type: data.targetType, id: data.targetId }]
         : [];
@@ -653,21 +642,60 @@ function ScheduleBlockEditor({
           playlistId: fallbackPlaylistId,
         });
       }
-      
-      const payload = {
-        programmeVersionId: versionId,
-        name: data.name,
-        priority: data.priority,
-        layoutTemplateId: data.layoutTemplateId || null,
-        timeRules,
-        targets,
-        zoneSources,
-      };
-      
+
       if (isEditing && block) {
-        return apiRequest("PATCH", `/api/schedule-blocks/${block.id}`, payload);
+        const ruleStartDate = data.startDate ? format(data.startDate, "yyyy-MM-dd") : undefined;
+        const ruleEndDate = data.endDate ? format(data.endDate, "yyyy-MM-dd") : undefined;
+        const effectiveStart = ruleStartDate || ruleEndDate;
+        const effectiveEnd = ruleEndDate || ruleStartDate;
+        const timeRules: TimeRule[] = [{
+          startDate: effectiveStart,
+          endDate: effectiveEnd,
+          startTime: data.startTime,
+          endTime: data.endTime,
+        }];
+        return apiRequest("PATCH", `/api/schedule-blocks/${block.id}`, {
+          programmeVersionId: versionId,
+          name: data.name,
+          priority: data.priority,
+          layoutTemplateId: data.layoutTemplateId || null,
+          timeRules,
+          targets,
+          zoneSources,
+        });
       }
-      return apiRequest("POST", `/api/programme-versions/${versionId}/blocks`, payload);
+
+      const startDate = data.startDate || new Date();
+      const endDate = data.endDate || startDate;
+      const days = eachDayOfInterval({ start: startDate, end: endDate });
+      const filteredDays = data.isRecurring && data.daysOfWeek && data.daysOfWeek.length > 0
+        ? days.filter((d) => data.daysOfWeek!.includes(d.getDay()))
+        : days;
+
+      if (filteredDays.length === 0) {
+        throw new Error("No matching days in the selected range");
+      }
+
+      const seriesId = filteredDays.length > 1 ? crypto.randomUUID() : null;
+
+      for (const day of filteredDays) {
+        const dateStr = format(day, "yyyy-MM-dd");
+        await apiRequest("POST", `/api/programme-versions/${versionId}/blocks`, {
+          programmeVersionId: versionId,
+          name: data.name,
+          priority: data.priority,
+          layoutTemplateId: data.layoutTemplateId || null,
+          timeRules: [{
+            startDate: dateStr,
+            endDate: dateStr,
+            startTime: data.startTime,
+            endTime: data.endTime,
+          }],
+          targets,
+          zoneSources,
+          seriesId,
+        });
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/programme-versions", versionId, "blocks"] });
@@ -713,8 +741,8 @@ function ScheduleBlockEditor({
   const deleteMutation = useMutation({
     mutationFn: async (mode: "single" | "series") => {
       if (!block) return;
-      if (mode === "series" && (block as any).seriesId) {
-        return apiRequest("DELETE", `/api/schedule-blocks/series/${(block as any).seriesId}`);
+      if (mode === "series" && block.seriesId) {
+        return apiRequest("DELETE", `/api/schedule-blocks/series/${block.seriesId}`);
       }
       return apiRequest("DELETE", `/api/schedule-blocks/${block.id}`);
     },
@@ -749,7 +777,7 @@ function ScheduleBlockEditor({
     },
   });
 
-  const hasSeries = !!(block as any)?.seriesId;
+  const hasSeries = !!block?.seriesId;
   
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1265,7 +1293,7 @@ export default function SchedulePage() {
   const blockColorMap = useMemo(() => {
     const map = new Map<string, string>();
     blocks.forEach((b) => {
-      const key = (b as any).seriesId || b.id;
+      const key = b.seriesId || b.id;
       map.set(b.id, getBlockColor(hashStringToIndex(key)));
     });
     return map;
@@ -1420,9 +1448,9 @@ export default function SchedulePage() {
     }) => {
       const block = blocks.find((b) => b.id === blockId);
       if (!block) throw new Error("Block not found");
-      const seriesId = (block as any).seriesId;
+      const seriesId = block.seriesId;
       const seriesBlocks = seriesId
-        ? blocks.filter((b) => (b as any).seriesId === seriesId)
+        ? blocks.filter((b) => b.seriesId === seriesId)
         : [block];
 
       for (const sb of seriesBlocks) {
