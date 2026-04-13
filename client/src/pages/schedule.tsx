@@ -1131,7 +1131,6 @@ export default function SchedulePage() {
   const [droppedItem, setDroppedItem] = useState<{ type: string; id: string; name: string } | null>(null);
   const [timelineDrag, setTimelineDrag] = useState<TimelineDragState | null>(null);
   const columnRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
-  const timelineContainerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   
   const programmesQ = useSiteFilteredQuery<Programme[]>("/api/programmes");
@@ -1314,7 +1313,7 @@ export default function SchedulePage() {
     },
   });
 
-  const resolveColumnDate = useCallback((clientX: number): { date: Date; dayOffset: number; origDayIndex: number } | null => {
+  const resolveColumnDate = useCallback((clientX: number): Date | null => {
     const entries = Array.from(columnRefsMap.current.entries());
     if (entries.length === 0) return null;
 
@@ -1326,14 +1325,12 @@ export default function SchedulePage() {
       const { rect } = sorted[i];
       if (clientX >= rect.left && clientX < rect.right) {
         const dayIndex = weekDays.findIndex((d) => d.toISOString() === sorted[i].key);
-        return { date: weekDays[dayIndex] || weekDays[0], dayOffset: 0, origDayIndex: dayIndex };
+        return weekDays[dayIndex] || weekDays[0];
       }
     }
 
-    if (clientX < sorted[0].rect.left) {
-      return { date: weekDays[0], dayOffset: 0, origDayIndex: 0 };
-    }
-    return { date: weekDays[weekDays.length - 1], dayOffset: 0, origDayIndex: weekDays.length - 1 };
+    if (clientX < sorted[0].rect.left) return weekDays[0];
+    return weekDays[weekDays.length - 1];
   }, [weekDays]);
 
   const handleDragInit = useCallback((
@@ -1381,12 +1378,12 @@ export default function SchedulePage() {
           newStartMin = Math.max(0, Math.min(snappedStart, 23 * 60 + 45 - duration));
           newEndMin = newStartMin + duration;
 
-          const col = resolveColumnDateRef.current(e.clientX);
-          if (col) {
-            newDate = col.date;
+          const targetDate = resolveColumnDateRef.current(e.clientX);
+          if (targetDate) {
+            newDate = targetDate;
             const wd = weekDaysRef.current;
             const origDayIndex = wd.findIndex((d) => isSameDay(d, prev.origDate));
-            const currentDayIndex = wd.findIndex((d) => isSameDay(d, col.date));
+            const currentDayIndex = wd.findIndex((d) => isSameDay(d, targetDate));
             newDayOffset = currentDayIndex - origDayIndex;
           }
         } else if (prev.mode === "resize-top") {
@@ -1549,7 +1546,7 @@ export default function SchedulePage() {
                   <Skeleton className="h-[400px] w-full" />
                 </div>
               ) : (
-                <div ref={timelineContainerRef} className="h-[600px] overflow-auto relative">
+                <div className="h-[600px] overflow-auto relative">
                   <div className="flex" style={{ minWidth: `${64 + weekDays.length * 140}px` }}>
                     <TimeGutter />
                     {weekDays.map((date) => (
