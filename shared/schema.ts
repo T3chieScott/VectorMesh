@@ -501,6 +501,7 @@ export interface LayoutZone {
   srtMute?: boolean;
   // WebRTC Stream widget configuration (OvenMediaEngine)
   webrtcSignallingUrl?: string;
+  webrtcStreamKey?: string;
   webrtcMute?: boolean;
   // Schedule widget configuration
   scheduleViewMode?: "hourly" | "daily" | "agenda";

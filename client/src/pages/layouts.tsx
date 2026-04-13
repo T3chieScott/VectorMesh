@@ -677,6 +677,7 @@ const zoneFormSchema = z.object({
   srtLatency: z.number().min(20).max(5000).optional(),
   srtMute: z.boolean().optional(),
   webrtcSignallingUrl: z.string().optional(),
+  webrtcStreamKey: z.string().optional(),
   webrtcMute: z.boolean().optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
@@ -1362,6 +1363,7 @@ function ZoneEditorDialog({
       srtLatency: 200,
       srtMute: true,
       webrtcSignallingUrl: "",
+      webrtcStreamKey: "",
       webrtcMute: true,
       textContent: "",
       textFontSize: 24,
@@ -1589,6 +1591,7 @@ function ZoneEditorDialog({
           srtLatency: zone.srtLatency || 200,
           srtMute: zone.srtMute !== false,
           webrtcSignallingUrl: zone.webrtcSignallingUrl || "",
+          webrtcStreamKey: zone.webrtcStreamKey || "",
           webrtcMute: zone.webrtcMute !== false,
           textContent: zone.textContent || "",
           textFontSize: typeof zone.textFontSize === 'number' ? zone.textFontSize :
@@ -1813,6 +1816,7 @@ function ZoneEditorDialog({
           srtLatency: 200,
           srtMute: true,
           webrtcSignallingUrl: "",
+          webrtcStreamKey: "",
           webrtcMute: true,
           textContent: "",
           textFontSize: 24,
@@ -7314,13 +7318,33 @@ function ZoneEditorDialog({
                       <FormLabel>Signalling URL</FormLabel>
                       <FormControl>
                         <Input
-                          placeholder="wss://ome-server:3334/app/stream"
+                          placeholder="wss://ome-server:3334/app"
                           {...field}
                           data-testid="input-webrtc-signalling-url"
                         />
                       </FormControl>
                       <p className="text-xs text-muted-foreground">
-                        OvenMediaEngine WebSocket signalling endpoint. Format: wss://host:port/app/stream-key. The player will perform SDP offer/answer exchange over this connection.
+                        OvenMediaEngine WebSocket signalling base URL. Format: wss://host:port/app — the stream key will be appended automatically.
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="webrtcStreamKey"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Stream Key</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="stream"
+                          {...field}
+                          data-testid="input-webrtc-stream-key"
+                        />
+                      </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        The stream name/key as configured in OvenMediaEngine. Combined with the signalling URL to form the full endpoint.
                       </p>
                       <FormMessage />
                     </FormItem>

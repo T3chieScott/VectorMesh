@@ -3386,10 +3386,13 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const destroyedRef = useRef(false);
   const [status, setStatus] = useState<"idle" | "connecting" | "live" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const connectRef = useRef<() => void>(() => {});
 
   const destroy = useCallback(() => {
+    destroyedRef.current = true;
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
@@ -3398,30 +3401,42 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
       abortRef.current.abort();
       abortRef.current = null;
     }
-    if (pcRef.current) {
-      try { pcRef.current.close(); } catch {}
-      pcRef.current = null;
-    }
     if (wsRef.current) {
-      try { wsRef.current.close(); } catch {}
+      const ws = wsRef.current;
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      try { ws.close(); } catch {}
       wsRef.current = null;
+    }
+    if (pcRef.current) {
+      const pc = pcRef.current;
+      pc.ontrack = null;
+      pc.onicecandidate = null;
+      pc.oniceconnectionstatechange = null;
+      try { pc.close(); } catch {}
+      pcRef.current = null;
     }
   }, []);
 
   const scheduleReconnect = useCallback(() => {
+    if (destroyedRef.current) return;
     if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-    reconnectTimerRef.current = setTimeout(() => connect(), 5000);
+    reconnectTimerRef.current = setTimeout(() => {
+      if (!destroyedRef.current) connectRef.current();
+    }, 5000);
   }, []);
 
   const connect = useCallback(async () => {
     if (!url || !videoRef.current) return;
     destroy();
+    destroyedRef.current = false;
     setStatus("connecting");
     setErrorMsg("");
 
     const ac = new AbortController();
     abortRef.current = ac;
-    let wsCloseHandled = false;
 
     try {
       const pc = new RTCPeerConnection({
@@ -3440,6 +3455,7 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
       };
 
       pc.oniceconnectionstatechange = () => {
+        if (destroyedRef.current) return;
         const state = pc.iceConnectionState;
         if (state === "connected" || state === "completed") {
           setStatus("live");
@@ -3469,6 +3485,7 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
       };
 
       ws.onmessage = async (event) => {
+        if (destroyedRef.current) return;
         try {
           const msg = JSON.parse(event.data);
 
@@ -3508,19 +3525,17 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
       };
 
       ws.onerror = () => {
-        wsCloseHandled = true;
+        if (destroyedRef.current) return;
         setStatus("error");
         setErrorMsg("WebSocket connection error");
         scheduleReconnect();
       };
 
       ws.onclose = () => {
-        if (!wsCloseHandled) {
-          wsCloseHandled = true;
-          setStatus("error");
-          setErrorMsg("Signalling connection closed");
-          scheduleReconnect();
-        }
+        if (destroyedRef.current) return;
+        setStatus("error");
+        setErrorMsg("Signalling connection closed");
+        scheduleReconnect();
       };
 
       if (videoRef.current) {
@@ -3533,6 +3548,8 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
       scheduleReconnect();
     }
   }, [url, destroy, scheduleReconnect]);
+
+  connectRef.current = connect;
 
   useEffect(() => {
     connect();
@@ -6120,13 +6137,17 @@ export function ZoneRenderer({
             mute={zone.srtMute}
           />
         );
-      case "webrtc_stream":
+      case "webrtc_stream": {
+        const webrtcFullUrl = zone.webrtcSignallingUrl && zone.webrtcStreamKey
+          ? `${zone.webrtcSignallingUrl.replace(/\/$/, "")}/${zone.webrtcStreamKey}`
+          : zone.webrtcSignallingUrl || "";
         return (
           <WebRtcStreamWidget
-            url={zone.webrtcSignallingUrl}
+            url={webrtcFullUrl}
             mute={zone.webrtcMute}
           />
         );
+      }
       default:
         return (
           <div className="h-full w-full bg-muted/30 flex items-center justify-center">
