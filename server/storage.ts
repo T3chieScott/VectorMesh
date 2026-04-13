@@ -188,9 +188,11 @@ export interface IStorage {
   getScheduleBlocks(programmeVersionId: string): Promise<ScheduleBlock[]>;
   getAllScheduleBlocks(): Promise<ScheduleBlock[]>;
   getScheduleBlock(id: string): Promise<ScheduleBlock | undefined>;
+  getScheduleBlocksBySeries(seriesId: string): Promise<ScheduleBlock[]>;
   createScheduleBlock(data: InsertScheduleBlock): Promise<ScheduleBlock>;
   updateScheduleBlock(id: string, data: Partial<InsertScheduleBlock>): Promise<ScheduleBlock | undefined>;
   deleteScheduleBlock(id: string): Promise<boolean>;
+  deleteScheduleBlocksBySeries(seriesId: string): Promise<number>;
 
   // Live Overrides
   getLiveOverrides(): Promise<LiveOverride[]>;
@@ -794,6 +796,10 @@ export class DatabaseStorage implements IStorage {
     return block;
   }
 
+  async getScheduleBlocksBySeries(seriesId: string): Promise<ScheduleBlock[]> {
+    return db.select().from(scheduleBlocks).where(eq(scheduleBlocks.seriesId, seriesId)).orderBy(asc(scheduleBlocks.createdAt));
+  }
+
   async createScheduleBlock(data: InsertScheduleBlock): Promise<ScheduleBlock> {
     const [block] = await db.insert(scheduleBlocks).values(data).returning();
     return block;
@@ -811,6 +817,11 @@ export class DatabaseStorage implements IStorage {
   async deleteScheduleBlock(id: string): Promise<boolean> {
     const result = await db.delete(scheduleBlocks).where(eq(scheduleBlocks.id, id));
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async deleteScheduleBlocksBySeries(seriesId: string): Promise<number> {
+    const result = await db.delete(scheduleBlocks).where(eq(scheduleBlocks.seriesId, seriesId));
+    return result.rowCount ?? 0;
   }
 
   // Live Overrides

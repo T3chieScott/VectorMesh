@@ -564,6 +564,7 @@ export const scheduleBlocks = pgTable("schedule_blocks", {
   targets: jsonb("targets").$type<ScheduleTarget[]>(),
   timeRules: jsonb("time_rules").$type<TimeRule[]>(),
   zoneSources: jsonb("zone_sources").$type<ZoneSource[]>(),
+  seriesId: varchar("series_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

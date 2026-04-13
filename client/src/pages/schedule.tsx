@@ -174,42 +174,30 @@ function normaliseRuleDates(rule: TimeRule): TimeRule {
   return rule;
 }
 
-function ruleSpecificity(rule: TimeRule): number {
-  const hasStart = !!rule.startDate;
-  const hasEnd = !!rule.endDate;
-  if (!hasStart && !hasEnd) return 0;
-  if (hasStart && hasEnd) {
-    const sd = parseISO(rule.startDate!);
-    const ed = parseISO(rule.endDate!);
-    const spanDays = Math.max(0, differenceInDays(ed, sd));
-    return 1000 - Math.min(spanDays, 999);
+function getRuleForDay(timeRules: TimeRule[], date: Date): TimeRule | null {
+  const dayOfWeek = date.getDay();
+  const rule = timeRules.length > 0 ? normaliseRuleDates(timeRules[0]) : null;
+  if (!rule) return null;
+  const days = rule.daysOfWeek;
+  if (days && days.length > 0 && !days.includes(dayOfWeek)) return null;
+  if (rule.startDate) {
+    const sd = parseISO(rule.startDate);
+    if (date < startOfDay(sd)) return null;
   }
-  return 1;
+  if (rule.endDate) {
+    const ed = parseISO(rule.endDate);
+    if (date > endOfDay(ed)) return null;
+  }
+  return rule;
 }
 
-function getBestRuleForDay(timeRules: TimeRule[], date: Date): TimeRule | null {
-  const dayOfWeek = date.getDay();
-  let bestRule: TimeRule | null = null;
-  let bestSpec = -1;
-  for (const raw of timeRules) {
-    const rule = normaliseRuleDates(raw);
-    const days = rule.daysOfWeek;
-    if (days && days.length > 0 && !days.includes(dayOfWeek)) continue;
-    if (rule.startDate) {
-      const sd = parseISO(rule.startDate);
-      if (date < startOfDay(sd)) continue;
-    }
-    if (rule.endDate) {
-      const ed = parseISO(rule.endDate);
-      if (date > endOfDay(ed)) continue;
-    }
-    const spec = ruleSpecificity(rule);
-    if (!bestRule || spec > bestSpec || spec === bestSpec) {
-      bestRule = rule;
-      bestSpec = spec;
-    }
+function hashStringToIndex(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
   }
-  return bestRule;
+  return Math.abs(hash);
 }
 
 function TimeBlockRenderer({
@@ -385,7 +373,7 @@ function DayColumn({
   const dayBlockEntries: Array<{ block: ScheduleBlockWithMeta; rule: TimeRule }> = [];
   for (const block of blocks) {
     const timeRules = (block.timeRules as TimeRule[]) || [];
-    const bestRule = getBestRuleForDay(timeRules, date);
+    const bestRule = getRuleForDay(timeRules, date);
     if (bestRule) {
       dayBlockEntries.push({ block, rule: bestRule });
     }
@@ -723,8 +711,11 @@ function ScheduleBlockEditor({
   });
   
   const deleteMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (mode: "single" | "series") => {
       if (!block) return;
+      if (mode === "series" && (block as any).seriesId) {
+        return apiRequest("DELETE", `/api/schedule-blocks/series/${(block as any).seriesId}`);
+      }
       return apiRequest("DELETE", `/api/schedule-blocks/${block.id}`);
     },
     onSuccess: () => {
@@ -757,6 +748,8 @@ function ScheduleBlockEditor({
       }
     },
   });
+
+  const hasSeries = !!(block as any)?.seriesId;
   
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1116,16 +1109,30 @@ function ScheduleBlockEditor({
             
             <DialogFooter className="gap-2">
               {isEditing && (
-                <Button
-                  type="button"
-                  variant="destructive"
-                  onClick={() => deleteMutation.mutate()}
-                  disabled={deleteMutation.isPending}
-                  data-testid="button-delete-block"
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete
-                </Button>
+                <div className="flex gap-2 mr-auto">
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => deleteMutation.mutate("single")}
+                    disabled={deleteMutation.isPending}
+                    data-testid="button-delete-block"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    {hasSeries ? "Delete This Day" : "Delete"}
+                  </Button>
+                  {hasSeries && (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={() => deleteMutation.mutate("series")}
+                      disabled={deleteMutation.isPending}
+                      data-testid="button-delete-series"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Delete Entire Series
+                    </Button>
+                  )}
+                </div>
               )}
               <Button type="submit" disabled={createMutation.isPending} data-testid="button-save-block">
                 {createMutation.isPending ? "Saving..." : isEditing ? "Update Block" : "Create Block"}
@@ -1257,7 +1264,10 @@ export default function SchedulePage() {
   
   const blockColorMap = useMemo(() => {
     const map = new Map<string, string>();
-    blocks.forEach((b, i) => map.set(b.id, getBlockColor(i)));
+    blocks.forEach((b) => {
+      const key = (b as any).seriesId || b.id;
+      map.set(b.id, getBlockColor(hashStringToIndex(key)));
+    });
     return map;
   }, [blocks]);
 
@@ -1272,8 +1282,8 @@ export default function SchedulePage() {
           const a = blocksWithRules[i];
           const b = blocksWithRules[j];
 
-          const aRule = getBestRuleForDay((a.timeRules as TimeRule[]) || [], day);
-          const bRule = getBestRuleForDay((b.timeRules as TimeRule[]) || [], day);
+          const aRule = getRuleForDay((a.timeRules as TimeRule[]) || [], day);
+          const bRule = getRuleForDay((b.timeRules as TimeRule[]) || [], day);
 
           if (!aRule?.startTime || !aRule?.endTime || !bRule?.startTime || !bRule?.endTime) continue;
 
@@ -1378,206 +1388,74 @@ export default function SchedulePage() {
   };
   
   const blockTimeMutation = useMutation({
-    mutationFn: async ({ blockId, newStartTime, newEndTime, newDate, singleDayDate, timeDelta, resizeMode }: {
-      blockId: string; newStartTime: string; newEndTime: string; newDate?: Date; singleDayDate?: Date; timeDelta?: number; resizeMode?: "resize-top" | "resize-bottom";
+    mutationFn: async ({ blockId, newStartTime, newEndTime, newDate }: {
+      blockId: string; newStartTime: string; newEndTime: string; newDate?: Date;
     }) => {
       const block = blocks.find((b) => b.id === blockId);
       if (!block) throw new Error("Block not found");
-      const existingRules = ((block.timeRules as TimeRule[]) || []).map(normaliseRuleDates);
-
-      let updatedRules: Record<string, unknown>[];
-
-      if (timeDelta !== undefined && existingRules.length > 0) {
-        updatedRules = existingRules.map((rule) => {
-          if (!rule.startTime || !rule.endTime) return rule;
-          const [sh, sm] = rule.startTime.split(":").map(Number);
-          const [eh, em] = rule.endTime.split(":").map(Number);
-          const ruleStartMin = sh * 60 + sm;
-          const ruleEndMin = eh * 60 + em;
-
-          if (resizeMode === "resize-top") {
-            const newStart = Math.max(0, Math.min(ruleStartMin + timeDelta, ruleEndMin - SNAP_MINUTES));
-            return { ...rule, startTime: minutesToTimeStr(newStart) };
-          } else if (resizeMode === "resize-bottom") {
-            const newEnd = Math.min(23 * 60 + 45, Math.max(ruleEndMin + timeDelta, ruleStartMin + SNAP_MINUTES));
-            return { ...rule, endTime: minutesToTimeStr(newEnd) };
-          }
-
-          const ruleDuration = ruleEndMin - ruleStartMin;
-          const newStart = Math.max(0, Math.min(ruleStartMin + timeDelta, 23 * 60 + 45 - Math.max(ruleDuration, SNAP_MINUTES)));
-          const newEnd = Math.min(23 * 60 + 45, newStart + ruleDuration);
-          return {
-            ...rule,
-            startTime: minutesToTimeStr(newStart),
-            endTime: minutesToTimeStr(newEnd),
-          };
-        });
-      } else if (singleDayDate && existingRules.length > 0) {
-        const targetDow = singleDayDate.getDay();
-        const targetDateStr = format(singleDayDate, "yyyy-MM-dd");
-
-        const matchingIndices: number[] = [];
-        let bestMatchIdx = -1;
-        let bestSpec = -1;
-        existingRules.forEach((r, i) => {
-          const days = r.daysOfWeek;
-          if (days && days.length > 0 && !days.includes(targetDow)) return;
-          if (r.startDate && singleDayDate < startOfDay(parseISO(r.startDate))) return;
-          if (r.endDate && singleDayDate > endOfDay(parseISO(r.endDate))) return;
-          const spec = ruleSpecificity(r);
-          matchingIndices.push(i);
-          if (bestMatchIdx === -1 || spec > bestSpec || spec === bestSpec) {
-            bestMatchIdx = i;
-            bestSpec = spec;
-          }
-        });
-
-        const staleIndices = new Set(matchingIndices.filter((i) => {
-          if (i === bestMatchIdx) return false;
-          const r = existingRules[i];
-          return !!(r.startDate || r.endDate);
-        }));
-
-        const ruleDateStr = newDate ? format(newDate, "yyyy-MM-dd") : targetDateStr;
-
-        if (newDate && ruleDateStr !== targetDateStr) {
-          existingRules.forEach((r, i) => {
-            if (staleIndices.has(i) || i === bestMatchIdx) return;
-            if (r.startDate && r.endDate && r.startDate === ruleDateStr && r.endDate === ruleDateStr) {
-              staleIndices.add(i);
-            }
-          });
-        }
-
-        if (bestMatchIdx === -1) {
-          updatedRules = [...existingRules, {
-            startDate: ruleDateStr, endDate: ruleDateStr,
-            startTime: newStartTime, endTime: newEndTime,
-          }];
-        } else {
-          const matchedRule = existingRules[bestMatchIdx];
-          const days = matchedRule.daysOfWeek;
-          const isDateBounded = !!(matchedRule.startDate && matchedRule.endDate);
-          const isSingleDay = isDateBounded && matchedRule.startDate === matchedRule.endDate;
-          const isGeneral = !isDateBounded && (!days || days.length === 0);
-          const dateChanged = !!(newDate && ruleDateStr !== targetDateStr);
-
-          const hasGeneralRule = existingRules.some((r) => {
-            const d = r.daysOfWeek;
-            return !r.startDate && !r.endDate && (!d || d.length === 0);
-          });
-
-          const destDateHasOverride = dateChanged && existingRules.some((r, i) =>
-            i !== bestMatchIdx && !staleIndices.has(i) &&
-            r.startDate === ruleDateStr && r.endDate === ruleDateStr &&
-            r.startDate === r.endDate
-          );
-          let removedDestSuppression = false;
-          if (destDateHasOverride) {
-            existingRules.forEach((r, i) => {
-              if (i !== bestMatchIdx && !staleIndices.has(i) &&
-                  r.startDate === ruleDateStr && r.endDate === ruleDateStr &&
-                  r.startDate === r.endDate) {
-                if (!r.startTime && !r.endTime) {
-                  removedDestSuppression = true;
-                }
-                staleIndices.add(i);
-              }
-            });
-          }
-
-          if (hasGeneralRule && dateChanged && isSingleDay) {
-            const isSuppressionRule = !matchedRule.startTime && !matchedRule.endTime;
-            if (isSuppressionRule) {
-              staleIndices.add(bestMatchIdx);
-            }
-          }
-
-          updatedRules = [];
-
-          for (let i = 0; i < existingRules.length; i++) {
-            if (staleIndices.has(i)) continue;
-
-            if (i !== bestMatchIdx) {
-              updatedRules.push(existingRules[i]);
-              continue;
-            }
-
-            if (days && days.length > 0) {
-              const remaining = days.filter((d: number) => d !== targetDow);
-              if (remaining.length > 0) {
-                updatedRules.push({ ...matchedRule, daysOfWeek: remaining });
-              }
-            } else if (isSingleDay) {
-            } else if (isDateBounded) {
-              updatedRules.push(matchedRule);
-            } else if (isGeneral && dateChanged) {
-              updatedRules.push(matchedRule);
-              updatedRules.push({
-                startDate: targetDateStr,
-                endDate: targetDateStr,
-              });
-            } else {
-              updatedRules.push(matchedRule);
-            }
-
-            const isRevertToGeneral = hasGeneralRule && dateChanged && removedDestSuppression;
-            if (!isRevertToGeneral) {
-              updatedRules.push({
-                startDate: ruleDateStr,
-                endDate: ruleDateStr,
-                startTime: newStartTime,
-                endTime: newEndTime,
-              });
-            }
-          }
-
-          if (hasGeneralRule && !dateChanged) {
-            updatedRules = updatedRules.filter((r) => {
-              const tr = r as TimeRule;
-              if (!tr.startDate || !tr.endDate) return true;
-              if (tr.startDate !== targetDateStr || tr.endDate !== targetDateStr) return true;
-              if (!tr.startTime && !tr.endTime) return false;
-              return true;
-            });
-          }
-        }
-      } else if (existingRules.length > 0) {
-        updatedRules = existingRules.map((rule) => ({
-          ...rule, startTime: newStartTime, endTime: newEndTime,
-        }));
-      } else {
-        updatedRules = [{ startTime: newStartTime, endTime: newEndTime, ...(newDate ? { startDate: format(newDate, "yyyy-MM-dd"), endDate: format(newDate, "yyyy-MM-dd") } : {}) }];
+      const existingRule = ((block.timeRules as TimeRule[]) || [])[0] || {};
+      const updatedRule: TimeRule = {
+        ...existingRule,
+        startTime: newStartTime,
+        endTime: newEndTime,
+      };
+      if (newDate) {
+        const dateStr = format(newDate, "yyyy-MM-dd");
+        updatedRule.startDate = dateStr;
+        updatedRule.endDate = dateStr;
       }
-
-      const deduped: Array<TimeRule | null> = [];
-      const seenSingleDay = new Map<string, number>();
-      const seenRange = new Map<string, number>();
-      for (let i = 0; i < updatedRules.length; i++) {
-        const r = updatedRules[i] as TimeRule;
-        const sd = r.startDate || "";
-        const ed = r.endDate || "";
-        if (sd && ed) {
-          const isSingle = sd === ed;
-          const key = `${sd}|${ed}`;
-          const bucket = isSingle ? seenSingleDay : seenRange;
-          if (bucket.has(key)) {
-            const prevIdx = bucket.get(key)!;
-            deduped[prevIdx] = null;
-          }
-          bucket.set(key, i);
-        }
-        deduped.push(r);
-      }
-      const finalRules = deduped.filter((r): r is TimeRule => r !== null);
-
-      await apiRequest("PATCH", `/api/schedule-blocks/${blockId}`, { timeRules: finalRules });
+      await apiRequest("PATCH", `/api/schedule-blocks/${blockId}`, { timeRules: [updatedRule] });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/programme-versions", selectedVersionId, "blocks"] });
     },
     onError: () => {
       toast({ title: "Failed to update block time", variant: "destructive" });
+    },
+  });
+
+  const seriesMoveMutation = useMutation({
+    mutationFn: async ({ blockId, timeDelta, resizeMode }: {
+      blockId: string; timeDelta: number; resizeMode?: "resize-top" | "resize-bottom";
+    }) => {
+      const block = blocks.find((b) => b.id === blockId);
+      if (!block) throw new Error("Block not found");
+      const seriesId = (block as any).seriesId;
+      const seriesBlocks = seriesId
+        ? blocks.filter((b) => (b as any).seriesId === seriesId)
+        : [block];
+
+      for (const sb of seriesBlocks) {
+        const rule = ((sb.timeRules as TimeRule[]) || [])[0];
+        if (!rule?.startTime || !rule?.endTime) continue;
+        const [sh, sm] = rule.startTime.split(":").map(Number);
+        const [eh, em] = rule.endTime.split(":").map(Number);
+        const ruleStartMin = sh * 60 + sm;
+        const ruleEndMin = eh * 60 + em;
+
+        let newStart: number, newEnd: number;
+        if (resizeMode === "resize-top") {
+          newStart = Math.max(0, Math.min(ruleStartMin + timeDelta, ruleEndMin - SNAP_MINUTES));
+          newEnd = ruleEndMin;
+        } else if (resizeMode === "resize-bottom") {
+          newStart = ruleStartMin;
+          newEnd = Math.min(23 * 60 + 45, Math.max(ruleEndMin + timeDelta, ruleStartMin + SNAP_MINUTES));
+        } else {
+          const duration = ruleEndMin - ruleStartMin;
+          newStart = Math.max(0, Math.min(ruleStartMin + timeDelta, 23 * 60 + 45 - Math.max(duration, SNAP_MINUTES)));
+          newEnd = Math.min(23 * 60 + 45, newStart + duration);
+        }
+        await apiRequest("PATCH", `/api/schedule-blocks/${sb.id}`, {
+          timeRules: [{ ...rule, startTime: minutesToTimeStr(newStart), endTime: minutesToTimeStr(newEnd) }],
+        });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/programme-versions", selectedVersionId, "blocks"] });
+    },
+    onError: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/programme-versions", selectedVersionId, "blocks"] });
+      toast({ title: "Failed to update series", variant: "destructive" });
     },
   });
 
@@ -1625,6 +1503,8 @@ export default function SchedulePage() {
   blocksRef.current = blocks;
   const blockTimeMutationRef = useRef(blockTimeMutation);
   blockTimeMutationRef.current = blockTimeMutation;
+  const seriesMoveMutationRef = useRef(seriesMoveMutation);
+  seriesMoveMutationRef.current = seriesMoveMutation;
 
   useEffect(() => {
     if (!timelineDrag) return;
@@ -1690,28 +1570,18 @@ export default function SchedulePage() {
           const shiftHeld = e.shiftKey;
           const dateChanged = !isSameDay(prev.currentDate, prev.origDate);
           setTimeout(() => {
-            if (shiftHeld && (prev.mode === "move" || prev.mode === "resize-top" || prev.mode === "resize-bottom")) {
-              blockTimeMutationRef.current.mutate({
+            if (shiftHeld) {
+              seriesMoveMutationRef.current.mutate({
                 blockId: prev.blockId,
-                newStartTime: newStart,
-                newEndTime: newEnd,
                 timeDelta: prev.deltaMinutes,
                 resizeMode: prev.mode !== "move" ? prev.mode : undefined,
-              });
-            } else if (!shiftHeld && prev.mode === "move" && dateChanged) {
-              blockTimeMutationRef.current.mutate({
-                blockId: prev.blockId,
-                newStartTime: newStart,
-                newEndTime: newEnd,
-                singleDayDate: prev.origDate,
-                newDate: prev.currentDate,
               });
             } else {
               blockTimeMutationRef.current.mutate({
                 blockId: prev.blockId,
                 newStartTime: newStart,
                 newEndTime: newEnd,
-                singleDayDate: !shiftHeld ? prev.origDate : undefined,
+                newDate: dateChanged ? prev.currentDate : undefined,
               });
             }
           }, 0);

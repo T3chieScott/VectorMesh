@@ -2094,6 +2094,63 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/schedule-blocks/series/:seriesId", requireAuth, async (req, res) => {
+    try {
+      const seriesBlocks = await storage.getScheduleBlocksBySeries(req.params.seriesId);
+      if (seriesBlocks.length === 0) {
+        return res.status(404).json({ error: "Series not found" });
+      }
+      const count = await storage.deleteScheduleBlocksBySeries(req.params.seriesId);
+      const versionId = seriesBlocks[0].programmeVersionId;
+      refreshScreensForVersion(versionId);
+      res.json({ deleted: count });
+    } catch (error) {
+      console.error("Error deleting series:", error);
+      res.status(500).json({ error: "Failed to delete series" });
+    }
+  });
+
+  app.post("/api/schedule-blocks/migrate-to-series", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const allBlocks = await storage.getAllScheduleBlocks();
+      let blocksSplit = 0;
+      let blocksCreated = 0;
+
+      for (const block of allBlocks) {
+        const rules = (block.timeRules as any[]) || [];
+        if (rules.length <= 1) continue;
+
+        const { v4: uuidv4 } = await import("uuid");
+        const seriesId = uuidv4();
+
+        await storage.updateScheduleBlock(block.id, {
+          timeRules: [rules[0]],
+          seriesId,
+        });
+
+        for (let i = 1; i < rules.length; i++) {
+          await storage.createScheduleBlock({
+            programmeVersionId: block.programmeVersionId,
+            name: block.name,
+            priority: block.priority ?? 0,
+            layoutTemplateId: block.layoutTemplateId,
+            targets: block.targets as any,
+            timeRules: [rules[i]],
+            zoneSources: block.zoneSources as any,
+            seriesId,
+          });
+          blocksCreated++;
+        }
+        blocksSplit++;
+      }
+
+      res.json({ blocksSplit, blocksCreated });
+    } catch (error) {
+      console.error("Error migrating to series:", error);
+      res.status(500).json({ error: "Failed to migrate" });
+    }
+  });
+
   app.post("/api/schedule-blocks/cleanup-rules", requireAuth, requireAdmin, async (req, res) => {
     try {
       const allBlocks = await storage.getAllScheduleBlocks();
