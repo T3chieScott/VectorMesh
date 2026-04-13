@@ -40,6 +40,7 @@ import {
   Radar,
   MonitorPlay,
   Radio,
+  Wifi,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
@@ -87,6 +88,7 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   aircraft_radar: Radar,
   youtube_live: MonitorPlay,
   srt_feed: Radio,
+  webrtc_stream: Wifi,
 };
 
 function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
@@ -3378,6 +3380,217 @@ function SrtFeedWidget({ url, latency = 200, mute = true }: { url?: string; late
   );
 }
 
+function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const [status, setStatus] = useState<"idle" | "connecting" | "live" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const destroy = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    if (pcRef.current) {
+      try { pcRef.current.close(); } catch {}
+      pcRef.current = null;
+    }
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch {}
+      wsRef.current = null;
+    }
+  }, []);
+
+  const scheduleReconnect = useCallback(() => {
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = setTimeout(() => connect(), 5000);
+  }, []);
+
+  const connect = useCallback(async () => {
+    if (!url || !videoRef.current) return;
+    destroy();
+    setStatus("connecting");
+    setErrorMsg("");
+
+    const ac = new AbortController();
+    abortRef.current = ac;
+    let wsCloseHandled = false;
+
+    try {
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+        bundlePolicy: "max-bundle",
+      });
+      pcRef.current = pc;
+
+      pc.addTransceiver("video", { direction: "recvonly" });
+      pc.addTransceiver("audio", { direction: "recvonly" });
+
+      pc.ontrack = (e) => {
+        if (videoRef.current && e.streams[0]) {
+          videoRef.current.srcObject = e.streams[0];
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        const state = pc.iceConnectionState;
+        if (state === "connected" || state === "completed") {
+          setStatus("live");
+        } else if (state === "failed" || state === "disconnected" || state === "closed") {
+          setStatus("error");
+          setErrorMsg("ICE connection " + state);
+          scheduleReconnect();
+        }
+      };
+
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            command: "candidate",
+            candidates: [e.candidate],
+          }));
+        }
+      };
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({
+          command: "request_offer",
+        }));
+      };
+
+      ws.onmessage = async (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+
+          if (msg.command === "offer" && msg.sdp) {
+            await pc.setRemoteDescription(new RTCSessionDescription({
+              type: "offer",
+              sdp: typeof msg.sdp === "object" ? msg.sdp.sdp : msg.sdp,
+            }));
+
+            if (msg.candidates) {
+              for (const c of msg.candidates) {
+                await pc.addIceCandidate(new RTCIceCandidate(c));
+              }
+            }
+
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            ws.send(JSON.stringify({
+              command: "answer",
+              sdp: answer.sdp,
+            }));
+          }
+
+          if (msg.command === "candidate") {
+            if (msg.candidates) {
+              for (const c of msg.candidates) {
+                await pc.addIceCandidate(new RTCIceCandidate(c));
+              }
+            }
+            if (msg.candidate) {
+              await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            }
+          }
+        } catch (err: unknown) {
+          console.warn("[WebRTC] Message handling error:", err);
+        }
+      };
+
+      ws.onerror = () => {
+        wsCloseHandled = true;
+        setStatus("error");
+        setErrorMsg("WebSocket connection error");
+        scheduleReconnect();
+      };
+
+      ws.onclose = () => {
+        if (!wsCloseHandled) {
+          wsCloseHandled = true;
+          setStatus("error");
+          setErrorMsg("Signalling connection closed");
+          scheduleReconnect();
+        }
+      };
+
+      if (videoRef.current) {
+        videoRef.current.addEventListener("playing", () => setStatus("live"), { once: true, signal: ac.signal });
+      }
+    } catch (err: unknown) {
+      console.error("[WebRTC] Init error:", err);
+      setStatus("error");
+      setErrorMsg(err instanceof Error ? err.message : "Failed to initialise WebRTC");
+      scheduleReconnect();
+    }
+  }, [url, destroy, scheduleReconnect]);
+
+  useEffect(() => {
+    connect();
+    return destroy;
+  }, [connect, destroy]);
+
+  if (!url) {
+    return (
+      <div className="h-full w-full bg-black/90 flex flex-col items-center justify-center gap-2 text-white/60">
+        <Wifi className="h-8 w-8" />
+        <span className="text-sm">No WebRTC URL configured</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative w-full h-full bg-black">
+      <video
+        ref={videoRef}
+        className="w-full h-full object-contain"
+        autoPlay
+        playsInline
+        muted={mute}
+        data-testid="video-webrtc-stream"
+      />
+      {status !== "live" && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80">
+          {status === "connecting" && (
+            <>
+              <div className="w-8 h-8 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+              <span className="text-white/70 text-sm" data-testid="text-webrtc-connecting">Connecting to stream...</span>
+            </>
+          )}
+          {status === "error" && (
+            <>
+              <Wifi className="h-8 w-8 text-red-400" />
+              <span className="text-red-400 text-sm" data-testid="text-webrtc-error">{errorMsg || "Stream error"}</span>
+              <span className="text-white/40 text-xs">Reconnecting...</span>
+            </>
+          )}
+          {status === "idle" && (
+            <>
+              <Wifi className="h-8 w-8 text-white/40" />
+              <span className="text-white/40 text-sm">Initialising...</span>
+            </>
+          )}
+        </div>
+      )}
+      {status === "live" && (
+        <div className="absolute top-2 right-2 flex items-center gap-1 bg-black/60 px-2 py-0.5 rounded" data-testid="badge-webrtc-live">
+          <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+          <span className="text-white text-[10px] font-medium uppercase">Live</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SpaceXLaunchWidget({
   refreshInterval = 60,
   fontSize = 14,
@@ -5905,6 +6118,13 @@ export function ZoneRenderer({
             url={zone.srtUrl}
             latency={zone.srtLatency}
             mute={zone.srtMute}
+          />
+        );
+      case "webrtc_stream":
+        return (
+          <WebRtcStreamWidget
+            url={zone.webrtcSignallingUrl}
+            mute={zone.webrtcMute}
           />
         );
       default:

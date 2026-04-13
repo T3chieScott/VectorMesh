@@ -120,6 +120,7 @@ import {
   Unlock,
   MonitorPlay,
   Radio,
+  Wifi,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -415,6 +416,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   aircraft_radar: Radar,
   youtube_live: MonitorPlay,
   srt_feed: Radio,
+  webrtc_stream: Wifi,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -443,11 +445,12 @@ const zoneTypeLabels: Record<string, string> = {
   aircraft_radar: "Aircraft Overhead Radar",
   youtube_live: "YouTube Live",
   srt_feed: "SRT Feed (live stream)",
+  webrtc_stream: "WebRTC Stream (ultra-low latency)",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar", "youtube_live", "srt_feed"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar", "youtube_live", "srt_feed", "webrtc_stream"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(0.01).max(100),
@@ -673,6 +676,8 @@ const zoneFormSchema = z.object({
   srtUrl: z.string().optional(),
   srtLatency: z.number().min(20).max(5000).optional(),
   srtMute: z.boolean().optional(),
+  webrtcSignallingUrl: z.string().optional(),
+  webrtcMute: z.boolean().optional(),
   scheduleViewMode: z.enum(["hourly", "daily", "agenda"]).optional(),
   scheduleEntries: z.array(z.object({
     id: z.string(),
@@ -1356,6 +1361,8 @@ function ZoneEditorDialog({
       srtUrl: "",
       srtLatency: 200,
       srtMute: true,
+      webrtcSignallingUrl: "",
+      webrtcMute: true,
       textContent: "",
       textFontSize: 24,
       textAlign: "center",
@@ -1581,6 +1588,8 @@ function ZoneEditorDialog({
           srtUrl: zone.srtUrl || "",
           srtLatency: zone.srtLatency || 200,
           srtMute: zone.srtMute !== false,
+          webrtcSignallingUrl: zone.webrtcSignallingUrl || "",
+          webrtcMute: zone.webrtcMute !== false,
           textContent: zone.textContent || "",
           textFontSize: typeof zone.textFontSize === 'number' ? zone.textFontSize :
             (zone.textFontSize === 'small' ? 14 : zone.textFontSize === 'large' ? 36 : zone.textFontSize === 'xlarge' ? 48 : 24),
@@ -1803,6 +1812,8 @@ function ZoneEditorDialog({
           srtUrl: "",
           srtLatency: 200,
           srtMute: true,
+          webrtcSignallingUrl: "",
+          webrtcMute: true,
           textContent: "",
           textFontSize: 24,
           textAlign: "center",
@@ -7280,6 +7291,51 @@ function ZoneEditorDialog({
                           checked={field.value !== false}
                           onCheckedChange={field.onChange}
                           data-testid="checkbox-srt-mute"
+                        />
+                      </FormControl>
+                      <FormLabel className="font-normal">Mute audio</FormLabel>
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+
+            {form.watch("type") === "webrtc_stream" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Wifi className="h-4 w-4" />
+                  WebRTC Stream Settings
+                </div>
+                <FormField
+                  control={form.control}
+                  name="webrtcSignallingUrl"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Signalling URL</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="wss://ome-server:3334/app/stream"
+                          {...field}
+                          data-testid="input-webrtc-signalling-url"
+                        />
+                      </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        OvenMediaEngine WebSocket signalling endpoint. Format: wss://host:port/app/stream-key. The player will perform SDP offer/answer exchange over this connection.
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="webrtcMute"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-3 space-y-0">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value !== false}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-webrtc-mute"
                         />
                       </FormControl>
                       <FormLabel className="font-normal">Mute audio</FormLabel>
