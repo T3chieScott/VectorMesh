@@ -166,6 +166,30 @@ interface TimelineDragState {
   shiftKey: boolean;
 }
 
+function getBestRuleForDay(timeRules: TimeRule[], date: Date): TimeRule | null {
+  const dayOfWeek = date.getDay();
+  let bestRule: TimeRule | null = null;
+  let bestIsDateSpecific = false;
+  for (const rule of timeRules) {
+    const days = rule.daysOfWeek;
+    if (days && days.length > 0 && !days.includes(dayOfWeek)) continue;
+    if (rule.startDate) {
+      const startDate = parseISO(rule.startDate);
+      if (date < startOfDay(startDate)) continue;
+    }
+    if (rule.endDate) {
+      const endDate = parseISO(rule.endDate);
+      if (date > endOfDay(endDate)) continue;
+    }
+    const isDateSpecific = !!(rule.startDate || rule.endDate);
+    if (!bestRule || (isDateSpecific && !bestIsDateSpecific) || (isDateSpecific === bestIsDateSpecific)) {
+      bestRule = rule;
+      bestIsDateSpecific = isDateSpecific;
+    }
+  }
+  return bestRule;
+}
+
 function TimeBlockRenderer({
   block,
   rule,
@@ -187,8 +211,6 @@ function TimeBlockRenderer({
   timelineDrag: TimelineDragState | null;
   onDragInit: (blockId: string, mode: DragMode, e: React.PointerEvent, origStartMin: number, origEndMin: number, date: Date, color: string, blockName: string) => void;
 }) {
-  const timeRules = (block.timeRules as TimeRule[]) || [];
-
   if (!rule?.startTime || !rule?.endTime) return null;
 
   const start = parseTime(rule.startTime);
@@ -221,9 +243,14 @@ function TimeBlockRenderer({
       const myDuration = origEndMinutes - origStartMinutes;
       displayStartMin = Math.max(0, Math.min(origStartMinutes + delta, 23 * 60 + 45 - Math.max(myDuration, SNAP_MINUTES)));
       displayEndMin = Math.min(23 * 60 + 45, displayStartMin + myDuration);
-    } else {
-      displayStartMin = timelineDrag!.currentStartMin;
-      displayEndMin = timelineDrag!.currentEndMin;
+    } else if (timelineDrag!.mode === "resize-top") {
+      const delta = timelineDrag!.deltaMinutes;
+      displayStartMin = Math.max(0, Math.min(origStartMinutes + delta, origEndMinutes - SNAP_MINUTES));
+      displayEndMin = origEndMinutes;
+    } else if (timelineDrag!.mode === "resize-bottom") {
+      const delta = timelineDrag!.deltaMinutes;
+      displayStartMin = origStartMinutes;
+      displayEndMin = Math.min(23 * 60 + 45, Math.max(origEndMinutes + delta, origStartMinutes + SNAP_MINUTES));
     }
   }
   const durationMinutes = displayEndMin - displayStartMin;
@@ -294,7 +321,7 @@ function TimeBlockRenderer({
           <AlertTriangle className="h-4 w-4 text-yellow-400 drop-shadow" />
         </div>
       )}
-      {(timeRules[0]?.daysOfWeek?.length || 0) > 0 && (
+      {(rule.daysOfWeek?.length || 0) > 0 && (
         <div className="absolute bottom-1 right-1 pointer-events-none">
           <Repeat className="h-3 w-3 text-white/70" />
         </div>
@@ -331,32 +358,12 @@ function DayColumn({
     timelineDrag.mode === "move" &&
     isSameDay(timelineDrag.currentDate, date);
 
-  const dayBlockEntries: Array<{ block: ScheduleBlockWithMeta; rule: TimeRule; ruleIndex: number }> = [];
+  const dayBlockEntries: Array<{ block: ScheduleBlockWithMeta; rule: TimeRule }> = [];
   for (const block of blocks) {
     const timeRules = (block.timeRules as TimeRule[]) || [];
-    let bestRule: TimeRule | null = null;
-    let bestRuleIndex = -1;
-    let bestIsDateSpecific = false;
-    timeRules.forEach((rule, ruleIndex) => {
-      const days = rule.daysOfWeek;
-      if (days && days.length > 0 && !days.includes(dayOfWeek)) return;
-      if (rule.startDate) {
-        const startDate = parseISO(rule.startDate);
-        if (date < startOfDay(startDate)) return;
-      }
-      if (rule.endDate) {
-        const endDate = parseISO(rule.endDate);
-        if (date > endOfDay(endDate)) return;
-      }
-      const isDateSpecific = !!(rule.startDate || rule.endDate);
-      if (!bestRule || (isDateSpecific && !bestIsDateSpecific) || (isDateSpecific === bestIsDateSpecific)) {
-        bestRule = rule;
-        bestRuleIndex = ruleIndex;
-        bestIsDateSpecific = isDateSpecific;
-      }
-    });
+    const bestRule = getBestRuleForDay(timeRules, date);
     if (bestRule) {
-      dayBlockEntries.push({ block, rule: bestRule, ruleIndex: bestRuleIndex });
+      dayBlockEntries.push({ block, rule: bestRule });
     }
   }
 
@@ -398,15 +405,16 @@ function DayColumn({
           />
         ))}
 
-        {dayBlockEntries.map(({ block, rule, ruleIndex }, index) => {
+        {dayBlockEntries.map(({ block, rule }) => {
           const conflict = conflicts.find((c) => c.blockId === block.id);
+          const blockIndex = blocks.indexOf(block);
           return (
             <TimeBlockRenderer
-              key={`${block.id}-${ruleIndex}`}
+              key={block.id}
               block={block}
               rule={rule}
               date={date}
-              color={getBlockColor(index)}
+              color={getBlockColor(blockIndex >= 0 ? blockIndex : 0)}
               hasConflict={!!conflict}
               isWinner={conflict?.winningBlockId === block.id}
               onClick={() => onBlockClick(block)}
@@ -1220,53 +1228,59 @@ export default function SchedulePage() {
   
   const conflicts = useMemo(() => {
     const result: ConflictInfo[] = [];
+    const seen = new Set<string>();
     const blocksWithRules = blocks.filter((b) => ((b.timeRules as TimeRule[]) || []).length > 0);
-    
-    for (let i = 0; i < blocksWithRules.length; i++) {
-      for (let j = i + 1; j < blocksWithRules.length; j++) {
-        const a = blocksWithRules[i];
-        const b = blocksWithRules[j];
-        
-        const aRules = (a.timeRules as TimeRule[]) || [];
-        const bRules = (b.timeRules as TimeRule[]) || [];
-        
-        const aRule = aRules[0];
-        const bRule = bRules[0];
-        
-        if (!aRule?.startTime || !aRule?.endTime || !bRule?.startTime || !bRule?.endTime) continue;
-        
-        const aStart = parseTime(aRule.startTime);
-        const aEnd = parseTime(aRule.endTime);
-        const bStart = parseTime(bRule.startTime);
-        const bEnd = parseTime(bRule.endTime);
-        
-        const aStartMins = aStart.hours * 60 + aStart.minutes;
-        const aEndMins = aEnd.hours * 60 + aEnd.minutes;
-        const bStartMins = bStart.hours * 60 + bStart.minutes;
-        const bEndMins = bEnd.hours * 60 + bEnd.minutes;
-        
-        const overlaps = aStartMins < bEndMins && bStartMins < aEndMins;
-        
-        if (overlaps) {
-          const winner = (a.priority || 0) >= (b.priority || 0) ? a : b;
-          const loser = winner === a ? b : a;
-          
-          result.push({
-            blockId: winner.id,
-            conflictsWith: [loser.id],
-            winningBlockId: winner.id,
-          });
-          result.push({
-            blockId: loser.id,
-            conflictsWith: [winner.id],
-            winningBlockId: winner.id,
-          });
+
+    for (const day of weekDays) {
+      for (let i = 0; i < blocksWithRules.length; i++) {
+        for (let j = i + 1; j < blocksWithRules.length; j++) {
+          const a = blocksWithRules[i];
+          const b = blocksWithRules[j];
+
+          const aRule = getBestRuleForDay((a.timeRules as TimeRule[]) || [], day);
+          const bRule = getBestRuleForDay((b.timeRules as TimeRule[]) || [], day);
+
+          if (!aRule?.startTime || !aRule?.endTime || !bRule?.startTime || !bRule?.endTime) continue;
+
+          const aStart = parseTime(aRule.startTime);
+          const aEnd = parseTime(aRule.endTime);
+          const bStart = parseTime(bRule.startTime);
+          const bEnd = parseTime(bRule.endTime);
+
+          const aStartMins = aStart.hours * 60 + aStart.minutes;
+          let aEndMins = aEnd.hours * 60 + aEnd.minutes;
+          if (aEndMins <= aStartMins) aEndMins = 24 * 60;
+          const bStartMins = bStart.hours * 60 + bStart.minutes;
+          let bEndMins = bEnd.hours * 60 + bEnd.minutes;
+          if (bEndMins <= bStartMins) bEndMins = 24 * 60;
+
+          const overlaps = aStartMins < bEndMins && bStartMins < aEndMins;
+
+          if (overlaps) {
+            const pairKey = [a.id, b.id].sort().join("-");
+            if (seen.has(pairKey)) continue;
+            seen.add(pairKey);
+
+            const winner = (a.priority || 0) >= (b.priority || 0) ? a : b;
+            const loser = winner === a ? b : a;
+
+            result.push({
+              blockId: winner.id,
+              conflictsWith: [loser.id],
+              winningBlockId: winner.id,
+            });
+            result.push({
+              blockId: loser.id,
+              conflictsWith: [winner.id],
+              winningBlockId: winner.id,
+            });
+          }
         }
       }
     }
-    
+
     return result;
-  }, [blocks]);
+  }, [blocks, weekDays]);
   
   const handlePrevious = () => {
     setCurrentDate((prev) => (viewMode === "week" ? subWeeks(prev, 1) : addDays(prev, -1)));
@@ -1326,8 +1340,8 @@ export default function SchedulePage() {
   };
   
   const blockTimeMutation = useMutation({
-    mutationFn: async ({ blockId, newStartTime, newEndTime, newDate, singleDayDate, timeDelta }: {
-      blockId: string; newStartTime: string; newEndTime: string; newDate?: Date; singleDayDate?: Date; timeDelta?: number;
+    mutationFn: async ({ blockId, newStartTime, newEndTime, newDate, singleDayDate, timeDelta, resizeMode }: {
+      blockId: string; newStartTime: string; newEndTime: string; newDate?: Date; singleDayDate?: Date; timeDelta?: number; resizeMode?: "resize-top" | "resize-bottom";
     }) => {
       const block = blocks.find((b) => b.id === blockId);
       if (!block) throw new Error("Block not found");
@@ -1342,6 +1356,15 @@ export default function SchedulePage() {
           const [eh, em] = rule.endTime.split(":").map(Number);
           const ruleStartMin = sh * 60 + sm;
           const ruleEndMin = eh * 60 + em;
+
+          if (resizeMode === "resize-top") {
+            const newStart = Math.max(0, Math.min(ruleStartMin + timeDelta, ruleEndMin - SNAP_MINUTES));
+            return { ...rule, startTime: minutesToTimeStr(newStart) };
+          } else if (resizeMode === "resize-bottom") {
+            const newEnd = Math.min(23 * 60 + 45, Math.max(ruleEndMin + timeDelta, ruleStartMin + SNAP_MINUTES));
+            return { ...rule, endTime: minutesToTimeStr(newEnd) };
+          }
+
           const ruleDuration = ruleEndMin - ruleStartMin;
           const newStart = Math.max(0, Math.min(ruleStartMin + timeDelta, 23 * 60 + 45 - Math.max(ruleDuration, SNAP_MINUTES)));
           const newEnd = Math.min(23 * 60 + 45, newStart + ruleDuration);
@@ -1378,6 +1401,15 @@ export default function SchedulePage() {
         }));
 
         const ruleDateStr = newDate ? format(newDate, "yyyy-MM-dd") : targetDateStr;
+
+        if (newDate && ruleDateStr !== targetDateStr) {
+          existingRules.forEach((r, i) => {
+            if (staleIndices.has(i) || i === bestMatchIdx) return;
+            if (r.startDate && r.endDate && r.startDate === ruleDateStr && r.endDate === ruleDateStr) {
+              staleIndices.add(i);
+            }
+          });
+        }
 
         if (bestMatchIdx === -1) {
           updatedRules = [...existingRules, {
@@ -1513,12 +1545,14 @@ export default function SchedulePage() {
           }
         } else if (prev.mode === "resize-top") {
           const snappedStart = snapToGrid(prev.origStartMin + deltaMinutes);
-          newStartMin = Math.max(0, Math.min(snappedStart, prev.currentEndMin - SNAP_MINUTES));
-          newEndMin = prev.currentEndMin;
+          newStartMin = Math.max(0, Math.min(snappedStart, prev.origEndMin - SNAP_MINUTES));
+          newEndMin = prev.origEndMin;
+          newDeltaMinutes = newStartMin - prev.origStartMin;
         } else if (prev.mode === "resize-bottom") {
           const snappedEnd = snapToGrid(prev.origEndMin + deltaMinutes);
-          newStartMin = prev.currentStartMin;
-          newEndMin = Math.min(23 * 60 + 45, Math.max(snappedEnd, prev.currentStartMin + SNAP_MINUTES));
+          newStartMin = prev.origStartMin;
+          newEndMin = Math.min(23 * 60 + 45, Math.max(snappedEnd, prev.origStartMin + SNAP_MINUTES));
+          newDeltaMinutes = newEndMin - prev.origEndMin;
         }
 
         return {
@@ -1540,12 +1574,13 @@ export default function SchedulePage() {
           const shiftHeld = e.shiftKey;
           const dateChanged = !isSameDay(prev.currentDate, prev.origDate);
           setTimeout(() => {
-            if (shiftHeld && prev.mode === "move") {
+            if (shiftHeld && (prev.mode === "move" || prev.mode === "resize-top" || prev.mode === "resize-bottom")) {
               blockTimeMutationRef.current.mutate({
                 blockId: prev.blockId,
                 newStartTime: newStart,
                 newEndTime: newEnd,
                 timeDelta: prev.deltaMinutes,
+                resizeMode: prev.mode !== "move" ? prev.mode : undefined,
               });
             } else if (!shiftHeld && prev.mode === "move" && dateChanged) {
               blockTimeMutationRef.current.mutate({
