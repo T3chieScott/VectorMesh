@@ -355,6 +355,7 @@ function TimeBlockRenderer({
 function DayColumn({
   date,
   blocks,
+  blockColorMap,
   conflicts,
   onBlockClick,
   onSlotClick,
@@ -365,6 +366,7 @@ function DayColumn({
 }: {
   date: Date;
   blocks: ScheduleBlockWithMeta[];
+  blockColorMap: Map<string, string>;
   conflicts: ConflictInfo[];
   onBlockClick: (block: ScheduleBlock) => void;
   onSlotClick: (date: Date, hour: number) => void;
@@ -430,14 +432,13 @@ function DayColumn({
         {dayBlockEntries.map(({ block, rule }) => {
           const dayKey = format(date, "yyyy-MM-dd");
           const conflict = conflicts.find((c) => c.blockId === block.id && c.dateKey === dayKey);
-          const blockIndex = blocks.indexOf(block);
           return (
             <TimeBlockRenderer
               key={block.id}
               block={block}
               rule={rule}
               date={date}
-              color={getBlockColor(blockIndex >= 0 ? blockIndex : 0)}
+              color={blockColorMap.get(block.id) || getBlockColor(0)}
               hasConflict={!!conflict}
               isWinner={conflict?.winningBlockId === block.id}
               onClick={() => onBlockClick(block)}
@@ -1254,6 +1255,12 @@ export default function SchedulePage() {
     ? Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
     : [currentDate];
   
+  const blockColorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    blocks.forEach((b, i) => map.set(b.id, getBlockColor(i)));
+    return map;
+  }, [blocks]);
+
   const conflicts = useMemo(() => {
     const result: ConflictInfo[] = [];
     const seen = new Set<string>();
@@ -1460,12 +1467,22 @@ export default function SchedulePage() {
             }
 
             const days = matchedRule.daysOfWeek;
+            const isDateBounded = !!(matchedRule.startDate && matchedRule.endDate);
+            const isGeneral = !isDateBounded && (!days || days.length === 0);
+            const dateChanged = newDate && ruleDateStr !== targetDateStr;
+
             if (days && days.length > 0) {
               const remaining = days.filter((d: number) => d !== targetDow);
               if (remaining.length > 0) {
                 updatedRules.push({ ...matchedRule, daysOfWeek: remaining });
               }
-            } else if (matchedRule.startDate && matchedRule.endDate) {
+            } else if (isDateBounded) {
+            } else if (isGeneral && dateChanged) {
+              updatedRules.push(matchedRule);
+              updatedRules.push({
+                startDate: targetDateStr,
+                endDate: targetDateStr,
+              });
             } else {
               updatedRules.push(matchedRule);
             }
@@ -1782,6 +1799,7 @@ export default function SchedulePage() {
                         key={date.toISOString()}
                         date={date}
                         blocks={blocks as ScheduleBlockWithMeta[]}
+                        blockColorMap={blockColorMap}
                         conflicts={conflicts}
                         onBlockClick={handleBlockClick}
                         onSlotClick={handleSlotClick}
