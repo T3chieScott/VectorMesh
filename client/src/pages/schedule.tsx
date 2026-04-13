@@ -167,25 +167,41 @@ interface TimelineDragState {
   shiftKey: boolean;
 }
 
+function normaliseRuleDates(rule: TimeRule): TimeRule {
+  if (rule.startDate && !rule.endDate) return { ...rule, endDate: rule.startDate };
+  if (rule.endDate && !rule.startDate) return { ...rule, startDate: rule.endDate };
+  return rule;
+}
+
+function ruleSpecificity(rule: TimeRule): number {
+  const hasStart = !!rule.startDate;
+  const hasEnd = !!rule.endDate;
+  if (hasStart && hasEnd && rule.startDate === rule.endDate) return 3;
+  if (hasStart && hasEnd) return 2;
+  if (hasStart || hasEnd) return 2;
+  return 0;
+}
+
 function getBestRuleForDay(timeRules: TimeRule[], date: Date): TimeRule | null {
   const dayOfWeek = date.getDay();
   let bestRule: TimeRule | null = null;
-  let bestIsDateSpecific = false;
-  for (const rule of timeRules) {
+  let bestSpec = -1;
+  for (const raw of timeRules) {
+    const rule = normaliseRuleDates(raw);
     const days = rule.daysOfWeek;
     if (days && days.length > 0 && !days.includes(dayOfWeek)) continue;
     if (rule.startDate) {
-      const startDate = parseISO(rule.startDate);
-      if (date < startOfDay(startDate)) continue;
+      const sd = parseISO(rule.startDate);
+      if (date < startOfDay(sd)) continue;
     }
     if (rule.endDate) {
-      const endDate = parseISO(rule.endDate);
-      if (date > endOfDay(endDate)) continue;
+      const ed = parseISO(rule.endDate);
+      if (date > endOfDay(ed)) continue;
     }
-    const isDateSpecific = !!(rule.startDate || rule.endDate);
-    if (!bestRule || (isDateSpecific && !bestIsDateSpecific) || (isDateSpecific === bestIsDateSpecific)) {
+    const spec = ruleSpecificity(rule);
+    if (!bestRule || spec > bestSpec || (spec === bestSpec && spec > 0)) {
       bestRule = rule;
-      bestIsDateSpecific = isDateSpecific;
+      bestSpec = spec;
     }
   }
   return bestRule;
@@ -499,7 +515,8 @@ function ScheduleBlockEditor({
   const { toast } = useToast();
   const isEditing = !!block;
   
-  const existingTimeRule = ((block?.timeRules as TimeRule[]) || [])[0];
+  const rawTimeRule = ((block?.timeRules as TimeRule[]) || [])[0];
+  const existingTimeRule = rawTimeRule ? normaliseRuleDates(rawTimeRule) : undefined;
   const existingTarget = ((block?.targets as ScheduleTarget[]) || [])[0];
   
   const defaultName = droppedItem?.type === "playlist" ? droppedItem.name : (block?.name || "");
@@ -611,9 +628,13 @@ function ScheduleBlockEditor({
   
   const createMutation = useMutation({
     mutationFn: async (data: BlockFormValues) => {
+      const ruleStartDate = data.startDate ? format(data.startDate, "yyyy-MM-dd") : undefined;
+      const ruleEndDate = data.endDate ? format(data.endDate, "yyyy-MM-dd") : undefined;
+      const effectiveStart = ruleStartDate || ruleEndDate;
+      const effectiveEnd = ruleEndDate || ruleStartDate;
       const timeRules: TimeRule[] = [{
-        startDate: data.startDate ? format(data.startDate, "yyyy-MM-dd") : undefined,
-        endDate: data.endDate ? format(data.endDate, "yyyy-MM-dd") : undefined,
+        startDate: effectiveStart,
+        endDate: effectiveEnd,
         startTime: data.startTime,
         endTime: data.endTime,
         daysOfWeek: data.isRecurring ? data.daysOfWeek : undefined,
@@ -1350,7 +1371,7 @@ export default function SchedulePage() {
     }) => {
       const block = blocks.find((b) => b.id === blockId);
       if (!block) throw new Error("Block not found");
-      const existingRules = (block.timeRules as TimeRule[]) || [];
+      const existingRules = ((block.timeRules as TimeRule[]) || []).map(normaliseRuleDates);
 
       let updatedRules: Record<string, unknown>[];
 
@@ -1385,17 +1406,17 @@ export default function SchedulePage() {
 
         const matchingIndices: number[] = [];
         let bestMatchIdx = -1;
-        let bestIsDateSpecific = false;
+        let bestSpec = -1;
         existingRules.forEach((r, i) => {
           const days = r.daysOfWeek;
           if (days && days.length > 0 && !days.includes(targetDow)) return;
           if (r.startDate && singleDayDate < startOfDay(parseISO(r.startDate))) return;
           if (r.endDate && singleDayDate > endOfDay(parseISO(r.endDate))) return;
-          const isDateSpecific = !!(r.startDate || r.endDate);
+          const spec = ruleSpecificity(r);
           matchingIndices.push(i);
-          if (bestMatchIdx === -1 || (isDateSpecific && !bestIsDateSpecific) || (isDateSpecific === bestIsDateSpecific)) {
+          if (bestMatchIdx === -1 || spec > bestSpec || (spec === bestSpec && spec > 0)) {
             bestMatchIdx = i;
-            bestIsDateSpecific = isDateSpecific;
+            bestSpec = spec;
           }
         });
 
@@ -1460,7 +1481,25 @@ export default function SchedulePage() {
         updatedRules = [{ startTime: newStartTime, endTime: newEndTime, ...(newDate ? { startDate: format(newDate, "yyyy-MM-dd"), endDate: format(newDate, "yyyy-MM-dd") } : {}) }];
       }
 
-      await apiRequest("PATCH", `/api/schedule-blocks/${blockId}`, { timeRules: updatedRules });
+      const deduped: Record<string, unknown>[] = [];
+      const seenDateKeys = new Map<string, number>();
+      for (let i = 0; i < updatedRules.length; i++) {
+        const r = updatedRules[i] as any;
+        const sd = r.startDate || "";
+        const ed = r.endDate || "";
+        if (sd && ed && sd === ed && !(r.daysOfWeek && r.daysOfWeek.length > 0)) {
+          const key = sd;
+          if (seenDateKeys.has(key)) {
+            const prevIdx = seenDateKeys.get(key)!;
+            deduped[prevIdx] = null as any;
+          }
+          seenDateKeys.set(key, i);
+        }
+        deduped.push(r);
+      }
+      const finalRules = deduped.filter(Boolean);
+
+      await apiRequest("PATCH", `/api/schedule-blocks/${blockId}`, { timeRules: finalRules });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/programme-versions", selectedVersionId, "blocks"] });

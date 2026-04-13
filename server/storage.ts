@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, desc, gte, lte, lt, inArray, isNotNull, sql, count } from "drizzle-orm";
+import { eq, and, asc, desc, gte, lte, lt, inArray, isNotNull, sql, count } from "drizzle-orm";
 import {
   clients,
   events,
@@ -781,7 +781,7 @@ export class DatabaseStorage implements IStorage {
 
   // Schedule Blocks
   async getScheduleBlocks(programmeVersionId: string): Promise<ScheduleBlock[]> {
-    return db.select().from(scheduleBlocks).where(eq(scheduleBlocks.programmeVersionId, programmeVersionId)).orderBy(desc(scheduleBlocks.priority));
+    return db.select().from(scheduleBlocks).where(eq(scheduleBlocks.programmeVersionId, programmeVersionId)).orderBy(desc(scheduleBlocks.priority), asc(scheduleBlocks.createdAt));
   }
 
   async getScheduleBlock(id: string): Promise<ScheduleBlock | undefined> {
