@@ -253,6 +253,7 @@ function TimeBlockRenderer({
   };
 
   const isDragging = shouldAnimateThis && timelineDrag!.hasMoved;
+  const isStaticDuringDrag = isDraggingThis && !isOrigDay && isMoveMode && timelineDrag?.hasMoved && !isDragging;
   const dayShift = isOrigDay ? (timelineDrag?.dayOffset || 0) : 0;
   const cursor = (isOrigDay && timelineDrag?.hasMoved)
     ? timelineDrag.mode === "move" ? "grabbing" : "ns-resize"
@@ -262,14 +263,14 @@ function TimeBlockRenderer({
     <div
       className={`absolute left-1 right-1 rounded-md px-2 py-1 select-none group ${color} ${
         hasConflict && !isWinner ? "opacity-50 border-2 border-dashed border-yellow-400" : ""
-      } ${isDragging ? "opacity-80 ring-2 ring-white/70 z-30 shadow-lg" : "hover:ring-2 hover:ring-white/50"}`}
+      } ${isDragging ? "opacity-80 ring-2 ring-white/70 z-30 shadow-lg" : isStaticDuringDrag ? "opacity-40 border-2 border-dashed border-white/60" : "hover:ring-2 hover:ring-white/50"}`}
       style={{
         top: `${top}px`,
         height: `${height}px`,
         cursor,
         transform: dayShift !== 0 ? `translateX(${dayShift * 100}%)` : undefined,
         transition: isDragging ? "none" : undefined,
-        zIndex: isDragging ? 50 : undefined,
+        zIndex: isDragging ? 50 : isStaticDuringDrag ? 51 : undefined,
       }}
       onPointerDown={(e) => handlePointerDown(e, "move")}
       data-testid={`block-${block.id}`}
