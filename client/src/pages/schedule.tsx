@@ -491,6 +491,7 @@ function ScheduleBlockEditor({
   screenGroups,
   playlists,
   media,
+  blocks,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -506,6 +507,7 @@ function ScheduleBlockEditor({
   screenGroups: ScreenGroup[];
   playlists: Playlist[];
   media: MediaAsset[];
+  blocks: ScheduleBlock[];
 }) {
   const { toast } = useToast();
   const isEditing = !!block;
@@ -572,6 +574,7 @@ function ScheduleBlockEditor({
 
   const existingFallbackSource = (block?.zoneSources as ZoneSource[] | undefined)?.find(zs => zs.zoneId === "__fallback__");
   const [fallbackPlaylistId, setFallbackPlaylistId] = useState<string>(existingFallbackSource?.playlistId || "");
+  const [applyToSeries, setApplyToSeries] = useState(false);
   
   useEffect(() => {
     if (open) {
@@ -644,24 +647,50 @@ function ScheduleBlockEditor({
       }
 
       if (isEditing && block) {
+        const existingRule = ((block.timeRules as TimeRule[]) || [])[0] || {};
         const ruleStartDate = data.startDate ? format(data.startDate, "yyyy-MM-dd") : undefined;
         const ruleEndDate = data.endDate ? format(data.endDate, "yyyy-MM-dd") : undefined;
         const effectiveStart = ruleStartDate || ruleEndDate;
         const effectiveEnd = ruleEndDate || ruleStartDate;
         const timeRules: TimeRule[] = [{
+          ...existingRule,
           startDate: effectiveStart,
           endDate: effectiveEnd,
           startTime: data.startTime,
           endTime: data.endTime,
+          daysOfWeek: data.isRecurring ? data.daysOfWeek : existingRule.daysOfWeek,
         }];
-        return apiRequest("PATCH", `/api/schedule-blocks/${block.id}`, {
-          programmeVersionId: versionId,
+
+        const sharedPayload = {
           name: data.name,
           priority: data.priority,
           layoutTemplateId: data.layoutTemplateId || null,
-          timeRules,
           targets,
           zoneSources,
+        };
+
+        if (applyToSeries && block.seriesId) {
+          const seriesBlocks = blocks.filter((b) => b.seriesId === block.seriesId);
+          for (const sb of seriesBlocks) {
+            const sbRule = ((sb.timeRules as TimeRule[]) || [])[0] || {};
+            await apiRequest("PATCH", `/api/schedule-blocks/${sb.id}`, {
+              ...sharedPayload,
+              programmeVersionId: versionId,
+              timeRules: [{
+                ...sbRule,
+                startTime: data.startTime,
+                endTime: data.endTime,
+                daysOfWeek: data.isRecurring ? data.daysOfWeek : sbRule.daysOfWeek,
+              }],
+            });
+          }
+          return;
+        }
+
+        return apiRequest("PATCH", `/api/schedule-blocks/${block.id}`, {
+          ...sharedPayload,
+          programmeVersionId: versionId,
+          timeRules,
         });
       }
 
@@ -1135,6 +1164,21 @@ function ScheduleBlockEditor({
               )}
             </div>
             
+            {isEditing && hasSeries && (
+              <div className="flex items-center gap-2 pt-2">
+                <input
+                  type="checkbox"
+                  id="apply-to-series"
+                  checked={applyToSeries}
+                  onChange={(e) => setApplyToSeries(e.target.checked)}
+                  data-testid="checkbox-apply-to-series"
+                />
+                <Label htmlFor="apply-to-series" className="text-sm cursor-pointer">
+                  Apply changes to all days in this series
+                </Label>
+              </div>
+            )}
+
             <DialogFooter className="gap-2">
               {isEditing && (
                 <div className="flex gap-2 mr-auto">
@@ -1443,8 +1487,8 @@ export default function SchedulePage() {
   });
 
   const seriesMoveMutation = useMutation({
-    mutationFn: async ({ blockId, timeDelta, resizeMode }: {
-      blockId: string; timeDelta: number; resizeMode?: "resize-top" | "resize-bottom";
+    mutationFn: async ({ blockId, timeDelta, dayOffset, resizeMode }: {
+      blockId: string; timeDelta: number; dayOffset?: number; resizeMode?: "resize-top" | "resize-bottom";
     }) => {
       const block = blocks.find((b) => b.id === blockId);
       if (!block) throw new Error("Block not found");
@@ -1473,8 +1517,17 @@ export default function SchedulePage() {
           newStart = Math.max(0, Math.min(ruleStartMin + timeDelta, 23 * 60 + 45 - Math.max(duration, SNAP_MINUTES)));
           newEnd = Math.min(23 * 60 + 45, newStart + duration);
         }
+
+        const updatedRule: TimeRule = { ...rule, startTime: minutesToTimeStr(newStart), endTime: minutesToTimeStr(newEnd) };
+        if (dayOffset && dayOffset !== 0 && rule.startDate && rule.endDate) {
+          const newDate = addDays(parseISO(rule.startDate), dayOffset);
+          const dateStr = format(newDate, "yyyy-MM-dd");
+          updatedRule.startDate = dateStr;
+          updatedRule.endDate = dateStr;
+        }
+
         await apiRequest("PATCH", `/api/schedule-blocks/${sb.id}`, {
-          timeRules: [{ ...rule, startTime: minutesToTimeStr(newStart), endTime: minutesToTimeStr(newEnd) }],
+          timeRules: [updatedRule],
         });
       }
     },
@@ -1602,6 +1655,7 @@ export default function SchedulePage() {
               seriesMoveMutationRef.current.mutate({
                 blockId: prev.blockId,
                 timeDelta: prev.deltaMinutes,
+                dayOffset: prev.dayOffset,
                 resizeMode: prev.mode !== "move" ? prev.mode : undefined,
               });
             } else {
@@ -1847,6 +1901,7 @@ export default function SchedulePage() {
         screenGroups={screenGroups}
         playlists={playlists}
         media={media}
+        blocks={blocks}
       />
     </div>
   );
