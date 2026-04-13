@@ -13,7 +13,7 @@ export const screenTypeEnum = pgEnum("screen_type", ["standard", "led_wall"]);
 export const orientationEnum = pgEnum("orientation", ["landscape", "portrait"]);
 export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "gif"]);
 export const programmeStatusEnum = pgEnum("programme_status", ["draft", "published"]);
-export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar", "youtube_live", "srt_feed", "webrtc_stream"]);
+export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar", "youtube_live", "webrtc_stream"]);
 export const scaleModeEnum = pgEnum("scale_mode", ["contain", "cover"]);
 
 // ============ CLIENTS ============
@@ -266,7 +266,7 @@ export type LayoutTemplate = typeof layoutTemplates.$inferSelect;
 export interface LayoutZone {
   id: string;
   name: string;
-  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown" | "shape" | "schedule" | "media_player" | "football_table" | "premier_league_fixtures" | "heathrow_arrivals" | "heathrow_departures" | "weather_forecast" | "spacex_launch" | "earthquakes" | "aircraft_radar" | "youtube_live" | "srt_feed" | "webrtc_stream";
+  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown" | "shape" | "schedule" | "media_player" | "football_table" | "premier_league_fixtures" | "heathrow_arrivals" | "heathrow_departures" | "weather_forecast" | "spacex_launch" | "earthquakes" | "aircraft_radar" | "youtube_live" | "webrtc_stream";
   x: number;
   y: number;
   width: number;
@@ -495,10 +495,6 @@ export interface LayoutZone {
   // YouTube Live widget configuration
   youtubeUrl?: string;
   youtubeMute?: boolean;
-  // SRT Feed widget configuration
-  srtUrl?: string;
-  srtLatency?: number;
-  srtMute?: boolean;
   // WebRTC Stream widget configuration (OvenMediaEngine)
   webrtcSignallingUrl?: string;
   webrtcStreamKey?: string;

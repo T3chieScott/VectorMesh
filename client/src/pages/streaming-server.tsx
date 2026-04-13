@@ -137,17 +137,6 @@ export default function StreamingServerPage() {
     }
   };
 
-  const buildSrtUrl = (stream: OmeStream) => {
-    if (!configQuery.data?.apiUrl) return "";
-    try {
-      const apiUrlObj = new URL(configQuery.data.apiUrl);
-      const host = apiUrlObj.hostname;
-      return `srt://${host}:9999/${stream.app}/${stream.stream}`;
-    } catch {
-      return "";
-    }
-  };
-
   const isConnected = statusQuery.data?.connected === true;
 
   return (
@@ -320,7 +309,6 @@ export default function StreamingServerPage() {
                 <TableBody>
                   {streamsQuery.data.map((stream, idx) => {
                     const webrtcUrl = buildWebrtcUrl(stream);
-                    const srtUrl = buildSrtUrl(stream);
                     const videoTrack = stream.tracks?.find(t => t.type === "Video" || t.type === "video");
                     const audioTrack = stream.tracks?.find(t => t.type === "Audio" || t.type === "audio");
 
@@ -372,7 +360,6 @@ export default function StreamingServerPage() {
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
                             {webrtcUrl && <CopyButton text={webrtcUrl} label={`webrtc-${idx}`} buttonLabel="WebRTC" />}
-                            {srtUrl && <CopyButton text={srtUrl} label={`srt-${idx}`} buttonLabel="SRT" />}
                           </div>
                         </TableCell>
                       </TableRow>
