@@ -3226,7 +3226,7 @@ function YouTubeLiveWidget({ url, mute = true }: { url?: string; mute?: boolean 
 
 function SrtFeedWidget({ url, latency = 200, mute = true }: { url?: string; latency?: number; mute?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const playerRef = useRef<any>(null);
+  const playerRef = useRef<{ pause: () => void; unload: () => void; detachMediaElement: () => void; destroy: () => void; attachMediaElement: (el: HTMLVideoElement) => void; on: (event: string, cb: (...args: string[]) => void) => void; load: () => void; play: () => Promise<void> } | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [status, setStatus] = useState<"idle" | "connecting" | "live" | "error" | "offline">("idle");
@@ -3310,10 +3310,10 @@ function SrtFeedWidget({ url, latency = 200, mute = true }: { url?: string; late
           reconnectTimerRef.current = setTimeout(() => initPlayer(), 5000);
         }, { signal: ac.signal });
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("[SRT] Init error:", err);
       setStatus("error");
-      setErrorMsg(err.message || "Failed to initialise player");
+      setErrorMsg(err instanceof Error ? err.message : "Failed to initialise player");
       reconnectTimerRef.current = setTimeout(() => initPlayer(), 5000);
     }
   }, [url, latency, destroyPlayer]);
