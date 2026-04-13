@@ -167,6 +167,7 @@ interface TimelineDragState {
   color: string;
   blockName: string;
   shiftKey: boolean;
+  ctrlKey: boolean;
   seriesId: string | null;
 }
 
@@ -298,6 +299,7 @@ function TimeBlockRenderer({
     onDragInit(block.id, mode, e, origStartMinutes, origEndMinutes, date, color, block.name, block.seriesId);
   };
 
+  const isCtrlDrag = isDraggingThis && timelineDrag?.ctrlKey && timelineDrag.hasMoved;
   const isDragging = (shouldAnimateThis && timelineDrag!.hasMoved) || isSeriesSibling;
   const isStaticDuringDrag = isDraggingThis && !isOrigDay && isMoveMode && timelineDrag?.hasMoved && !isDragging;
   const dayShift = isOrigDay ? (timelineDrag?.dayOffset || 0)
@@ -306,59 +308,84 @@ function TimeBlockRenderer({
     ? timelineDrag.mode === "move" ? "grabbing" : "ns-resize"
     : "pointer";
 
+  const origTop = (origStartMinutes / 60) * HOUR_HEIGHT;
+  const origHeight = Math.max(((origEndMinutes - origStartMinutes) / 60) * HOUR_HEIGHT, 20);
+
+  const dragBadgeLabel = timelineDrag?.ctrlKey ? "Duplicate" : timelineDrag?.shiftKey ? "All days" : "This day";
+  const dragBadgeClass = timelineDrag?.ctrlKey
+    ? "bg-green-500/80 text-white"
+    : timelineDrag?.shiftKey ? "bg-blue-500/80 text-white" : "bg-muted text-muted-foreground";
+
   return (
-    <div
-      className={`absolute left-1 right-1 rounded-md px-2 py-1 select-none group ${color} ${
-        hasConflict && !isWinner ? "opacity-50 border-2 border-dashed border-yellow-400" : ""
-      } ${isDragging ? "opacity-80 ring-2 ring-white/70 z-30 shadow-lg" : isStaticDuringDrag ? "opacity-40 border-2 border-dashed border-white/60" : "hover:ring-2 hover:ring-white/50"}`}
-      style={{
-        top: `${top}px`,
-        height: `${height}px`,
-        cursor,
-        transform: dayShift !== 0 ? `translateX(${dayShift * 100}%)` : undefined,
-        transition: isDragging ? "none" : undefined,
-        zIndex: isDragging ? 50 : isStaticDuringDrag ? 51 : undefined,
-      }}
-      onPointerDown={(e) => handlePointerDown(e, "move")}
-      data-testid={`block-${block.id}-${rule.startTime}`}
-    >
+    <>
+      {isCtrlDrag && isOrigDay && (
+        <div
+          className={`absolute left-1 right-1 rounded-md px-2 py-1 select-none ${color} opacity-30 border-2 border-dashed border-white/60`}
+          style={{ top: `${origTop}px`, height: `${origHeight}px`, zIndex: 5 }}
+          data-testid={`block-ghost-${block.id}`}
+        >
+          <div className="text-white text-xs font-medium truncate pointer-events-none">{block.name}</div>
+        </div>
+      )}
       <div
-        className="absolute top-0 left-0 right-0 h-2 cursor-ns-resize z-10 group-hover:bg-white/20 rounded-t-md"
-        onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, "resize-top"); }}
-        data-testid={`resize-top-${block.id}-${rule.startTime}`}
-      />
-      <div
-        className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize z-10 group-hover:bg-white/20 rounded-b-md"
-        onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, "resize-bottom"); }}
-        data-testid={`resize-bottom-${block.id}-${rule.startTime}`}
-      />
+        className={`absolute left-1 right-1 rounded-md px-2 py-1 select-none group ${color} ${
+          hasConflict && !isWinner ? "opacity-50 border-2 border-dashed border-yellow-400" : ""
+        } ${isDragging ? "opacity-80 ring-2 ring-white/70 z-30 shadow-lg" : isStaticDuringDrag ? "opacity-40 border-2 border-dashed border-white/60" : "hover:ring-2 hover:ring-white/50"}`}
+        style={{
+          top: `${top}px`,
+          height: `${height}px`,
+          cursor,
+          transform: dayShift !== 0 ? `translateX(${dayShift * 100}%)` : undefined,
+          transition: isDragging ? "none" : undefined,
+          zIndex: isDragging ? 50 : isStaticDuringDrag ? 51 : undefined,
+        }}
+        onPointerDown={(e) => handlePointerDown(e, "move")}
+        data-testid={`block-${block.id}-${rule.startTime}`}
+      >
+        <div
+          className="absolute top-0 left-0 right-0 h-2 cursor-ns-resize z-10 group-hover:bg-white/20 rounded-t-md"
+          onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, "resize-top"); }}
+          data-testid={`resize-top-${block.id}-${rule.startTime}`}
+        />
+        <div
+          className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize z-10 group-hover:bg-white/20 rounded-b-md"
+          onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, "resize-bottom"); }}
+          data-testid={`resize-bottom-${block.id}-${rule.startTime}`}
+        />
 
-      {isDragging && isOrigDay && (
-        <div className="absolute -top-6 left-0 bg-foreground text-background text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap z-40 flex items-center gap-1">
-          {minutesToTimeStr(displayStartMin)} – {minutesToTimeStr(displayEndMin)}
-          <span className={`ml-1 px-1 rounded ${timelineDrag!.shiftKey ? "bg-blue-500/80 text-white" : "bg-muted text-muted-foreground"}`}>
-            {timelineDrag!.shiftKey ? "All days" : "This day"}
-          </span>
-        </div>
-      )}
+        {isDragging && isOrigDay && (
+          <div className="absolute -top-6 left-0 bg-foreground text-background text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap z-40 flex items-center gap-1">
+            {minutesToTimeStr(displayStartMin)} – {minutesToTimeStr(displayEndMin)}
+            <span className={`ml-1 px-1 rounded ${dragBadgeClass}`}>
+              {dragBadgeLabel}
+            </span>
+          </div>
+        )}
 
-      <div className="text-white text-xs font-medium truncate pointer-events-none">{block.name}</div>
-      {height > 30 && (
-        <div className="text-white/70 text-xs truncate pointer-events-none">
-          {minutesToTimeStr(displayStartMin)} - {minutesToTimeStr(displayEndMin)}
-        </div>
-      )}
-      {hasConflict && (
-        <div className="absolute -top-1 -right-1 pointer-events-none">
-          <AlertTriangle className="h-4 w-4 text-yellow-400 drop-shadow" />
-        </div>
-      )}
-      {(rule.daysOfWeek?.length || 0) > 0 && (
-        <div className="absolute bottom-1 right-1 pointer-events-none">
-          <Repeat className="h-3 w-3 text-white/70" />
-        </div>
-      )}
-    </div>
+        {isCtrlDrag && isOrigDay && (
+          <div className="absolute -top-0.5 -right-0.5 pointer-events-none z-40">
+            <Copy className="h-3 w-3 text-white drop-shadow" />
+          </div>
+        )}
+
+        <div className="text-white text-xs font-medium truncate pointer-events-none">{block.name}</div>
+        {height > 30 && (
+          <div className="text-white/70 text-xs truncate pointer-events-none">
+            {minutesToTimeStr(displayStartMin)} - {minutesToTimeStr(displayEndMin)}
+          </div>
+        )}
+        {hasConflict && (
+          <div className="absolute -top-1 -right-1 pointer-events-none">
+            <AlertTriangle className="h-4 w-4 text-yellow-400 drop-shadow" />
+          </div>
+        )}
+        {(rule.daysOfWeek?.length || 0) > 0 && (
+          <div className="absolute bottom-1 right-1 pointer-events-none">
+            <Repeat className="h-3 w-3 text-white/70" />
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -1646,6 +1673,40 @@ export default function SchedulePage() {
     },
   });
 
+  const duplicateBlockMutation = useMutation({
+    mutationFn: async ({ blockId, newStartTime, newEndTime, newDate }: {
+      blockId: string; newStartTime: string; newEndTime: string; newDate?: Date;
+    }) => {
+      const block = blocks.find((b) => b.id === blockId);
+      if (!block) throw new Error("Block not found");
+      const existingRule = ((block.timeRules as TimeRule[]) || [])[0] || {};
+      const targetDate = newDate ? format(newDate, "yyyy-MM-dd") : existingRule.startDate;
+      await apiRequest("POST", `/api/programme-versions/${selectedVersionId}/blocks`, {
+        programmeVersionId: selectedVersionId,
+        name: block.name,
+        priority: block.priority ?? 0,
+        layoutTemplateId: block.layoutTemplateId,
+        targets: block.targets,
+        zoneSources: block.zoneSources,
+        timeRules: [{
+          ...existingRule,
+          startTime: newStartTime,
+          endTime: newEndTime,
+          startDate: targetDate,
+          endDate: targetDate,
+        }],
+        seriesId: null,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/programme-versions", selectedVersionId, "blocks"] });
+      toast({ title: "Block duplicated" });
+    },
+    onError: () => {
+      toast({ title: "Failed to duplicate block", variant: "destructive" });
+    },
+  });
+
   const resolveColumnDate = useCallback((clientX: number): Date | null => {
     const entries = Array.from(columnRefsMap.current.entries());
     if (entries.length === 0) return null;
@@ -1679,6 +1740,7 @@ export default function SchedulePage() {
       currentDate: origDate, dayOffset: 0, deltaMinutes: 0,
       hasMoved: false, color, blockName,
       shiftKey: e.shiftKey,
+      ctrlKey: e.ctrlKey || e.metaKey,
       seriesId,
     });
   }, []);
@@ -1693,6 +1755,8 @@ export default function SchedulePage() {
   blockTimeMutationRef.current = blockTimeMutation;
   const seriesMoveMutationRef = useRef(seriesMoveMutation);
   seriesMoveMutationRef.current = seriesMoveMutation;
+  const duplicateBlockMutationRef = useRef(duplicateBlockMutation);
+  duplicateBlockMutationRef.current = duplicateBlockMutation;
 
   useEffect(() => {
     if (!timelineDrag) return;
@@ -1745,6 +1809,7 @@ export default function SchedulePage() {
           currentDate: newDate, dayOffset: newDayOffset,
           deltaMinutes: newDeltaMinutes,
           hasMoved, shiftKey,
+          ctrlKey: e.ctrlKey || e.metaKey,
         };
       });
     };
@@ -1756,9 +1821,17 @@ export default function SchedulePage() {
           const newStart = minutesToTimeStr(prev.currentStartMin);
           const newEnd = minutesToTimeStr(prev.currentEndMin);
           const shiftHeld = e.shiftKey;
+          const ctrlHeld = e.ctrlKey || e.metaKey;
           const dateChanged = !isSameDay(prev.currentDate, prev.origDate);
           setTimeout(() => {
-            if (shiftHeld) {
+            if (ctrlHeld && prev.mode === "move") {
+              duplicateBlockMutationRef.current.mutate({
+                blockId: prev.blockId,
+                newStartTime: newStart,
+                newEndTime: newEnd,
+                newDate: prev.currentDate,
+              });
+            } else if (shiftHeld) {
               seriesMoveMutationRef.current.mutate({
                 blockId: prev.blockId,
                 timeDelta: prev.deltaMinutes,
