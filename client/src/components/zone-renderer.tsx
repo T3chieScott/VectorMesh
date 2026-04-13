@@ -3471,13 +3471,17 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
 
       const ws = new WebSocket(url);
       wsRef.current = ws;
+      const pendingCandidates: RTCIceCandidate[] = [];
 
       pc.onicecandidate = (e) => {
-        if (e.candidate && ws.readyState === WebSocket.OPEN) {
+        if (!e.candidate) return;
+        if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
             command: "candidate",
             candidates: [e.candidate],
           }));
+        } else {
+          pendingCandidates.push(e.candidate);
         }
       };
 
@@ -3487,6 +3491,13 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
           id: Date.now(),
           sdp: offer.sdp,
         }));
+        for (const c of pendingCandidates) {
+          ws.send(JSON.stringify({
+            command: "candidate",
+            candidates: [c],
+          }));
+        }
+        pendingCandidates.length = 0;
       };
 
       ws.onmessage = async (event) => {
