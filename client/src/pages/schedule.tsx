@@ -159,6 +159,7 @@ interface TimelineDragState {
   currentEndMin: number;
   currentDate: Date;
   dayOffset: number;
+  deltaMinutes: number;
   hasMoved: boolean;
   color: string;
   blockName: string;
@@ -216,10 +217,22 @@ function TimeBlockRenderer({
   const isResizeMode = isDraggingThis && (timelineDrag.mode === "resize-top" || timelineDrag.mode === "resize-bottom");
   const shouldAnimateThis = isDraggingThis && (
     isOrigDay ||
-    (isResizeMode && timelineDrag.shiftKey)
+    (isDraggingThis && timelineDrag.shiftKey)
   );
-  const displayStartMin = shouldAnimateThis ? timelineDrag!.currentStartMin : origStartMinutes;
-  const displayEndMin = shouldAnimateThis ? timelineDrag!.currentEndMin : origEndMinutes;
+
+  let displayStartMin = origStartMinutes;
+  let displayEndMin = origEndMinutes;
+  if (shouldAnimateThis) {
+    if (isOrigDay) {
+      displayStartMin = timelineDrag!.currentStartMin;
+      displayEndMin = timelineDrag!.currentEndMin;
+    } else {
+      const delta = timelineDrag!.deltaMinutes;
+      const myDuration = origEndMinutes - origStartMinutes;
+      displayStartMin = Math.max(0, Math.min(origStartMinutes + delta, 23 * 60 + 45 - Math.max(myDuration, SNAP_MINUTES)));
+      displayEndMin = Math.min(23 * 60 + 45, displayStartMin + myDuration);
+    }
+  }
   const durationMinutes = displayEndMin - displayStartMin;
 
   if (durationMinutes <= 0 && !isDraggingThis) return null;
@@ -267,14 +280,12 @@ function TimeBlockRenderer({
         data-testid={`resize-bottom-${block.id}`}
       />
 
-      {isDragging && (isOrigDay || !isResizeMode) && (
+      {isDragging && isOrigDay && (
         <div className="absolute -top-6 left-0 bg-foreground text-background text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap z-40 flex items-center gap-1">
           {minutesToTimeStr(displayStartMin)} – {minutesToTimeStr(displayEndMin)}
-          {isResizeMode && isOrigDay && (
-            <span className={`ml-1 px-1 rounded ${timelineDrag!.shiftKey ? "bg-blue-500/80 text-white" : "bg-muted text-muted-foreground"}`}>
-              {timelineDrag!.shiftKey ? "All days" : "This day"}
-            </span>
-          )}
+          <span className={`ml-1 px-1 rounded ${timelineDrag!.shiftKey ? "bg-blue-500/80 text-white" : "bg-muted text-muted-foreground"}`}>
+            {timelineDrag!.shiftKey ? "All days" : "This day"}
+          </span>
         </div>
       )}
 
@@ -1310,8 +1321,8 @@ export default function SchedulePage() {
   };
   
   const blockTimeMutation = useMutation({
-    mutationFn: async ({ blockId, newStartTime, newEndTime, newDate, singleDayDate }: {
-      blockId: string; newStartTime: string; newEndTime: string; newDate?: Date; singleDayDate?: Date;
+    mutationFn: async ({ blockId, newStartTime, newEndTime, newDate, singleDayDate, timeDelta }: {
+      blockId: string; newStartTime: string; newEndTime: string; newDate?: Date; singleDayDate?: Date; timeDelta?: number;
     }) => {
       const block = blocks.find((b) => b.id === blockId);
       if (!block) throw new Error("Block not found");
@@ -1319,7 +1330,23 @@ export default function SchedulePage() {
 
       let updatedRules: Record<string, unknown>[];
 
-      if (singleDayDate && existingRules.length > 0) {
+      if (timeDelta !== undefined && timeDelta !== 0 && existingRules.length > 0) {
+        updatedRules = existingRules.map((rule) => {
+          if (!rule.startTime || !rule.endTime) return rule;
+          const [sh, sm] = rule.startTime.split(":").map(Number);
+          const [eh, em] = rule.endTime.split(":").map(Number);
+          const ruleStartMin = sh * 60 + sm;
+          const ruleEndMin = eh * 60 + em;
+          const ruleDuration = ruleEndMin - ruleStartMin;
+          const newStart = Math.max(0, Math.min(ruleStartMin + timeDelta, 23 * 60 + 45 - Math.max(ruleDuration, SNAP_MINUTES)));
+          const newEnd = Math.min(23 * 60 + 45, newStart + ruleDuration);
+          return {
+            ...rule,
+            startTime: minutesToTimeStr(newStart),
+            endTime: minutesToTimeStr(newEnd),
+          };
+        });
+      } else if (singleDayDate && existingRules.length > 0) {
         const targetDow = singleDayDate.getDay();
         const targetDateStr = format(singleDayDate, "yyyy-MM-dd");
 
@@ -1423,7 +1450,7 @@ export default function SchedulePage() {
       startX: e.clientX, startY: e.clientY,
       origStartMin, origEndMin, origDate,
       currentStartMin: origStartMin, currentEndMin: origEndMin,
-      currentDate: origDate, dayOffset: 0,
+      currentDate: origDate, dayOffset: 0, deltaMinutes: 0,
       hasMoved: false, color, blockName,
       shiftKey: e.shiftKey,
     });
@@ -1454,11 +1481,14 @@ export default function SchedulePage() {
         let newDayOffset = prev.dayOffset;
         const shiftKey = e.shiftKey;
 
+        let newDeltaMinutes = prev.deltaMinutes;
+
         if (prev.mode === "move") {
           const snappedStart = snapToGrid(prev.origStartMin + deltaMinutes);
           const duration = prev.origEndMin - prev.origStartMin;
           newStartMin = Math.max(0, Math.min(snappedStart, 23 * 60 + 45 - duration));
           newEndMin = newStartMin + duration;
+          newDeltaMinutes = newStartMin - prev.origStartMin;
 
           const targetDate = resolveColumnDateRef.current(e.clientX);
           if (targetDate) {
@@ -1482,6 +1512,7 @@ export default function SchedulePage() {
           ...prev,
           currentStartMin: newStartMin, currentEndMin: newEndMin,
           currentDate: newDate, dayOffset: newDayOffset,
+          deltaMinutes: newDeltaMinutes,
           hasMoved, shiftKey,
         };
       });
@@ -1493,18 +1524,24 @@ export default function SchedulePage() {
         if (prev.hasMoved) {
           const newStart = minutesToTimeStr(prev.currentStartMin);
           const newEnd = minutesToTimeStr(prev.currentEndMin);
-          const dateChanged = !isSameDay(prev.currentDate, prev.origDate);
-          const isResize = prev.mode === "resize-top" || prev.mode === "resize-bottom";
           const shiftHeld = e.shiftKey;
-          const singleDayOnly = isResize && !shiftHeld;
+          const singleDayOnly = !shiftHeld;
           setTimeout(() => {
-            blockTimeMutationRef.current.mutate({
-              blockId: prev.blockId,
-              newStartTime: newStart,
-              newEndTime: newEnd,
-              newDate: dateChanged ? prev.currentDate : undefined,
-              singleDayDate: singleDayOnly ? prev.origDate : undefined,
-            });
+            if (shiftHeld && prev.mode === "move") {
+              blockTimeMutationRef.current.mutate({
+                blockId: prev.blockId,
+                newStartTime: newStart,
+                newEndTime: newEnd,
+                timeDelta: prev.deltaMinutes,
+              });
+            } else {
+              blockTimeMutationRef.current.mutate({
+                blockId: prev.blockId,
+                newStartTime: newStart,
+                newEndTime: newEnd,
+                singleDayDate: singleDayOnly ? prev.origDate : undefined,
+              });
+            }
           }, 0);
         } else {
           const block = blocksRef.current.find((b) => b.id === prev.blockId);
