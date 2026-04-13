@@ -1504,7 +1504,9 @@ export default function SchedulePage() {
               if (remaining.length > 0) {
                 updatedRules.push({ ...matchedRule, daysOfWeek: remaining });
               }
+            } else if (isSingleDay) {
             } else if (isDateBounded) {
+              updatedRules.push(matchedRule);
             } else if (isGeneral && dateChanged) {
               updatedRules.push(matchedRule);
               updatedRules.push({
