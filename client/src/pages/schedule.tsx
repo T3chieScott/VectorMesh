@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -96,6 +96,8 @@ type ViewMode = "day" | "week";
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const DAYS_OF_WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const HOUR_HEIGHT = 60;
+const SNAP_MINUTES = 15;
+const DRAG_THRESHOLD = 5;
 
 interface ScheduleBlockWithMeta extends ScheduleBlock {
   programmeVersionId: string;
@@ -132,6 +134,19 @@ function formatTimeInput(hours: number, minutes: number): string {
   return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
 }
 
+function snapToGrid(minutes: number): number {
+  return Math.round(minutes / SNAP_MINUTES) * SNAP_MINUTES;
+}
+
+function minutesToTimeStr(totalMinutes: number): string {
+  const clamped = Math.max(0, Math.min(totalMinutes, 24 * 60 - 1));
+  const h = Math.floor(clamped / 60);
+  const m = clamped % 60;
+  return formatTimeInput(h, m);
+}
+
+type DragMode = "move" | "resize-top" | "resize-bottom";
+
 function TimeBlockRenderer({
   block,
   date,
@@ -140,6 +155,7 @@ function TimeBlockRenderer({
   isWinner,
   onClick,
   onDragStart,
+  onBlockTimeChange,
 }: {
   block: ScheduleBlockWithMeta;
   date: Date;
@@ -148,51 +164,159 @@ function TimeBlockRenderer({
   isWinner: boolean;
   onClick: () => void;
   onDragStart?: (e: React.DragEvent) => void;
+  onBlockTimeChange?: (blockId: string, newStartTime: string, newEndTime: string) => void;
 }) {
   const timeRules = (block.timeRules as TimeRule[]) || [];
   const rule = timeRules[0];
-  
+
+  const [dragState, setDragState] = useState<{
+    mode: DragMode;
+    startY: number;
+    origStartMin: number;
+    origEndMin: number;
+    currentStartMin: number;
+    currentEndMin: number;
+    hasMoved: boolean;
+  } | null>(null);
+
+  const blockRef = useRef<HTMLDivElement>(null);
+
   if (!rule?.startTime || !rule?.endTime) return null;
-  
+
   const start = parseTime(rule.startTime);
   const end = parseTime(rule.endTime);
-  
-  const startMinutes = start.hours * 60 + start.minutes;
-  let endMinutes = end.hours * 60 + end.minutes;
-  if (endMinutes <= startMinutes) {
-    endMinutes = 24 * 60;
+
+  const origStartMinutes = start.hours * 60 + start.minutes;
+  let origEndMinutes = end.hours * 60 + end.minutes;
+  if (origEndMinutes <= origStartMinutes) {
+    origEndMinutes = 24 * 60;
   }
-  const durationMinutes = endMinutes - startMinutes;
-  
-  if (durationMinutes <= 0) return null;
-  
-  const top = (startMinutes / 60) * HOUR_HEIGHT;
+
+  const displayStartMin = dragState ? dragState.currentStartMin : origStartMinutes;
+  const displayEndMin = dragState ? dragState.currentEndMin : origEndMinutes;
+  const durationMinutes = displayEndMin - displayStartMin;
+
+  if (durationMinutes <= 0 && !dragState) return null;
+
+  const top = (displayStartMin / 60) * HOUR_HEIGHT;
   const height = Math.max((durationMinutes / 60) * HOUR_HEIGHT, 20);
-  
+
+  const handlePointerDown = (e: React.PointerEvent, mode: DragMode) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
+    setDragState({
+      mode,
+      startY: e.clientY,
+      origStartMin: origStartMinutes,
+      origEndMin: origEndMinutes,
+      currentStartMin: origStartMinutes,
+      currentEndMin: origEndMinutes,
+      hasMoved: false,
+    });
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    setDragState((prev) => {
+      if (!prev) return prev;
+      const deltaY = e.clientY - prev.startY;
+      const deltaMinutes = (deltaY / HOUR_HEIGHT) * 60;
+      const hasMoved = prev.hasMoved || Math.abs(deltaY) > DRAG_THRESHOLD;
+
+      if (prev.mode === "move") {
+        const snappedStart = snapToGrid(prev.origStartMin + deltaMinutes);
+        const duration = prev.origEndMin - prev.origStartMin;
+        const clampedStart = Math.max(0, Math.min(snappedStart, 23 * 60 + 45 - duration));
+        return { ...prev, currentStartMin: clampedStart, currentEndMin: clampedStart + duration, hasMoved };
+      } else if (prev.mode === "resize-top") {
+        const snappedStart = snapToGrid(prev.origStartMin + deltaMinutes);
+        const clampedStart = Math.max(0, Math.min(snappedStart, prev.currentEndMin - SNAP_MINUTES));
+        return { ...prev, currentStartMin: clampedStart, hasMoved };
+      } else if (prev.mode === "resize-bottom") {
+        const snappedEnd = snapToGrid(prev.origEndMin + deltaMinutes);
+        const clampedEnd = Math.min(23 * 60 + 45, Math.max(snappedEnd, prev.currentStartMin + SNAP_MINUTES));
+        return { ...prev, currentEndMin: clampedEnd, hasMoved };
+      }
+      return prev;
+    });
+  };
+
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    setDragState((prev) => {
+      if (!prev) return null;
+      if (prev.hasMoved && onBlockTimeChange) {
+        const newStart = minutesToTimeStr(prev.currentStartMin);
+        const newEnd = minutesToTimeStr(prev.currentEndMin);
+        setTimeout(() => onBlockTimeChange(block.id, newStart, newEnd), 0);
+      } else if (!prev.hasMoved) {
+        setTimeout(() => onClick(), 0);
+      }
+      return null;
+    });
+  }, [block.id, onBlockTimeChange, onClick]);
+
+  const handlePointerCancel = useCallback(() => {
+    setDragState(null);
+  }, []);
+
+  const isDragging = dragState !== null;
+  const cursor = isDragging
+    ? dragState.mode === "move" ? "grabbing" : "ns-resize"
+    : "pointer";
+
   return (
     <div
-      className={`absolute left-1 right-1 rounded-md px-2 py-1 cursor-pointer transition-all hover:ring-2 hover:ring-white/50 ${color} ${
+      ref={blockRef}
+      className={`absolute left-1 right-1 rounded-md px-2 py-1 select-none group ${color} ${
         hasConflict && !isWinner ? "opacity-50 border-2 border-dashed border-yellow-400" : ""
-      }`}
-      style={{ top: `${top}px`, height: `${height}px` }}
-      onClick={onClick}
-      draggable
-      onDragStart={onDragStart}
+      } ${isDragging ? "opacity-75 ring-2 ring-white/70 z-30 shadow-lg" : "hover:ring-2 hover:ring-white/50"}`}
+      style={{ top: `${top}px`, height: `${height}px`, cursor }}
+      onPointerDown={(e) => handlePointerDown(e, "move")}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
+      onLostPointerCapture={handlePointerCancel}
       data-testid={`block-${block.id}`}
     >
-      <div className="text-white text-xs font-medium truncate">{block.name}</div>
+      <div
+        className="absolute top-0 left-0 right-0 h-2 cursor-ns-resize z-10 group-hover:bg-white/20 rounded-t-md"
+        onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, "resize-top"); }}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        data-testid={`resize-top-${block.id}`}
+      />
+      <div
+        className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize z-10 group-hover:bg-white/20 rounded-b-md"
+        onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, "resize-bottom"); }}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        data-testid={`resize-bottom-${block.id}`}
+      />
+
+      {isDragging && (
+        <div className="absolute -top-6 left-0 bg-foreground text-background text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap z-40">
+          {minutesToTimeStr(displayStartMin)} – {minutesToTimeStr(displayEndMin)}
+        </div>
+      )}
+
+      <div className="text-white text-xs font-medium truncate pointer-events-none">{block.name}</div>
       {height > 30 && (
-        <div className="text-white/70 text-xs truncate">
-          {rule.startTime} - {rule.endTime}
+        <div className="text-white/70 text-xs truncate pointer-events-none">
+          {minutesToTimeStr(displayStartMin)} - {minutesToTimeStr(displayEndMin)}
         </div>
       )}
       {hasConflict && (
-        <div className="absolute -top-1 -right-1">
+        <div className="absolute -top-1 -right-1 pointer-events-none">
           <AlertTriangle className="h-4 w-4 text-yellow-400 drop-shadow" />
         </div>
       )}
       {(timeRules[0]?.daysOfWeek?.length || 0) > 0 && (
-        <div className="absolute bottom-1 right-1">
+        <div className="absolute bottom-1 right-1 pointer-events-none">
           <Repeat className="h-3 w-3 text-white/70" />
         </div>
       )}
@@ -207,6 +331,7 @@ function DayColumn({
   onBlockClick,
   onSlotClick,
   onDrop,
+  onBlockTimeChange,
 }: {
   date: Date;
   blocks: ScheduleBlockWithMeta[];
@@ -214,16 +339,17 @@ function DayColumn({
   onBlockClick: (block: ScheduleBlock) => void;
   onSlotClick: (date: Date, hour: number) => void;
   onDrop: (date: Date, hour: number, data: string) => void;
+  onBlockTimeChange: (blockId: string, newStartTime: string, newEndTime: string) => void;
 }) {
   const isToday = isSameDay(date, new Date());
   const dayOfWeek = date.getDay();
-  
+
   const dayBlocks = blocks.filter((block) => {
     const timeRules = (block.timeRules as TimeRule[]) || [];
     return timeRules.some((rule) => {
       const days = rule.daysOfWeek;
       if (days && days.length > 0 && !days.includes(dayOfWeek)) return false;
-      
+
       if (rule.startDate) {
         const startDate = parseISO(rule.startDate);
         if (date < startOfDay(startDate)) return false;
@@ -232,21 +358,21 @@ function DayColumn({
         const endDate = parseISO(rule.endDate);
         if (date > endOfDay(endDate)) return false;
       }
-      
+
       return true;
     });
   });
-  
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
   };
-  
+
   const handleDrop = (e: React.DragEvent, hour: number) => {
     e.preventDefault();
     const data = e.dataTransfer.getData("text/plain");
     onDrop(date, hour, data);
   };
-  
+
   return (
     <div className="flex-1 min-w-[120px] border-r border-border last:border-r-0">
       <div
@@ -259,7 +385,7 @@ function DayColumn({
           {format(date, "d")}
         </div>
       </div>
-      
+
       <div className="relative" style={{ height: `${24 * HOUR_HEIGHT}px` }}>
         {HOURS.map((hour) => (
           <div
@@ -272,7 +398,7 @@ function DayColumn({
             data-testid={`slot-${format(date, "yyyy-MM-dd")}-${hour}`}
           />
         ))}
-        
+
         {dayBlocks.map((block, index) => {
           const conflict = conflicts.find((c) => c.blockId === block.id);
           return (
@@ -284,9 +410,7 @@ function DayColumn({
               hasConflict={!!conflict}
               isWinner={conflict?.winningBlockId === block.id}
               onClick={() => onBlockClick(block)}
-              onDragStart={(e) => {
-                e.dataTransfer.setData("text/plain", JSON.stringify({ type: "block", id: block.id }));
-              }}
+              onBlockTimeChange={onBlockTimeChange}
             />
           );
         })}
@@ -1198,6 +1322,28 @@ export default function SchedulePage() {
     }
   };
   
+  const blockTimeMutation = useMutation({
+    mutationFn: async ({ blockId, newStartTime, newEndTime }: { blockId: string; newStartTime: string; newEndTime: string }) => {
+      const block = blocks.find((b) => b.id === blockId);
+      if (!block) throw new Error("Block not found");
+      const existingRules = (block.timeRules as TimeRule[]) || [];
+      const updatedRules = existingRules.length > 0
+        ? existingRules.map((rule, i) => i === 0 ? { ...rule, startTime: newStartTime, endTime: newEndTime } : rule)
+        : [{ startTime: newStartTime, endTime: newEndTime }];
+      await apiRequest("PATCH", `/api/schedule-blocks/${blockId}`, { timeRules: updatedRules });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/programme-versions", selectedVersionId, "blocks"] });
+    },
+    onError: () => {
+      toast({ title: "Failed to update block time", variant: "destructive" });
+    },
+  });
+
+  const handleBlockTimeChange = useCallback((blockId: string, newStartTime: string, newEndTime: string) => {
+    blockTimeMutation.mutate({ blockId, newStartTime, newEndTime });
+  }, [blockTimeMutation]);
+
   const handleEditorClose = (open: boolean) => {
     setEditorOpen(open);
     if (!open) {
@@ -1312,6 +1458,7 @@ export default function SchedulePage() {
                         onBlockClick={handleBlockClick}
                         onSlotClick={handleSlotClick}
                         onDrop={handleDrop}
+                        onBlockTimeChange={handleBlockTimeChange}
                       />
                     ))}
                   </div>
