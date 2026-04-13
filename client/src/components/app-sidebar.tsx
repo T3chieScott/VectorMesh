@@ -19,6 +19,7 @@ import {
   ChevronsUpDown,
   Check,
   Globe,
+  Radio,
 } from "lucide-react";
 import {
   Sidebar,
@@ -136,6 +137,11 @@ const adminNavItems = [
     title: "User Management",
     url: "/admin/users",
     icon: Shield,
+  },
+  {
+    title: "Streaming Server",
+    url: "/admin/streaming",
+    icon: Radio,
   },
   {
     title: "Activity Log",

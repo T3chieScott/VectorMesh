@@ -3417,6 +3417,192 @@ export async function registerRoutes(
     }
   });
 
+  // ============ OME (OvenMediaEngine) PROXY ============
+
+  app.get("/api/ome/config", requireAuth, loadUserContext, requireAdmin, async (_req, res) => {
+    try {
+      const urlSetting = await storage.getSystemSetting("ome_api_url");
+      const tokenSetting = await storage.getSystemSetting("ome_access_token");
+      res.json({
+        apiUrl: urlSetting?.value || "",
+        accessToken: tokenSetting?.value?.trim() ? "••••••••" : "",
+      });
+    } catch (error) {
+      console.error("Error fetching OME config:", error);
+      res.status(500).json({ error: "Failed to fetch OME config" });
+    }
+  });
+
+  app.put("/api/ome/config", requireAuth, loadUserContext, requireAdmin, async (req, res) => {
+    try {
+      const { apiUrl, accessToken } = req.body;
+      if (typeof apiUrl !== "string") {
+        return res.status(400).json({ error: "apiUrl is required" });
+      }
+      const trimmedUrl = apiUrl.trim();
+      if (trimmedUrl) {
+        try {
+          const parsed = new URL(trimmedUrl);
+          if (!["http:", "https:"].includes(parsed.protocol)) {
+            return res.status(400).json({ error: "API URL must use http or https protocol" });
+          }
+        } catch {
+          return res.status(400).json({ error: "Invalid API URL format" });
+        }
+      }
+      await storage.setSystemSetting("ome_api_url", trimmedUrl);
+      if (typeof accessToken === "string" && !accessToken.startsWith("••")) {
+        await storage.setSystemSetting("ome_access_token", accessToken.trim());
+      }
+      if (!trimmedUrl) {
+        await storage.setSystemSetting("ome_access_token", "");
+      }
+      logAudit(req, "update", "ome_config", undefined, { apiUrl: trimmedUrl });
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error saving OME config:", error);
+      res.status(500).json({ error: "Failed to save OME config" });
+    }
+  });
+
+  async function omeApiFetch(path: string): Promise<any> {
+    const urlSetting = await storage.getSystemSetting("ome_api_url");
+    const tokenSetting = await storage.getSystemSetting("ome_access_token");
+    if (!urlSetting?.value) throw new Error("OME API URL not configured");
+    const baseUrl = urlSetting.value.replace(/\/$/, "");
+    const url = `${baseUrl}${path}`;
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      throw new Error("OME API URL must use http or https");
+    }
+    const headers: Record<string, string> = { "Accept": "application/json" };
+    if (tokenSetting?.value) {
+      headers["Authorization"] = `Basic ${Buffer.from("admin:" + tokenSetting.value).toString("base64")}`;
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const resp = await fetch(url, { headers, signal: controller.signal });
+      clearTimeout(timeout);
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        throw new Error(`OME API ${resp.status}: ${text}`);
+      }
+      return resp.json();
+    } catch (err: any) {
+      clearTimeout(timeout);
+      if (err.name === "AbortError") throw new Error("OME API request timed out");
+      throw err;
+    }
+  }
+
+  app.get("/api/ome/status", requireAuth, loadUserContext, requireAdmin, async (_req, res) => {
+    try {
+      const urlSetting = await storage.getSystemSetting("ome_api_url");
+      if (!urlSetting?.value) {
+        return res.json({ connected: false, error: "Not configured" });
+      }
+      const data = await omeApiFetch("/v1/stats/current/vhosts/default");
+      const totalRecv = data?.response?.totalBytesIn || 0;
+      const totalSend = data?.response?.totalBytesOut || 0;
+      const connCreated = data?.response?.totalConnections || 0;
+      res.json({
+        connected: true,
+        version: data?.response?.version || undefined,
+        uptime: data?.response?.createdTime
+          ? formatUptime(data.response.createdTime)
+          : undefined,
+        totalRecvBytes: totalRecv,
+        totalSendBytes: totalSend,
+        totalConnections: connCreated,
+      });
+    } catch (error: any) {
+      console.error("OME status error:", error?.message);
+      res.json({ connected: false, error: error?.message || "Unknown error" });
+    }
+  });
+
+  function formatUptime(createdTime: string): string {
+    try {
+      const created = new Date(createdTime);
+      const now = new Date();
+      const diffMs = now.getTime() - created.getTime();
+      const days = Math.floor(diffMs / 86400000);
+      const hours = Math.floor((diffMs % 86400000) / 3600000);
+      const minutes = Math.floor((diffMs % 3600000) / 60000);
+      if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+      if (hours > 0) return `${hours}h ${minutes}m`;
+      return `${minutes}m`;
+    } catch {
+      return createdTime;
+    }
+  }
+
+  app.get("/api/ome/streams", requireAuth, loadUserContext, requireAdmin, async (_req, res) => {
+    try {
+      const result: any[] = [];
+      let vhosts: string[];
+      try {
+        const vhostData = await omeApiFetch("/v1/vhosts");
+        vhosts = vhostData?.response || [];
+      } catch {
+        vhosts = ["default"];
+      }
+
+      for (const vhost of vhosts) {
+        let apps: string[];
+        try {
+          const appData = await omeApiFetch(`/v1/vhosts/${vhost}/apps`);
+          apps = appData?.response || [];
+        } catch {
+          continue;
+        }
+
+        for (const app2 of apps) {
+          let streams: string[];
+          try {
+            const streamData = await omeApiFetch(`/v1/vhosts/${vhost}/apps/${app2}/streams`);
+            streams = streamData?.response || [];
+          } catch {
+            continue;
+          }
+
+          for (const stream of streams) {
+            try {
+              const detail = await omeApiFetch(`/v1/vhosts/${vhost}/apps/${app2}/streams/${stream}`);
+              const info = detail?.response || {};
+              const tracks = (info.input?.tracks || []).map((t: any) => ({
+                type: t.type,
+                codec: t.codec,
+                bitrate: t.bitrate,
+                width: t.video?.width,
+                height: t.video?.height,
+                framerate: t.video?.framerate,
+                samplerate: t.audio?.samplerate,
+                channel: t.audio?.channel,
+              }));
+              result.push({
+                vhost,
+                app: app2,
+                stream,
+                inputType: info.input?.sourceType || info.input?.type || undefined,
+                inputUrl: info.input?.url || undefined,
+                tracks,
+              });
+            } catch {
+              result.push({ vhost, app: app2, stream, tracks: [] });
+            }
+          }
+        }
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("OME streams error:", error?.message);
+      res.status(502).json({ error: error?.message || "Failed to fetch streams" });
+    }
+  });
+
   // Temporary endpoint to serve deployment files
   app.get("/api/deploy-package", async (_req, res) => {
     try {
