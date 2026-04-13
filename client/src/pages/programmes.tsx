@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -8,6 +8,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -71,7 +72,7 @@ import {
   Monitor,
   AlertTriangle,
 } from "lucide-react";
-import type { Programme, Event, ProgrammeVersion, ScheduleBlock, LayoutTemplate, Playlist, Screen, ScreenGroup, TimeRule, ScheduleTarget } from "@shared/schema";
+import type { Programme, Event, ProgrammeVersion, ScheduleBlock, LayoutTemplate, Playlist, Screen, ScreenGroup, TimeRule, ScheduleTarget, ZoneSource } from "@shared/schema";
 
 const programmeFormSchema = z.object({
   eventId: z.string().min(1, "Event is required"),
@@ -120,6 +121,7 @@ function BlockEditorDialog({
   programmeId,
   block,
   layouts,
+  playlists,
   screens,
   screenGroups,
   open,
@@ -130,6 +132,7 @@ function BlockEditorDialog({
   programmeId?: string;
   block?: ScheduleBlock;
   layouts: LayoutTemplate[];
+  playlists: Playlist[];
   screens: Screen[];
   screenGroups: ScreenGroup[];
   open: boolean;
@@ -178,6 +181,49 @@ function BlockEditorDialog({
 
   const isRecurring = form.watch("isRecurring");
   const targetType = form.watch("targetType");
+  const selectedLayoutId = form.watch("layoutTemplateId");
+  const selectedLayout = layouts.find((l) => l.id === selectedLayoutId);
+
+  const [zoneMappings, setZoneMappings] = useState<Record<string, string>>({});
+  const [fallbackPlaylistId, setFallbackPlaylistId] = useState<string>("");
+
+  useEffect(() => {
+    if (open) {
+      const mappings: Record<string, string> = {};
+      if (block?.zoneSources) {
+        for (const zs of block.zoneSources as ZoneSource[]) {
+          if (zs.playlistId && zs.zoneId !== "__fallback__") mappings[zs.zoneId] = zs.playlistId;
+        }
+      }
+      setZoneMappings(mappings);
+      const fbSource = (block?.zoneSources as ZoneSource[] | undefined)?.find(zs => zs.zoneId === "__fallback__");
+      setFallbackPlaylistId(fbSource?.playlistId || "");
+    }
+  }, [open, block]);
+
+  useEffect(() => {
+    if (!selectedLayout) return;
+    const validZoneIds = new Set(
+      ((selectedLayout.zones as any[]) || [])
+        .filter((z: any) => z.type === "media_player")
+        .map((z: any) => z.id)
+    );
+    setZoneMappings(prev => {
+      const pruned: Record<string, string> = {};
+      for (const [zoneId, playlistId] of Object.entries(prev)) {
+        if (validZoneIds.has(zoneId)) pruned[zoneId] = playlistId;
+      }
+      return pruned;
+    });
+    if (selectedLayout && fallbackPlaylistId) {
+      setFallbackPlaylistId("");
+    }
+  }, [selectedLayoutId]);
+
+  const mediaPlayerZones = useMemo(() => {
+    if (!selectedLayout) return [];
+    return ((selectedLayout.zones as any[]) || []).filter((z: any) => z.type === "media_player");
+  }, [selectedLayout]);
 
   const saveMutation = useMutation({
     mutationFn: (data: BlockFormValues) => {
@@ -193,13 +239,29 @@ function BlockEditorDialog({
         ? [{ type: data.targetType, id: data.targetId }]
         : [];
 
+      const zoneSources: ZoneSource[] = Object.entries(zoneMappings)
+        .filter(([_, playlistId]) => playlistId && playlistId !== "none")
+        .map(([zoneId, playlistId]) => ({
+          zoneId,
+          type: "playlist" as const,
+          playlistId,
+        }));
+
+      if (!data.layoutTemplateId && fallbackPlaylistId) {
+        zoneSources.push({
+          zoneId: "__fallback__",
+          type: "playlist" as const,
+          playlistId: fallbackPlaylistId,
+        });
+      }
+
       const payload = {
         name: data.name,
         priority: data.priority,
         layoutTemplateId: data.layoutTemplateId === "none" || !data.layoutTemplateId ? null : data.layoutTemplateId,
         timeRules,
         targets,
-        zoneSources: [],
+        zoneSources,
       };
       if (isEditing) {
         return apiRequest("PATCH", `/api/schedule-blocks/${block.id}`, payload);
@@ -471,6 +533,72 @@ function BlockEditorDialog({
               )}
             />
 
+            {selectedLayout && (
+              <div className="p-3 rounded-lg border bg-muted/30 space-y-3">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Layers className="h-4 w-4" />
+                  <span className="font-medium text-foreground">{selectedLayout.name}</span>
+                  <span>({((selectedLayout.zones as any[])?.length || 0)} zones)</span>
+                </div>
+                {mediaPlayerZones.length > 0 && (
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Playlist Zone Mapping</Label>
+                    <p className="text-xs text-muted-foreground">Assign playlists to media player zones in this layout</p>
+                    {mediaPlayerZones.map((zone: any) => (
+                      <div key={zone.id} className="flex items-center gap-3" data-testid={`zone-mapping-${zone.id}`}>
+                        <div className="flex items-center gap-2 min-w-[120px]">
+                          <PlayCircle className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-sm truncate">{zone.name || "Media Player"}</span>
+                        </div>
+                        <Select
+                          value={zoneMappings[zone.id] || "none"}
+                          onValueChange={(v) => setZoneMappings(prev => ({ ...prev, [zone.id]: v === "none" ? "" : v }))}
+                        >
+                          <SelectTrigger className="flex-1" data-testid={`select-zone-playlist-${zone.id}`}>
+                            <SelectValue placeholder="No playlist" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">No playlist assigned</SelectItem>
+                            {playlists.map((pl) => (
+                              <SelectItem key={pl.id} value={pl.id}>
+                                {pl.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!selectedLayout && (
+              <div className="p-3 rounded-lg border bg-muted/30 space-y-3">
+                <div className="flex items-center gap-2 text-sm">
+                  <Monitor className="h-4 w-4 text-muted-foreground" />
+                  <span className="font-medium">Fullscreen Playlist</span>
+                </div>
+                <p className="text-xs text-muted-foreground">Without a layout, select a playlist to play fullscreen on target screens.</p>
+                <Select
+                  value={fallbackPlaylistId || "none"}
+                  onValueChange={(v) => setFallbackPlaylistId(v === "none" ? "" : v)}
+                >
+                  <SelectTrigger data-testid="select-fallback-playlist">
+                    <SelectValue placeholder="Select a playlist" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No playlist</SelectItem>
+                    {playlists.map((pl) => (
+                      <SelectItem key={pl.id} value={pl.id}>
+                        {pl.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
@@ -606,11 +734,13 @@ function ScheduleBlockRow({
 function ScheduleBlocksSection({
   version,
   layouts,
+  playlists,
   screens,
   screenGroups,
 }: {
   version: ProgrammeVersion;
   layouts: LayoutTemplate[];
+  playlists: Playlist[];
   screens: Screen[];
   screenGroups: ScreenGroup[];
 }) {
@@ -728,6 +858,7 @@ function ScheduleBlocksSection({
         programmeId={version.programmeId}
         block={editingBlock}
         layouts={layouts}
+        playlists={playlists}
         screens={screens}
         screenGroups={screenGroups}
         open={blockDialogOpen}
@@ -745,6 +876,7 @@ function ProgrammeCard({
   event,
   versions,
   layouts,
+  playlists,
   screens,
   screenGroups,
 }: {
@@ -752,6 +884,7 @@ function ProgrammeCard({
   event?: Event;
   versions: ProgrammeVersion[];
   layouts: LayoutTemplate[];
+  playlists: Playlist[];
   screens: Screen[];
   screenGroups: ScreenGroup[];
 }) {
@@ -975,6 +1108,7 @@ function ProgrammeCard({
           <ScheduleBlocksSection
             version={publishedVersion || draftVersion!}
             layouts={layouts}
+            playlists={playlists}
             screens={screens}
             screenGroups={screenGroups}
           />
@@ -1129,6 +1263,9 @@ export default function ProgrammesPage() {
   const layoutsQ = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
   const { data: layouts = [] } = useQuery(layoutsQ);
 
+  const playlistsQ = useSiteFilteredQuery<Playlist[]>("/api/playlists");
+  const { data: playlists = [] } = useQuery(playlistsQ);
+
   const { data: screens = [] } = useQuery<Screen[]>({
     queryKey: ["/api/screens"],
   });
@@ -1196,6 +1333,7 @@ export default function ProgrammesPage() {
               event={eventMap.get(programme.eventId)}
               versions={versions}
               layouts={layouts}
+              playlists={playlists}
               screens={screens}
               screenGroups={screenGroups}
             />
