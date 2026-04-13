@@ -1695,7 +1695,7 @@ export default function SchedulePage() {
           startDate: targetDate,
           endDate: targetDate,
         }],
-        seriesId: null,
+        seriesId: block.seriesId || null,
       });
     },
     onSuccess: () => {
