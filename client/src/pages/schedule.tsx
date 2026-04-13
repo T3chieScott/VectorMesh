@@ -108,6 +108,7 @@ interface ConflictInfo {
   blockId: string;
   conflictsWith: string[];
   winningBlockId: string;
+  dateKey: string;
 }
 
 const BLOCK_COLORS = [
@@ -406,7 +407,8 @@ function DayColumn({
         ))}
 
         {dayBlockEntries.map(({ block, rule }) => {
-          const conflict = conflicts.find((c) => c.blockId === block.id);
+          const dayKey = format(date, "yyyy-MM-dd");
+          const conflict = conflicts.find((c) => c.blockId === block.id && c.dateKey === dayKey);
           const blockIndex = blocks.indexOf(block);
           return (
             <TimeBlockRenderer
@@ -1257,7 +1259,8 @@ export default function SchedulePage() {
           const overlaps = aStartMins < bEndMins && bStartMins < aEndMins;
 
           if (overlaps) {
-            const pairKey = [a.id, b.id].sort().join("-");
+            const dayKey = format(day, "yyyy-MM-dd");
+            const pairKey = `${dayKey}:${[a.id, b.id].sort().join("-")}`;
             if (seen.has(pairKey)) continue;
             seen.add(pairKey);
 
@@ -1268,11 +1271,13 @@ export default function SchedulePage() {
               blockId: winner.id,
               conflictsWith: [loser.id],
               winningBlockId: winner.id,
+              dateKey: dayKey,
             });
             result.push({
               blockId: loser.id,
               conflictsWith: [winner.id],
               winningBlockId: winner.id,
+              dateKey: dayKey,
             });
           }
         }
