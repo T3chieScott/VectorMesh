@@ -2094,6 +2094,62 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/schedule-blocks/cleanup-rules", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const allBlocks = await storage.getAllScheduleBlocks();
+      let blocksUpdated = 0;
+      let totalRulesBefore = 0;
+      let totalRulesAfter = 0;
+
+      for (const block of allBlocks) {
+        const rules = (block.timeRules as Array<{ startDate?: string; endDate?: string; startTime?: string; endTime?: string; daysOfWeek?: number[] }>) || [];
+        totalRulesBefore += rules.length;
+
+        const normalised = rules.map((r) => {
+          const result = { ...r };
+          if (result.startDate && !result.endDate) result.endDate = result.startDate;
+          if (result.endDate && !result.startDate) result.startDate = result.endDate;
+          return result;
+        });
+
+        const deduped: Array<typeof normalised[number] | null> = [];
+        const seenDateKeys = new Map<string, number>();
+        for (let i = 0; i < normalised.length; i++) {
+          const r = normalised[i];
+          const sd = r.startDate || "";
+          const ed = r.endDate || "";
+          if (sd || ed) {
+            const key = `${sd}|${ed}`;
+            if (seenDateKeys.has(key)) {
+              const prevIdx = seenDateKeys.get(key)!;
+              deduped[prevIdx] = null;
+            }
+            seenDateKeys.set(key, i);
+          }
+          deduped.push(r);
+        }
+        const cleaned = deduped.filter((r): r is typeof normalised[number] => r !== null);
+
+        if (JSON.stringify(cleaned) !== JSON.stringify(rules)) {
+          await storage.updateScheduleBlock(block.id, { timeRules: cleaned });
+          blocksUpdated++;
+        }
+        totalRulesAfter += cleaned.length;
+      }
+
+      res.json({
+        blocksScanned: allBlocks.length,
+        blocksUpdated,
+        totalRulesBefore,
+        totalRulesAfter,
+        rulesRemoved: totalRulesBefore - totalRulesAfter,
+      });
+    } catch (error) {
+      console.error("Error cleaning up schedule block rules:", error);
+      res.status(500).json({ error: "Failed to clean up schedule block rules" });
+    }
+  });
+
   // ============ LIVE OVERRIDES ============
   app.get("/api/live-overrides", requireAuth, loadUserContext, async (req, res) => {
     try {

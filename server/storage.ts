@@ -186,6 +186,7 @@ export interface IStorage {
 
   // Schedule Blocks
   getScheduleBlocks(programmeVersionId: string): Promise<ScheduleBlock[]>;
+  getAllScheduleBlocks(): Promise<ScheduleBlock[]>;
   getScheduleBlock(id: string): Promise<ScheduleBlock | undefined>;
   createScheduleBlock(data: InsertScheduleBlock): Promise<ScheduleBlock>;
   updateScheduleBlock(id: string, data: Partial<InsertScheduleBlock>): Promise<ScheduleBlock | undefined>;
@@ -782,6 +783,10 @@ export class DatabaseStorage implements IStorage {
   // Schedule Blocks
   async getScheduleBlocks(programmeVersionId: string): Promise<ScheduleBlock[]> {
     return db.select().from(scheduleBlocks).where(eq(scheduleBlocks.programmeVersionId, programmeVersionId)).orderBy(desc(scheduleBlocks.priority), asc(scheduleBlocks.createdAt));
+  }
+
+  async getAllScheduleBlocks(): Promise<ScheduleBlock[]> {
+    return db.select().from(scheduleBlocks).orderBy(asc(scheduleBlocks.createdAt));
   }
 
   async getScheduleBlock(id: string): Promise<ScheduleBlock | undefined> {

@@ -199,7 +199,7 @@ function getBestRuleForDay(timeRules: TimeRule[], date: Date): TimeRule | null {
       if (date > endOfDay(ed)) continue;
     }
     const spec = ruleSpecificity(rule);
-    if (!bestRule || spec > bestSpec || (spec === bestSpec && spec > 0)) {
+    if (!bestRule || spec > bestSpec || spec === bestSpec) {
       bestRule = rule;
       bestSpec = spec;
     }
@@ -1481,23 +1481,23 @@ export default function SchedulePage() {
         updatedRules = [{ startTime: newStartTime, endTime: newEndTime, ...(newDate ? { startDate: format(newDate, "yyyy-MM-dd"), endDate: format(newDate, "yyyy-MM-dd") } : {}) }];
       }
 
-      const deduped: Record<string, unknown>[] = [];
+      const deduped: Array<TimeRule | null> = [];
       const seenDateKeys = new Map<string, number>();
       for (let i = 0; i < updatedRules.length; i++) {
-        const r = updatedRules[i] as any;
+        const r = updatedRules[i] as TimeRule;
         const sd = r.startDate || "";
         const ed = r.endDate || "";
-        if (sd && ed && sd === ed && !(r.daysOfWeek && r.daysOfWeek.length > 0)) {
-          const key = sd;
+        if (sd || ed) {
+          const key = `${sd}|${ed}`;
           if (seenDateKeys.has(key)) {
             const prevIdx = seenDateKeys.get(key)!;
-            deduped[prevIdx] = null as any;
+            deduped[prevIdx] = null;
           }
           seenDateKeys.set(key, i);
         }
         deduped.push(r);
       }
-      const finalRules = deduped.filter(Boolean);
+      const finalRules = deduped.filter((r): r is TimeRule => r !== null);
 
       await apiRequest("PATCH", `/api/schedule-blocks/${blockId}`, { timeRules: finalRules });
     },
