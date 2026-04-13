@@ -147,6 +147,23 @@ function minutesToTimeStr(totalMinutes: number): string {
 
 type DragMode = "move" | "resize-top" | "resize-bottom";
 
+interface TimelineDragState {
+  blockId: string;
+  mode: DragMode;
+  startX: number;
+  startY: number;
+  origStartMin: number;
+  origEndMin: number;
+  origDate: Date;
+  currentStartMin: number;
+  currentEndMin: number;
+  currentDate: Date;
+  dayOffset: number;
+  hasMoved: boolean;
+  color: string;
+  blockName: string;
+}
+
 function TimeBlockRenderer({
   block,
   date,
@@ -154,8 +171,8 @@ function TimeBlockRenderer({
   hasConflict,
   isWinner,
   onClick,
-  onDragStart,
-  onBlockTimeChange,
+  timelineDrag,
+  onDragInit,
 }: {
   block: ScheduleBlockWithMeta;
   date: Date;
@@ -163,23 +180,11 @@ function TimeBlockRenderer({
   hasConflict: boolean;
   isWinner: boolean;
   onClick: () => void;
-  onDragStart?: (e: React.DragEvent) => void;
-  onBlockTimeChange?: (blockId: string, newStartTime: string, newEndTime: string) => void;
+  timelineDrag: TimelineDragState | null;
+  onDragInit: (blockId: string, mode: DragMode, e: React.PointerEvent, origStartMin: number, origEndMin: number, date: Date, color: string, blockName: string) => void;
 }) {
   const timeRules = (block.timeRules as TimeRule[]) || [];
   const rule = timeRules[0];
-
-  const [dragState, setDragState] = useState<{
-    mode: DragMode;
-    startY: number;
-    origStartMin: number;
-    origEndMin: number;
-    currentStartMin: number;
-    currentEndMin: number;
-    hasMoved: boolean;
-  } | null>(null);
-
-  const blockRef = useRef<HTMLDivElement>(null);
 
   if (!rule?.startTime || !rule?.endTime) return null;
 
@@ -192,11 +197,12 @@ function TimeBlockRenderer({
     origEndMinutes = 24 * 60;
   }
 
-  const displayStartMin = dragState ? dragState.currentStartMin : origStartMinutes;
-  const displayEndMin = dragState ? dragState.currentEndMin : origEndMinutes;
+  const isDraggingThis = timelineDrag?.blockId === block.id;
+  const displayStartMin = isDraggingThis ? timelineDrag.currentStartMin : origStartMinutes;
+  const displayEndMin = isDraggingThis ? timelineDrag.currentEndMin : origEndMinutes;
   const durationMinutes = displayEndMin - displayStartMin;
 
-  if (durationMinutes <= 0 && !dragState) return null;
+  if (durationMinutes <= 0 && !isDraggingThis) return null;
 
   const top = (displayStartMin / 60) * HOUR_HEIGHT;
   const height = Math.max((durationMinutes / 60) * HOUR_HEIGHT, 20);
@@ -205,96 +211,39 @@ function TimeBlockRenderer({
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-
-    setDragState({
-      mode,
-      startY: e.clientY,
-      origStartMin: origStartMinutes,
-      origEndMin: origEndMinutes,
-      currentStartMin: origStartMinutes,
-      currentEndMin: origEndMinutes,
-      hasMoved: false,
-    });
+    onDragInit(block.id, mode, e, origStartMinutes, origEndMinutes, date, color, block.name);
   };
 
-  const handlePointerMove = (e: React.PointerEvent) => {
-    setDragState((prev) => {
-      if (!prev) return prev;
-      const deltaY = e.clientY - prev.startY;
-      const deltaMinutes = (deltaY / HOUR_HEIGHT) * 60;
-      const hasMoved = prev.hasMoved || Math.abs(deltaY) > DRAG_THRESHOLD;
-
-      if (prev.mode === "move") {
-        const snappedStart = snapToGrid(prev.origStartMin + deltaMinutes);
-        const duration = prev.origEndMin - prev.origStartMin;
-        const clampedStart = Math.max(0, Math.min(snappedStart, 23 * 60 + 45 - duration));
-        return { ...prev, currentStartMin: clampedStart, currentEndMin: clampedStart + duration, hasMoved };
-      } else if (prev.mode === "resize-top") {
-        const snappedStart = snapToGrid(prev.origStartMin + deltaMinutes);
-        const clampedStart = Math.max(0, Math.min(snappedStart, prev.currentEndMin - SNAP_MINUTES));
-        return { ...prev, currentStartMin: clampedStart, hasMoved };
-      } else if (prev.mode === "resize-bottom") {
-        const snappedEnd = snapToGrid(prev.origEndMin + deltaMinutes);
-        const clampedEnd = Math.min(23 * 60 + 45, Math.max(snappedEnd, prev.currentStartMin + SNAP_MINUTES));
-        return { ...prev, currentEndMin: clampedEnd, hasMoved };
-      }
-      return prev;
-    });
-  };
-
-  const handlePointerUp = useCallback((e: React.PointerEvent) => {
-    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-    setDragState((prev) => {
-      if (!prev) return null;
-      if (prev.hasMoved && onBlockTimeChange) {
-        const newStart = minutesToTimeStr(prev.currentStartMin);
-        const newEnd = minutesToTimeStr(prev.currentEndMin);
-        setTimeout(() => onBlockTimeChange(block.id, newStart, newEnd), 0);
-      } else if (!prev.hasMoved) {
-        setTimeout(() => onClick(), 0);
-      }
-      return null;
-    });
-  }, [block.id, onBlockTimeChange, onClick]);
-
-  const handlePointerCancel = useCallback(() => {
-    setDragState(null);
-  }, []);
-
-  const isDragging = dragState !== null;
+  const isDragging = isDraggingThis && timelineDrag.hasMoved;
+  const dayShift = isDraggingThis ? timelineDrag.dayOffset : 0;
   const cursor = isDragging
-    ? dragState.mode === "move" ? "grabbing" : "ns-resize"
+    ? timelineDrag.mode === "move" ? "grabbing" : "ns-resize"
     : "pointer";
 
   return (
     <div
-      ref={blockRef}
       className={`absolute left-1 right-1 rounded-md px-2 py-1 select-none group ${color} ${
         hasConflict && !isWinner ? "opacity-50 border-2 border-dashed border-yellow-400" : ""
-      } ${isDragging ? "opacity-75 ring-2 ring-white/70 z-30 shadow-lg" : "hover:ring-2 hover:ring-white/50"}`}
-      style={{ top: `${top}px`, height: `${height}px`, cursor }}
+      } ${isDragging ? "opacity-80 ring-2 ring-white/70 z-30 shadow-lg" : "hover:ring-2 hover:ring-white/50"}`}
+      style={{
+        top: `${top}px`,
+        height: `${height}px`,
+        cursor,
+        transform: dayShift !== 0 ? `translateX(${dayShift * 100}%)` : undefined,
+        transition: isDragging ? "none" : undefined,
+        zIndex: isDragging ? 50 : undefined,
+      }}
       onPointerDown={(e) => handlePointerDown(e, "move")}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerCancel}
-      onLostPointerCapture={handlePointerCancel}
       data-testid={`block-${block.id}`}
     >
       <div
         className="absolute top-0 left-0 right-0 h-2 cursor-ns-resize z-10 group-hover:bg-white/20 rounded-t-md"
         onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, "resize-top"); }}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerCancel}
         data-testid={`resize-top-${block.id}`}
       />
       <div
         className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize z-10 group-hover:bg-white/20 rounded-b-md"
         onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, "resize-bottom"); }}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerCancel}
         data-testid={`resize-bottom-${block.id}`}
       />
 
@@ -331,7 +280,9 @@ function DayColumn({
   onBlockClick,
   onSlotClick,
   onDrop,
-  onBlockTimeChange,
+  timelineDrag,
+  onDragInit,
+  columnRef,
 }: {
   date: Date;
   blocks: ScheduleBlockWithMeta[];
@@ -339,10 +290,16 @@ function DayColumn({
   onBlockClick: (block: ScheduleBlock) => void;
   onSlotClick: (date: Date, hour: number) => void;
   onDrop: (date: Date, hour: number, data: string) => void;
-  onBlockTimeChange: (blockId: string, newStartTime: string, newEndTime: string) => void;
+  timelineDrag: TimelineDragState | null;
+  onDragInit: (blockId: string, mode: DragMode, e: React.PointerEvent, origStartMin: number, origEndMin: number, date: Date, color: string, blockName: string) => void;
+  columnRef?: (el: HTMLDivElement | null) => void;
 }) {
   const isToday = isSameDay(date, new Date());
   const dayOfWeek = date.getDay();
+
+  const isDropTarget = timelineDrag && timelineDrag.hasMoved &&
+    timelineDrag.mode === "move" &&
+    isSameDay(timelineDrag.currentDate, date);
 
   const dayBlocks = blocks.filter((block) => {
     const timeRules = (block.timeRules as TimeRule[]) || [];
@@ -374,10 +331,12 @@ function DayColumn({
   };
 
   return (
-    <div className="flex-1 min-w-[120px] border-r border-border last:border-r-0">
+    <div ref={columnRef} className={`flex-1 min-w-[120px] border-r border-border last:border-r-0 ${
+      isDropTarget ? "bg-primary/5" : ""
+    }`}>
       <div
-        className={`sticky top-0 z-10 p-2 text-center border-b bg-card ${
-          isToday ? "bg-primary/10" : ""
+        className={`sticky top-0 z-10 p-2 text-center border-b transition-colors ${
+          isDropTarget ? "bg-primary/15 border-primary/30" : isToday ? "bg-primary/10 bg-card" : "bg-card"
         }`}
       >
         <div className="text-xs text-muted-foreground">{format(date, "EEE")}</div>
@@ -410,7 +369,8 @@ function DayColumn({
               hasConflict={!!conflict}
               isWinner={conflict?.winningBlockId === block.id}
               onClick={() => onBlockClick(block)}
-              onBlockTimeChange={onBlockTimeChange}
+              timelineDrag={timelineDrag}
+              onDragInit={onDragInit}
             />
           );
         })}
@@ -1169,6 +1129,9 @@ export default function SchedulePage() {
   const [selectedBlock, setSelectedBlock] = useState<ScheduleBlock | undefined>();
   const [clickedSlot, setClickedSlot] = useState<{ date: Date; hour: number } | null>(null);
   const [droppedItem, setDroppedItem] = useState<{ type: string; id: string; name: string } | null>(null);
+  const [timelineDrag, setTimelineDrag] = useState<TimelineDragState | null>(null);
+  const columnRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
+  const timelineContainerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   
   const programmesQ = useSiteFilteredQuery<Programme[]>("/api/programmes");
@@ -1323,13 +1286,24 @@ export default function SchedulePage() {
   };
   
   const blockTimeMutation = useMutation({
-    mutationFn: async ({ blockId, newStartTime, newEndTime }: { blockId: string; newStartTime: string; newEndTime: string }) => {
+    mutationFn: async ({ blockId, newStartTime, newEndTime, newDate }: {
+      blockId: string; newStartTime: string; newEndTime: string; newDate?: Date;
+    }) => {
       const block = blocks.find((b) => b.id === blockId);
       if (!block) throw new Error("Block not found");
       const existingRules = (block.timeRules as TimeRule[]) || [];
       const updatedRules = existingRules.length > 0
-        ? existingRules.map((rule, i) => i === 0 ? { ...rule, startTime: newStartTime, endTime: newEndTime } : rule)
-        : [{ startTime: newStartTime, endTime: newEndTime }];
+        ? existingRules.map((rule, i) => {
+            if (i !== 0) return rule;
+            const updated: Record<string, unknown> = { ...rule, startTime: newStartTime, endTime: newEndTime };
+            if (newDate) {
+              const dateStr = format(newDate, "yyyy-MM-dd");
+              updated.startDate = dateStr;
+              updated.endDate = dateStr;
+            }
+            return updated;
+          })
+        : [{ startTime: newStartTime, endTime: newEndTime, ...(newDate ? { startDate: format(newDate, "yyyy-MM-dd"), endDate: format(newDate, "yyyy-MM-dd") } : {}) }];
       await apiRequest("PATCH", `/api/schedule-blocks/${blockId}`, { timeRules: updatedRules });
     },
     onSuccess: () => {
@@ -1340,9 +1314,138 @@ export default function SchedulePage() {
     },
   });
 
-  const handleBlockTimeChange = useCallback((blockId: string, newStartTime: string, newEndTime: string) => {
-    blockTimeMutation.mutate({ blockId, newStartTime, newEndTime });
-  }, [blockTimeMutation]);
+  const resolveColumnDate = useCallback((clientX: number): { date: Date; dayOffset: number; origDayIndex: number } | null => {
+    const entries = Array.from(columnRefsMap.current.entries());
+    if (entries.length === 0) return null;
+
+    const sorted = entries
+      .map(([key, el]) => ({ key, rect: el.getBoundingClientRect() }))
+      .sort((a, b) => a.rect.left - b.rect.left);
+
+    for (let i = 0; i < sorted.length; i++) {
+      const { rect } = sorted[i];
+      if (clientX >= rect.left && clientX < rect.right) {
+        const dayIndex = weekDays.findIndex((d) => d.toISOString() === sorted[i].key);
+        return { date: weekDays[dayIndex] || weekDays[0], dayOffset: 0, origDayIndex: dayIndex };
+      }
+    }
+
+    if (clientX < sorted[0].rect.left) {
+      return { date: weekDays[0], dayOffset: 0, origDayIndex: 0 };
+    }
+    return { date: weekDays[weekDays.length - 1], dayOffset: 0, origDayIndex: weekDays.length - 1 };
+  }, [weekDays]);
+
+  const handleDragInit = useCallback((
+    blockId: string, mode: DragMode, e: React.PointerEvent,
+    origStartMin: number, origEndMin: number, origDate: Date, color: string, blockName: string
+  ) => {
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    setTimelineDrag({
+      blockId, mode,
+      startX: e.clientX, startY: e.clientY,
+      origStartMin, origEndMin, origDate,
+      currentStartMin: origStartMin, currentEndMin: origEndMin,
+      currentDate: origDate, dayOffset: 0,
+      hasMoved: false, color, blockName,
+    });
+  }, []);
+
+  const resolveColumnDateRef = useRef(resolveColumnDate);
+  resolveColumnDateRef.current = resolveColumnDate;
+  const weekDaysRef = useRef(weekDays);
+  weekDaysRef.current = weekDays;
+  const blocksRef = useRef(blocks);
+  blocksRef.current = blocks;
+  const blockTimeMutationRef = useRef(blockTimeMutation);
+  blockTimeMutationRef.current = blockTimeMutation;
+
+  useEffect(() => {
+    if (!timelineDrag) return;
+
+    const handleMove = (e: PointerEvent) => {
+      setTimelineDrag((prev) => {
+        if (!prev) return prev;
+        const deltaY = e.clientY - prev.startY;
+        const deltaMinutes = (deltaY / HOUR_HEIGHT) * 60;
+        const hasMoved = prev.hasMoved || Math.abs(deltaY) > DRAG_THRESHOLD || Math.abs(e.clientX - prev.startX) > DRAG_THRESHOLD;
+
+        let newStartMin = prev.currentStartMin;
+        let newEndMin = prev.currentEndMin;
+        let newDate = prev.currentDate;
+        let newDayOffset = prev.dayOffset;
+
+        if (prev.mode === "move") {
+          const snappedStart = snapToGrid(prev.origStartMin + deltaMinutes);
+          const duration = prev.origEndMin - prev.origStartMin;
+          newStartMin = Math.max(0, Math.min(snappedStart, 23 * 60 + 45 - duration));
+          newEndMin = newStartMin + duration;
+
+          const col = resolveColumnDateRef.current(e.clientX);
+          if (col) {
+            newDate = col.date;
+            const wd = weekDaysRef.current;
+            const origDayIndex = wd.findIndex((d) => isSameDay(d, prev.origDate));
+            const currentDayIndex = wd.findIndex((d) => isSameDay(d, col.date));
+            newDayOffset = currentDayIndex - origDayIndex;
+          }
+        } else if (prev.mode === "resize-top") {
+          const snappedStart = snapToGrid(prev.origStartMin + deltaMinutes);
+          newStartMin = Math.max(0, Math.min(snappedStart, prev.currentEndMin - SNAP_MINUTES));
+          newEndMin = prev.currentEndMin;
+        } else if (prev.mode === "resize-bottom") {
+          const snappedEnd = snapToGrid(prev.origEndMin + deltaMinutes);
+          newStartMin = prev.currentStartMin;
+          newEndMin = Math.min(23 * 60 + 45, Math.max(snappedEnd, prev.currentStartMin + SNAP_MINUTES));
+        }
+
+        return {
+          ...prev,
+          currentStartMin: newStartMin, currentEndMin: newEndMin,
+          currentDate: newDate, dayOffset: newDayOffset,
+          hasMoved,
+        };
+      });
+    };
+
+    const handleUp = () => {
+      setTimelineDrag((prev) => {
+        if (!prev) return null;
+        if (prev.hasMoved) {
+          const newStart = minutesToTimeStr(prev.currentStartMin);
+          const newEnd = minutesToTimeStr(prev.currentEndMin);
+          const dateChanged = !isSameDay(prev.currentDate, prev.origDate);
+          setTimeout(() => {
+            blockTimeMutationRef.current.mutate({
+              blockId: prev.blockId,
+              newStartTime: newStart,
+              newEndTime: newEnd,
+              newDate: dateChanged ? prev.currentDate : undefined,
+            });
+          }, 0);
+        } else {
+          const block = blocksRef.current.find((b) => b.id === prev.blockId);
+          if (block) {
+            setTimeout(() => handleBlockClick(block), 0);
+          }
+        }
+        return null;
+      });
+    };
+
+    const handleCancel = () => {
+      setTimelineDrag(null);
+    };
+
+    document.addEventListener("pointermove", handleMove);
+    document.addEventListener("pointerup", handleUp);
+    document.addEventListener("pointercancel", handleCancel);
+    return () => {
+      document.removeEventListener("pointermove", handleMove);
+      document.removeEventListener("pointerup", handleUp);
+      document.removeEventListener("pointercancel", handleCancel);
+    };
+  }, [timelineDrag !== null]);
 
   const handleEditorClose = (open: boolean) => {
     setEditorOpen(open);
@@ -1446,7 +1549,7 @@ export default function SchedulePage() {
                   <Skeleton className="h-[400px] w-full" />
                 </div>
               ) : (
-                <div className="h-[600px] overflow-auto relative">
+                <div ref={timelineContainerRef} className="h-[600px] overflow-auto relative">
                   <div className="flex" style={{ minWidth: `${64 + weekDays.length * 140}px` }}>
                     <TimeGutter />
                     {weekDays.map((date) => (
@@ -1458,7 +1561,12 @@ export default function SchedulePage() {
                         onBlockClick={handleBlockClick}
                         onSlotClick={handleSlotClick}
                         onDrop={handleDrop}
-                        onBlockTimeChange={handleBlockTimeChange}
+                        timelineDrag={timelineDrag}
+                        onDragInit={handleDragInit}
+                        columnRef={(el) => {
+                          if (el) columnRefsMap.current.set(date.toISOString(), el);
+                          else columnRefsMap.current.delete(date.toISOString());
+                        }}
                       />
                     ))}
                   </div>
