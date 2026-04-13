@@ -3229,7 +3229,7 @@ function SrtFeedWidget({ url, latency = 200, mute = true }: { url?: string; late
   const playerRef = useRef<{ pause: () => void; unload: () => void; detachMediaElement: () => void; destroy: () => void; attachMediaElement: (el: HTMLVideoElement) => void; on: (event: string, cb: (...args: string[]) => void) => void; load: () => void; play: () => Promise<void> } | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const [status, setStatus] = useState<"idle" | "connecting" | "live" | "error" | "offline">("idle");
+  const [status, setStatus] = useState<"idle" | "connecting" | "live" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
 
   const destroyPlayer = useCallback(() => {
@@ -3288,6 +3288,7 @@ function SrtFeedWidget({ url, latency = 200, mute = true }: { url?: string; late
         console.warn("[SRT] Player error:", errorType, errorDetail);
         setStatus("error");
         setErrorMsg(`${errorType}: ${errorDetail}`);
+        if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = setTimeout(() => initPlayer(), 5000);
       });
 
@@ -3307,6 +3308,7 @@ function SrtFeedWidget({ url, latency = 200, mute = true }: { url?: string; late
         videoRef.current.addEventListener("error", () => {
           setStatus("error");
           setErrorMsg("Video playback error");
+          if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
           reconnectTimerRef.current = setTimeout(() => initPlayer(), 5000);
         }, { signal: ac.signal });
       }
@@ -3314,6 +3316,7 @@ function SrtFeedWidget({ url, latency = 200, mute = true }: { url?: string; late
       console.error("[SRT] Init error:", err);
       setStatus("error");
       setErrorMsg(err instanceof Error ? err.message : "Failed to initialise player");
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = setTimeout(() => initPlayer(), 5000);
     }
   }, [url, latency, destroyPlayer]);
