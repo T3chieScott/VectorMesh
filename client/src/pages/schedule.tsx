@@ -215,9 +215,11 @@ function TimeBlockRenderer({
   const isDraggingThis = timelineDrag?.blockId === block.id;
   const isOrigDay = isDraggingThis && isSameDay(date, timelineDrag.origDate);
   const isResizeMode = isDraggingThis && (timelineDrag.mode === "resize-top" || timelineDrag.mode === "resize-bottom");
+  const isMoveMode = isDraggingThis && timelineDrag.mode === "move";
   const shouldAnimateThis = isDraggingThis && (
     isOrigDay ||
-    (isDraggingThis && timelineDrag.shiftKey)
+    (isResizeMode && timelineDrag.shiftKey) ||
+    (isMoveMode && timelineDrag.shiftKey)
   );
 
   let displayStartMin = origStartMinutes;
@@ -226,11 +228,14 @@ function TimeBlockRenderer({
     if (isOrigDay) {
       displayStartMin = timelineDrag!.currentStartMin;
       displayEndMin = timelineDrag!.currentEndMin;
-    } else {
+    } else if (isMoveMode) {
       const delta = timelineDrag!.deltaMinutes;
       const myDuration = origEndMinutes - origStartMinutes;
       displayStartMin = Math.max(0, Math.min(origStartMinutes + delta, 23 * 60 + 45 - Math.max(myDuration, SNAP_MINUTES)));
       displayEndMin = Math.min(23 * 60 + 45, displayStartMin + myDuration);
+    } else {
+      displayStartMin = timelineDrag!.currentStartMin;
+      displayEndMin = timelineDrag!.currentEndMin;
     }
   }
   const durationMinutes = displayEndMin - displayStartMin;
