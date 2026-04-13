@@ -168,6 +168,7 @@ interface TimelineDragState {
 
 function TimeBlockRenderer({
   block,
+  rule,
   date,
   color,
   hasConflict,
@@ -177,6 +178,7 @@ function TimeBlockRenderer({
   onDragInit,
 }: {
   block: ScheduleBlockWithMeta;
+  rule: TimeRule;
   date: Date;
   color: string;
   hasConflict: boolean;
@@ -186,20 +188,6 @@ function TimeBlockRenderer({
   onDragInit: (blockId: string, mode: DragMode, e: React.PointerEvent, origStartMin: number, origEndMin: number, date: Date, color: string, blockName: string) => void;
 }) {
   const timeRules = (block.timeRules as TimeRule[]) || [];
-  const dayOfWeek = date.getDay();
-  const rule = timeRules.find((r) => {
-    const days = r.daysOfWeek;
-    if (days && days.length > 0 && !days.includes(dayOfWeek)) return false;
-    if (r.startDate) {
-      const rStart = parseISO(r.startDate);
-      if (date < startOfDay(rStart)) return false;
-    }
-    if (r.endDate) {
-      const rEnd = parseISO(r.endDate);
-      if (date > endOfDay(rEnd)) return false;
-    }
-    return true;
-  }) || timeRules[0];
 
   if (!rule?.startTime || !rule?.endTime) return null;
 
@@ -212,12 +200,14 @@ function TimeBlockRenderer({
     origEndMinutes = 24 * 60;
   }
 
-  const isDraggingThis = timelineDrag?.blockId === block.id;
-  const isOrigDay = isDraggingThis && isSameDay(date, timelineDrag.origDate);
+  const isDraggingThisBlock = timelineDrag?.blockId === block.id;
+  const isOrigDay = isDraggingThisBlock && isSameDay(date, timelineDrag.origDate);
+  const isOrigInstance = isOrigDay && origStartMinutes === timelineDrag!.origStartMin && origEndMinutes === timelineDrag!.origEndMin;
+  const isDraggingThis = isDraggingThisBlock && (isOrigInstance || !isOrigDay);
   const isResizeMode = isDraggingThis && (timelineDrag.mode === "resize-top" || timelineDrag.mode === "resize-bottom");
   const isMoveMode = isDraggingThis && timelineDrag.mode === "move";
   const shouldAnimateThis = isDraggingThis && (
-    isOrigDay ||
+    isOrigInstance ||
     (isResizeMode && timelineDrag.shiftKey) ||
     (isMoveMode && timelineDrag.shiftKey)
   );
@@ -225,7 +215,7 @@ function TimeBlockRenderer({
   let displayStartMin = origStartMinutes;
   let displayEndMin = origEndMinutes;
   if (shouldAnimateThis) {
-    if (isOrigDay) {
+    if (isOrigInstance) {
       displayStartMin = timelineDrag!.currentStartMin;
       displayEndMin = timelineDrag!.currentEndMin;
     } else if (isMoveMode) {
@@ -253,9 +243,9 @@ function TimeBlockRenderer({
   };
 
   const isDragging = shouldAnimateThis && timelineDrag!.hasMoved;
-  const isStaticDuringDrag = isDraggingThis && !isOrigDay && isMoveMode && timelineDrag?.hasMoved && !isDragging;
-  const dayShift = isOrigDay ? (timelineDrag?.dayOffset || 0) : 0;
-  const cursor = (isOrigDay && timelineDrag?.hasMoved)
+  const isStaticDuringDrag = isDraggingThis && !isOrigInstance && isMoveMode && timelineDrag?.hasMoved && !isDragging;
+  const dayShift = isOrigInstance ? (timelineDrag?.dayOffset || 0) : 0;
+  const cursor = (isOrigInstance && timelineDrag?.hasMoved)
     ? timelineDrag.mode === "move" ? "grabbing" : "ns-resize"
     : "pointer";
 
@@ -273,20 +263,20 @@ function TimeBlockRenderer({
         zIndex: isDragging ? 50 : isStaticDuringDrag ? 51 : undefined,
       }}
       onPointerDown={(e) => handlePointerDown(e, "move")}
-      data-testid={`block-${block.id}`}
+      data-testid={`block-${block.id}-${rule.startTime}`}
     >
       <div
         className="absolute top-0 left-0 right-0 h-2 cursor-ns-resize z-10 group-hover:bg-white/20 rounded-t-md"
         onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, "resize-top"); }}
-        data-testid={`resize-top-${block.id}`}
+        data-testid={`resize-top-${block.id}-${rule.startTime}`}
       />
       <div
         className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize z-10 group-hover:bg-white/20 rounded-b-md"
         onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, "resize-bottom"); }}
-        data-testid={`resize-bottom-${block.id}`}
+        data-testid={`resize-bottom-${block.id}-${rule.startTime}`}
       />
 
-      {isDragging && isOrigDay && (
+      {isDragging && isOrigInstance && (
         <div className="absolute -top-6 left-0 bg-foreground text-background text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap z-40 flex items-center gap-1">
           {minutesToTimeStr(displayStartMin)} – {minutesToTimeStr(displayEndMin)}
           <span className={`ml-1 px-1 rounded ${timelineDrag!.shiftKey ? "bg-blue-500/80 text-white" : "bg-muted text-muted-foreground"}`}>
@@ -343,24 +333,23 @@ function DayColumn({
     timelineDrag.mode === "move" &&
     isSameDay(timelineDrag.currentDate, date);
 
-  const dayBlocks = blocks.filter((block) => {
+  const dayBlockEntries: Array<{ block: ScheduleBlockWithMeta; rule: TimeRule; ruleIndex: number }> = [];
+  for (const block of blocks) {
     const timeRules = (block.timeRules as TimeRule[]) || [];
-    return timeRules.some((rule) => {
+    timeRules.forEach((rule, ruleIndex) => {
       const days = rule.daysOfWeek;
-      if (days && days.length > 0 && !days.includes(dayOfWeek)) return false;
-
+      if (days && days.length > 0 && !days.includes(dayOfWeek)) return;
       if (rule.startDate) {
         const startDate = parseISO(rule.startDate);
-        if (date < startOfDay(startDate)) return false;
+        if (date < startOfDay(startDate)) return;
       }
       if (rule.endDate) {
         const endDate = parseISO(rule.endDate);
-        if (date > endOfDay(endDate)) return false;
+        if (date > endOfDay(endDate)) return;
       }
-
-      return true;
+      dayBlockEntries.push({ block, rule, ruleIndex });
     });
-  });
+  }
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -400,12 +389,13 @@ function DayColumn({
           />
         ))}
 
-        {dayBlocks.map((block, index) => {
+        {dayBlockEntries.map(({ block, rule, ruleIndex }, index) => {
           const conflict = conflicts.find((c) => c.blockId === block.id);
           return (
             <TimeBlockRenderer
-              key={block.id}
+              key={`${block.id}-${ruleIndex}`}
               block={block}
+              rule={rule}
               date={date}
               color={getBlockColor(index)}
               hasConflict={!!conflict}
