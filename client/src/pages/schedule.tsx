@@ -652,14 +652,23 @@ function ScheduleBlockEditor({
         const ruleEndDate = data.endDate ? format(data.endDate, "yyyy-MM-dd") : undefined;
         const effectiveStart = ruleStartDate || ruleEndDate;
         const effectiveEnd = ruleEndDate || ruleStartDate;
-        const timeRules: TimeRule[] = [{
+        const resolvedDaysOfWeek = data.isRecurring ? data.daysOfWeek : undefined;
+
+        const editedRule: TimeRule = {
           ...existingRule,
-          startDate: effectiveStart,
-          endDate: effectiveEnd,
           startTime: data.startTime,
           endTime: data.endTime,
-          daysOfWeek: data.isRecurring ? data.daysOfWeek : existingRule.daysOfWeek,
-        }];
+          daysOfWeek: resolvedDaysOfWeek,
+        };
+
+        if (data.isRecurring) {
+          editedRule.startDate = effectiveStart;
+          editedRule.endDate = effectiveEnd;
+        } else {
+          const singleDate = effectiveStart || existingRule.startDate;
+          editedRule.startDate = singleDate;
+          editedRule.endDate = singleDate;
+        }
 
         const sharedPayload = {
           name: data.name,
@@ -680,7 +689,7 @@ function ScheduleBlockEditor({
                 ...sbRule,
                 startTime: data.startTime,
                 endTime: data.endTime,
-                daysOfWeek: data.isRecurring ? data.daysOfWeek : sbRule.daysOfWeek,
+                daysOfWeek: resolvedDaysOfWeek,
               }],
             });
           }
@@ -690,7 +699,7 @@ function ScheduleBlockEditor({
         return apiRequest("PATCH", `/api/schedule-blocks/${block.id}`, {
           ...sharedPayload,
           programmeVersionId: versionId,
-          timeRules,
+          timeRules: [editedRule],
         });
       }
 
