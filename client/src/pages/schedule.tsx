@@ -654,22 +654,6 @@ function ScheduleBlockEditor({
         const effectiveEnd = ruleEndDate || ruleStartDate;
         const resolvedDaysOfWeek = data.isRecurring ? data.daysOfWeek : undefined;
 
-        const editedRule: TimeRule = {
-          ...existingRule,
-          startTime: data.startTime,
-          endTime: data.endTime,
-          daysOfWeek: resolvedDaysOfWeek,
-        };
-
-        if (data.isRecurring) {
-          editedRule.startDate = effectiveStart;
-          editedRule.endDate = effectiveEnd;
-        } else {
-          const singleDate = effectiveStart || existingRule.startDate;
-          editedRule.startDate = singleDate;
-          editedRule.endDate = singleDate;
-        }
-
         const sharedPayload = {
           name: data.name,
           priority: data.priority,
@@ -694,6 +678,78 @@ function ScheduleBlockEditor({
             });
           }
           return;
+        }
+
+        if (!data.isRecurring && data.startDate && data.endDate) {
+          const days = eachDayOfInterval({ start: data.startDate, end: data.endDate });
+          if (days.length > 1) {
+            const existingBlockDate = existingRule.startDate;
+            const seriesId = block.seriesId || crypto.randomUUID();
+
+            const existingSeriesBlocks = block.seriesId
+              ? blocks.filter((b) => b.seriesId === block.seriesId)
+              : [];
+            const existingDates = new Set(
+              existingSeriesBlocks.map((b) => {
+                const r = ((b.timeRules as TimeRule[]) || [])[0];
+                return r?.startDate;
+              }).filter(Boolean)
+            );
+            if (!block.seriesId && existingBlockDate) {
+              existingDates.add(existingBlockDate);
+            }
+
+            await apiRequest("PATCH", `/api/schedule-blocks/${block.id}`, {
+              ...sharedPayload,
+              programmeVersionId: versionId,
+              seriesId,
+              timeRules: [{
+                ...existingRule,
+                startDate: existingBlockDate || format(days[0], "yyyy-MM-dd"),
+                endDate: existingBlockDate || format(days[0], "yyyy-MM-dd"),
+                startTime: data.startTime,
+                endTime: data.endTime,
+                daysOfWeek: resolvedDaysOfWeek,
+              }],
+            });
+
+            for (const day of days) {
+              const dateStr = format(day, "yyyy-MM-dd");
+              if (existingDates.has(dateStr)) continue;
+              await apiRequest("POST", `/api/programme-versions/${versionId}/blocks`, {
+                programmeVersionId: versionId,
+                name: data.name,
+                priority: data.priority,
+                layoutTemplateId: data.layoutTemplateId || null,
+                timeRules: [{
+                  startDate: dateStr,
+                  endDate: dateStr,
+                  startTime: data.startTime,
+                  endTime: data.endTime,
+                }],
+                targets,
+                zoneSources,
+                seriesId,
+              });
+            }
+            return;
+          }
+        }
+
+        const editedRule: TimeRule = {
+          ...existingRule,
+          startTime: data.startTime,
+          endTime: data.endTime,
+          daysOfWeek: resolvedDaysOfWeek,
+        };
+
+        if (data.isRecurring) {
+          editedRule.startDate = effectiveStart;
+          editedRule.endDate = effectiveEnd;
+        } else {
+          const singleDate = effectiveStart || existingRule.startDate;
+          editedRule.startDate = singleDate;
+          editedRule.endDate = singleDate;
         }
 
         return apiRequest("PATCH", `/api/schedule-blocks/${block.id}`, {
