@@ -3466,6 +3466,9 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
         }
       };
 
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
       const ws = new WebSocket(url);
       wsRef.current = ws;
 
@@ -3480,7 +3483,9 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
 
       ws.onopen = () => {
         ws.send(JSON.stringify({
-          command: "request_offer",
+          command: "offer",
+          id: Date.now(),
+          sdp: offer.sdp,
         }));
       };
 
@@ -3489,10 +3494,11 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
         try {
           const msg = JSON.parse(event.data);
 
-          if (msg.command === "offer" && msg.sdp) {
+          if ((msg.command === "answer" || msg.sdp) && pc.signalingState === "have-local-offer") {
+            const sdp = typeof msg.sdp === "object" ? msg.sdp.sdp : (msg.sdp || "");
             await pc.setRemoteDescription(new RTCSessionDescription({
-              type: "offer",
-              sdp: typeof msg.sdp === "object" ? msg.sdp.sdp : msg.sdp,
+              type: "answer",
+              sdp,
             }));
 
             if (msg.candidates) {
@@ -3500,13 +3506,6 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
                 await pc.addIceCandidate(new RTCIceCandidate(c));
               }
             }
-
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            ws.send(JSON.stringify({
-              command: "answer",
-              sdp: answer.sdp,
-            }));
           }
 
           if (msg.command === "candidate") {
