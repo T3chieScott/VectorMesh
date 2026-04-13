@@ -237,8 +237,11 @@ function TimeBlockRenderer({
   const isDragging = shouldAnimateThis && timelineDrag!.hasMoved;
   const isOrigDay = isDraggingThis && isSameDay(date, timelineDrag.origDate);
   const dayShift = shouldAnimateThis ? timelineDrag!.dayOffset : 0;
-  const cursor = (isOrigDay && timelineDrag!.hasMoved)
-    ? timelineDrag!.mode === "move" ? "grabbing" : "ns-resize"
+  const showDragCursor = isDraggingThis && timelineDrag.hasMoved && (
+    isOrigDay || timelineDrag.mode === "move"
+  );
+  const cursor = showDragCursor
+    ? timelineDrag.mode === "move" ? "grabbing" : "ns-resize"
     : "pointer";
 
   return (
@@ -268,10 +271,10 @@ function TimeBlockRenderer({
         data-testid={`resize-bottom-${block.id}`}
       />
 
-      {isOrigDay && isDragging && (
+      {isDragging && (isOrigDay || !isResizeMode) && (
         <div className="absolute -top-6 left-0 bg-foreground text-background text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap z-40 flex items-center gap-1">
           {minutesToTimeStr(displayStartMin)} – {minutesToTimeStr(displayEndMin)}
-          {isResizeMode && (
+          {isResizeMode && isOrigDay && (
             <span className={`ml-1 px-1 rounded ${timelineDrag!.shiftKey ? "bg-blue-500/80 text-white" : "bg-muted text-muted-foreground"}`}>
               {timelineDrag!.shiftKey ? "All days" : "This day"}
             </span>
