@@ -2544,6 +2544,15 @@ export async function registerRoutes(
               } else {
                 if (nowMins < startMins || nowMins > endMins) timeMatch = false;
               }
+            } else if (timeMatch) {
+              if (rule.startTime) {
+                const [h, m] = rule.startTime.split(":").map(Number);
+                if (now.getHours() < h || (now.getHours() === h && now.getMinutes() < m)) timeMatch = false;
+              }
+              if (rule.endTime) {
+                const [h, m] = rule.endTime.split(":").map(Number);
+                if (now.getHours() > h || (now.getHours() === h && now.getMinutes() > m)) timeMatch = false;
+              }
             }
           }
 
@@ -2719,6 +2728,15 @@ export async function registerRoutes(
                 if (nowMins < startMins && nowMins > endMins) timeMatch = false;
               } else {
                 if (nowMins < startMins || nowMins > endMins) timeMatch = false;
+              }
+            } else if (timeMatch) {
+              if (rule2.startTime) {
+                const [h, m] = rule2.startTime.split(":").map(Number);
+                if (now.getHours() < h || (now.getHours() === h && now.getMinutes() < m)) timeMatch = false;
+              }
+              if (rule2.endTime) {
+                const [h, m] = rule2.endTime.split(":").map(Number);
+                if (now.getHours() > h || (now.getHours() === h && now.getMinutes() > m)) timeMatch = false;
               }
             }
           }

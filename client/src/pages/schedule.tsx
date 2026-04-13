@@ -694,20 +694,40 @@ function ScheduleBlockEditor({
         });
       }
 
+      const ruleStartDate = data.startDate ? format(data.startDate, "yyyy-MM-dd") : undefined;
+      const ruleEndDate = data.endDate ? format(data.endDate, "yyyy-MM-dd") : undefined;
+      const effectiveStart = ruleStartDate || ruleEndDate;
+      const effectiveEnd = ruleEndDate || ruleStartDate;
+
+      if (data.isRecurring && data.daysOfWeek && data.daysOfWeek.length > 0) {
+        return apiRequest("POST", `/api/programme-versions/${versionId}/blocks`, {
+          programmeVersionId: versionId,
+          name: data.name,
+          priority: data.priority,
+          layoutTemplateId: data.layoutTemplateId || null,
+          timeRules: [{
+            startDate: effectiveStart,
+            endDate: effectiveEnd,
+            startTime: data.startTime,
+            endTime: data.endTime,
+            daysOfWeek: data.daysOfWeek,
+          }],
+          targets,
+          zoneSources,
+        });
+      }
+
       const startDate = data.startDate || new Date();
       const endDate = data.endDate || startDate;
       const days = eachDayOfInterval({ start: startDate, end: endDate });
-      const filteredDays = data.isRecurring && data.daysOfWeek && data.daysOfWeek.length > 0
-        ? days.filter((d) => data.daysOfWeek!.includes(d.getDay()))
-        : days;
 
-      if (filteredDays.length === 0) {
+      if (days.length === 0) {
         throw new Error("No matching days in the selected range");
       }
 
-      const seriesId = filteredDays.length > 1 ? crypto.randomUUID() : null;
+      const seriesId = days.length > 1 ? crypto.randomUUID() : null;
 
-      for (const day of filteredDays) {
+      for (const day of days) {
         const dateStr = format(day, "yyyy-MM-dd");
         await apiRequest("POST", `/api/programme-versions/${versionId}/blocks`, {
           programmeVersionId: versionId,
