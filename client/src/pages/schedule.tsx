@@ -167,6 +167,7 @@ interface TimelineDragState {
   color: string;
   blockName: string;
   shiftKey: boolean;
+  seriesId: string | null;
 }
 
 function normaliseRuleDates(rule: TimeRule): TimeRule {
@@ -220,7 +221,7 @@ function TimeBlockRenderer({
   isWinner: boolean;
   onClick: () => void;
   timelineDrag: TimelineDragState | null;
-  onDragInit: (blockId: string, mode: DragMode, e: React.PointerEvent, origStartMin: number, origEndMin: number, date: Date, color: string, blockName: string) => void;
+  onDragInit: (blockId: string, mode: DragMode, e: React.PointerEvent, origStartMin: number, origEndMin: number, date: Date, color: string, blockName: string, seriesId: string | null) => void;
 }) {
   if (!rule?.startTime || !rule?.endTime) return null;
 
@@ -234,19 +235,38 @@ function TimeBlockRenderer({
   }
 
   const isDraggingThis = timelineDrag?.blockId === block.id;
+  const isSeriesSibling = !isDraggingThis &&
+    timelineDrag?.shiftKey &&
+    timelineDrag?.seriesId != null &&
+    block.seriesId === timelineDrag.seriesId &&
+    timelineDrag.hasMoved;
   const isOrigDay = isDraggingThis && isSameDay(date, timelineDrag.origDate);
   const isResizeMode = isDraggingThis && (timelineDrag.mode === "resize-top" || timelineDrag.mode === "resize-bottom");
   const isMoveMode = isDraggingThis && timelineDrag.mode === "move";
-  const shouldAnimateThis = isDraggingThis && (
+  const shouldAnimateThis = (isDraggingThis && (
     isOrigDay ||
     (isResizeMode && timelineDrag.shiftKey) ||
     (isMoveMode && timelineDrag.shiftKey)
-  );
+  )) || isSeriesSibling;
 
   let displayStartMin = origStartMinutes;
   let displayEndMin = origEndMinutes;
   if (shouldAnimateThis) {
-    if (isOrigDay) {
+    if (isSeriesSibling) {
+      const dragMode = timelineDrag!.mode;
+      const delta = timelineDrag!.deltaMinutes;
+      if (dragMode === "move") {
+        const myDuration = origEndMinutes - origStartMinutes;
+        displayStartMin = Math.max(0, Math.min(origStartMinutes + delta, 23 * 60 + 45 - Math.max(myDuration, SNAP_MINUTES)));
+        displayEndMin = Math.min(23 * 60 + 45, displayStartMin + myDuration);
+      } else if (dragMode === "resize-top") {
+        displayStartMin = Math.max(0, Math.min(origStartMinutes + delta, origEndMinutes - SNAP_MINUTES));
+        displayEndMin = origEndMinutes;
+      } else if (dragMode === "resize-bottom") {
+        displayStartMin = origStartMinutes;
+        displayEndMin = Math.min(23 * 60 + 45, Math.max(origEndMinutes + delta, origStartMinutes + SNAP_MINUTES));
+      }
+    } else if (isOrigDay) {
       displayStartMin = timelineDrag!.currentStartMin;
       displayEndMin = timelineDrag!.currentEndMin;
     } else if (isMoveMode) {
@@ -275,12 +295,13 @@ function TimeBlockRenderer({
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-    onDragInit(block.id, mode, e, origStartMinutes, origEndMinutes, date, color, block.name);
+    onDragInit(block.id, mode, e, origStartMinutes, origEndMinutes, date, color, block.name, block.seriesId);
   };
 
-  const isDragging = shouldAnimateThis && timelineDrag!.hasMoved;
+  const isDragging = (shouldAnimateThis && timelineDrag!.hasMoved) || isSeriesSibling;
   const isStaticDuringDrag = isDraggingThis && !isOrigDay && isMoveMode && timelineDrag?.hasMoved && !isDragging;
-  const dayShift = isOrigDay ? (timelineDrag?.dayOffset || 0) : 0;
+  const dayShift = isOrigDay ? (timelineDrag?.dayOffset || 0)
+    : isSeriesSibling && timelineDrag?.mode === "move" ? (timelineDrag?.dayOffset || 0) : 0;
   const cursor = (isOrigDay && timelineDrag?.hasMoved)
     ? timelineDrag.mode === "move" ? "grabbing" : "ns-resize"
     : "pointer";
@@ -361,7 +382,7 @@ function DayColumn({
   onSlotClick: (date: Date, hour: number) => void;
   onDrop: (date: Date, hour: number, data: string) => void;
   timelineDrag: TimelineDragState | null;
-  onDragInit: (blockId: string, mode: DragMode, e: React.PointerEvent, origStartMin: number, origEndMin: number, date: Date, color: string, blockName: string) => void;
+  onDragInit: (blockId: string, mode: DragMode, e: React.PointerEvent, origStartMin: number, origEndMin: number, date: Date, color: string, blockName: string, seriesId: string | null) => void;
   columnRef?: (el: HTMLDivElement | null) => void;
 }) {
   const isToday = isSameDay(date, new Date());
@@ -1647,7 +1668,7 @@ export default function SchedulePage() {
 
   const handleDragInit = useCallback((
     blockId: string, mode: DragMode, e: React.PointerEvent,
-    origStartMin: number, origEndMin: number, origDate: Date, color: string, blockName: string
+    origStartMin: number, origEndMin: number, origDate: Date, color: string, blockName: string, seriesId: string | null
   ) => {
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     setTimelineDrag({
@@ -1658,6 +1679,7 @@ export default function SchedulePage() {
       currentDate: origDate, dayOffset: 0, deltaMinutes: 0,
       hasMoved: false, color, blockName,
       shiftKey: e.shiftKey,
+      seriesId,
     });
   }, []);
 
