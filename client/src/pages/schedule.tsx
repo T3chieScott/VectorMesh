@@ -73,7 +73,6 @@ import {
   GripVertical,
   Trash2,
   Pencil,
-  Image,
   Copy,
   PlayCircle,
   Monitor,
@@ -368,15 +367,15 @@ function ScheduleBlockEditor({
   const existingTimeRule = ((block?.timeRules as TimeRule[]) || [])[0];
   const existingTarget = ((block?.targets as ScheduleTarget[]) || [])[0];
   
-  // Use dropped item name if available
-  const defaultName = droppedItem?.name || block?.name || "";
+  const defaultName = droppedItem?.type === "playlist" ? droppedItem.name : (block?.name || "");
+  const defaultLayoutId = droppedItem?.type === "layout" ? droppedItem.id : "";
   
   const form = useForm<BlockFormValues>({
     resolver: zodResolver(blockFormSchema),
     defaultValues: {
       name: defaultName,
       priority: block?.priority || 0,
-      layoutTemplateId: block?.layoutTemplateId || "",
+      layoutTemplateId: defaultLayoutId || block?.layoutTemplateId || "",
       startDate: existingTimeRule?.startDate ? parseISO(existingTimeRule.startDate) : initialDate,
       endDate: existingTimeRule?.endDate ? parseISO(existingTimeRule.endDate) : undefined,
       startTime: existingTimeRule?.startTime || (initialHour !== undefined ? formatTimeInput(initialHour, 0) : "09:00"),
@@ -391,10 +390,12 @@ function ScheduleBlockEditor({
   // Reset form when dialog opens with new data
   useEffect(() => {
     if (open) {
+      const droppedLayoutId = droppedItem?.type === "layout" ? droppedItem.id : "";
+      const resetName = droppedItem?.type === "playlist" ? droppedItem.name : (block?.name || "");
       form.reset({
-        name: droppedItem?.name || block?.name || "",
+        name: resetName,
         priority: block?.priority || 0,
-        layoutTemplateId: block?.layoutTemplateId || "",
+        layoutTemplateId: droppedLayoutId || block?.layoutTemplateId || "",
         startDate: existingTimeRule?.startDate ? parseISO(existingTimeRule.startDate) : initialDate,
         endDate: existingTimeRule?.endDate ? parseISO(existingTimeRule.endDate) : undefined,
         startTime: existingTimeRule?.startTime || (initialHour !== undefined ? formatTimeInput(initialHour, 0) : "09:00"),
@@ -1015,7 +1016,7 @@ function ConflictPanel({ conflicts, blocks }: { conflicts: ConflictInfo[]; block
   );
 }
 
-function MediaDragItem({ item, type }: { item: MediaAsset | Playlist; type: "media" | "playlist" }) {
+function DragItem({ item, type }: { item: { id: string; name: string }; type: "playlist" | "layout" }) {
   return (
     <div
       draggable
@@ -1026,8 +1027,8 @@ function MediaDragItem({ item, type }: { item: MediaAsset | Playlist; type: "med
       data-testid={`drag-${type}-${item.id}`}
     >
       <GripVertical className="h-4 w-4 text-muted-foreground" />
-      {type === "media" ? (
-        <Image className="h-4 w-4 text-muted-foreground" />
+      {type === "layout" ? (
+        <Monitor className="h-4 w-4 text-muted-foreground" />
       ) : (
         <Layers className="h-4 w-4 text-muted-foreground" />
       )}
@@ -1332,18 +1333,30 @@ export default function SchedulePage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
+                <Label className="text-xs text-muted-foreground mb-2 block">Layouts</Label>
+                <div className="space-y-1.5 max-h-[180px] overflow-y-auto">
+                  {layouts.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No layouts yet</p>
+                  ) : (
+                    layouts.map((layout) => (
+                      <DragItem key={layout.id} item={layout} type="layout" />
+                    ))
+                  )}
+                </div>
+              </div>
+              <div>
                 <Label className="text-xs text-muted-foreground mb-2 block">Playlists</Label>
-                <div className="space-y-1.5 max-h-[250px] overflow-y-auto">
+                <div className="space-y-1.5 max-h-[180px] overflow-y-auto">
                   {playlists.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No playlists yet</p>
                   ) : (
                     playlists.map((playlist) => (
-                      <MediaDragItem key={playlist.id} item={playlist} type="playlist" />
+                      <DragItem key={playlist.id} item={playlist} type="playlist" />
                     ))
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">Drag a playlist onto the timeline to schedule it. Add media to playlists first via the Media page.</p>
               </div>
+              <p className="text-xs text-muted-foreground">Drag items onto the timeline to create schedule blocks.</p>
             </CardContent>
           </Card>
           
