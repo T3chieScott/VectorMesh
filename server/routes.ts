@@ -2112,16 +2112,18 @@ export async function registerRoutes(
 
   app.post("/api/schedule-blocks/migrate-to-series", requireAuth, requireAdmin, async (req, res) => {
     try {
+      const { v4: uuidv4 } = await import("uuid");
       const allBlocks = await storage.getAllScheduleBlocks();
       let blocksSplit = 0;
       let blocksCreated = 0;
+      const affectedVersionIds = new Set<string>();
 
       for (const block of allBlocks) {
         const rules = (block.timeRules as any[]) || [];
         if (rules.length <= 1) continue;
 
-        const { v4: uuidv4 } = await import("uuid");
         const seriesId = uuidv4();
+        affectedVersionIds.add(block.programmeVersionId);
 
         await storage.updateScheduleBlock(block.id, {
           timeRules: [rules[0]],
@@ -2144,7 +2146,11 @@ export async function registerRoutes(
         blocksSplit++;
       }
 
-      res.json({ blocksSplit, blocksCreated });
+      for (const vId of affectedVersionIds) {
+        refreshScreensForVersion(vId);
+      }
+
+      res.json({ blocksSplit, blocksCreated, versionsRefreshed: affectedVersionIds.size });
     } catch (error) {
       console.error("Error migrating to series:", error);
       res.status(500).json({ error: "Failed to migrate" });
