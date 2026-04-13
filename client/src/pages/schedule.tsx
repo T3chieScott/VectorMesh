@@ -336,6 +336,9 @@ function DayColumn({
   const dayBlockEntries: Array<{ block: ScheduleBlockWithMeta; rule: TimeRule; ruleIndex: number }> = [];
   for (const block of blocks) {
     const timeRules = (block.timeRules as TimeRule[]) || [];
+    let bestRule: TimeRule | null = null;
+    let bestRuleIndex = -1;
+    let bestIsDateSpecific = false;
     timeRules.forEach((rule, ruleIndex) => {
       const days = rule.daysOfWeek;
       if (days && days.length > 0 && !days.includes(dayOfWeek)) return;
@@ -347,8 +350,16 @@ function DayColumn({
         const endDate = parseISO(rule.endDate);
         if (date > endOfDay(endDate)) return;
       }
-      dayBlockEntries.push({ block, rule, ruleIndex });
+      const isDateSpecific = !!(rule.startDate || rule.endDate);
+      if (!bestRule || (isDateSpecific && !bestIsDateSpecific) || (isDateSpecific === bestIsDateSpecific)) {
+        bestRule = rule;
+        bestRuleIndex = ruleIndex;
+        bestIsDateSpecific = isDateSpecific;
+      }
     });
+    if (bestRule) {
+      dayBlockEntries.push({ block, rule: bestRule, ruleIndex: bestRuleIndex });
+    }
   }
 
   const handleDragOver = (e: React.DragEvent) => {
