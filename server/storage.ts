@@ -782,7 +782,7 @@ export class DatabaseStorage implements IStorage {
 
   // Schedule Blocks
   async getScheduleBlocks(programmeVersionId: string): Promise<ScheduleBlock[]> {
-    return db.select().from(scheduleBlocks).where(eq(scheduleBlocks.programmeVersionId, programmeVersionId)).orderBy(desc(scheduleBlocks.priority), asc(scheduleBlocks.createdAt));
+    return db.select().from(scheduleBlocks).where(eq(scheduleBlocks.programmeVersionId, programmeVersionId)).orderBy(desc(scheduleBlocks.priority), asc(scheduleBlocks.createdAt), asc(scheduleBlocks.id));
   }
 
   async getAllScheduleBlocks(): Promise<ScheduleBlock[]> {
