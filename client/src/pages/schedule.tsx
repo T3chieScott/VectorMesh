@@ -1330,7 +1330,7 @@ export default function SchedulePage() {
 
       let updatedRules: Record<string, unknown>[];
 
-      if (timeDelta !== undefined && timeDelta !== 0 && existingRules.length > 0) {
+      if (timeDelta !== undefined && existingRules.length > 0) {
         updatedRules = existingRules.map((rule) => {
           if (!rule.startTime || !rule.endTime) return rule;
           const [sh, sm] = rule.startTime.split(":").map(Number);
