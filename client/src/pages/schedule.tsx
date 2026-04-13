@@ -1363,9 +1363,11 @@ export default function SchedulePage() {
           return true;
         });
 
+        const ruleDateStr = newDate ? format(newDate, "yyyy-MM-dd") : targetDateStr;
+
         if (matchIdx === -1) {
           updatedRules = [...existingRules, {
-            startDate: targetDateStr, endDate: targetDateStr,
+            startDate: ruleDateStr, endDate: ruleDateStr,
             startTime: newStartTime, endTime: newEndTime,
           }];
         } else {
@@ -1399,8 +1401,8 @@ export default function SchedulePage() {
 
             updatedRules.push({
               ...matchedRule,
-              startDate: targetDateStr,
-              endDate: targetDateStr,
+              startDate: ruleDateStr,
+              endDate: ruleDateStr,
               daysOfWeek: undefined,
               startTime: newStartTime,
               endTime: newEndTime,
@@ -1530,7 +1532,7 @@ export default function SchedulePage() {
           const newStart = minutesToTimeStr(prev.currentStartMin);
           const newEnd = minutesToTimeStr(prev.currentEndMin);
           const shiftHeld = e.shiftKey;
-          const singleDayOnly = !shiftHeld;
+          const dateChanged = !isSameDay(prev.currentDate, prev.origDate);
           setTimeout(() => {
             if (shiftHeld && prev.mode === "move") {
               blockTimeMutationRef.current.mutate({
@@ -1539,12 +1541,20 @@ export default function SchedulePage() {
                 newEndTime: newEnd,
                 timeDelta: prev.deltaMinutes,
               });
+            } else if (!shiftHeld && prev.mode === "move" && dateChanged) {
+              blockTimeMutationRef.current.mutate({
+                blockId: prev.blockId,
+                newStartTime: newStart,
+                newEndTime: newEnd,
+                singleDayDate: prev.origDate,
+                newDate: prev.currentDate,
+              });
             } else {
               blockTimeMutationRef.current.mutate({
                 blockId: prev.blockId,
                 newStartTime: newStart,
                 newEndTime: newEnd,
-                singleDayDate: singleDayOnly ? prev.origDate : undefined,
+                singleDayDate: !shiftHeld ? prev.origDate : undefined,
               });
             }
           }, 0);
