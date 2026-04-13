@@ -29,10 +29,11 @@ interface OmeStream {
   inputType?: string;
   inputUrl?: string;
   tracks?: Array<{ type: string; codec?: string; bitrate?: number; width?: number; height?: number; framerate?: number; samplerate?: number; channel?: number }>;
+  outputs?: Array<{ name?: string; protocol?: string; url?: string; tracks?: Array<{ type: string; codec?: string }> }>;
   viewers?: number;
 }
 
-function CopyButton({ text, label }: { text: string; label?: string }) {
+function CopyButton({ text, label, buttonLabel }: { text: string; label?: string; buttonLabel?: string }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -61,7 +62,7 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
       data-testid={`button-copy-${label || "url"}`}
     >
       {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
-      {copied ? "Copied" : "Copy"}
+      {copied ? "Copied" : (buttonLabel || "Copy")}
     </Button>
   );
 }
@@ -311,7 +312,9 @@ export default function StreamingServerPage() {
                     <TableHead>Application</TableHead>
                     <TableHead>Input</TableHead>
                     <TableHead>Tracks</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Outputs</TableHead>
+                    <TableHead className="text-center">Viewers</TableHead>
+                    <TableHead className="text-right">Copy URL</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -350,10 +353,26 @@ export default function StreamingServerPage() {
                             {!videoTrack && !audioTrack && <span className="text-xs text-muted-foreground">—</span>}
                           </div>
                         </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1 flex-wrap">
+                            {stream.outputs && stream.outputs.length > 0 ? (
+                              stream.outputs.map((o, oi) => (
+                                <Badge key={oi} variant="outline" className="text-xs">
+                                  {o.protocol || o.name || "output"}
+                                </Badge>
+                              ))
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <span className="font-medium tabular-nums" data-testid={`text-viewers-${idx}`}>{stream.viewers ?? 0}</span>
+                        </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
-                            {webrtcUrl && <CopyButton text={webrtcUrl} label={`webrtc-${idx}`} />}
-                            {srtUrl && <CopyButton text={srtUrl} label={`srt-${idx}`} />}
+                            {webrtcUrl && <CopyButton text={webrtcUrl} label={`webrtc-${idx}`} buttonLabel="WebRTC" />}
+                            {srtUrl && <CopyButton text={srtUrl} label={`srt-${idx}`} buttonLabel="SRT" />}
                           </div>
                         </TableCell>
                       </TableRow>

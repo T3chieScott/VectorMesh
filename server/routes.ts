@@ -3581,6 +3581,21 @@ export async function registerRoutes(
                 samplerate: t.audio?.samplerate,
                 channel: t.audio?.channel,
               }));
+              const outputs = (info.outputs || []).map((o: any) => ({
+                name: o.name,
+                protocol: o.protocol,
+                url: o.url,
+                tracks: (o.tracks || []).map((t: any) => ({
+                  type: t.type,
+                  codec: t.codec,
+                })),
+              }));
+              let viewers = 0;
+              try {
+                const statsData = await omeApiFetch(`/v1/stats/current/vhosts/${vhost}/apps/${app2}/streams/${stream}`);
+                const sr = statsData?.response;
+                viewers = sr?.totalConnections || sr?.connections || 0;
+              } catch {}
               result.push({
                 vhost,
                 app: app2,
@@ -3588,9 +3603,11 @@ export async function registerRoutes(
                 inputType: info.input?.sourceType || info.input?.type || undefined,
                 inputUrl: info.input?.url || undefined,
                 tracks,
+                outputs,
+                viewers,
               });
             } catch {
-              result.push({ vhost, app: app2, stream, tracks: [] });
+              result.push({ vhost, app: app2, stream, tracks: [], outputs: [], viewers: 0 });
             }
           }
         }
