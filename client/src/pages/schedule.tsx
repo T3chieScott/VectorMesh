@@ -162,6 +162,7 @@ interface TimelineDragState {
   hasMoved: boolean;
   color: string;
   blockName: string;
+  shiftKey: boolean;
 }
 
 function TimeBlockRenderer({
@@ -184,7 +185,20 @@ function TimeBlockRenderer({
   onDragInit: (blockId: string, mode: DragMode, e: React.PointerEvent, origStartMin: number, origEndMin: number, date: Date, color: string, blockName: string) => void;
 }) {
   const timeRules = (block.timeRules as TimeRule[]) || [];
-  const rule = timeRules[0];
+  const dayOfWeek = date.getDay();
+  const rule = timeRules.find((r) => {
+    const days = r.daysOfWeek;
+    if (days && days.length > 0 && !days.includes(dayOfWeek)) return false;
+    if (r.startDate) {
+      const rStart = parseISO(r.startDate);
+      if (date < startOfDay(rStart)) return false;
+    }
+    if (r.endDate) {
+      const rEnd = parseISO(r.endDate);
+      if (date > endOfDay(rEnd)) return false;
+    }
+    return true;
+  }) || timeRules[0];
 
   if (!rule?.startTime || !rule?.endTime) return null;
 
@@ -248,8 +262,13 @@ function TimeBlockRenderer({
       />
 
       {isDragging && (
-        <div className="absolute -top-6 left-0 bg-foreground text-background text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap z-40">
+        <div className="absolute -top-6 left-0 bg-foreground text-background text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap z-40 flex items-center gap-1">
           {minutesToTimeStr(displayStartMin)} – {minutesToTimeStr(displayEndMin)}
+          {isDraggingThis && (timelineDrag.mode === "resize-top" || timelineDrag.mode === "resize-bottom") && (
+            <span className={`ml-1 px-1 rounded ${timelineDrag.shiftKey ? "bg-blue-500/80 text-white" : "bg-muted text-muted-foreground"}`}>
+              {timelineDrag.shiftKey ? "All days" : "This day"}
+            </span>
+          )}
         </div>
       )}
 
@@ -1285,24 +1304,97 @@ export default function SchedulePage() {
   };
   
   const blockTimeMutation = useMutation({
-    mutationFn: async ({ blockId, newStartTime, newEndTime, newDate }: {
-      blockId: string; newStartTime: string; newEndTime: string; newDate?: Date;
+    mutationFn: async ({ blockId, newStartTime, newEndTime, newDate, singleDayDate }: {
+      blockId: string; newStartTime: string; newEndTime: string; newDate?: Date; singleDayDate?: Date;
     }) => {
       const block = blocks.find((b) => b.id === blockId);
       if (!block) throw new Error("Block not found");
       const existingRules = (block.timeRules as TimeRule[]) || [];
-      const updatedRules = existingRules.length > 0
-        ? existingRules.map((rule, i) => {
-            if (i !== 0) return rule;
-            const updated: Record<string, unknown> = { ...rule, startTime: newStartTime, endTime: newEndTime };
-            if (newDate) {
-              const dateStr = format(newDate, "yyyy-MM-dd");
-              updated.startDate = dateStr;
-              updated.endDate = dateStr;
+
+      let updatedRules: Record<string, unknown>[];
+
+      if (singleDayDate && existingRules.length > 0) {
+        const targetDow = singleDayDate.getDay();
+        const targetDateStr = format(singleDayDate, "yyyy-MM-dd");
+
+        const matchIdx = existingRules.findIndex((r) => {
+          const days = r.daysOfWeek;
+          if (days && days.length > 0 && !days.includes(targetDow)) return false;
+          if (r.startDate && singleDayDate < startOfDay(parseISO(r.startDate))) return false;
+          if (r.endDate && singleDayDate > endOfDay(parseISO(r.endDate))) return false;
+          return true;
+        });
+
+        if (matchIdx === -1) {
+          updatedRules = [...existingRules, {
+            startDate: targetDateStr, endDate: targetDateStr,
+            startTime: newStartTime, endTime: newEndTime,
+          }];
+        } else {
+          const matchedRule = existingRules[matchIdx];
+          updatedRules = [];
+
+          for (let i = 0; i < existingRules.length; i++) {
+            if (i !== matchIdx) {
+              updatedRules.push(existingRules[i]);
+              continue;
             }
-            return updated;
-          })
-        : [{ startTime: newStartTime, endTime: newEndTime, ...(newDate ? { startDate: format(newDate, "yyyy-MM-dd"), endDate: format(newDate, "yyyy-MM-dd") } : {}) }];
+
+            const days = matchedRule.daysOfWeek;
+            if (days && days.length > 0) {
+              const remaining = days.filter((d: number) => d !== targetDow);
+              if (remaining.length > 0) {
+                updatedRules.push({ ...matchedRule, daysOfWeek: remaining });
+              }
+            } else if (matchedRule.startDate && matchedRule.endDate) {
+              const dayBefore = format(addDays(singleDayDate, -1), "yyyy-MM-dd");
+              const dayAfter = format(addDays(singleDayDate, 1), "yyyy-MM-dd");
+              if (matchedRule.startDate < targetDateStr) {
+                updatedRules.push({ ...matchedRule, endDate: dayBefore });
+              }
+              if (matchedRule.endDate > targetDateStr) {
+                updatedRules.push({ ...matchedRule, startDate: dayAfter });
+              }
+            } else {
+              updatedRules.push(matchedRule);
+            }
+
+            updatedRules.push({
+              ...matchedRule,
+              startDate: targetDateStr,
+              endDate: targetDateStr,
+              daysOfWeek: undefined,
+              startTime: newStartTime,
+              endTime: newEndTime,
+            });
+          }
+        }
+      } else if (existingRules.length > 0) {
+        const targetDate = newDate || singleDayDate;
+        const matchIdx = targetDate
+          ? existingRules.findIndex((r) => {
+              const days = r.daysOfWeek;
+              if (days && days.length > 0 && !days.includes(targetDate.getDay())) return false;
+              if (r.startDate && targetDate < startOfDay(parseISO(r.startDate))) return false;
+              if (r.endDate && targetDate > endOfDay(parseISO(r.endDate))) return false;
+              return true;
+            })
+          : 0;
+        const ruleIdx = matchIdx >= 0 ? matchIdx : 0;
+        updatedRules = existingRules.map((rule, i) => {
+          if (i !== ruleIdx) return rule;
+          const updated: Record<string, unknown> = { ...rule, startTime: newStartTime, endTime: newEndTime };
+          if (newDate) {
+            const dateStr = format(newDate, "yyyy-MM-dd");
+            updated.startDate = dateStr;
+            updated.endDate = dateStr;
+          }
+          return updated;
+        });
+      } else {
+        updatedRules = [{ startTime: newStartTime, endTime: newEndTime, ...(newDate ? { startDate: format(newDate, "yyyy-MM-dd"), endDate: format(newDate, "yyyy-MM-dd") } : {}) }];
+      }
+
       await apiRequest("PATCH", `/api/schedule-blocks/${blockId}`, { timeRules: updatedRules });
     },
     onSuccess: () => {
@@ -1345,6 +1437,7 @@ export default function SchedulePage() {
       currentStartMin: origStartMin, currentEndMin: origEndMin,
       currentDate: origDate, dayOffset: 0,
       hasMoved: false, color, blockName,
+      shiftKey: e.shiftKey,
     });
   }, []);
 
@@ -1371,6 +1464,7 @@ export default function SchedulePage() {
         let newEndMin = prev.currentEndMin;
         let newDate = prev.currentDate;
         let newDayOffset = prev.dayOffset;
+        const shiftKey = e.shiftKey;
 
         if (prev.mode === "move") {
           const snappedStart = snapToGrid(prev.origStartMin + deltaMinutes);
@@ -1400,24 +1494,28 @@ export default function SchedulePage() {
           ...prev,
           currentStartMin: newStartMin, currentEndMin: newEndMin,
           currentDate: newDate, dayOffset: newDayOffset,
-          hasMoved,
+          hasMoved, shiftKey,
         };
       });
     };
 
-    const handleUp = () => {
+    const handleUp = (e: PointerEvent) => {
       setTimelineDrag((prev) => {
         if (!prev) return null;
         if (prev.hasMoved) {
           const newStart = minutesToTimeStr(prev.currentStartMin);
           const newEnd = minutesToTimeStr(prev.currentEndMin);
           const dateChanged = !isSameDay(prev.currentDate, prev.origDate);
+          const isResize = prev.mode === "resize-top" || prev.mode === "resize-bottom";
+          const shiftHeld = e.shiftKey;
+          const singleDayOnly = isResize && !shiftHeld;
           setTimeout(() => {
             blockTimeMutationRef.current.mutate({
               blockId: prev.blockId,
               newStartTime: newStart,
               newEndTime: newEnd,
               newDate: dateChanged ? prev.currentDate : undefined,
+              singleDayDate: singleDayOnly ? prev.origDate : undefined,
             });
           }, 0);
         } else {
