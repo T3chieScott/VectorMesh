@@ -76,6 +76,7 @@ import {
   Image,
   Copy,
   PlayCircle,
+  Monitor,
 } from "lucide-react";
 import type {
   ScheduleBlock,
@@ -420,33 +421,50 @@ function ScheduleBlockEditor({
     }
     return mappings;
   });
+
+  const existingFallbackSource = (block?.zoneSources as ZoneSource[] | undefined)?.find(zs => zs.zoneId === "__fallback__");
+  const [fallbackPlaylistId, setFallbackPlaylistId] = useState<string>(existingFallbackSource?.playlistId || "");
   
   useEffect(() => {
     if (open) {
       const mappings: Record<string, string> = {};
       if (block?.zoneSources) {
         for (const zs of block.zoneSources as ZoneSource[]) {
-          if (zs.playlistId) mappings[zs.zoneId] = zs.playlistId;
+          if (zs.playlistId && zs.zoneId !== "__fallback__") mappings[zs.zoneId] = zs.playlistId;
         }
       }
       setZoneMappings(mappings);
+
+      const fbSource = (block?.zoneSources as ZoneSource[] | undefined)?.find(zs => zs.zoneId === "__fallback__");
+      setFallbackPlaylistId(fbSource?.playlistId || "");
+
+      if (droppedItem?.type === "playlist" && droppedItem.id) {
+        setFallbackPlaylistId(droppedItem.id);
+      }
     }
-  }, [open, block]);
+  }, [open, block, droppedItem]);
 
   useEffect(() => {
     if (!selectedLayout) return;
-    const validZoneIds = new Set(
-      ((selectedLayout.zones as any[]) || [])
-        .filter((z: any) => z.type === "media_player")
-        .map((z: any) => z.id)
-    );
+    const mpZones = ((selectedLayout.zones as any[]) || [])
+      .filter((z: any) => z.type === "media_player");
+    const validZoneIds = new Set(mpZones.map((z: any) => z.id));
     setZoneMappings(prev => {
       const pruned: Record<string, string> = {};
       for (const [zoneId, playlistId] of Object.entries(prev)) {
         if (validZoneIds.has(zoneId)) pruned[zoneId] = playlistId;
       }
+      if (droppedItem?.type === "playlist" && droppedItem.id && mpZones.length > 0) {
+        const firstZone = mpZones[0];
+        if (!pruned[firstZone.id]) {
+          pruned[firstZone.id] = droppedItem.id;
+        }
+      }
       return pruned;
     });
+    if (selectedLayout && fallbackPlaylistId) {
+      setFallbackPlaylistId("");
+    }
   }, [selectedLayoutId]);
   
   const mediaPlayerZones = useMemo(() => {
@@ -476,6 +494,14 @@ function ScheduleBlockEditor({
           type: "playlist" as const,
           playlistId,
         }));
+
+      if (!data.layoutTemplateId && fallbackPlaylistId) {
+        zoneSources.push({
+          zoneId: "__fallback__",
+          type: "playlist" as const,
+          playlistId: fallbackPlaylistId,
+        });
+      }
       
       const payload = {
         programmeVersionId: versionId,
@@ -838,6 +864,32 @@ function ScheduleBlockEditor({
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+
+            {!selectedLayout && (
+              <div className="p-3 rounded-lg border bg-muted/30 space-y-3">
+                <div className="flex items-center gap-2 text-sm">
+                  <Monitor className="h-4 w-4 text-muted-foreground" />
+                  <span className="font-medium">Fullscreen Playlist</span>
+                </div>
+                <p className="text-xs text-muted-foreground">Without a layout, select a playlist to play fullscreen on target screens.</p>
+                <Select
+                  value={fallbackPlaylistId || "none"}
+                  onValueChange={(v) => setFallbackPlaylistId(v === "none" ? "" : v)}
+                >
+                  <SelectTrigger data-testid="select-fallback-playlist">
+                    <SelectValue placeholder="Select a playlist" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No playlist</SelectItem>
+                    {playlists.map((pl) => (
+                      <SelectItem key={pl.id} value={pl.id}>
+                        {pl.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
             
@@ -1281,28 +1333,16 @@ export default function SchedulePage() {
             <CardContent className="space-y-4">
               <div>
                 <Label className="text-xs text-muted-foreground mb-2 block">Playlists</Label>
-                <div className="space-y-1.5 max-h-[150px] overflow-y-auto">
+                <div className="space-y-1.5 max-h-[250px] overflow-y-auto">
                   {playlists.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No playlists</p>
+                    <p className="text-sm text-muted-foreground">No playlists yet</p>
                   ) : (
-                    playlists.slice(0, 5).map((playlist) => (
+                    playlists.map((playlist) => (
                       <MediaDragItem key={playlist.id} item={playlist} type="playlist" />
                     ))
                   )}
                 </div>
-              </div>
-              
-              <div>
-                <Label className="text-xs text-muted-foreground mb-2 block">Media</Label>
-                <div className="space-y-1.5 max-h-[150px] overflow-y-auto">
-                  {media.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No media</p>
-                  ) : (
-                    media.slice(0, 5).map((item) => (
-                      <MediaDragItem key={item.id} item={item} type="media" />
-                    ))
-                  )}
-                </div>
+                <p className="text-xs text-muted-foreground mt-2">Drag a playlist onto the timeline to schedule it. Add media to playlists first via the Media page.</p>
               </div>
             </CardContent>
           </Card>

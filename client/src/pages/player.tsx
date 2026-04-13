@@ -643,7 +643,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     );
   }
 
-  if (!layout) {
+  if (!layout && !isFallbackPlaylist) {
     return (
       <div className="fixed inset-0 bg-black flex items-center justify-center">
         <div className="text-center text-white">

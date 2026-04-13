@@ -2437,19 +2437,27 @@ export async function registerRoutes(
             return true;
           });
 
-          if (timeMatch && block.layoutTemplateId) {
-            layout = await storage.getLayoutTemplate(block.layoutTemplateId);
-            activeZoneSources = (block.zoneSources as any[]) || [];
-            break;
+          if (timeMatch) {
+            if (block.layoutTemplateId) {
+              layout = await storage.getLayoutTemplate(block.layoutTemplateId);
+              activeZoneSources = (block.zoneSources as any[]) || [];
+              break;
+            }
+            const blockZoneSources = (block.zoneSources as any[]) || [];
+            const hasFallback = blockZoneSources.some((zs: any) => zs.zoneId === "__fallback__" && zs.type === "playlist" && zs.playlistId);
+            if (hasFallback) {
+              activeZoneSources = blockZoneSources;
+              break;
+            }
           }
         }
       }
 
-      if (!layout && screen.fallbackLayoutId) {
+      if (!layout && activeZoneSources.length === 0 && screen.fallbackLayoutId) {
         layout = await storage.getLayoutTemplate(screen.fallbackLayoutId);
       }
 
-      if (!layout && screen.fallbackPlaylistId) {
+      if (!layout && activeZoneSources.length === 0 && screen.fallbackPlaylistId) {
         const fbPlaylist = await storage.getPlaylist(screen.fallbackPlaylistId);
         if (fbPlaylist) {
           activeZoneSources = [{
