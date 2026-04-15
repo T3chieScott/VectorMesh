@@ -4,6 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { addMinutes, formatDistanceToNow } from "date-fns";
+import { PresetManager } from "@/components/preset-manager";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -915,6 +916,12 @@ function ScreenCard({
             )}
           </div>
         )}
+        <PresetManager
+          targetType="screen"
+          targetId={screen.id}
+          layouts={layouts}
+          playlists={playlists}
+        />
         {screen.lastSeen && (
           <p className="text-xs text-muted-foreground" title={new Date(screen.lastSeen).toLocaleString()}>
             Last seen: {formatDistanceToNow(new Date(screen.lastSeen), { addSuffix: true })}

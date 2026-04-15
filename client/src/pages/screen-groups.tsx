@@ -4,6 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { PresetManager } from "@/components/preset-manager";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,7 +35,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useSiteContext, useSiteFilteredQuery } from "@/hooks/use-site-context";
 import { Plus, MoreHorizontal, Pencil, Trash2, Tv2, Monitor, Users, X, UserPlus } from "lucide-react";
-import type { ScreenGroup, Screen, Client } from "@shared/schema";
+import type { ScreenGroup, Screen, Client, LayoutTemplate, Playlist } from "@shared/schema";
 
 const groupFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -203,7 +204,7 @@ function ManageMembersDialog({
   );
 }
 
-function GroupCard({ group, clients }: { group: ScreenGroupWithCount; clients: Client[] }) {
+function GroupCard({ group, clients, layouts, playlists }: { group: ScreenGroupWithCount; clients: Client[]; layouts: LayoutTemplate[]; playlists: Playlist[] }) {
   const [editOpen, setEditOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const { toast } = useToast();
@@ -362,6 +363,12 @@ function GroupCard({ group, clients }: { group: ScreenGroupWithCount; clients: C
             {memberCount} {memberCount === 1 ? "screen" : "screens"}
           </span>
         </div>
+        <PresetManager
+          targetType="group"
+          targetId={group.id}
+          layouts={layouts}
+          playlists={playlists}
+        />
       </CardContent>
       <ManageMembersDialog
         group={group}
@@ -496,6 +503,14 @@ export default function ScreenGroupsPage() {
     queryKey: ["/api/clients"],
   });
 
+  const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
+    queryKey: ["/api/layout-templates"],
+  });
+
+  const { data: playlists = [] } = useQuery<Playlist[]>({
+    queryKey: ["/api/playlists"],
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -542,7 +557,7 @@ export default function ScreenGroupsPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {groups.map((group) => (
-            <GroupCard key={group.id} group={group} clients={clients} />
+            <GroupCard key={group.id} group={group} clients={clients} layouts={layouts} playlists={playlists} />
           ))}
         </div>
       )}

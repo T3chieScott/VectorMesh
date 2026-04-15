@@ -2289,7 +2289,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/screen-presets", requireAuth, loadUserContext, async (req, res) => {
+  app.post("/api/screen-presets", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
       const data = insertScreenPresetSchema.parse(req.body);
       if (!data.screenId && !data.groupId) {
@@ -2309,7 +2309,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/screen-presets/:id", requireAuth, loadUserContext, async (req, res) => {
+  app.patch("/api/screen-presets/:id", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
       const existing = await storage.getScreenPreset(req.params.id);
       if (!existing) return res.status(404).json({ error: "Preset not found" });
@@ -2329,7 +2329,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/screen-presets/:id", requireAuth, loadUserContext, async (req, res) => {
+  app.delete("/api/screen-presets/:id", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
       const existing = await storage.getScreenPreset(req.params.id);
       if (!existing) return res.status(404).json({ error: "Preset not found" });
@@ -2348,7 +2348,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/screen-presets/reorder", requireAuth, loadUserContext, async (req, res) => {
+  app.post("/api/screen-presets/reorder", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
       const { orderedIds } = req.body as { orderedIds: string[] };
       if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
@@ -2392,6 +2392,17 @@ export async function registerRoutes(
 
       if (targets.length === 0) {
         return res.status(400).json({ error: "Cannot activate: no target screens found (empty group or missing screen)" });
+      }
+
+      const targetScreenIds = new Set(targets.map(t => t.id));
+      const allOverrides = await storage.getLiveOverrides();
+      for (const o of allOverrides) {
+        if (!o.presetId || !o.isActive) continue;
+        const oTargets = (o.targets as Array<{ type: string; id: string }>) || [];
+        const hasOverlap = oTargets.some(t => targetScreenIds.has(t.id));
+        if (hasOverlap) {
+          await storage.deleteLiveOverride(o.id);
+        }
       }
 
       const now = new Date();
