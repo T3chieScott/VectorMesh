@@ -203,6 +203,7 @@ export interface IStorage {
   createScreenPreset(data: InsertScreenPreset): Promise<ScreenPreset>;
   updateScreenPreset(id: string, data: Partial<InsertScreenPreset>): Promise<ScreenPreset | undefined>;
   deleteScreenPreset(id: string): Promise<boolean>;
+  reorderScreenPresets(orderedIds: string[]): Promise<void>;
 
   // Live Overrides
   getLiveOverrides(): Promise<LiveOverride[]>;
@@ -868,6 +869,14 @@ export class DatabaseStorage implements IStorage {
   async deleteScreenPreset(id: string): Promise<boolean> {
     const result = await db.delete(screenPresets).where(eq(screenPresets.id, id));
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async reorderScreenPresets(orderedIds: string[]): Promise<void> {
+    for (let i = 0; i < orderedIds.length; i++) {
+      await db.update(screenPresets)
+        .set({ displayOrder: i })
+        .where(eq(screenPresets.id, orderedIds[i]));
+    }
   }
 
   // Live Overrides

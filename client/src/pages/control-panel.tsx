@@ -1,12 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -56,8 +57,17 @@ import {
   Zap,
   GripVertical,
   LayoutGrid,
+  PlayCircle,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
-import type { Screen, ScreenGroup, LayoutTemplate, Playlist } from "@shared/schema";
+import type { Screen, ScreenGroup, LayoutTemplate, Playlist, ZoneSource } from "@shared/schema";
+
+interface LayoutZone {
+  id: string;
+  name?: string;
+  type: string;
+}
 
 interface ScreenPreset {
   id: string;
@@ -65,10 +75,18 @@ interface ScreenPreset {
   screenId: string | null;
   groupId: string | null;
   layoutTemplateId: string | null;
-  zoneSources: any[] | null;
+  zoneSources: ZoneSource[] | null;
   displayOrder: number | null;
   createdAt: string | null;
   isActive: boolean;
+}
+
+interface PresetPayload {
+  name: string;
+  layoutTemplateId: string | null;
+  zoneSources: ZoneSource[];
+  screenId?: string;
+  groupId?: string;
 }
 
 const presetFormSchema = z.object({
@@ -85,7 +103,11 @@ function PresetButton({
   onDeactivate,
   onEdit,
   onDelete,
+  onMoveUp,
+  onMoveDown,
   isPending,
+  isFirst,
+  isLast,
 }: {
   preset: ScreenPreset;
   layoutName: string;
@@ -93,8 +115,14 @@ function PresetButton({
   onDeactivate: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
   isPending: boolean;
+  isFirst: boolean;
+  isLast: boolean;
 }) {
+  const zoneCount = preset.zoneSources?.length || 0;
+
   return (
     <div
       className={`relative group rounded-xl border-2 transition-all ${
@@ -119,6 +147,11 @@ function PresetButton({
               <p className="text-sm text-muted-foreground mt-1 truncate flex items-center gap-1.5">
                 <Layout className="h-3.5 w-3.5 shrink-0" />
                 {layoutName}
+              </p>
+            )}
+            {zoneCount > 0 && (
+              <p className="text-xs text-muted-foreground/70 mt-0.5">
+                {zoneCount} zone mapping{zoneCount !== 1 ? "s" : ""}
               </p>
             )}
           </div>
@@ -146,6 +179,28 @@ function PresetButton({
         </div>
       </button>
       <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+        {!isFirst && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={(e) => { e.stopPropagation(); onMoveUp(); }}
+            data-testid={`button-move-up-${preset.id}`}
+          >
+            <ArrowUp className="h-3.5 w-3.5" />
+          </Button>
+        )}
+        {!isLast && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={(e) => { e.stopPropagation(); onMoveDown(); }}
+            data-testid={`button-move-down-${preset.id}`}
+          >
+            <ArrowDown className="h-3.5 w-3.5" />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"
@@ -193,6 +248,7 @@ function PresetFormDialog({
   targetType,
   targetId,
   layouts,
+  playlists,
   editPreset,
 }: {
   open: boolean;
@@ -200,6 +256,7 @@ function PresetFormDialog({
   targetType: "screen" | "group";
   targetId: string;
   layouts: LayoutTemplate[];
+  playlists: Playlist[];
   editPreset?: ScreenPreset | null;
 }) {
   const { toast } = useToast();
@@ -211,60 +268,94 @@ function PresetFormDialog({
     },
   });
 
+  const [zoneMappings, setZoneMappings] = useState<Record<string, string>>({});
+
   useEffect(() => {
     if (open) {
       form.reset({
         name: editPreset?.name || "",
         layoutTemplateId: editPreset?.layoutTemplateId || "",
       });
+      const mappings: Record<string, string> = {};
+      if (editPreset?.zoneSources) {
+        for (const zs of editPreset.zoneSources) {
+          if (zs.playlistId) mappings[zs.zoneId] = zs.playlistId;
+        }
+      }
+      setZoneMappings(mappings);
     }
   }, [open, editPreset]);
 
+  const selectedLayoutId = form.watch("layoutTemplateId");
+  const selectedLayout = layouts.find((l) => l.id === selectedLayoutId);
+
+  const mediaPlayerZones = useMemo(() => {
+    if (!selectedLayout) return [];
+    const zones = (selectedLayout.zones as LayoutZone[] | undefined) || [];
+    return zones.filter((z) => z.type === "media_player");
+  }, [selectedLayout]);
+
+  const buildZoneSources = useCallback((): ZoneSource[] => {
+    return Object.entries(zoneMappings)
+      .filter(([, playlistId]) => playlistId && playlistId !== "none")
+      .map(([zoneId, playlistId]) => ({
+        zoneId,
+        type: "playlist" as const,
+        playlistId,
+      }));
+  }, [zoneMappings]);
+
   const createMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", "/api/screen-presets", data),
+    mutationFn: (data: PresetPayload) => apiRequest("POST", "/api/screen-presets", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screen-presets"] });
       onOpenChange(false);
       form.reset();
+      setZoneMappings({});
       toast({ title: "Preset created" });
     },
     onError: () => toast({ title: "Failed to create preset", variant: "destructive" }),
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("PATCH", `/api/screen-presets/${editPreset?.id}`, data),
+    mutationFn: (data: Partial<PresetPayload>) => apiRequest("PATCH", `/api/screen-presets/${editPreset?.id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screen-presets"] });
       onOpenChange(false);
       form.reset();
+      setZoneMappings({});
       toast({ title: "Preset updated" });
     },
     onError: () => toast({ title: "Failed to update preset", variant: "destructive" }),
   });
 
   const onSubmit = (values: PresetFormValues) => {
-    const payload: any = {
-      name: values.name,
-      layoutTemplateId: values.layoutTemplateId || null,
-    };
-    if (!editPreset) {
+    const zoneSources = buildZoneSources();
+    if (editPreset) {
+      updateMutation.mutate({
+        name: values.name,
+        layoutTemplateId: values.layoutTemplateId || null,
+        zoneSources,
+      });
+    } else {
+      const payload: PresetPayload = {
+        name: values.name,
+        layoutTemplateId: values.layoutTemplateId || null,
+        zoneSources,
+      };
       if (targetType === "screen") payload.screenId = targetId;
       else payload.groupId = targetId;
-    }
-    if (editPreset) {
-      updateMutation.mutate(payload);
-    } else {
       createMutation.mutate(payload);
     }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{editPreset ? "Edit Preset" : "Create Preset"}</DialogTitle>
           <DialogDescription>
-            {editPreset ? "Update this preset's name and layout." : "Create a new preset button for quick content switching."}
+            {editPreset ? "Update this preset's name, layout, and zone assignments." : "Create a new preset button for quick content switching."}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -306,6 +397,47 @@ function PresetFormDialog({
                 </FormItem>
               )}
             />
+
+            {selectedLayout && mediaPlayerZones.length > 0 && (
+              <div className="p-3 rounded-lg border bg-muted/30 space-y-3">
+                <div className="flex items-center gap-2 text-sm">
+                  <Layout className="h-4 w-4 text-muted-foreground" />
+                  <span className="font-medium">{selectedLayout.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    ({mediaPlayerZones.length} media zone{mediaPlayerZones.length !== 1 ? "s" : ""})
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Playlist Zone Mapping</Label>
+                  <p className="text-xs text-muted-foreground">Assign playlists to media player zones in this layout</p>
+                  {mediaPlayerZones.map((zone) => (
+                    <div key={zone.id} className="flex items-center gap-3" data-testid={`zone-mapping-${zone.id}`}>
+                      <div className="flex items-center gap-2 min-w-[120px]">
+                        <PlayCircle className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm truncate">{zone.name || "Media Player"}</span>
+                      </div>
+                      <Select
+                        value={zoneMappings[zone.id] || "none"}
+                        onValueChange={(v) => setZoneMappings(prev => ({ ...prev, [zone.id]: v === "none" ? "" : v }))}
+                      >
+                        <SelectTrigger className="flex-1" data-testid={`select-zone-playlist-${zone.id}`}>
+                          <SelectValue placeholder="No playlist" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No playlist assigned</SelectItem>
+                          {playlists.map((pl) => (
+                            <SelectItem key={pl.id} value={pl.id}>
+                              {pl.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                 Cancel
@@ -330,11 +462,13 @@ function TargetPresets({
   targetId,
   targetName,
   layouts,
+  playlists,
 }: {
   targetType: "screen" | "group";
   targetId: string;
   targetName: string;
   layouts: LayoutTemplate[];
+  playlists: Playlist[];
 }) {
   const { toast } = useToast();
   const [formOpen, setFormOpen] = useState(false);
@@ -350,6 +484,11 @@ function TargetPresets({
     },
     refetchInterval: 5000,
   });
+
+  const sortedPresets = useMemo(() =>
+    [...presets].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)),
+    [presets]
+  );
 
   const layoutMap = new Map(layouts.map((l) => [l.id, l.name]));
 
@@ -380,6 +519,28 @@ function TargetPresets({
     onError: () => toast({ title: "Failed to delete preset", variant: "destructive" }),
   });
 
+  const reorderMutation = useMutation({
+    mutationFn: (orderedIds: string[]) => apiRequest("POST", "/api/screen-presets/reorder", { orderedIds }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screen-presets"] });
+    },
+    onError: () => toast({ title: "Failed to reorder presets", variant: "destructive" }),
+  });
+
+  const handleMoveUp = useCallback((index: number) => {
+    if (index <= 0) return;
+    const ids = sortedPresets.map(p => p.id);
+    [ids[index - 1], ids[index]] = [ids[index], ids[index - 1]];
+    reorderMutation.mutate(ids);
+  }, [sortedPresets, reorderMutation]);
+
+  const handleMoveDown = useCallback((index: number) => {
+    if (index >= sortedPresets.length - 1) return;
+    const ids = sortedPresets.map(p => p.id);
+    [ids[index], ids[index + 1]] = [ids[index + 1], ids[index]];
+    reorderMutation.mutate(ids);
+  }, [sortedPresets, reorderMutation]);
+
   if (isLoading) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -401,7 +562,7 @@ function TargetPresets({
           )}
           <h2 className="text-lg font-semibold" data-testid="text-target-name">{targetName}</h2>
           <Badge variant="outline" className="text-xs">
-            {presets.length} preset{presets.length !== 1 ? "s" : ""}
+            {sortedPresets.length} preset{sortedPresets.length !== 1 ? "s" : ""}
           </Badge>
         </div>
         <Button
@@ -414,7 +575,7 @@ function TargetPresets({
         </Button>
       </div>
 
-      {presets.length === 0 ? (
+      {sortedPresets.length === 0 ? (
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <LayoutGrid className="h-10 w-10 text-muted-foreground/50 mb-3" />
@@ -435,7 +596,7 @@ function TargetPresets({
         </Card>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {presets.map((preset) => (
+          {sortedPresets.map((preset, index) => (
             <PresetButton
               key={preset.id}
               preset={preset}
@@ -444,7 +605,11 @@ function TargetPresets({
               onDeactivate={() => deactivateMutation.mutate(preset.id)}
               onEdit={() => { setEditingPreset(preset); setFormOpen(true); }}
               onDelete={() => deleteMutation.mutate(preset.id)}
+              onMoveUp={() => handleMoveUp(index)}
+              onMoveDown={() => handleMoveDown(index)}
               isPending={activateMutation.isPending || deactivateMutation.isPending}
+              isFirst={index === 0}
+              isLast={index === sortedPresets.length - 1}
             />
           ))}
         </div>
@@ -459,6 +624,7 @@ function TargetPresets({
         targetType={targetType}
         targetId={targetId}
         layouts={layouts}
+        playlists={playlists}
         editPreset={editingPreset}
       />
     </div>
@@ -483,6 +649,10 @@ export default function ControlPanelPage() {
 
   const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
     queryKey: ["/api/layout-templates"],
+  });
+
+  const { data: playlists = [] } = useQuery<Playlist[]>({
+    queryKey: ["/api/playlists"],
   });
 
   const isLoading = screensLoading || groupsLoading;
@@ -601,6 +771,7 @@ export default function ControlPanelPage() {
             targetId={selectedTarget.id}
             targetName={selectedName}
             layouts={layouts}
+            playlists={playlists}
           />
         </div>
       )}

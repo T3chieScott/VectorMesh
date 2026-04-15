@@ -2348,6 +2348,27 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/screen-presets/reorder", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const { orderedIds } = req.body as { orderedIds: string[] };
+      if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+        return res.status(400).json({ error: "orderedIds array is required" });
+      }
+      const first = await storage.getScreenPreset(orderedIds[0]);
+      if (!first) return res.status(404).json({ error: "Preset not found" });
+      const clientId = await resolvePresetClientId(first);
+      if (clientId && !canAccessClient(req, clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      await storage.reorderScreenPresets(orderedIds);
+      logAudit(req, "reorder", "screen_preset", orderedIds[0], { count: orderedIds.length });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error reordering presets:", error);
+      res.status(500).json({ error: "Failed to reorder presets" });
+    }
+  });
+
   app.post("/api/screen-presets/:id/activate", requireAuth, loadUserContext, async (req, res) => {
     try {
       const preset = await storage.getScreenPreset(req.params.id);
