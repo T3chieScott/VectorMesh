@@ -665,15 +665,35 @@ export default function ControlPanelPage() {
     },
   });
 
+  const isLoading = screensLoading || groupsLoading;
+
+  const selectedClientId = selectedTarget
+    ? selectedTarget.type === "screen"
+      ? screens.find((s) => s.id === selectedTarget.id)?.clientId
+      : groups.find((g) => g.id === selectedTarget.id)?.clientId
+    : undefined;
+
   const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
-    queryKey: ["/api/layout-templates"],
+    queryKey: ["/api/layouts", selectedClientId],
+    queryFn: async () => {
+      const url = selectedClientId ? `/api/layouts?clientId=${selectedClientId}` : "/api/layouts";
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch layouts");
+      return res.json();
+    },
+    enabled: !!selectedTarget,
   });
 
   const { data: playlists = [] } = useQuery<Playlist[]>({
-    queryKey: ["/api/playlists"],
+    queryKey: ["/api/playlists", selectedClientId],
+    queryFn: async () => {
+      const url = selectedClientId ? `/api/playlists?clientId=${selectedClientId}` : "/api/playlists";
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch playlists");
+      return res.json();
+    },
+    enabled: !!selectedTarget,
   });
-
-  const isLoading = screensLoading || groupsLoading;
 
   const selectedName = selectedTarget
     ? selectedTarget.type === "screen"
