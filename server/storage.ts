@@ -16,6 +16,7 @@ import {
   scheduleBlocks,
   playlists,
   playlistItems,
+  screenPresets,
   liveOverrides,
   playerHeartbeats,
   auditLogs,
@@ -57,6 +58,8 @@ import {
   type InsertPlaylistItem,
   type AlertSetting,
   type AlertHistory,
+  type ScreenPreset,
+  type InsertScreenPreset,
   systemSettings,
   type SystemSetting,
 } from "@shared/schema";
@@ -194,9 +197,17 @@ export interface IStorage {
   deleteScheduleBlock(id: string): Promise<boolean>;
   deleteScheduleBlocksBySeries(seriesId: string): Promise<number>;
 
+  // Screen Presets
+  getScreenPresets(filter?: { screenId?: string; groupId?: string }): Promise<ScreenPreset[]>;
+  getScreenPreset(id: string): Promise<ScreenPreset | undefined>;
+  createScreenPreset(data: InsertScreenPreset): Promise<ScreenPreset>;
+  updateScreenPreset(id: string, data: Partial<InsertScreenPreset>): Promise<ScreenPreset | undefined>;
+  deleteScreenPreset(id: string): Promise<boolean>;
+
   // Live Overrides
   getLiveOverrides(): Promise<LiveOverride[]>;
   getLiveOverride(id: string): Promise<LiveOverride | undefined>;
+  getLiveOverrideByPresetId(presetId: string): Promise<LiveOverride | undefined>;
   createLiveOverride(data: InsertLiveOverride): Promise<LiveOverride>;
   updateLiveOverride(id: string, data: Partial<InsertLiveOverride>): Promise<LiveOverride | undefined>;
   deleteLiveOverride(id: string): Promise<boolean>;
@@ -824,6 +835,41 @@ export class DatabaseStorage implements IStorage {
     return result.rowCount ?? 0;
   }
 
+  // Screen Presets
+  async getScreenPresets(filter?: { screenId?: string; groupId?: string }): Promise<ScreenPreset[]> {
+    const conditions = [];
+    if (filter?.screenId) conditions.push(eq(screenPresets.screenId, filter.screenId));
+    if (filter?.groupId) conditions.push(eq(screenPresets.groupId, filter.groupId));
+    if (conditions.length > 0) {
+      return db.select().from(screenPresets).where(and(...conditions)).orderBy(asc(screenPresets.displayOrder), asc(screenPresets.createdAt));
+    }
+    return db.select().from(screenPresets).orderBy(asc(screenPresets.displayOrder), asc(screenPresets.createdAt));
+  }
+
+  async getScreenPreset(id: string): Promise<ScreenPreset | undefined> {
+    const [preset] = await db.select().from(screenPresets).where(eq(screenPresets.id, id));
+    return preset;
+  }
+
+  async createScreenPreset(data: InsertScreenPreset): Promise<ScreenPreset> {
+    const [preset] = await db.insert(screenPresets).values(data).returning();
+    return preset;
+  }
+
+  async updateScreenPreset(id: string, data: Partial<InsertScreenPreset>): Promise<ScreenPreset | undefined> {
+    const [preset] = await db
+      .update(screenPresets)
+      .set(data)
+      .where(eq(screenPresets.id, id))
+      .returning();
+    return preset;
+  }
+
+  async deleteScreenPreset(id: string): Promise<boolean> {
+    const result = await db.delete(screenPresets).where(eq(screenPresets.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
   // Live Overrides
   async getLiveOverrides(): Promise<LiveOverride[]> {
     return db.select().from(liveOverrides).orderBy(desc(liveOverrides.createdAt));
@@ -831,6 +877,11 @@ export class DatabaseStorage implements IStorage {
 
   async getLiveOverride(id: string): Promise<LiveOverride | undefined> {
     const [override] = await db.select().from(liveOverrides).where(eq(liveOverrides.id, id));
+    return override;
+  }
+
+  async getLiveOverrideByPresetId(presetId: string): Promise<LiveOverride | undefined> {
+    const [override] = await db.select().from(liveOverrides).where(eq(liveOverrides.presetId, presetId));
     return override;
   }
 

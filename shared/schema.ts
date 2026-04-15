@@ -653,6 +653,29 @@ export type InsertPlaylistItem = z.infer<typeof insertPlaylistItemSchema>;
 export type UpdatePlaylistItem = z.infer<typeof updatePlaylistItemSchema>;
 export type PlaylistItem = typeof playlistItems.$inferSelect;
 
+// ============ SCREEN PRESETS ============
+
+export const screenPresets = pgTable("screen_presets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  screenId: varchar("screen_id").references(() => screens.id, { onDelete: "cascade" }),
+  groupId: varchar("group_id").references(() => screenGroups.id, { onDelete: "cascade" }),
+  layoutTemplateId: varchar("layout_template_id").references(() => layoutTemplates.id, { onDelete: "set null" }),
+  zoneSources: jsonb("zone_sources").$type<ZoneSource[]>(),
+  displayOrder: integer("display_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const screenPresetsRelations = relations(screenPresets, ({ one }) => ({
+  screen: one(screens, { fields: [screenPresets.screenId], references: [screens.id] }),
+  group: one(screenGroups, { fields: [screenPresets.groupId], references: [screenGroups.id] }),
+  layoutTemplate: one(layoutTemplates, { fields: [screenPresets.layoutTemplateId], references: [layoutTemplates.id] }),
+}));
+
+export const insertScreenPresetSchema = createInsertSchema(screenPresets).omit({ id: true, createdAt: true });
+export type InsertScreenPreset = z.infer<typeof insertScreenPresetSchema>;
+export type ScreenPreset = typeof screenPresets.$inferSelect;
+
 // ============ LIVE OVERRIDES ============
 
 export const liveOverrides = pgTable("live_overrides", {
@@ -666,6 +689,7 @@ export const liveOverrides = pgTable("live_overrides", {
   startTime: timestamp("start_time").notNull(),
   endTime: timestamp("end_time").notNull(),
   isActive: boolean("is_active").default(true),
+  presetId: varchar("preset_id").references(() => screenPresets.id, { onDelete: "set null" }),
   createdById: varchar("created_by_id").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow(),
 });

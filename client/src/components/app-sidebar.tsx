@@ -20,6 +20,7 @@ import {
   Check,
   Globe,
   Radio,
+  SlidersHorizontal,
 } from "lucide-react";
 import {
   Sidebar,
@@ -106,6 +107,11 @@ const displayNavItems = [
     title: "Live Override",
     url: "/live-override",
     icon: Zap,
+  },
+  {
+    title: "Control Panel",
+    url: "/control-panel",
+    icon: SlidersHorizontal,
   },
   {
     title: "Player Simulator",

@@ -6,7 +6,7 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
-import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
+import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
 import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
 import { setupAuth, isAuthenticated } from "./auth";
 import multer from "multer";
@@ -2213,7 +2213,210 @@ export async function registerRoutes(
     }
   });
 
+  // ============ SCREEN PRESETS ============
+
+  async function resolvePresetClientId(preset: { screenId: string | null; groupId: string | null }): Promise<string | null> {
+    if (preset.screenId) {
+      const screen = await storage.getScreen(preset.screenId);
+      return screen?.clientId || null;
+    }
+    if (preset.groupId) {
+      const group = await storage.getScreenGroup(preset.groupId);
+      return group?.clientId || null;
+    }
+    return null;
+  }
+
+  async function deleteAllOverridesForPreset(presetId: string) {
+    const allOverrides = await storage.getLiveOverrides();
+    const matching = allOverrides.filter(o => o.presetId === presetId);
+    for (const o of matching) {
+      await storage.deleteLiveOverride(o.id);
+    }
+  }
+
+  app.get("/api/screen-presets", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const screenId = req.query.screenId as string | undefined;
+      const groupId = req.query.groupId as string | undefined;
+      if (!screenId && !groupId) {
+        return res.status(400).json({ error: "screenId or groupId query parameter is required" });
+      }
+      if (screenId) {
+        const screen = await storage.getScreen(screenId);
+        if (!screen) return res.status(404).json({ error: "Screen not found" });
+        if (screen.clientId && !canAccessClient(req, screen.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
+      if (groupId) {
+        const group = await storage.getScreenGroup(groupId);
+        if (!group) return res.status(404).json({ error: "Screen group not found" });
+        if (group.clientId && !canAccessClient(req, group.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
+      const presets = await storage.getScreenPresets({ screenId, groupId });
+      const overrides = await storage.getLiveOverrides();
+      const activePresetIds = new Set(
+        overrides
+          .filter(o => o.presetId && o.isActive && new Date(o.startTime) <= new Date() && new Date(o.endTime) >= new Date())
+          .map(o => o.presetId)
+      );
+      const presetsWithStatus = presets.map(p => ({
+        ...p,
+        isActive: activePresetIds.has(p.id),
+      }));
+      res.json(presetsWithStatus);
+    } catch (error) {
+      console.error("Error fetching screen presets:", error);
+      res.status(500).json({ error: "Failed to fetch screen presets" });
+    }
+  });
+
+  app.get("/api/screen-presets/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const preset = await storage.getScreenPreset(req.params.id);
+      if (!preset) return res.status(404).json({ error: "Preset not found" });
+      const clientId = await resolvePresetClientId(preset);
+      if (clientId && !canAccessClient(req, clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      res.json(preset);
+    } catch (error) {
+      console.error("Error fetching preset:", error);
+      res.status(500).json({ error: "Failed to fetch preset" });
+    }
+  });
+
+  app.post("/api/screen-presets", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const data = insertScreenPresetSchema.parse(req.body);
+      if (!data.screenId && !data.groupId) {
+        return res.status(400).json({ error: "Either screenId or groupId is required" });
+      }
+      const clientId = await resolvePresetClientId(data);
+      if (clientId && !canAccessClient(req, clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const preset = await storage.createScreenPreset(data);
+      logAudit(req, "create", "screen_preset", preset.id, { name: preset.name });
+      res.status(201).json(preset);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      console.error("Error creating screen preset:", error);
+      res.status(500).json({ error: "Failed to create screen preset" });
+    }
+  });
+
+  app.patch("/api/screen-presets/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const existing = await storage.getScreenPreset(req.params.id);
+      if (!existing) return res.status(404).json({ error: "Preset not found" });
+      const clientId = await resolvePresetClientId(existing);
+      if (clientId && !canAccessClient(req, clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const { screenId, groupId, ...allowedUpdates } = insertScreenPresetSchema.partial().parse(req.body);
+      const preset = await storage.updateScreenPreset(req.params.id, allowedUpdates);
+      if (!preset) return res.status(404).json({ error: "Preset not found" });
+      logAudit(req, "update", "screen_preset", preset.id, { name: preset.name });
+      res.json(preset);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      console.error("Error updating screen preset:", error);
+      res.status(500).json({ error: "Failed to update screen preset" });
+    }
+  });
+
+  app.delete("/api/screen-presets/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const existing = await storage.getScreenPreset(req.params.id);
+      if (!existing) return res.status(404).json({ error: "Preset not found" });
+      const clientId = await resolvePresetClientId(existing);
+      if (clientId && !canAccessClient(req, clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      await deleteAllOverridesForPreset(req.params.id);
+      const deleted = await storage.deleteScreenPreset(req.params.id);
+      if (!deleted) return res.status(404).json({ error: "Preset not found" });
+      logAudit(req, "delete", "screen_preset", req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting screen preset:", error);
+      res.status(500).json({ error: "Failed to delete screen preset" });
+    }
+  });
+
+  app.post("/api/screen-presets/:id/activate", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const preset = await storage.getScreenPreset(req.params.id);
+      if (!preset) return res.status(404).json({ error: "Preset not found" });
+      const clientId = await resolvePresetClientId(preset);
+      if (clientId && !canAccessClient(req, clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      await deleteAllOverridesForPreset(preset.id);
+
+      const targets: Array<{ type: "screen" | "group"; id: string }> = [];
+      if (preset.screenId) {
+        targets.push({ type: "screen", id: preset.screenId });
+      } else if (preset.groupId) {
+        const members = await storage.getGroupMembers(preset.groupId);
+        for (const m of members) {
+          targets.push({ type: "screen", id: m.id });
+        }
+      }
+
+      if (targets.length === 0) {
+        return res.status(400).json({ error: "Cannot activate: no target screens found (empty group or missing screen)" });
+      }
+
+      const now = new Date();
+      const endTime = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+
+      const override = await storage.createLiveOverride({
+        name: `Preset: ${preset.name}`,
+        priority: 200,
+        targets,
+        layoutTemplateId: preset.layoutTemplateId,
+        zoneSources: preset.zoneSources,
+        startTime: now,
+        endTime,
+        isActive: true,
+        presetId: preset.id,
+      });
+
+      logAudit(req, "activate", "screen_preset", preset.id, { name: preset.name, overrideId: override.id });
+      res.json({ preset, override });
+    } catch (error) {
+      console.error("Error activating preset:", error);
+      res.status(500).json({ error: "Failed to activate preset" });
+    }
+  });
+
+  app.post("/api/screen-presets/:id/deactivate", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const preset = await storage.getScreenPreset(req.params.id);
+      if (!preset) return res.status(404).json({ error: "Preset not found" });
+      const clientId = await resolvePresetClientId(preset);
+      if (clientId && !canAccessClient(req, clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      await deleteAllOverridesForPreset(preset.id);
+
+      logAudit(req, "deactivate", "screen_preset", preset.id, { name: preset.name });
+      res.json({ preset, deactivated: true });
+    } catch (error) {
+      console.error("Error deactivating preset:", error);
+      res.status(500).json({ error: "Failed to deactivate preset" });
+    }
+  });
+
   // ============ LIVE OVERRIDES ============
+
   app.get("/api/live-overrides", requireAuth, loadUserContext, async (req, res) => {
     try {
       const overrides = await storage.getLiveOverrides();

@@ -36,6 +36,7 @@ import AdminUsersPage from "@/pages/admin-users";
 import AdminDisplayProfilesPage from "@/pages/admin-display-profiles";
 import ActivityLogPage from "@/pages/activity-log";
 import StreamingServerPage from "@/pages/streaming-server";
+import ControlPanelPage from "@/pages/control-panel";
 import PlayerPage from "@/pages/player";
 
 function AdminRoute({ component: Component }: { component: () => JSX.Element }) {
@@ -67,6 +68,7 @@ function AuthenticatedRouter() {
       <Route path="/admin/users">{() => <AdminRoute component={AdminUsersPage} />}</Route>
       <Route path="/admin/display-profiles">{() => <AdminRoute component={AdminDisplayProfilesPage} />}</Route>
       <Route path="/admin/activity">{() => <AdminRoute component={ActivityLogPage} />}</Route>
+      <Route path="/control-panel" component={ControlPanelPage} />
       <Route path="/admin/streaming">{() => <AdminRoute component={StreamingServerPage} />}</Route>
       <Route component={NotFound} />
     </Switch>
