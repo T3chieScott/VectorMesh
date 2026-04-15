@@ -2354,11 +2354,23 @@ export async function registerRoutes(
       if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
         return res.status(400).json({ error: "orderedIds array is required" });
       }
-      const first = await storage.getScreenPreset(orderedIds[0]);
-      if (!first) return res.status(404).json({ error: "Preset not found" });
-      const clientId = await resolvePresetClientId(first);
-      if (clientId && !canAccessClient(req, clientId)) {
-        return res.status(403).json({ error: "Access denied" });
+      let commonScreenId: string | null = null;
+      let commonGroupId: string | null = null;
+      for (const id of orderedIds) {
+        const preset = await storage.getScreenPreset(id);
+        if (!preset) return res.status(404).json({ error: `Preset ${id} not found` });
+        const clientId = await resolvePresetClientId(preset);
+        if (clientId && !canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+        if (commonScreenId === null && commonGroupId === null) {
+          commonScreenId = preset.screenId;
+          commonGroupId = preset.groupId;
+        } else {
+          if (preset.screenId !== commonScreenId || preset.groupId !== commonGroupId) {
+            return res.status(400).json({ error: "All presets must belong to the same screen or group" });
+          }
+        }
       }
       await storage.reorderScreenPresets(orderedIds);
       logAudit(req, "reorder", "screen_preset", orderedIds[0], { count: orderedIds.length });

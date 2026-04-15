@@ -4,6 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -108,6 +109,7 @@ function PresetButton({
   isPending,
   isFirst,
   isLast,
+  canManage,
 }: {
   preset: ScreenPreset;
   layoutName: string;
@@ -120,6 +122,7 @@ function PresetButton({
   isPending: boolean;
   isFirst: boolean;
   isLast: boolean;
+  canManage: boolean;
 }) {
   const zoneCount = preset.zoneSources?.length || 0;
 
@@ -178,66 +181,68 @@ function PresetButton({
           )}
         </div>
       </button>
-      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-        {!isFirst && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={(e) => { e.stopPropagation(); onMoveUp(); }}
-            data-testid={`button-move-up-${preset.id}`}
-          >
-            <ArrowUp className="h-3.5 w-3.5" />
-          </Button>
-        )}
-        {!isLast && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={(e) => { e.stopPropagation(); onMoveDown(); }}
-            data-testid={`button-move-down-${preset.id}`}
-          >
-            <ArrowDown className="h-3.5 w-3.5" />
-          </Button>
-        )}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          onClick={(e) => { e.stopPropagation(); onEdit(); }}
-          data-testid={`button-edit-preset-${preset.id}`}
-        >
-          <Pencil className="h-3.5 w-3.5" />
-        </Button>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
+      {canManage && (
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+          {!isFirst && (
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7 text-destructive"
-              onClick={(e) => e.stopPropagation()}
-              data-testid={`button-delete-preset-${preset.id}`}
+              className="h-7 w-7"
+              onClick={(e) => { e.stopPropagation(); onMoveUp(); }}
+              data-testid={`button-move-up-${preset.id}`}
             >
-              <Trash2 className="h-3.5 w-3.5" />
+              <ArrowUp className="h-3.5 w-3.5" />
             </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete Preset</AlertDialogTitle>
-              <AlertDialogDescription>
-                Delete "{preset.name}"? If it's currently active, the override will also be removed.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={onDelete} data-testid="button-confirm-delete-preset">
-                Delete
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </div>
+          )}
+          {!isLast && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={(e) => { e.stopPropagation(); onMoveDown(); }}
+              data-testid={`button-move-down-${preset.id}`}
+            >
+              <ArrowDown className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={(e) => { e.stopPropagation(); onEdit(); }}
+            data-testid={`button-edit-preset-${preset.id}`}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-destructive"
+                onClick={(e) => e.stopPropagation()}
+                data-testid={`button-delete-preset-${preset.id}`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete Preset</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Delete "{preset.name}"? If it's currently active, the override will also be removed.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={onDelete} data-testid="button-confirm-delete-preset">
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      )}
     </div>
   );
 }
@@ -463,12 +468,14 @@ function TargetPresets({
   targetName,
   layouts,
   playlists,
+  canManage,
 }: {
   targetType: "screen" | "group";
   targetId: string;
   targetName: string;
   layouts: LayoutTemplate[];
   playlists: Playlist[];
+  canManage: boolean;
 }) {
   const { toast } = useToast();
   const [formOpen, setFormOpen] = useState(false);
@@ -565,14 +572,16 @@ function TargetPresets({
             {sortedPresets.length} preset{sortedPresets.length !== 1 ? "s" : ""}
           </Badge>
         </div>
-        <Button
-          onClick={() => { setEditingPreset(null); setFormOpen(true); }}
-          size="sm"
-          data-testid="button-add-preset"
-        >
-          <Plus className="h-4 w-4 mr-1" />
-          Add Preset
-        </Button>
+        {canManage && (
+          <Button
+            onClick={() => { setEditingPreset(null); setFormOpen(true); }}
+            size="sm"
+            data-testid="button-add-preset"
+          >
+            <Plus className="h-4 w-4 mr-1" />
+            Add Preset
+          </Button>
+        )}
       </div>
 
       {sortedPresets.length === 0 ? (
@@ -581,17 +590,21 @@ function TargetPresets({
             <LayoutGrid className="h-10 w-10 text-muted-foreground/50 mb-3" />
             <h3 className="font-medium text-muted-foreground mb-1">No presets yet</h3>
             <p className="text-sm text-muted-foreground/70 max-w-sm">
-              Create presets to quickly switch this {targetType === "screen" ? "screen" : "group"} between different layouts with a single tap.
+              {canManage
+                ? `Create presets to quickly switch this ${targetType === "screen" ? "screen" : "group"} between different layouts with a single tap.`
+                : "No presets have been configured for this target yet. Ask an admin to create presets."}
             </p>
-            <Button
-              variant="outline"
-              className="mt-4"
-              onClick={() => { setEditingPreset(null); setFormOpen(true); }}
-              data-testid="button-add-first-preset"
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              Create First Preset
-            </Button>
+            {canManage && (
+              <Button
+                variant="outline"
+                className="mt-4"
+                onClick={() => { setEditingPreset(null); setFormOpen(true); }}
+                data-testid="button-add-first-preset"
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                Create First Preset
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (
@@ -610,28 +623,33 @@ function TargetPresets({
               isPending={activateMutation.isPending || deactivateMutation.isPending}
               isFirst={index === 0}
               isLast={index === sortedPresets.length - 1}
+              canManage={canManage}
             />
           ))}
         </div>
       )}
 
-      <PresetFormDialog
-        open={formOpen}
-        onOpenChange={(open) => {
-          setFormOpen(open);
-          if (!open) setEditingPreset(null);
-        }}
-        targetType={targetType}
-        targetId={targetId}
-        layouts={layouts}
-        playlists={playlists}
-        editPreset={editingPreset}
-      />
+      {canManage && (
+        <PresetFormDialog
+          open={formOpen}
+          onOpenChange={(open) => {
+            setFormOpen(open);
+            if (!open) setEditingPreset(null);
+          }}
+          targetType={targetType}
+          targetId={targetId}
+          layouts={layouts}
+          playlists={playlists}
+          editPreset={editingPreset}
+        />
+      )}
     </div>
   );
 }
 
 export default function ControlPanelPage() {
+  const { user } = useAuth();
+  const canManage = user?.role === "admin" || user?.role === "account_manager";
   const [selectedTarget, setSelectedTarget] = useState<{ type: "screen" | "group"; id: string } | null>(null);
 
   const { data: screens = [], isLoading: screensLoading } = useQuery<Screen[]>({
@@ -772,6 +790,7 @@ export default function ControlPanelPage() {
             targetName={selectedName}
             layouts={layouts}
             playlists={playlists}
+            canManage={canManage}
           />
         </div>
       )}
