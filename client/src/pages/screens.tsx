@@ -878,25 +878,23 @@ function ScreenCard({
             </Button>
           </div>
         )}
-        {screen.isPaired && (
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <TestTube className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">Test Pattern</span>
-              {screen.testPatternEnabled && (
-                <Badge variant="outline" className="h-4 text-[10px] px-1.5 border-amber-500/40 text-amber-600 dark:text-amber-400">
-                  ACTIVE
-                </Badge>
-              )}
-            </div>
-            <Switch
-              checked={screen.testPatternEnabled || false}
-              onCheckedChange={(checked) => toggleTestPatternMutation.mutate(checked)}
-              disabled={!!screen.locked}
-              data-testid={`switch-test-pattern-${screen.id}`}
-            />
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <TestTube className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Test Pattern</span>
+            {screen.testPatternEnabled && (
+              <Badge variant="outline" className="h-4 text-[10px] px-1.5 border-amber-500/40 text-amber-600 dark:text-amber-400">
+                ACTIVE
+              </Badge>
+            )}
           </div>
-        )}
+          <Switch
+            checked={screen.testPatternEnabled || false}
+            onCheckedChange={(checked) => toggleTestPatternMutation.mutate(checked)}
+            disabled={!!screen.locked}
+            data-testid={`switch-test-pattern-${screen.id}`}
+          />
+        </div>
         {screen.isPaired && (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
