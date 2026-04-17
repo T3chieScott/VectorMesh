@@ -124,15 +124,16 @@ function CanvasPreview({
         data-testid="canvas-preview"
       >
         <div
-          className="absolute bg-primary/20 border-2 border-primary rounded-sm"
+          className="absolute bg-primary/20 border-2 border-primary rounded-sm flex items-start justify-start"
           style={{ left: sx, top: sy, width: Math.max(sw, 2), height: Math.max(sh, 2) }}
-        />
-        <span className="absolute top-1 left-1.5 text-[10px] text-muted-foreground">
-          Canvas {canvasWidth}×{canvasHeight}
-        </span>
+        >
+          <span className="text-[10px] text-foreground/80 px-1 py-0.5 leading-none">
+            Screen {screenWidth}×{screenHeight}
+          </span>
+        </div>
       </div>
       <span className="text-xs text-muted-foreground">
-        Screen {screenWidth}×{screenHeight} at ({canvasX}, {canvasY})
+        Canvas {canvasWidth}×{canvasHeight} • Position ({canvasX}, {canvasY})
       </span>
     </div>
   );
