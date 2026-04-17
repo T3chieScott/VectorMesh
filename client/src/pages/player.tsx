@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
 import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
+import { TestPattern } from "@/components/test-pattern";
 import html2canvas from "html2canvas";
 
 interface PlayerContentData {
@@ -638,6 +639,33 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
           <div className="w-12 h-12 mx-auto mb-4 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
           <p className="text-lg">Connecting to VectorMesh...</p>
           <p className="text-white/40 text-xs mt-2">Screen: {screenId}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (content.screen.testPatternEnabled) {
+    const tpWidth = trueWidth;
+    const tpHeight = trueHeight;
+    const tpScaledWidth = tpWidth * scale;
+    const tpScaledHeight = tpHeight * scale;
+    return (
+      <div className="fixed inset-0 bg-black flex items-center justify-center overflow-hidden" style={{ cursor: "none" }}>
+        <div
+          className="relative overflow-hidden"
+          style={{ width: `${tpScaledWidth}px`, height: `${tpScaledHeight}px` }}
+        >
+          <div
+            ref={containerRef}
+            style={{
+              width: `${tpWidth}px`,
+              height: `${tpHeight}px`,
+              transform: `scale(${scale})`,
+              transformOrigin: "top left",
+            }}
+          >
+            <TestPattern screenName={content.screen.name} width={tpWidth} height={tpHeight} />
+          </div>
         </div>
       </div>
     );

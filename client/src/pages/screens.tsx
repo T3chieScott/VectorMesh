@@ -62,6 +62,7 @@ import {
   Unlock,
   Camera,
   LayoutGrid,
+  TestTube,
 } from "lucide-react";
 import { useSiteContext } from "@/hooks/use-site-context";
 import { useAuth } from "@/hooks/use-auth";
@@ -424,6 +425,18 @@ function ScreenCard({
     },
     onError: () => {
       toast({ title: "Failed to toggle screenshots", variant: "destructive" });
+    },
+  });
+
+  const toggleTestPatternMutation = useMutation({
+    mutationFn: (enabled: boolean) =>
+      apiRequest("PATCH", `/api/screens/${screen.id}`, { testPatternEnabled: enabled }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
+      toast({ title: screen.testPatternEnabled ? "Test pattern disabled" : "Test pattern enabled" });
+    },
+    onError: () => {
+      toast({ title: "Failed to toggle test pattern", variant: "destructive" });
     },
   });
 
@@ -863,6 +876,25 @@ function ScreenCard({
             >
               <Copy className="h-4 w-4" />
             </Button>
+          </div>
+        )}
+        {screen.isPaired && (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <TestTube className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Test Pattern</span>
+              {screen.testPatternEnabled && (
+                <Badge variant="outline" className="h-4 text-[10px] px-1.5 border-amber-500/40 text-amber-600 dark:text-amber-400">
+                  ACTIVE
+                </Badge>
+              )}
+            </div>
+            <Switch
+              checked={screen.testPatternEnabled || false}
+              onCheckedChange={(checked) => toggleTestPatternMutation.mutate(checked)}
+              disabled={!!screen.locked}
+              data-testid={`switch-test-pattern-${screen.id}`}
+            />
           </div>
         )}
         {screen.isPaired && (

@@ -155,6 +155,7 @@ export const screens = pgTable("screens", {
   screenshotEnabled: boolean("screenshot_enabled").default(false),
   lastScreenshot: text("last_screenshot"),
   lastScreenshotAt: timestamp("last_screenshot_at"),
+  testPatternEnabled: boolean("test_pattern_enabled").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
