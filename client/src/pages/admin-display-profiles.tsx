@@ -101,17 +101,19 @@ function DisplayProfileCard({ profile, clients }: { profile: DisplayProfile; cli
   return (
     <Card className="hover-elevate transition-all">
       <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+        <div className="flex items-start gap-3 min-w-0 flex-1">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
             <Monitor className="h-5 w-5 text-primary" />
           </div>
-          <div>
-            <CardTitle className="text-base" data-testid={`text-profile-name-${profile.id}`}>
+          <div className="min-w-0 flex-1">
+            <CardTitle className="text-base truncate" data-testid={`text-profile-name-${profile.id}`}>
               {profile.name}
             </CardTitle>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              {client && <span>{client.name} ·</span>}
-              <span>{profile.width}x{profile.height}</span>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+              {client && <span className="truncate">{client.name}</span>}
+              <span>{profile.width}×{profile.height}</span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
               <Badge variant="secondary" className="text-xs">
                 {profile.orientation}
               </Badge>
