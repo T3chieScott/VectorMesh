@@ -573,18 +573,21 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const trueWidth = Math.round(REFERENCE_HEIGHT * displayAspect);
   const trueHeight = REFERENCE_HEIGHT;
 
+  const viewportW = canvasEnabled ? playerScreenW : trueWidth;
+  const viewportH = canvasEnabled ? playerScreenH : trueHeight;
+
   useEffect(() => {
     const updateScale = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      const scaleX = w / trueWidth;
-      const scaleY = h / trueHeight;
+      const scaleX = w / viewportW;
+      const scaleY = h / viewportH;
       setScale(Math.min(scaleX, scaleY));
     };
     updateScale();
     window.addEventListener("resize", updateScale);
     return () => window.removeEventListener("resize", updateScale);
-  }, [trueWidth, trueHeight]);
+  }, [viewportW, viewportH]);
 
   const getZoneMedia = (zoneId: string): MediaAsset[] => {
     if (!content) return [];
@@ -748,8 +751,8 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     );
   }
 
-  const scaledWidth = trueWidth * scale;
-  const scaledHeight = trueHeight * scale;
+  const scaledWidth = viewportW * scale;
+  const scaledHeight = viewportH * scale;
 
   return (
     <div className="fixed inset-0 bg-black flex items-center justify-center overflow-hidden" style={{ cursor: "none" }}>
@@ -762,13 +765,13 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       >
         <div
           ref={containerRef}
+          className="relative overflow-hidden"
           style={{
-            width: `${trueWidth}px`,
-            height: `${trueHeight}px`,
+            width: `${viewportW}px`,
+            height: `${viewportH}px`,
             transform: `scale(${scale})`,
             transformOrigin: "top left",
           }}
-          className="relative"
         >
           {content.liveOverride && (
             <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white px-3 py-1 flex items-center justify-center gap-2 text-sm font-medium">
@@ -776,33 +779,47 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
             </div>
           )}
 
-          {zones.map((zone) => (
-            <div
-              key={isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
-              className="absolute"
-              style={{
-                left: `${zone.x}%`,
-                top: `${zone.y}%`,
-                width: `${zone.width}%`,
-                height: `${zone.height}%`,
-                zIndex: zone.zIndex || 1,
-              }}
-            >
-              <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
-                <ZoneRenderer
-                  zone={zone}
-                  media={getZoneMedia(zone.id)}
-                  mediaIndex={getZoneMediaIndex(zone.id)}
-                  isPlaying={true}
-                  showBorder={false}
-                  timezone={weatherTimezone}
-                  fillContainer={true}
-                  mediaBaseUrl="/api/player/media"
-                  deviceToken={token}
-                />
+          <div
+            className="absolute"
+            style={
+              canvasEnabled
+                ? {
+                    left: `${-playerCanvasX}px`,
+                    top: `${-playerCanvasY}px`,
+                    width: `${canvasW}px`,
+                    height: `${canvasH}px`,
+                  }
+                : { left: 0, top: 0, width: "100%", height: "100%" }
+            }
+          >
+            {zones.map((zone) => (
+              <div
+                key={isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
+                className="absolute"
+                style={{
+                  left: `${zone.x}%`,
+                  top: `${zone.y}%`,
+                  width: `${zone.width}%`,
+                  height: `${zone.height}%`,
+                  zIndex: zone.zIndex || 1,
+                }}
+              >
+                <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
+                  <ZoneRenderer
+                    zone={zone}
+                    media={getZoneMedia(zone.id)}
+                    mediaIndex={getZoneMediaIndex(zone.id)}
+                    isPlaying={true}
+                    showBorder={false}
+                    timezone={weatherTimezone}
+                    fillContainer={true}
+                    mediaBaseUrl="/api/player/media"
+                    deviceToken={token}
+                  />
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
 
