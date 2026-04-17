@@ -300,6 +300,15 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         playlistItems: data.playlistItems,
         layoutTemplates: data.layoutTemplates,
         zoneSources: data.zoneSources,
+        screenName: data.screen?.name,
+        testPatternEnabled: data.screen?.testPatternEnabled,
+        canvasEnabled: data.screen?.canvasEnabled,
+        canvasWidth: data.screen?.canvasWidth,
+        canvasHeight: data.screen?.canvasHeight,
+        canvasX: data.screen?.canvasX,
+        canvasY: data.screen?.canvasY,
+        profileWidth: data.profile?.width,
+        profileHeight: data.profile?.height,
       });
 
       if (data.refreshRequested) {
@@ -560,7 +569,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const playerScreenW = content?.profile?.width || 1920;
   const playerScreenH = content?.profile?.height || 1080;
 
-  const displayAspect = canvasEnabled ? canvasW / canvasH : aspectRatio;
+  const displayAspect = aspectRatio;
   const trueWidth = Math.round(REFERENCE_HEIGHT * displayAspect);
   const trueHeight = REFERENCE_HEIGHT;
 
@@ -645,10 +654,26 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   }
 
   if (content.screen.testPatternEnabled) {
-    const tpWidth = trueWidth;
-    const tpHeight = trueHeight;
-    const tpScaledWidth = tpWidth * scale;
-    const tpScaledHeight = tpHeight * scale;
+    const tpWidth = playerScreenW;
+    const tpHeight = playerScreenH;
+    const vpW = typeof window !== "undefined" ? window.innerWidth : tpWidth;
+    const vpH = typeof window !== "undefined" ? window.innerHeight : tpHeight;
+    const tpScale = Math.min(vpW / tpWidth, vpH / tpHeight);
+    const tpScaledWidth = tpWidth * tpScale;
+    const tpScaledHeight = tpHeight * tpScale;
+
+    const insetMaxW = Math.min(280, tpWidth * 0.28);
+    const insetMaxH = Math.min(200, tpHeight * 0.28);
+    const insetScale = canvasEnabled
+      ? Math.min(insetMaxW / Math.max(canvasW, 1), insetMaxH / Math.max(canvasH, 1))
+      : 0;
+    const insetW = canvasW * insetScale;
+    const insetH = canvasH * insetScale;
+    const insetScreenX = playerCanvasX * insetScale;
+    const insetScreenY = playerCanvasY * insetScale;
+    const insetScreenW = Math.max(playerScreenW * insetScale, 2);
+    const insetScreenH = Math.max(playerScreenH * insetScale, 2);
+
     return (
       <div className="fixed inset-0 bg-black flex items-center justify-center overflow-hidden" style={{ cursor: "none" }}>
         <div
@@ -660,11 +685,46 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
             style={{
               width: `${tpWidth}px`,
               height: `${tpHeight}px`,
-              transform: `scale(${scale})`,
+              transform: `scale(${tpScale})`,
               transformOrigin: "top left",
+              position: "relative",
             }}
           >
             <TestPattern screenName={content.screen.name} width={tpWidth} height={tpHeight} />
+            {canvasEnabled && (
+              <div
+                className="absolute bg-black/70 border border-white/40 rounded p-2 flex flex-col items-center gap-1.5"
+                style={{
+                  top: `${Math.round(tpHeight * 0.02)}px`,
+                  right: `${Math.round(tpWidth * 0.02)}px`,
+                  zIndex: 10,
+                }}
+                data-testid="test-pattern-canvas-inset"
+              >
+                <div
+                  className="relative border border-dashed border-white/60"
+                  style={{ width: `${insetW}px`, height: `${insetH}px` }}
+                >
+                  <div
+                    className="absolute bg-yellow-400/40 border-2 border-yellow-400"
+                    style={{
+                      left: `${insetScreenX}px`,
+                      top: `${insetScreenY}px`,
+                      width: `${insetScreenW}px`,
+                      height: `${insetScreenH}px`,
+                    }}
+                  />
+                </div>
+                <div
+                  className="text-white/90 font-mono text-center leading-tight"
+                  style={{ fontSize: `${Math.max(10, Math.round(Math.min(tpWidth, tpHeight) * 0.018))}px` }}
+                >
+                  Canvas {canvasW}×{canvasH}
+                  <br />
+                  Screen at ({playerCanvasX}, {playerCanvasY})
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -716,74 +776,33 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
             </div>
           )}
 
-          {canvasEnabled ? (
+          {zones.map((zone) => (
             <div
+              key={isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
               className="absolute"
               style={{
-                left: `${(playerCanvasX / canvasW) * 100}%`,
-                top: `${(playerCanvasY / canvasH) * 100}%`,
-                width: `${(playerScreenW / canvasW) * 100}%`,
-                height: `${(playerScreenH / canvasH) * 100}%`,
-                overflow: "hidden",
+                left: `${zone.x}%`,
+                top: `${zone.y}%`,
+                width: `${zone.width}%`,
+                height: `${zone.height}%`,
+                zIndex: zone.zIndex || 1,
               }}
             >
-              {zones.map((zone) => (
-                <div
-                  key={isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
-                  className="absolute"
-                  style={{
-                    left: `${zone.x}%`,
-                    top: `${zone.y}%`,
-                    width: `${zone.width}%`,
-                    height: `${zone.height}%`,
-                    zIndex: zone.zIndex || 1,
-                  }}
-                >
-                  <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
-                    <ZoneRenderer
-                      zone={zone}
-                      media={getZoneMedia(zone.id)}
-                      mediaIndex={getZoneMediaIndex(zone.id)}
-                      isPlaying={true}
-                      showBorder={false}
-                      timezone={weatherTimezone}
-                      fillContainer={true}
-                      mediaBaseUrl="/api/player/media"
-                      deviceToken={token}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            zones.map((zone) => (
-              <div
-                key={isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
-                className="absolute"
-                style={{
-                  left: `${zone.x}%`,
-                  top: `${zone.y}%`,
-                  width: `${zone.width}%`,
-                  height: `${zone.height}%`,
-                  zIndex: zone.zIndex || 1,
-                }}
-              >
-                <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
-                  <ZoneRenderer
-                    zone={zone}
-                    media={getZoneMedia(zone.id)}
-                    mediaIndex={getZoneMediaIndex(zone.id)}
-                    isPlaying={true}
-                    showBorder={false}
-                    timezone={weatherTimezone}
-                    fillContainer={true}
-                    mediaBaseUrl="/api/player/media"
-                    deviceToken={token}
-                  />
-                </div>
+              <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
+                <ZoneRenderer
+                  zone={zone}
+                  media={getZoneMedia(zone.id)}
+                  mediaIndex={getZoneMediaIndex(zone.id)}
+                  isPlaying={true}
+                  showBorder={false}
+                  timezone={weatherTimezone}
+                  fillContainer={true}
+                  mediaBaseUrl="/api/player/media"
+                  deviceToken={token}
+                />
               </div>
-            ))
-          )}
+            </div>
+          ))}
         </div>
       </div>
 
