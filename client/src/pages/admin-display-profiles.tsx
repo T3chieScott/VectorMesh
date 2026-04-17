@@ -44,8 +44,8 @@ import type { DisplayProfile, Client } from "@shared/schema";
 
 const profileFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  width: z.number().min(320).max(7680),
-  height: z.number().min(240).max(4320),
+  width: z.number().min(1).max(7680),
+  height: z.number().min(1).max(4320),
   orientation: z.enum(["landscape", "portrait"]),
   screenType: z.enum(["standard", "led_wall"]),
   safePadding: z.number().min(0).max(100),
