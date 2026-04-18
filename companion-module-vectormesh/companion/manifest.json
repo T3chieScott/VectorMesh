@@ -1,0 +1,26 @@
+{
+  "id": "vectormesh",
+  "name": "vectormesh",
+  "shortname": "VectorMesh",
+  "description": "Control VectorMesh onsite display screens — fire screen presets, see live status, build per-screen dashboards.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": "https://github.com/4wallcloud/companion-module-vectormesh",
+  "bugs": "https://github.com/4wallcloud/companion-module-vectormesh/issues",
+  "maintainers": [
+    {
+      "name": "4Wall Cloud",
+      "email": "support@4wallcloud.com"
+    }
+  ],
+  "legacyIds": [],
+  "runtime": {
+    "type": "node18",
+    "api": "nodejs-ipc",
+    "apiVersion": "1.11.0",
+    "entrypoint": "dist/main.js"
+  },
+  "manufacturer": "4Wall Cloud",
+  "products": ["VectorMesh"],
+  "keywords": ["video", "display", "av", "signage", "presets"]
+}
