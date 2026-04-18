@@ -882,7 +882,7 @@ export default function SimulatorPage() {
                 <div className="flex rounded-lg border overflow-hidden">
                   <button
                     className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
-                      state.canvasViewMode === "fullcanvas"
+                      state.canvasViewMode === "aoi"
                         ? "bg-primary text-primary-foreground"
                         : "bg-muted/30 text-muted-foreground hover:bg-muted/60"
                     }`}
@@ -1001,7 +1001,7 @@ export default function SimulatorPage() {
                   )}
                   {!isPlaylistPreview && selectedScreen?.canvasEnabled && (
                     <Badge variant="outline" className="text-[10px] ml-1 font-normal" data-testid="badge-canvas-mode">
-                      {state.canvasViewMode === "fullcanvas" ? "Full Canvas" : "Screen AOI"}
+                      {state.canvasViewMode === "fullcanvas" ? "Full canvas" : "Screen view"}
                     </Badge>
                   )}
                 </CardTitle>
