@@ -8,7 +8,7 @@ Bitfocus Companion module for [VectorMesh](https://vectormesh.4wallcloud.com) �
 - **Feedbacks**: recolor a button when its preset is currently live, or when any preset is driving a given screen.
 - **Variables**:
   - `$(vectormesh:active_presets_count)` — number of presets currently live.
-  - `$(vectormesh:active_preset_<screen_slug>)` — name of the preset currently driving each screen, empty when none.
+  - `$(vectormesh:active_preset_<screen_id>)` — name of the preset currently driving each screen, empty when none. The suffix is the server's screen UUID with dashes replaced by underscores, so the variable key stays valid even if you rename the screen.
 - **Drag-and-drop presets**: one starter button per VectorMesh preset, black until live, green when active.
 
 ## Requirements
@@ -63,15 +63,24 @@ You can also build buttons by hand: pick the **Activate preset / Deactivate pres
 
 ## Endpoints used
 
-The module only talks to four endpoints, all of which accept the bearer token:
+All endpoints accept the bearer token. Only the first two are required for
+the module to operate; the screens / groups endpoints enrich the variables
+and screen-feedback dropdowns and are best-effort.
+
+Required:
 
 ```
-GET  /api/screens
-GET  /api/screen-groups
 GET  /api/screen-presets
 GET  /api/screen-presets/active
 POST /api/screen-presets/:id/activate
 POST /api/screen-presets/:id/deactivate
+```
+
+Optional enrichment:
+
+```
+GET  /api/screens
+GET  /api/screen-groups
 ```
 
 ## Development
