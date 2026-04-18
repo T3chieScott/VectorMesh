@@ -241,33 +241,55 @@ function PlayerDisplay({
               </div>
             </>
           ) : zones.length > 0 ? (
-        zones.map((zone) => (
-          <div
-            key={useStableKeys ? getZoneFingerprint(zone) : zone.id}
-            className="absolute"
-            style={{
-              left: `${zone.x}%`,
-              top: `${zone.y}%`,
-              width: `${zone.width}%`,
-              height: `${zone.height}%`,
-              zIndex: zone.zIndex || 1,
-            }}
-          >
-            <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
-              <ZoneRenderer
-                zone={zone}
-                media={getZoneMedia(zone.id)}
-                mediaIndex={getZoneMediaIndex(zone.id)}
-                isPlaying={state.isPlaying}
-                skipNonce={skipNonce}
-                showBorder={state.showZoneBorders}
-                playlistName={getPlaylistName(zone.id)}
-                timezone={weatherTimezone}
-                fillContainer={true}
-              />
+        (() => {
+          const zoneNodes = zones.map((zone) => (
+            <div
+              key={useStableKeys ? getZoneFingerprint(zone) : zone.id}
+              className="absolute"
+              style={{
+                left: `${zone.x}%`,
+                top: `${zone.y}%`,
+                width: `${zone.width}%`,
+                height: `${zone.height}%`,
+                zIndex: zone.zIndex || 1,
+              }}
+            >
+              <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
+                <ZoneRenderer
+                  zone={zone}
+                  media={getZoneMedia(zone.id)}
+                  mediaIndex={getZoneMediaIndex(zone.id)}
+                  isPlaying={state.isPlaying}
+                  skipNonce={skipNonce}
+                  showBorder={state.showZoneBorders}
+                  playlistName={getPlaylistName(zone.id)}
+                  timezone={weatherTimezone}
+                  fillContainer={true}
+                />
+              </div>
             </div>
-          </div>
-        ))
+          ));
+          if (isAoiMode) {
+            const scaleFactor = trueHeight / screenH;
+            return (
+              <div className="absolute inset-0 overflow-hidden">
+                <div
+                  className="absolute"
+                  style={{
+                    width: `${canvasW * scaleFactor}px`,
+                    height: `${canvasH * scaleFactor}px`,
+                    left: `${-canvasX * scaleFactor}px`,
+                    top: `${-canvasY * scaleFactor}px`,
+                  }}
+                  data-testid="canvas-stage-aoi"
+                >
+                  {zoneNodes}
+                </div>
+              </div>
+            );
+          }
+          return <>{zoneNodes}</>;
+        })()
       ) : layout ? (
         <div className="absolute inset-0 flex items-center justify-center text-white/50">
           <div className="text-center">
@@ -367,7 +389,7 @@ export default function SimulatorPage() {
     currentDate: "",
     showZoneBorders: true,
     isFullscreen: false,
-    canvasViewMode: "fullcanvas",
+    canvasViewMode: "aoi",
   });
 
   const screensQ = useSiteFilteredQuery<Screen[]>("/api/screens");
@@ -864,29 +886,29 @@ export default function SimulatorPage() {
                         ? "bg-primary text-primary-foreground"
                         : "bg-muted/30 text-muted-foreground hover:bg-muted/60"
                     }`}
-                    onClick={() => setState((prev) => ({ ...prev, canvasViewMode: "fullcanvas" }))}
-                    data-testid="button-canvas-fullcanvas"
-                  >
-                    <Frame className="h-3 w-3" />
-                    Full Canvas
-                  </button>
-                  <button
-                    className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
-                      state.canvasViewMode === "aoi"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted/30 text-muted-foreground hover:bg-muted/60"
-                    }`}
                     onClick={() => setState((prev) => ({ ...prev, canvasViewMode: "aoi" }))}
                     data-testid="button-canvas-aoi"
                   >
                     <ScanSearch className="h-3 w-3" />
-                    Screen AOI
+                    Screen (default)
+                  </button>
+                  <button
+                    className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
+                      state.canvasViewMode === "fullcanvas"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted/30 text-muted-foreground hover:bg-muted/60"
+                    }`}
+                    onClick={() => setState((prev) => ({ ...prev, canvasViewMode: "fullcanvas" }))}
+                    data-testid="button-canvas-fullcanvas"
+                  >
+                    <Frame className="h-3 w-3" />
+                    Full canvas
                   </button>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  {state.canvasViewMode === "fullcanvas"
-                    ? `Full canvas ${selectedScreen.canvasWidth}×${selectedScreen.canvasHeight} with AOI highlighted`
-                    : `Screen view ${selectedProfile?.width || 1920}×${selectedProfile?.height || 1080} at (${selectedScreen.canvasX || 0},${selectedScreen.canvasY || 0})`}
+                  {state.canvasViewMode === "aoi"
+                    ? `Showing the physical screen ${selectedProfile?.width || 1920}×${selectedProfile?.height || 1080} cropped from canvas at (${selectedScreen.canvasX || 0},${selectedScreen.canvasY || 0}).`
+                    : `Overview of the full ${selectedScreen.canvasWidth}×${selectedScreen.canvasHeight} canvas with this screen's area highlighted.`}
                 </p>
               </div>
             )}
