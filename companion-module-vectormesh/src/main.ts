@@ -7,7 +7,7 @@ import { buildFeedbacks } from './feedbacks'
 import { buildVariableDefinitions, buildVariableValues } from './variables'
 import { buildPresets } from './presets'
 
-const PRESETS_REFRESH_EVERY_N_TICKS = 15 // at 2s poll, refresh presets list every 30s
+const PRESETS_REFRESH_EVERY_N_TICKS = 15 // at 2s poll, refresh preset list ~30s
 
 export class VectorMeshInstance extends InstanceBase<ModuleConfig> {
 	public api!: VectorMeshApi
@@ -21,9 +21,13 @@ export class VectorMeshInstance extends InstanceBase<ModuleConfig> {
 	async init(config: ModuleConfig): Promise<void> {
 		this.cfg = normalizeConfig(config)
 		this.api = new VectorMeshApi(this.cfg.url, this.cfg.token)
-		this.updateStatus(InstanceStatus.Connecting)
-		await this.refreshAll(true)
-		this.startPolling()
+		// Always publish empty defs first so Companion shows the module even on bad config
+		this.publishDefinitions()
+		const ok = await this.validateConfig()
+		if (ok) {
+			await this.refreshAll()
+			this.startPolling()
+		}
 	}
 
 	async destroy(): Promise<void> {
@@ -38,10 +42,39 @@ export class VectorMeshInstance extends InstanceBase<ModuleConfig> {
 		this.cfg = normalizeConfig(config)
 		this.api = new VectorMeshApi(this.cfg.url, this.cfg.token)
 		this.consecutiveFailures = 0
-		this.updateStatus(InstanceStatus.Connecting)
+		this.tickCount = 0
 		this.stopPolling()
-		await this.refreshAll(true)
-		this.startPolling()
+		this.publishDefinitions()
+		const ok = await this.validateConfig()
+		if (ok) {
+			await this.refreshAll()
+			this.startPolling()
+		}
+	}
+
+	/**
+	 * Single-call validation against the one required endpoint (/api/screen-presets).
+	 * Returns true if the config is usable and polling should start.
+	 */
+	private async validateConfig(): Promise<boolean> {
+		if (!this.cfg.url || !this.cfg.token) {
+			this.updateStatus(InstanceStatus.BadConfig, 'Server URL and API token are required')
+			return false
+		}
+		this.updateStatus(InstanceStatus.Connecting)
+		const r = await this.api.listPresets()
+		if (r.ok) {
+			this.updateStatus(InstanceStatus.Ok)
+			return true
+		}
+		if (r.status === 401 || r.status === 403) {
+			this.updateStatus(InstanceStatus.AuthenticationFailure, 'Invalid or revoked API token')
+		} else if (r.status === 0) {
+			this.updateStatus(InstanceStatus.ConnectionFailure, r.error ?? 'Server unreachable')
+		} else {
+			this.updateStatus(InstanceStatus.UnknownError, r.error ?? `HTTP ${r.status}`)
+		}
+		return false
 	}
 
 	private startPolling(): void {
@@ -62,11 +95,6 @@ export class VectorMeshInstance extends InstanceBase<ModuleConfig> {
 		}
 	}
 
-	/** Schedule an extra active-state refresh shortly after a write action. */
-	refreshAllNow(): Promise<void> {
-		return this.refreshAll(false)
-	}
-
 	refreshActiveSoon(): void {
 		if (this.refreshSoonTimer) return
 		this.refreshSoonTimer = setTimeout(() => {
@@ -79,7 +107,7 @@ export class VectorMeshInstance extends InstanceBase<ModuleConfig> {
 		this.tickCount++
 		try {
 			if (this.tickCount % PRESETS_REFRESH_EVERY_N_TICKS === 0) {
-				await this.refreshAll(false)
+				await this.refreshAll()
 			} else {
 				await this.refreshActiveOnly()
 			}
@@ -88,27 +116,35 @@ export class VectorMeshInstance extends InstanceBase<ModuleConfig> {
 		}
 	}
 
-	private async refreshAll(initial: boolean): Promise<void> {
-		const [presetsRes, screensRes, groupsRes, activeRes] = await Promise.all([
+	/**
+	 * Refresh required state (presets + active) and best-effort enrichment
+	 * (screens + groups). Failure of the optional endpoints does NOT flip
+	 * status — only required-endpoint failures do.
+	 */
+	private async refreshAll(): Promise<void> {
+		const [presetsRes, activeRes, screensRes, groupsRes] = await Promise.all([
 			this.api.listPresets(),
+			this.api.listActivePresets(),
 			this.api.listScreens(),
 			this.api.listScreenGroups(),
-			this.api.listActivePresets(),
 		])
-		const fail = [presetsRes, screensRes, groupsRes, activeRes].find((r) => !r.ok)
-		if (fail) {
-			this.handleFailure(fail.status, fail.error ?? 'Unknown error')
-			if (initial) {
-				// still publish empty defs so Companion shows the module
-				this.publishDefinitions()
-			}
+
+		// Required endpoints
+		const requiredFail = !presetsRes.ok ? presetsRes : !activeRes.ok ? activeRes : null
+		if (requiredFail) {
+			this.handleRequiredFailure(requiredFail.status, requiredFail.error ?? 'Unknown error')
 			return
 		}
 		this.consecutiveFailures = 0
 		this.state.presets = presetsRes.data ?? []
-		this.state.screens = screensRes.data ?? []
-		this.state.groups = groupsRes.data ?? []
 		this.state.activePresets = activeRes.data ?? []
+
+		// Optional enrichment — keep last known list on failure
+		if (screensRes.ok) this.state.screens = screensRes.data ?? []
+		else this.log('debug', `Optional /api/screens fetch failed: ${screensRes.error}`)
+		if (groupsRes.ok) this.state.groups = groupsRes.data ?? []
+		else this.log('debug', `Optional /api/screen-groups fetch failed: ${groupsRes.error}`)
+
 		recomputeActiveIndexes(this.state)
 		this.updateStatus(InstanceStatus.Ok)
 		this.publishDefinitions()
@@ -117,7 +153,7 @@ export class VectorMeshInstance extends InstanceBase<ModuleConfig> {
 	private async refreshActiveOnly(): Promise<void> {
 		const r = await this.api.listActivePresets()
 		if (!r.ok) {
-			this.handleFailure(r.status, r.error ?? 'Unknown error')
+			this.handleRequiredFailure(r.status, r.error ?? 'Unknown error')
 			return
 		}
 		this.consecutiveFailures = 0
@@ -125,10 +161,10 @@ export class VectorMeshInstance extends InstanceBase<ModuleConfig> {
 		recomputeActiveIndexes(this.state)
 		this.checkFeedbacks('preset_active', 'any_preset_active_on_screen')
 		this.setVariableValues(buildVariableValues(this))
-		if (this.tickCount > 0) this.updateStatus(InstanceStatus.Ok)
+		this.updateStatus(InstanceStatus.Ok)
 	}
 
-	private handleFailure(status: number, message: string): void {
+	private handleRequiredFailure(status: number, message: string): void {
 		this.consecutiveFailures++
 		if (status === 401 || status === 403) {
 			this.updateStatus(InstanceStatus.AuthenticationFailure, message)
