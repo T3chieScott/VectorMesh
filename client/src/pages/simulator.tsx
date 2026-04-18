@@ -927,7 +927,9 @@ export default function SimulatorPage() {
                   {state.canvasViewMode === "aoi"
                     ? selectedProfile
                       ? `Showing the physical screen ${selectedProfile.width}×${selectedProfile.height} cropped from canvas at (${selectedScreen.canvasX || 0},${selectedScreen.canvasY || 0}).`
-                      : `Showing the layout's natural size cropped from canvas at (${selectedScreen.canvasX || 0},${selectedScreen.canvasY || 0}).`
+                      : selectedLayout
+                        ? `Showing the layout's natural size cropped from canvas at (${selectedScreen.canvasX || 0},${selectedScreen.canvasY || 0}).`
+                        : `Showing 1920×1080 cropped from canvas at (${selectedScreen.canvasX || 0},${selectedScreen.canvasY || 0}).`
                     : `Overview of the full ${selectedScreen.canvasWidth}×${selectedScreen.canvasHeight} canvas with this screen's area highlighted.`}
                 </p>
                 {!selectedProfile && (
@@ -937,9 +939,11 @@ export default function SimulatorPage() {
                   >
                     <AlertTriangle className="h-3 w-3 mt-0.5 flex-shrink-0" />
                     <span>
-                      No display profile assigned — using the layout's
-                      dimensions. Assign a profile for an accurate physical
-                      preview.
+                      No display profile assigned —{" "}
+                      {selectedLayout
+                        ? "using the layout's dimensions"
+                        : "using a default 1920×1080"}
+                      . Assign a profile for an accurate physical preview.
                     </span>
                   </p>
                 )}
