@@ -113,8 +113,26 @@ function PlayerDisplay({
   const canvasH = screen?.canvasHeight || 1080;
   const canvasX = screen?.canvasX || 0;
   const canvasY = screen?.canvasY || 0;
-  const screenW = profile?.width || 1920;
-  const screenH = profile?.height || 1080;
+
+  let screenW: number;
+  let screenH: number;
+  if (profile) {
+    screenW = profile.width || 1920;
+    screenH = profile.height || 1080;
+  } else if (
+    layout?.aspectRatio === "custom" &&
+    layout.customWidth &&
+    layout.customHeight
+  ) {
+    screenW = layout.customWidth;
+    screenH = layout.customHeight;
+  } else if (layoutAspect) {
+    screenH = 1080;
+    screenW = Math.round(1080 * (layoutAspect.width / layoutAspect.height));
+  } else {
+    screenW = 1920;
+    screenH = 1080;
+  }
 
   const isFullCanvasMode = canvasEnabled && state.canvasViewMode === "fullcanvas";
   const isAoiMode = canvasEnabled && state.canvasViewMode === "aoi";
@@ -907,9 +925,24 @@ export default function SimulatorPage() {
                 </div>
                 <p className="text-[11px] text-muted-foreground">
                   {state.canvasViewMode === "aoi"
-                    ? `Showing the physical screen ${selectedProfile?.width || 1920}×${selectedProfile?.height || 1080} cropped from canvas at (${selectedScreen.canvasX || 0},${selectedScreen.canvasY || 0}).`
+                    ? selectedProfile
+                      ? `Showing the physical screen ${selectedProfile.width}×${selectedProfile.height} cropped from canvas at (${selectedScreen.canvasX || 0},${selectedScreen.canvasY || 0}).`
+                      : `Showing the layout's natural size cropped from canvas at (${selectedScreen.canvasX || 0},${selectedScreen.canvasY || 0}).`
                     : `Overview of the full ${selectedScreen.canvasWidth}×${selectedScreen.canvasHeight} canvas with this screen's area highlighted.`}
                 </p>
+                {!selectedProfile && (
+                  <p
+                    className="text-[11px] text-amber-600 dark:text-amber-400 flex items-start gap-1"
+                    data-testid="text-missing-profile-note"
+                  >
+                    <AlertTriangle className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                    <span>
+                      No display profile assigned — using the layout's
+                      dimensions. Assign a profile for an accurate physical
+                      preview.
+                    </span>
+                  </p>
+                )}
               </div>
             )}
 
