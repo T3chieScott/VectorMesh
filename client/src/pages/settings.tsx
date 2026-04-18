@@ -32,6 +32,7 @@ import {
   Copy,
   AlertTriangle,
   Trash2,
+  HelpCircle,
 } from "lucide-react";
 import {
   Dialog,
@@ -517,7 +518,10 @@ function ApiTokensCard() {
     }
   };
 
-  const activeTokens = tokens.filter(t => !t.revokedAt);
+  const [showRevoked, setShowRevoked] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const visibleTokens = showRevoked ? tokens : tokens.filter(t => !t.revokedAt);
+  const revokedCount = tokens.filter(t => t.revokedAt).length;
 
   return (
     <Card>
@@ -538,55 +542,76 @@ function ApiTokensCard() {
           </div>
         ) : (
           <>
-            {activeTokens.length === 0 ? (
-              <p className="text-sm text-muted-foreground italic">No active tokens</p>
+            {visibleTokens.length === 0 ? (
+              <p className="text-sm text-muted-foreground italic">No tokens yet</p>
             ) : (
               <div className="space-y-2">
-                {activeTokens.map((t) => (
-                  <div
-                    key={t.id}
-                    className="flex items-center justify-between gap-3 p-3 border rounded-md"
-                    data-testid={`row-api-token-${t.id}`}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-sm truncate" data-testid={`text-token-name-${t.id}`}>{t.name}</p>
-                      <p className="text-xs text-muted-foreground font-mono">{t.prefix}…</p>
-                      <p className="text-xs text-muted-foreground">
-                        Last used: {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}
-                        {" · "}
-                        Created: {t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "—"}
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setRevokeId(t.id)}
-                      data-testid={`button-revoke-token-${t.id}`}
+                {visibleTokens.map((t) => {
+                  const isRevoked = !!t.revokedAt;
+                  return (
+                    <div
+                      key={t.id}
+                      className={`flex items-center justify-between gap-3 p-3 border rounded-md ${isRevoked ? "opacity-60" : ""}`}
+                      data-testid={`row-api-token-${t.id}`}
                     >
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </div>
-                ))}
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-sm truncate flex items-center gap-2" data-testid={`text-token-name-${t.id}`}>
+                          {t.name}
+                          {isRevoked && <Badge variant="outline" className="text-xs">Revoked</Badge>}
+                        </p>
+                        <p className="text-xs text-muted-foreground font-mono">{t.prefix}…</p>
+                        <p className="text-xs text-muted-foreground">
+                          Last used: {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}
+                          {" · "}
+                          Created: {t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "—"}
+                          {isRevoked && t.revokedAt && (
+                            <> · Revoked: {new Date(t.revokedAt).toLocaleDateString()}</>
+                          )}
+                        </p>
+                      </div>
+                      {!isRevoked && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setRevokeId(t.id)}
+                          data-testid={`button-revoke-token-${t.id}`}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCreateOpen(true)}
-              data-testid="button-create-api-token"
-            >
-              <Plus className="h-4 w-4 mr-2" /> Create token
-            </Button>
-
-            <div className="text-xs text-muted-foreground space-y-1 pt-2 border-t">
-              <p className="font-medium text-foreground">Companion-friendly endpoints:</p>
-              <code className="block">GET  /api/screens</code>
-              <code className="block">GET  /api/screen-groups</code>
-              <code className="block">GET  /api/screen-presets?screenId=…</code>
-              <code className="block">GET  /api/screen-presets/active</code>
-              <code className="block">POST /api/screen-presets/:id/activate</code>
-              <code className="block">POST /api/screen-presets/:id/deactivate</code>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCreateOpen(true)}
+                data-testid="button-create-api-token"
+              >
+                <Plus className="h-4 w-4 mr-2" /> Create token
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setHelpOpen(true)}
+                data-testid="button-api-token-help"
+              >
+                <HelpCircle className="h-4 w-4 mr-2" /> How to use
+              </Button>
+              {revokedCount > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowRevoked(v => !v)}
+                  data-testid="button-toggle-revoked-tokens"
+                >
+                  {showRevoked ? "Hide" : "Show"} {revokedCount} revoked
+                </Button>
+              )}
             </div>
           </>
         )}
@@ -646,6 +671,56 @@ function ApiTokensCard() {
             <Button onClick={() => setRevealedToken(null)} data-testid="button-dismiss-token">
               I've saved it
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Using API Tokens</DialogTitle>
+            <DialogDescription>
+              Send your token in the <code>Authorization</code> header on every request.
+              The recommended client is the dedicated Bitfocus Companion module —
+              see <a href="https://github.com/4wallcloud/companion-module-vectormesh" target="_blank" rel="noreferrer" className="underline">companion-module-vectormesh</a>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <div>
+              <p className="font-medium mb-1">List screens</p>
+              <pre className="bg-muted rounded p-2 text-xs overflow-x-auto"><code>{`curl -H "Authorization: Bearer vm_..." \\
+  https://vectormesh.4wallcloud.com/api/screens`}</code></pre>
+            </div>
+            <div>
+              <p className="font-medium mb-1">List screen groups</p>
+              <pre className="bg-muted rounded p-2 text-xs overflow-x-auto"><code>{`curl -H "Authorization: Bearer vm_..." \\
+  https://vectormesh.4wallcloud.com/api/screen-groups`}</code></pre>
+            </div>
+            <div>
+              <p className="font-medium mb-1">List presets for a screen or group</p>
+              <pre className="bg-muted rounded p-2 text-xs overflow-x-auto"><code>{`curl -H "Authorization: Bearer vm_..." \\
+  "https://vectormesh.4wallcloud.com/api/screen-presets?screenId=SCREEN_ID"`}</code></pre>
+            </div>
+            <div>
+              <p className="font-medium mb-1">Poll which presets are currently live</p>
+              <pre className="bg-muted rounded p-2 text-xs overflow-x-auto"><code>{`curl -H "Authorization: Bearer vm_..." \\
+  https://vectormesh.4wallcloud.com/api/screen-presets/active`}</code></pre>
+            </div>
+            <div>
+              <p className="font-medium mb-1">Activate / deactivate a preset</p>
+              <pre className="bg-muted rounded p-2 text-xs overflow-x-auto"><code>{`curl -X POST -H "Authorization: Bearer vm_..." \\
+  https://vectormesh.4wallcloud.com/api/screen-presets/PRESET_ID/activate
+
+curl -X POST -H "Authorization: Bearer vm_..." \\
+  https://vectormesh.4wallcloud.com/api/screen-presets/PRESET_ID/deactivate`}</code></pre>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Tokens grant the same tenant access as your account for this allowlist of endpoints.
+              Treat them like a password and revoke any token that may have been exposed.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setHelpOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
