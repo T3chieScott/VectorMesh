@@ -920,6 +920,14 @@ export default function SimulatorPage() {
                     ) {
                       w = selectedLayout.customWidth;
                       h = selectedLayout.customHeight;
+                    } else if (selectedLayout) {
+                      const a = getAspectRatioDimensions(
+                        selectedLayout.aspectRatio || "16:9",
+                        selectedLayout.customWidth,
+                        selectedLayout.customHeight,
+                      );
+                      h = 1080;
+                      w = Math.round(1080 * (a.width / a.height));
                     }
                     return `Showing screen ${w}×${h} at canvas position (${cx},${cy}).`;
                   })()}
