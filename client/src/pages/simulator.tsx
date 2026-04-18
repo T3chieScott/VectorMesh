@@ -116,6 +116,7 @@ function PlayerDisplay({
 
   let screenW: number;
   let screenH: number;
+  let screenSizeFromLayout = false;
   if (profile) {
     screenW = profile.width || 1920;
     screenH = profile.height || 1080;
@@ -126,9 +127,11 @@ function PlayerDisplay({
   ) {
     screenW = layout.customWidth;
     screenH = layout.customHeight;
+    screenSizeFromLayout = true;
   } else if (layoutAspect) {
     screenH = 1080;
     screenW = Math.round(1080 * (layoutAspect.width / layoutAspect.height));
+    screenSizeFromLayout = true;
   } else {
     screenW = 1920;
     screenH = 1080;
@@ -287,7 +290,7 @@ function PlayerDisplay({
               </div>
             </div>
           ));
-          if (isAoiMode) {
+          if (isAoiMode && !screenSizeFromLayout) {
             const scaleFactor = trueHeight / screenH;
             return (
               <div className="absolute inset-0 overflow-hidden">
