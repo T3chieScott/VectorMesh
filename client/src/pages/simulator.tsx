@@ -116,7 +116,6 @@ function PlayerDisplay({
 
   let screenW: number;
   let screenH: number;
-  let screenSizeFromLayout = false;
   if (profile) {
     screenW = profile.width || 1920;
     screenH = profile.height || 1080;
@@ -127,11 +126,9 @@ function PlayerDisplay({
   ) {
     screenW = layout.customWidth;
     screenH = layout.customHeight;
-    screenSizeFromLayout = true;
   } else if (layoutAspect) {
     screenH = 1080;
     screenW = Math.round(1080 * (layoutAspect.width / layoutAspect.height));
-    screenSizeFromLayout = true;
   } else {
     screenW = 1920;
     screenH = 1080;
@@ -262,55 +259,33 @@ function PlayerDisplay({
               </div>
             </>
           ) : zones.length > 0 ? (
-        (() => {
-          const zoneNodes = zones.map((zone) => (
-            <div
-              key={useStableKeys ? getZoneFingerprint(zone) : zone.id}
-              className="absolute"
-              style={{
-                left: `${zone.x}%`,
-                top: `${zone.y}%`,
-                width: `${zone.width}%`,
-                height: `${zone.height}%`,
-                zIndex: zone.zIndex || 1,
-              }}
-            >
-              <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
-                <ZoneRenderer
-                  zone={zone}
-                  media={getZoneMedia(zone.id)}
-                  mediaIndex={getZoneMediaIndex(zone.id)}
-                  isPlaying={state.isPlaying}
-                  skipNonce={skipNonce}
-                  showBorder={state.showZoneBorders}
-                  playlistName={getPlaylistName(zone.id)}
-                  timezone={weatherTimezone}
-                  fillContainer={true}
-                />
-              </div>
+        zones.map((zone) => (
+          <div
+            key={useStableKeys ? getZoneFingerprint(zone) : zone.id}
+            className="absolute"
+            style={{
+              left: `${zone.x}%`,
+              top: `${zone.y}%`,
+              width: `${zone.width}%`,
+              height: `${zone.height}%`,
+              zIndex: zone.zIndex || 1,
+            }}
+          >
+            <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
+              <ZoneRenderer
+                zone={zone}
+                media={getZoneMedia(zone.id)}
+                mediaIndex={getZoneMediaIndex(zone.id)}
+                isPlaying={state.isPlaying}
+                skipNonce={skipNonce}
+                showBorder={state.showZoneBorders}
+                playlistName={getPlaylistName(zone.id)}
+                timezone={weatherTimezone}
+                fillContainer={true}
+              />
             </div>
-          ));
-          if (isAoiMode && !screenSizeFromLayout) {
-            const scaleFactor = trueHeight / screenH;
-            return (
-              <div className="absolute inset-0 overflow-hidden">
-                <div
-                  className="absolute"
-                  style={{
-                    width: `${canvasW * scaleFactor}px`,
-                    height: `${canvasH * scaleFactor}px`,
-                    left: `${-canvasX * scaleFactor}px`,
-                    top: `${-canvasY * scaleFactor}px`,
-                  }}
-                  data-testid="canvas-stage-aoi"
-                >
-                  {zoneNodes}
-                </div>
-              </div>
-            );
-          }
-          return <>{zoneNodes}</>;
-        })()
+          </div>
+        ))
       ) : layout ? (
         <div className="absolute inset-0 flex items-center justify-center text-white/50">
           <div className="text-center">
@@ -927,13 +902,27 @@ export default function SimulatorPage() {
                   </button>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  {state.canvasViewMode === "aoi"
-                    ? selectedProfile
-                      ? `Showing the physical screen ${selectedProfile.width}×${selectedProfile.height} cropped from canvas at (${selectedScreen.canvasX || 0},${selectedScreen.canvasY || 0}).`
-                      : selectedLayout
-                        ? `Showing the layout's natural size cropped from canvas at (${selectedScreen.canvasX || 0},${selectedScreen.canvasY || 0}).`
-                        : `Showing 1920×1080 cropped from canvas at (${selectedScreen.canvasX || 0},${selectedScreen.canvasY || 0}).`
-                    : `Overview of the full ${selectedScreen.canvasWidth}×${selectedScreen.canvasHeight} canvas with this screen's area highlighted.`}
+                  {(() => {
+                    if (state.canvasViewMode !== "aoi") {
+                      return `Overview of the full ${selectedScreen.canvasWidth}×${selectedScreen.canvasHeight} canvas with this screen's area highlighted.`;
+                    }
+                    const cx = selectedScreen.canvasX || 0;
+                    const cy = selectedScreen.canvasY || 0;
+                    let w = 1920;
+                    let h = 1080;
+                    if (selectedProfile) {
+                      w = selectedProfile.width;
+                      h = selectedProfile.height;
+                    } else if (
+                      selectedLayout?.aspectRatio === "custom" &&
+                      selectedLayout.customWidth &&
+                      selectedLayout.customHeight
+                    ) {
+                      w = selectedLayout.customWidth;
+                      h = selectedLayout.customHeight;
+                    }
+                    return `Showing screen ${w}×${h} at canvas position (${cx},${cy}).`;
+                  })()}
                 </p>
                 {!selectedProfile && (
                   <p
