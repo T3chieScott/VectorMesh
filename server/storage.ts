@@ -64,6 +64,7 @@ import {
   type SystemSetting,
 } from "@shared/schema";
 import { users, userSites, passwordResetTokens, type User, type UpsertUser, type UserSite, type PasswordResetToken } from "@shared/models/auth";
+import { apiTokens, type ApiToken, type InsertApiToken } from "@shared/schema";
 
 export interface IStorage {
   // Users
@@ -239,6 +240,14 @@ export interface IStorage {
   getSystemSetting(key: string): Promise<SystemSetting | undefined>;
   getAllSystemSettings(): Promise<SystemSetting[]>;
   setSystemSetting(key: string, value: string): Promise<SystemSetting>;
+
+  // API Tokens
+  createApiToken(data: InsertApiToken): Promise<ApiToken>;
+  getApiTokensByUser(userId: string): Promise<ApiToken[]>;
+  getApiToken(id: string): Promise<ApiToken | undefined>;
+  getApiTokenByHash(tokenHash: string): Promise<ApiToken | undefined>;
+  revokeApiToken(id: string): Promise<boolean>;
+  touchApiTokenLastUsed(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1092,6 +1101,35 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return setting;
+  }
+
+  // API Tokens
+  async createApiToken(data: InsertApiToken): Promise<ApiToken> {
+    const [token] = await db.insert(apiTokens).values(data).returning();
+    return token;
+  }
+
+  async getApiTokensByUser(userId: string): Promise<ApiToken[]> {
+    return db.select().from(apiTokens).where(eq(apiTokens.userId, userId)).orderBy(desc(apiTokens.createdAt));
+  }
+
+  async getApiToken(id: string): Promise<ApiToken | undefined> {
+    const [token] = await db.select().from(apiTokens).where(eq(apiTokens.id, id));
+    return token;
+  }
+
+  async getApiTokenByHash(tokenHash: string): Promise<ApiToken | undefined> {
+    const [token] = await db.select().from(apiTokens).where(eq(apiTokens.tokenHash, tokenHash));
+    return token;
+  }
+
+  async revokeApiToken(id: string): Promise<boolean> {
+    const result = await db.update(apiTokens).set({ revokedAt: new Date() }).where(eq(apiTokens.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async touchApiTokenLastUsed(id: string): Promise<void> {
+    await db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, id));
   }
 }
 

@@ -1,6 +1,7 @@
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import type { Express, RequestHandler } from "express";
+import crypto from "crypto";
 import { storage } from "./storage";
 
 export function setupAuth(app: Express) {
@@ -32,7 +33,43 @@ export function setupAuth(app: Express) {
   );
 }
 
+export function hashApiToken(plain: string): string {
+  return crypto.createHash("sha256").update(plain).digest("hex");
+}
+
+const TOKEN_TOUCH_DEBOUNCE_MS = 60_000;
+const lastTouchedAt = new Map<string, number>();
+
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const plain = authHeader.slice(7).trim();
+    if (plain.startsWith("vm_")) {
+      try {
+        const tokenRecord = await storage.getApiTokenByHash(hashApiToken(plain));
+        if (!tokenRecord || tokenRecord.revokedAt) {
+          return res.status(401).json({ message: "Invalid or revoked token" });
+        }
+        const user = await storage.getUser(tokenRecord.userId);
+        if (!user || !user.isActive) {
+          return res.status(401).json({ message: "Account inactive" });
+        }
+        const now = Date.now();
+        const last = lastTouchedAt.get(tokenRecord.id) || 0;
+        if (now - last > TOKEN_TOUCH_DEBOUNCE_MS) {
+          lastTouchedAt.set(tokenRecord.id, now);
+          storage.touchApiTokenLastUsed(tokenRecord.id).catch(() => {});
+        }
+        (req as any).dbUser = user;
+        (req as any).apiToken = tokenRecord;
+        return next();
+      } catch (err) {
+        console.error("Bearer token auth error:", err);
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+    }
+  }
+
   const userId = (req.session as any)?.userId;
   if (!userId) {
     return res.status(401).json({ message: "Unauthorized" });

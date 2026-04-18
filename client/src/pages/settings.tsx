@@ -28,7 +28,29 @@ import {
   HardDrive,
   Save,
   FolderOpen,
+  Key,
+  Copy,
+  AlertTriangle,
+  Trash2,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 
 
@@ -435,6 +457,222 @@ function StorageSettingsCard() {
   );
 }
 
+interface ApiTokenData {
+  id: string;
+  name: string;
+  prefix: string;
+  lastUsedAt: string | null;
+  createdAt: string | null;
+  revokedAt: string | null;
+}
+
+function ApiTokensCard() {
+  const { toast } = useToast();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [tokenName, setTokenName] = useState("");
+  const [revealedToken, setRevealedToken] = useState<string | null>(null);
+  const [revokeId, setRevokeId] = useState<string | null>(null);
+
+  const { data: tokens = [], isLoading } = useQuery<ApiTokenData[]>({
+    queryKey: ["/api/me/api-tokens"],
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await apiRequest("POST", "/api/me/api-tokens", { name });
+      return res.json() as Promise<ApiTokenData & { token: string }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/me/api-tokens"] });
+      setRevealedToken(data.token);
+      setTokenName("");
+      setCreateOpen(false);
+    },
+    onError: () => {
+      toast({ title: "Failed to create token", variant: "destructive" });
+    },
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/me/api-tokens/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/me/api-tokens"] });
+      toast({ title: "Token revoked" });
+      setRevokeId(null);
+    },
+    onError: () => {
+      toast({ title: "Failed to revoke token", variant: "destructive" });
+    },
+  });
+
+  const handleCopy = async () => {
+    if (!revealedToken) return;
+    try {
+      await navigator.clipboard.writeText(revealedToken);
+      toast({ title: "Token copied to clipboard" });
+    } catch {
+      toast({ title: "Copy failed — select & copy manually", variant: "destructive" });
+    }
+  };
+
+  const activeTokens = tokens.filter(t => !t.revokedAt);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base font-semibold flex items-center gap-2">
+          <Key className="h-4 w-4" />
+          API Tokens
+        </CardTitle>
+        <CardDescription>
+          Long-lived bearer tokens for external integrations like Stream Deck / Bitfocus Companion.
+          Use as <code className="text-xs">Authorization: Bearer vm_...</code>
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <>
+            {activeTokens.length === 0 ? (
+              <p className="text-sm text-muted-foreground italic">No active tokens</p>
+            ) : (
+              <div className="space-y-2">
+                {activeTokens.map((t) => (
+                  <div
+                    key={t.id}
+                    className="flex items-center justify-between gap-3 p-3 border rounded-md"
+                    data-testid={`row-api-token-${t.id}`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-sm truncate" data-testid={`text-token-name-${t.id}`}>{t.name}</p>
+                      <p className="text-xs text-muted-foreground font-mono">{t.prefix}…</p>
+                      <p className="text-xs text-muted-foreground">
+                        Last used: {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}
+                        {" · "}
+                        Created: {t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "—"}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setRevokeId(t.id)}
+                      data-testid={`button-revoke-token-${t.id}`}
+                    >
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCreateOpen(true)}
+              data-testid="button-create-api-token"
+            >
+              <Plus className="h-4 w-4 mr-2" /> Create token
+            </Button>
+
+            <div className="text-xs text-muted-foreground space-y-1 pt-2 border-t">
+              <p className="font-medium text-foreground">Companion-friendly endpoints:</p>
+              <code className="block">GET  /api/screens</code>
+              <code className="block">GET  /api/screen-groups</code>
+              <code className="block">GET  /api/screen-presets?screenId=…</code>
+              <code className="block">GET  /api/screen-presets/active</code>
+              <code className="block">POST /api/screen-presets/:id/activate</code>
+              <code className="block">POST /api/screen-presets/:id/deactivate</code>
+            </div>
+          </>
+        )}
+      </CardContent>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create API Token</DialogTitle>
+            <DialogDescription>
+              Give this token a memorable name. The token itself is shown only once after creation.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label>Name</Label>
+            <Input
+              placeholder="e.g. Production Stream Deck"
+              value={tokenName}
+              onChange={(e) => setTokenName(e.target.value)}
+              data-testid="input-new-token-name"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => createMutation.mutate(tokenName.trim())}
+              disabled={!tokenName.trim() || createMutation.isPending}
+              data-testid="button-confirm-create-token"
+            >
+              {createMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!revealedToken} onOpenChange={(o) => !o && setRevealedToken(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Save your token now
+            </DialogTitle>
+            <DialogDescription className="text-destructive">
+              This is the only time you will see this token. Treat it like a password — anyone with
+              it has full access to your account's tenant data via the API. Store it in your
+              integration's secret manager and copy it now.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="bg-muted rounded-md p-3 font-mono text-xs break-all" data-testid="text-revealed-token">
+            {revealedToken}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCopy} data-testid="button-copy-token">
+              <Copy className="h-4 w-4 mr-2" /> Copy
+            </Button>
+            <Button onClick={() => setRevealedToken(null)} data-testid="button-dismiss-token">
+              I've saved it
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!revokeId} onOpenChange={(o) => !o && setRevokeId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke this token?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Any integration using this token will immediately lose access. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => revokeId && revokeMutation.mutate(revokeId)}
+              data-testid="button-confirm-revoke-token"
+            >
+              Revoke
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   const { user, logout } = useAuth();
 
@@ -499,6 +737,8 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        <ApiTokensCard />
 
         <AlertSettingsCard />
 

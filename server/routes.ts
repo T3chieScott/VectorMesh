@@ -8,7 +8,7 @@ import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
 import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
 import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
-import { setupAuth, isAuthenticated } from "./auth";
+import { setupAuth, isAuthenticated, hashApiToken } from "./auth";
 import multer from "multer";
 import path from "path";
 import os from "os";
@@ -314,6 +314,72 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Reset password error:", error);
       res.status(500).json({ error: "Failed to reset password" });
+    }
+  });
+
+  // ============ API TOKENS (personal) ============
+  app.get("/api/me/api-tokens", requireAuth, async (req, res) => {
+    try {
+      const user = (req as any).dbUser;
+      const tokens = await storage.getApiTokensByUser(user.id);
+      res.json(tokens.map(t => ({
+        id: t.id,
+        name: t.name,
+        prefix: t.prefix,
+        lastUsedAt: t.lastUsedAt,
+        createdAt: t.createdAt,
+        revokedAt: t.revokedAt,
+      })));
+    } catch (error) {
+      console.error("List api tokens error:", error);
+      res.status(500).json({ error: "Failed to list tokens" });
+    }
+  });
+
+  app.post("/api/me/api-tokens", requireAuth, async (req, res) => {
+    try {
+      const user = (req as any).dbUser;
+      const name = (req.body?.name || "").toString().trim();
+      if (!name || name.length > 80) {
+        return res.status(400).json({ error: "Name is required (max 80 chars)" });
+      }
+      const random = crypto.randomBytes(32).toString("base64url");
+      const plain = `vm_${random}`;
+      const tokenHash = hashApiToken(plain);
+      const prefix = plain.slice(0, 12);
+      const created = await storage.createApiToken({
+        userId: user.id,
+        name,
+        tokenHash,
+        prefix,
+      });
+      logAudit(req, "create", "api_token", created.id, { name });
+      res.status(201).json({
+        token: plain,
+        id: created.id,
+        name: created.name,
+        prefix: created.prefix,
+        createdAt: created.createdAt,
+      });
+    } catch (error) {
+      console.error("Create api token error:", error);
+      res.status(500).json({ error: "Failed to create token" });
+    }
+  });
+
+  app.delete("/api/me/api-tokens/:id", requireAuth, async (req, res) => {
+    try {
+      const user = (req as any).dbUser;
+      const token = await storage.getApiToken(req.params.id);
+      if (!token || token.userId !== user.id) {
+        return res.status(404).json({ error: "Token not found" });
+      }
+      await storage.revokeApiToken(token.id);
+      logAudit(req, "revoke", "api_token", token.id, { name: token.name });
+      res.status(204).send();
+    } catch (error) {
+      console.error("Revoke api token error:", error);
+      res.status(500).json({ error: "Failed to revoke token" });
     }
   });
 
@@ -2271,6 +2337,39 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching screen presets:", error);
       res.status(500).json({ error: "Failed to fetch screen presets" });
+    }
+  });
+
+  app.get("/api/screen-presets/active", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const overrides = await storage.getLiveOverrides();
+      const now = new Date();
+      const active = overrides.filter(o =>
+        o.presetId && o.isActive && new Date(o.startTime) <= now && new Date(o.endTime) >= now
+      );
+      const result: Array<{ presetId: string; presetName: string; screenIds: string[]; since: Date | null }> = [];
+      for (const o of active) {
+        const preset = await storage.getScreenPreset(o.presetId!);
+        if (!preset) continue;
+        const clientId = await resolvePresetClientId(preset);
+        if (clientId) {
+          if (!canAccessClient(req, clientId)) continue;
+        } else if (!isAdmin(req)) {
+          continue;
+        }
+        const targets = (o.targets as Array<{ type: string; id: string }>) || [];
+        const screenIds = targets.filter(t => t.type === "screen").map(t => t.id);
+        result.push({
+          presetId: preset.id,
+          presetName: preset.name,
+          screenIds,
+          since: o.startTime,
+        });
+      }
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching active presets:", error);
+      res.status(500).json({ error: "Failed to fetch active presets" });
     }
   });
 

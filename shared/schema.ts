@@ -799,4 +799,20 @@ export const systemSettings = pgTable("system_settings", {
 
 export const insertSystemSettingSchema = createInsertSchema(systemSettings);
 export type SystemSetting = typeof systemSettings.$inferSelect;
+
+// ============ API TOKENS ============
+
+export const apiTokens = pgTable("api_tokens", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  tokenHash: varchar("token_hash").notNull().unique(),
+  prefix: varchar("prefix").notNull(),
+  lastUsedAt: timestamp("last_used_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  revokedAt: timestamp("revoked_at"),
+});
+
+export type ApiToken = typeof apiTokens.$inferSelect;
+export type InsertApiToken = typeof apiTokens.$inferInsert;
 export type InsertSystemSetting = z.infer<typeof insertSystemSettingSchema>;
