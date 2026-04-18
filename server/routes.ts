@@ -8,7 +8,7 @@ import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
 import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
 import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
-import { setupAuth, isAuthenticated, hashApiToken } from "./auth";
+import { setupAuth, isAuthenticated, isAuthenticatedOrToken, hashApiToken } from "./auth";
 import multer from "multer";
 import path from "path";
 import os from "os";
@@ -55,6 +55,7 @@ function stripSensitiveFields(user: any) {
 }
 
 const requireAuth = isAuthenticated;
+const requireAuthOrToken = isAuthenticatedOrToken;
 
 async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   const user = (req as any).dbUser;
@@ -336,7 +337,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/me/api-tokens", requireAuth, async (req, res) => {
+  app.post("/api/me/api-tokens", requireAuth, requireAdminOrAccountManager, async (req, res) => {
     try {
       const user = (req as any).dbUser;
       const name = (req.body?.name || "").toString().trim();
@@ -888,7 +889,7 @@ export async function registerRoutes(
   });
 
   // ============ SCREEN GROUPS ============
-  app.get("/api/screen-groups", requireAuth, loadUserContext, async (req, res) => {
+  app.get("/api/screen-groups", requireAuthOrToken, loadUserContext, async (req, res) => {
     try {
       const groups = await storage.getScreenGroupsWithMemberCounts();
       const allowed = getAllowedClientIds(req);
@@ -1032,7 +1033,7 @@ export async function registerRoutes(
   });
 
   // ============ SCREENS ============
-  app.get("/api/screens", requireAuth, loadUserContext, async (req, res) => {
+  app.get("/api/screens", requireAuthOrToken, loadUserContext, async (req, res) => {
     try {
       await storage.markStaleScreensOffline(STALE_THRESHOLD_MS);
       const screens = await storage.getScreens();
@@ -2301,7 +2302,7 @@ export async function registerRoutes(
     }
   }
 
-  app.get("/api/screen-presets", requireAuth, loadUserContext, async (req, res) => {
+  app.get("/api/screen-presets", requireAuthOrToken, loadUserContext, async (req, res) => {
     try {
       const screenId = req.query.screenId as string | undefined;
       const groupId = req.query.groupId as string | undefined;
@@ -2340,18 +2341,29 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/screen-presets/active", requireAuth, loadUserContext, async (req, res) => {
+  app.get("/api/screen-presets/active", requireAuthOrToken, loadUserContext, async (req, res) => {
     try {
-      const overrides = await storage.getLiveOverrides();
+      const [overrides, allPresets, allScreens, allGroups] = await Promise.all([
+        storage.getLiveOverrides(),
+        storage.getScreenPresets(),
+        storage.getScreens(),
+        storage.getScreenGroups(),
+      ]);
+      const presetById = new Map(allPresets.map(p => [p.id, p]));
+      const screenClientById = new Map(allScreens.map(s => [s.id, s.clientId]));
+      const groupClientById = new Map(allGroups.map(g => [g.id, g.clientId]));
       const now = new Date();
-      const active = overrides.filter(o =>
-        o.presetId && o.isActive && new Date(o.startTime) <= now && new Date(o.endTime) >= now
-      );
       const result: Array<{ presetId: string; presetName: string; screenIds: string[]; since: Date | null }> = [];
-      for (const o of active) {
-        const preset = await storage.getScreenPreset(o.presetId!);
+      for (const o of overrides) {
+        if (!o.presetId || !o.isActive) continue;
+        if (new Date(o.startTime) > now || new Date(o.endTime) < now) continue;
+        const preset = presetById.get(o.presetId);
         if (!preset) continue;
-        const clientId = await resolvePresetClientId(preset);
+        const clientId = preset.screenId
+          ? screenClientById.get(preset.screenId) || null
+          : preset.groupId
+            ? groupClientById.get(preset.groupId) || null
+            : null;
         if (clientId) {
           if (!canAccessClient(req, clientId)) continue;
         } else if (!isAdmin(req)) {
@@ -2480,7 +2492,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/screen-presets/:id/activate", requireAuth, loadUserContext, async (req, res) => {
+  app.post("/api/screen-presets/:id/activate", requireAuthOrToken, loadUserContext, async (req, res) => {
     try {
       const preset = await storage.getScreenPreset(req.params.id);
       if (!preset) return res.status(404).json({ error: "Preset not found" });
@@ -2539,7 +2551,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/screen-presets/:id/deactivate", requireAuth, loadUserContext, async (req, res) => {
+  app.post("/api/screen-presets/:id/deactivate", requireAuthOrToken, loadUserContext, async (req, res) => {
     try {
       const preset = await storage.getScreenPreset(req.params.id);
       if (!preset) return res.status(404).json({ error: "Preset not found" });
