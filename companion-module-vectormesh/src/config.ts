@@ -1,5 +1,4 @@
 import type { SomeCompanionConfigField } from '@companion-module/base'
-import { Regex } from '@companion-module/base'
 
 export interface ModuleConfig {
         url: string
@@ -36,7 +35,7 @@ export function getConfigFields(): SomeCompanionConfigField[] {
                         label: 'VectorMesh server URL',
                         tooltip: 'e.g. https://vectormesh.4wallcloud.com (no trailing slash)',
                         width: 8,
-                        regex: Regex.URL,
+                        regex: '/^https?:\\/\\/.+/',
                         default: 'https://vectormesh.4wallcloud.com',
                 },
                 {

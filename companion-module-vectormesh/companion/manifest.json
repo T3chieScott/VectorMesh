@@ -5,8 +5,8 @@
   "description": "Control VectorMesh onsite display screens — fire screen presets, see live status, build per-screen dashboards.",
   "version": "0.1.0",
   "license": "MIT",
-  "repository": "https://github.com/4wallcloud/companion-module-vectormesh",
-  "bugs": "https://github.com/4wallcloud/companion-module-vectormesh/issues",
+  "repository": "https://github.com/T3chieScott/companion-module-vectormesh",
+  "bugs": "https://github.com/T3chieScott/companion-module-vectormesh/issues",
   "maintainers": [
     {
       "name": "4Wall Cloud",

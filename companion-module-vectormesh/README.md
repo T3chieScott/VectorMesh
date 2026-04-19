@@ -28,7 +28,7 @@ Bitfocus Companion module for [VectorMesh](https://vectormesh.4wallcloud.com) â€
 
 Until the module is accepted into Companion's official module library, install it as a developer module:
 
-1. Download the latest `companion-module-vectormesh-vX.Y.Z.tgz` from the [releases page](https://github.com/4wallcloud/companion-module-vectormesh/releases).
+1. Download the latest `companion-module-vectormesh-vX.Y.Z.tgz` from the [releases page](https://github.com/T3chieScott/companion-module-vectormesh/releases).
 2. Extract it to your Companion modules directory:
    - macOS: `~/Documents/Companion/modules/`
    - Windows: `C:\Users\<you>\Documents\Companion\modules\`

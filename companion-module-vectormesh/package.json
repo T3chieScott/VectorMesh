@@ -12,7 +12,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/4wallcloud/companion-module-vectormesh.git"
+    "url": "git+https://github.com/T3chieScott/companion-module-vectormesh.git"
   },
   "dependencies": {
     "@companion-module/base": "^1.11.0"
