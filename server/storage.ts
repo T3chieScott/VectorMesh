@@ -64,7 +64,7 @@ import {
   type SystemSetting,
 } from "@shared/schema";
 import { users, userSites, passwordResetTokens, type User, type UpsertUser, type UserSite, type PasswordResetToken } from "@shared/models/auth";
-import { apiTokens, type ApiToken, type InsertApiToken } from "@shared/schema";
+import { apiTokens, apiTokenKnownIps, type ApiToken, type InsertApiToken } from "@shared/schema";
 
 export interface IStorage {
   // Users
@@ -247,7 +247,9 @@ export interface IStorage {
   getApiToken(id: string): Promise<ApiToken | undefined>;
   getApiTokenByHash(tokenHash: string): Promise<ApiToken | undefined>;
   revokeApiToken(id: string): Promise<boolean>;
-  touchApiTokenLastUsed(id: string): Promise<void>;
+  touchApiTokenLastUsed(id: string, ip?: string): Promise<void>;
+  recordApiTokenIpUse(tokenId: string, ip: string): Promise<{ isNew: boolean }>;
+  deleteApiTokenKnownIp(tokenId: string, ip: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1130,6 +1132,26 @@ export class DatabaseStorage implements IStorage {
 
   async touchApiTokenLastUsed(id: string): Promise<void> {
     await db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, id));
+  }
+
+  async recordApiTokenIpUse(tokenId: string, ip: string): Promise<{ isNew: boolean }> {
+    // ON CONFLICT DO NOTHING + RETURNING — only returns a row when the
+    // (tokenId, ip) pair was actually inserted, i.e. genuinely new.
+    const inserted = await db
+      .insert(apiTokenKnownIps)
+      .values({ tokenId, ip })
+      .onConflictDoNothing({ target: [apiTokenKnownIps.tokenId, apiTokenKnownIps.ip] })
+      .returning({ id: apiTokenKnownIps.id });
+    return { isNew: inserted.length > 0 };
+  }
+
+  async deleteApiTokenKnownIp(tokenId: string, ip: string): Promise<void> {
+    // Used to roll back a record_api_token_ip_use insert when the
+    // companion audit_log write fails, so the next request retries the
+    // first-seen detection cleanly instead of silently dropping it.
+    await db
+      .delete(apiTokenKnownIps)
+      .where(and(eq(apiTokenKnownIps.tokenId, tokenId), eq(apiTokenKnownIps.ip, ip)));
   }
 }
 

@@ -57,22 +57,45 @@ export class VectorMeshInstance extends InstanceBase<ModuleConfig> {
          * Returns true if the config is usable and polling should start.
          */
         private async validateConfig(): Promise<boolean> {
+                return this.runTestConnection('config')
+        }
+
+        /**
+         * Test connection: makes a single GET /api/screen-presets call and
+         * surfaces OK / Bad token / Unreachable to both the module status
+         * indicator and the module log. Called automatically on save (config
+         * validation hook) and on demand by the `test_connection` action.
+         *
+         * Note on the "button before save" UX: @companion-module/base
+         * SomeCompanionConfigField has no `button` field type, so an in-form
+         * test button is not possible. We therefore expose the test in two
+         * places: (1) clicking Save on the config page runs this and reports
+         * OK/Bad token/Unreachable inline in the module status, and (2) the
+         * `test_connection` Companion action lets the user re-run it
+         * one-click without re-saving config.
+         */
+        async runTestConnection(source: 'config' | 'action'): Promise<boolean> {
                 if (!this.cfg.url || !this.cfg.token) {
                         this.updateStatus(InstanceStatus.BadConfig, 'Server URL and API token are required')
+                        if (source === 'action') this.log('error', 'Test connection: missing URL or token')
                         return false
                 }
-                this.updateStatus(InstanceStatus.Connecting)
+                this.updateStatus(InstanceStatus.Connecting, 'Testing connection…')
                 const r = await this.api.listPresets()
                 if (r.ok) {
-                        this.updateStatus(InstanceStatus.Ok)
+                        this.updateStatus(InstanceStatus.Ok, 'OK')
+                        this.log('info', 'Test connection: OK')
                         return true
                 }
                 if (r.status === 401 || r.status === 403) {
-                        this.updateStatus(InstanceStatus.AuthenticationFailure, 'Invalid or revoked API token')
+                        this.updateStatus(InstanceStatus.AuthenticationFailure, 'Bad token')
+                        this.log('error', 'Test connection: Bad token (401/403). Check the API token in VectorMesh → Settings → API Tokens.')
                 } else if (r.status === 0) {
-                        this.updateStatus(InstanceStatus.ConnectionFailure, r.error ?? 'Server unreachable')
+                        this.updateStatus(InstanceStatus.ConnectionFailure, 'Unreachable')
+                        this.log('error', `Test connection: Unreachable (${r.error ?? 'server did not respond'}). Check the server URL.`)
                 } else {
                         this.updateStatus(InstanceStatus.UnknownError, r.error ?? `HTTP ${r.status}`)
+                        this.log('error', `Test connection: HTTP ${r.status} ${r.error ?? ''}`)
                 }
                 return false
         }

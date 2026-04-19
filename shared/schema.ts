@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, jsonb, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, jsonb, pgEnum, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -816,3 +816,22 @@ export const apiTokens = pgTable("api_tokens", {
 export type ApiToken = typeof apiTokens.$inferSelect;
 export type InsertApiToken = typeof apiTokens.$inferInsert;
 export type InsertSystemSetting = z.infer<typeof insertSystemSettingSchema>;
+
+// Tracks every distinct (token, source IP) pair we have ever seen.
+// First time a token is used from a brand-new IP we also write an audit_log
+// entry so admins can spot a stolen token being used from an unexpected place.
+export const apiTokenKnownIps = pgTable(
+  "api_token_known_ips",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    tokenId: varchar("token_id").notNull().references(() => apiTokens.id, { onDelete: "cascade" }),
+    ip: varchar("ip").notNull(),
+    firstSeenAt: timestamp("first_seen_at").defaultNow(),
+  },
+  (table) => ({
+    tokenIpUnique: uniqueIndex("api_token_known_ips_token_ip_unique").on(table.tokenId, table.ip),
+  }),
+);
+
+export type ApiTokenKnownIp = typeof apiTokenKnownIps.$inferSelect;
+export type InsertApiTokenKnownIp = typeof apiTokenKnownIps.$inferInsert;

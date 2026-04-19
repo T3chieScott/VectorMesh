@@ -39,6 +39,17 @@ export function hashApiToken(plain: string): string {
 
 const TOKEN_TOUCH_DEBOUNCE_MS = 60_000;
 const lastTouchedAt = new Map<string, number>();
+// Per-process cache of (token_id, ip) pairs we have already verified during
+// this server's lifetime, so we don't hit the DB on every authenticated
+// request once a known caller is established.
+const seenTokenIps = new Set<string>();
+
+function clientIpFromReq(req: any): string {
+  // express has trust proxy enabled in setupAuth(); req.ip honours
+  // X-Forwarded-For. Fall back to socket address just in case.
+  const ip = (req.ip as string | undefined) || req.socket?.remoteAddress || "";
+  return String(ip).trim();
+}
 
 async function loadFromSession(req: any, res: any): Promise<boolean> {
   const userId = req.session?.userId;
@@ -78,6 +89,58 @@ async function loadFromBearerToken(req: any, res: any, plain: string): Promise<b
       lastTouchedAt.set(tokenRecord.id, now);
       storage.touchApiTokenLastUsed(tokenRecord.id).catch(() => {});
     }
+
+    // First-seen IP detection: write an audit_log entry the first time we
+    // see this (token, source IP) pair so admins can spot a stolen token
+    // being used from an unexpected location.
+    //
+    // Durability strategy: we attempt the audit_log insert *first* and only
+    // mark the pair as known once it lands. If the audit insert throws,
+    // the (token, ip) row is never written, so a retry on the next request
+    // will redo the detection — we never silently drop a first-seen event.
+    // The in-memory Set is just a fast path so we don't hit the DB on
+    // every authenticated request from a known caller.
+    const ip = clientIpFromReq(req);
+    if (ip) {
+      const cacheKey = `${tokenRecord.id}|${ip}`;
+      if (!seenTokenIps.has(cacheKey)) {
+        seenTokenIps.add(cacheKey);
+        (async () => {
+          try {
+            const result = await storage.recordApiTokenIpUse(tokenRecord.id, ip);
+            if (!result.isNew) return; // already audited from a previous run
+            try {
+              await storage.createAuditLog({
+                userId: tokenRecord.userId,
+                action: "api_token_new_ip",
+                entityType: "api_token",
+                entityId: tokenRecord.id,
+                payload: {
+                  ip,
+                  tokenName: tokenRecord.name,
+                  tokenPrefix: tokenRecord.prefix,
+                  userAgent: req.headers?.["user-agent"] ?? null,
+                },
+              });
+            } catch (auditErr) {
+              // Audit insert failed AFTER known_ips was persisted, so we
+              // would otherwise silently lose this first-seen event. Roll
+              // back the known_ips row so the next request from the same
+              // IP retries the whole detection cleanly.
+              seenTokenIps.delete(cacheKey);
+              await storage
+                .deleteApiTokenKnownIp(tokenRecord.id, ip)
+                .catch(() => {});
+              throw auditErr;
+            }
+          } catch (err) {
+            seenTokenIps.delete(cacheKey);
+            console.error("Failed to record API token IP use:", err);
+          }
+        })();
+      }
+    }
+
     req.dbUser = user;
     req.apiToken = tokenRecord;
     return true;
