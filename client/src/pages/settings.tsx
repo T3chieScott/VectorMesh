@@ -33,7 +33,10 @@ import {
   AlertTriangle,
   Trash2,
   HelpCircle,
+  Globe,
 } from "lucide-react";
+import { Link } from "wouter";
+import { formatDistanceToNow } from "date-fns";
 import {
   Dialog,
   DialogContent,
@@ -465,6 +468,7 @@ interface ApiTokenData {
   lastUsedAt: string | null;
   createdAt: string | null;
   revokedAt: string | null;
+  newIp: { ip: string | null; at: string | null; count: number } | null;
 }
 
 function ApiTokensCard() {
@@ -568,6 +572,39 @@ function ApiTokensCard() {
                             <> · Revoked: {new Date(t.revokedAt).toLocaleDateString()}</>
                           )}
                         </p>
+                        {t.newIp && !isRevoked && (
+                          <div
+                            className="mt-2 flex items-start gap-2 text-xs rounded-md border border-amber-300/60 bg-amber-50 px-2 py-1.5 dark:border-amber-700/60 dark:bg-amber-950/40"
+                            data-testid={`alert-new-ip-${t.id}`}
+                          >
+                            <Globe className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-700 dark:text-amber-400" />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-amber-900 dark:text-amber-200">
+                                <span className="font-medium">
+                                  {t.newIp.count > 1 ? `${t.newIp.count} new IPs seen` : "New IP seen"}
+                                </span>
+                                {t.newIp.ip && (
+                                  <>
+                                    {" — last from "}
+                                    <code className="font-mono" data-testid={`text-new-ip-${t.id}`}>{t.newIp.ip}</code>
+                                  </>
+                                )}
+                                {t.newIp.at && (
+                                  <span className="text-amber-700/80 dark:text-amber-300/80">
+                                    {" "}({formatDistanceToNow(new Date(t.newIp.at), { addSuffix: true })})
+                                  </span>
+                                )}
+                              </p>
+                              <Link
+                                href={`/admin/activity?action=api_token_new_ip&entityType=api_token&entityId=${encodeURIComponent(t.id)}`}
+                                className="text-amber-800 dark:text-amber-300 hover:underline"
+                                data-testid={`link-view-token-uses-${t.id}`}
+                              >
+                                View all uses
+                              </Link>
+                            </div>
+                          </div>
+                        )}
                       </div>
                       {!isRevoked && (
                         <Button

@@ -31,6 +31,7 @@ import {
   Shield,
   Filter,
   X,
+  Globe,
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -67,6 +68,8 @@ const ACTION_CONFIG: Record<string, { label: string; colour: string; icon: typeo
   unpair: { label: "Unpaired", colour: "bg-red-500/10 text-red-600 border-red-200 dark:border-red-800", icon: X },
   assign_site: { label: "Assigned Site", colour: "bg-blue-500/10 text-blue-600 border-blue-200 dark:border-blue-800", icon: Plus },
   remove_site: { label: "Removed Site", colour: "bg-red-500/10 text-red-600 border-red-200 dark:border-red-800", icon: Trash2 },
+  revoke: { label: "Revoked", colour: "bg-red-500/10 text-red-600 border-red-200 dark:border-red-800", icon: X },
+  api_token_new_ip: { label: "API Token New IP", colour: "bg-amber-500/10 text-amber-600 border-amber-200 dark:border-amber-800", icon: Globe },
 };
 
 const ENTITY_LABELS: Record<string, string> = {
@@ -82,6 +85,7 @@ const ENTITY_LABELS: Record<string, string> = {
   playlist: "Playlist",
   live_override: "Live Override",
   user: "User",
+  api_token: "API Token",
 };
 
 function getActionConfig(action: string) {
@@ -130,10 +134,15 @@ function formatTimestamp(ts: string): { relative: string; absolute: string } {
 const PAGE_SIZE = 25;
 
 export default function ActivityLogPage() {
+  const initialParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const initialEntityId = initialParams.get("entityId") || "";
+  const initialAction = initialParams.get("action") || "all";
+  const initialEntityType = initialParams.get("entityType") || "all";
   const [page, setPage] = useState(0);
-  const [entityTypeFilter, setEntityTypeFilter] = useState<string>("all");
-  const [actionFilter, setActionFilter] = useState<string>("all");
-  const [showFilters, setShowFilters] = useState(false);
+  const [entityTypeFilter, setEntityTypeFilter] = useState<string>(initialEntityType);
+  const [actionFilter, setActionFilter] = useState<string>(initialAction);
+  const [entityIdFilter, setEntityIdFilter] = useState<string>(initialEntityId);
+  const [showFilters, setShowFilters] = useState(!!initialEntityId || initialAction !== "all" || initialEntityType !== "all");
   const { toast } = useToast();
 
   const clearLogsMutation = useMutation({
@@ -154,17 +163,19 @@ export default function ActivityLogPage() {
   queryParams.set("offset", String(page * PAGE_SIZE));
   if (entityTypeFilter && entityTypeFilter !== "all") queryParams.set("entityType", entityTypeFilter);
   if (actionFilter && actionFilter !== "all") queryParams.set("action", actionFilter);
+  if (entityIdFilter) queryParams.set("entityId", entityIdFilter);
 
   const { data, isLoading } = useQuery<AuditLogsResponse>({
     queryKey: [`/api/admin/audit-logs?${queryParams.toString()}`],
   });
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
-  const hasFilters = entityTypeFilter !== "all" || actionFilter !== "all";
+  const hasFilters = entityTypeFilter !== "all" || actionFilter !== "all" || !!entityIdFilter;
 
   const clearFilters = () => {
     setEntityTypeFilter("all");
     setActionFilter("all");
+    setEntityIdFilter("");
     setPage(0);
   };
 
@@ -267,6 +278,21 @@ export default function ActivityLogPage() {
                 )}
               </div>
             </div>
+            {entityIdFilter && (
+              <div className="mt-4 flex items-center gap-2 text-sm" data-testid="badge-entity-id-filter">
+                <span className="text-muted-foreground">Filtering by entity ID:</span>
+                <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">{entityIdFilter}</code>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2"
+                  onClick={() => { setEntityIdFilter(""); setPage(0); }}
+                  data-testid="button-clear-entity-id"
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

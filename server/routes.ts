@@ -323,14 +323,19 @@ export async function registerRoutes(
     try {
       const user = (req as any).dbUser;
       const tokens = await storage.getApiTokensByUser(user.id);
-      res.json(tokens.map(t => ({
-        id: t.id,
-        name: t.name,
-        prefix: t.prefix,
-        lastUsedAt: t.lastUsedAt,
-        createdAt: t.createdAt,
-        revokedAt: t.revokedAt,
-      })));
+      const newIpEvents = await storage.getRecentNewIpEventsForTokens(tokens.map(t => t.id));
+      res.json(tokens.map(t => {
+        const event = newIpEvents.get(t.id);
+        return {
+          id: t.id,
+          name: t.name,
+          prefix: t.prefix,
+          lastUsedAt: t.lastUsedAt,
+          createdAt: t.createdAt,
+          revokedAt: t.revokedAt,
+          newIp: event ? { ip: event.lastIp, at: event.lastAt, count: event.count } : null,
+        };
+      }));
     } catch (error) {
       console.error("List api tokens error:", error);
       res.status(500).json({ error: "Failed to list tokens" });
@@ -3564,6 +3569,7 @@ export async function registerRoutes(
       const options: any = {};
       if (req.query.userId) options.userId = req.query.userId as string;
       if (req.query.entityType) options.entityType = req.query.entityType as string;
+      if (req.query.entityId) options.entityId = req.query.entityId as string;
       if (req.query.action) options.action = req.query.action as string;
       if (req.query.dateFrom) options.dateFrom = new Date(req.query.dateFrom as string);
       if (req.query.dateTo) options.dateTo = new Date(req.query.dateTo as string);

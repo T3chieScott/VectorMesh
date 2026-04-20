@@ -220,7 +220,7 @@ export interface IStorage {
 
   // Audit Logs
   createAuditLog(data: InsertAuditLog): Promise<AuditLog>;
-  getAuditLogs(options: { userId?: string; entityType?: string; action?: string; dateFrom?: Date; dateTo?: Date; limit?: number; offset?: number }): Promise<{ logs: AuditLog[]; total: number }>;
+  getAuditLogs(options: { userId?: string; entityType?: string; entityId?: string; action?: string; dateFrom?: Date; dateTo?: Date; limit?: number; offset?: number }): Promise<{ logs: AuditLog[]; total: number }>;
   getAuditLogStats(): Promise<{ loginsToday: number; activeUsersWeek: number; changesThisWeek: number; totalLogs: number }>;
   clearAuditLogs(): Promise<void>;
 
@@ -250,6 +250,7 @@ export interface IStorage {
   touchApiTokenLastUsed(id: string, ip?: string): Promise<void>;
   recordApiTokenIpUse(tokenId: string, ip: string): Promise<{ isNew: boolean }>;
   deleteApiTokenKnownIp(tokenId: string, ip: string): Promise<void>;
+  getRecentNewIpEventsForTokens(tokenIds: string[]): Promise<Map<string, { lastIp: string | null; lastAt: Date | null; count: number }>>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -947,10 +948,11 @@ export class DatabaseStorage implements IStorage {
     return log;
   }
 
-  async getAuditLogs(options: { userId?: string; entityType?: string; action?: string; dateFrom?: Date; dateTo?: Date; limit?: number; offset?: number }): Promise<{ logs: AuditLog[]; total: number }> {
+  async getAuditLogs(options: { userId?: string; entityType?: string; entityId?: string; action?: string; dateFrom?: Date; dateTo?: Date; limit?: number; offset?: number }): Promise<{ logs: AuditLog[]; total: number }> {
     const conditions = [];
     if (options.userId) conditions.push(eq(auditLogs.userId, options.userId));
     if (options.entityType) conditions.push(eq(auditLogs.entityType, options.entityType));
+    if (options.entityId) conditions.push(eq(auditLogs.entityId, options.entityId));
     if (options.action) conditions.push(eq(auditLogs.action, options.action));
     if (options.dateFrom) conditions.push(gte(auditLogs.timestamp, options.dateFrom));
     if (options.dateTo) conditions.push(lte(auditLogs.timestamp, options.dateTo));
@@ -1143,6 +1145,30 @@ export class DatabaseStorage implements IStorage {
       .onConflictDoNothing({ target: [apiTokenKnownIps.tokenId, apiTokenKnownIps.ip] })
       .returning({ id: apiTokenKnownIps.id });
     return { isNew: inserted.length > 0 };
+  }
+
+  async getRecentNewIpEventsForTokens(tokenIds: string[]): Promise<Map<string, { lastIp: string | null; lastAt: Date | null; count: number }>> {
+    const result = new Map<string, { lastIp: string | null; lastAt: Date | null; count: number }>();
+    if (tokenIds.length === 0) return result;
+    const rows = await db
+      .select({
+        entityId: auditLogs.entityId,
+        ip: sql<string | null>`${auditLogs.payload}->>'ip'`,
+        timestamp: auditLogs.timestamp,
+      })
+      .from(auditLogs)
+      .where(and(eq(auditLogs.action, "api_token_new_ip"), inArray(auditLogs.entityId, tokenIds)))
+      .orderBy(desc(auditLogs.timestamp));
+    for (const row of rows) {
+      if (!row.entityId) continue;
+      const existing = result.get(row.entityId);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        result.set(row.entityId, { lastIp: row.ip ?? null, lastAt: row.timestamp ?? null, count: 1 });
+      }
+    }
+    return result;
   }
 
   async deleteApiTokenKnownIp(tokenId: string, ip: string): Promise<void> {
