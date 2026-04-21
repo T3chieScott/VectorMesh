@@ -572,17 +572,30 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const playerScreenW = content?.profile?.width || 1920;
   const playerScreenH = content?.profile?.height || 1080;
 
-  const layoutIsCustom = layout?.aspectRatio === "custom";
-  const layoutCustomW = layout?.customWidth ?? 0;
-  const layoutCustomH = layout?.customHeight ?? 0;
+  // Compute the layout's authored pixel dimensions using the same convention as
+  // the layout editor (client/src/pages/layouts.tsx getLayoutPixelDimensions):
+  // custom layouts use customWidth/customHeight; non-custom layouts derive from
+  // a 1920px base width and the aspect ratio.
+  const layoutAuthored = (() => {
+    if (!layout) return null;
+    if (layout.aspectRatio === "custom") {
+      const w = layout.customWidth ?? 0;
+      const h = layout.customHeight ?? 0;
+      return w > 0 && h > 0 ? { width: w, height: h } : null;
+    }
+    if (!layoutAspect || layoutAspect.width <= 0 || layoutAspect.height <= 0) return null;
+    const baseWidth = 1920;
+    return {
+      width: baseWidth,
+      height: Math.round((baseWidth * layoutAspect.height) / layoutAspect.width),
+    };
+  })();
   const dimsMatch = (a: number, b: number) => Math.abs(a - b) <= 1;
   const useCanvasMode =
     canvasEnabled &&
-    layoutIsCustom &&
-    layoutCustomW > 0 &&
-    layoutCustomH > 0 &&
-    dimsMatch(layoutCustomW, canvasW) &&
-    dimsMatch(layoutCustomH, canvasH);
+    layoutAuthored !== null &&
+    dimsMatch(layoutAuthored.width, canvasW) &&
+    dimsMatch(layoutAuthored.height, canvasH);
 
   const displayAspect = aspectRatio;
   const trueWidth = Math.round(REFERENCE_HEIGHT * displayAspect);
