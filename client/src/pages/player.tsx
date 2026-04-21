@@ -226,12 +226,6 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previousMediaUrlsRef = useRef<string[]>([]);
   const captureScreenshotRef = useRef<(() => Promise<void>) | null>(null);
-  // Mirrors of captureW/captureH (computed from canvasEnabled/canvasW/H/
-  // trueWidth/trueHeight further down) so the captureScreenshot callback
-  // can read them without re-deriving from the DOM. The values are kept in
-  // sync via the useEffect below the captureW/H computation.
-  const captureWRef = useRef<number>(0);
-  const captureHRef = useRef<number>(0);
 
   useEffect(() => {
     const goOffline = () => setIsOffline(true);
@@ -381,17 +375,20 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const captureScreenshot = useCallback(async () => {
     try {
       if (!containerRef.current) return;
-      // Use captureW/captureH (the same values that drive the capture
-      // target's inline style.width/style.height) directly via refs. The
-      // container has `transform: scale(...)` applied to fit the browser
-      // window, but the *logical* layout size — which is what html2canvas
-      // needs as its capture box — is captureW/captureH. Without these
+      // Read the capture target's UN-transformed logical dimensions. The
+      // container has `transform: scale(...)` applied so it visually fits the
+      // browser window, but offsetWidth/offsetHeight return the layout size
+      // before transform — which is what html2canvas needs as its capture box.
+      // Reading from the rendered element (rather than from a captureW/H ref)
+      // is intentional: the test-pattern path renders at tpCaptureW/H while
+      // the layout path renders at captureW/H, and offsetWidth/offsetHeight
+      // correctly reflects whichever is currently mounted. Without these
       // explicit dims (and the transform reset in onclone below),
       // html2canvas mis-calculates the render region and silently clips
       // children that fall outside it (Task #80: cropped player snapshots).
       const targetEl = containerRef.current;
-      const captureWidth = captureWRef.current || targetEl.offsetWidth;
-      const captureHeight = captureHRef.current || targetEl.offsetHeight;
+      const captureWidth = targetEl.offsetWidth;
+      const captureHeight = targetEl.offsetHeight;
       const canvas = await html2canvas(targetEl, {
         scale: 0.3,
         useCORS: true,
@@ -642,11 +639,6 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   // binding so this invariant cannot silently drift.
   const captureW = canvasEnabled ? canvasW : trueWidth;
   const captureH = canvasEnabled ? canvasH : trueHeight;
-  // Keep refs in sync so captureScreenshot can read these without taking
-  // a dependency on captureW/captureH (which would force the callback
-  // identity to change every render).
-  captureWRef.current = captureW;
-  captureHRef.current = captureH;
 
   // Inside the canvas viewport, the screen slot sits at the screen's AOI.
   // Inside the slot, the zone frame either fills the slot (screen-fitted
