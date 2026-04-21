@@ -855,7 +855,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   // viewport. When not, it fills the screen viewport directly.
   const slotContents = (
     <>
-      {content.liveOverride && (
+      {content.liveOverride && content.screen?.showLiveBanner && (
         <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white px-3 py-1 flex items-center justify-center gap-2 text-sm font-medium">
           LIVE: {content.liveOverride.name}
         </div>

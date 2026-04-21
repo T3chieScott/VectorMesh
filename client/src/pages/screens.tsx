@@ -65,6 +65,7 @@ import {
   LayoutGrid,
   TestTube,
   AlertTriangle,
+  Radio,
 } from "lucide-react";
 import { useSiteContext } from "@/hooks/use-site-context";
 import { useAuth } from "@/hooks/use-auth";
@@ -446,6 +447,18 @@ function ScreenCard({
     },
     onError: () => {
       toast({ title: "Failed to toggle test pattern", variant: "destructive" });
+    },
+  });
+
+  const toggleLiveBannerMutation = useMutation({
+    mutationFn: (enabled: boolean) =>
+      apiRequest("PATCH", `/api/screens/${screen.id}`, { showLiveBanner: enabled }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
+      toast({ title: screen.showLiveBanner ? "LIVE banner hidden" : "LIVE banner shown" });
+    },
+    onError: () => {
+      toast({ title: "Failed to toggle LIVE banner", variant: "destructive" });
     },
   });
 
@@ -931,6 +944,18 @@ function ScreenCard({
             onCheckedChange={(checked) => toggleTestPatternMutation.mutate(checked)}
             disabled={!!screen.locked}
             data-testid={`switch-test-pattern-${screen.id}`}
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Radio className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Show LIVE Banner</span>
+          </div>
+          <Switch
+            checked={screen.showLiveBanner || false}
+            onCheckedChange={(checked) => toggleLiveBannerMutation.mutate(checked)}
+            disabled={!!screen.locked}
+            data-testid={`switch-live-banner-${screen.id}`}
           />
         </div>
         {screen.isPaired && (
