@@ -1158,7 +1158,7 @@ export async function registerRoutes(
       if (existing.locked) {
         return res.status(403).json({ error: "This screen is locked and cannot be modified. Unlock it first." });
       }
-      const body: Record<string, any> = { ...req.body };
+      const body = { ...req.body };
       // Only normalize empty-string -> null for fields that are actually present
       // in the request body. Otherwise a partial PATCH (e.g. toggling
       // screenshotEnabled) would clobber the existing value with null.
