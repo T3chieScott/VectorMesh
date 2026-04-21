@@ -1009,11 +1009,12 @@ function ScreenCard({
                       </DialogTitle>
                     </DialogHeader>
                     <div className="relative w-full max-h-[85vh] overflow-auto bg-black">
-                      <div className="relative inline-block">
+                      <div className="relative w-full">
                         <img
                           src={screenshotQuery.data.screenshot}
                           alt={`${screen.name} full-resolution screenshot`}
-                          className="block max-w-none w-auto h-auto"
+                          className="block w-full h-auto"
+                          style={{ imageRendering: "auto" }}
                           data-testid={`img-screenshot-full-${screen.id}`}
                         />
                         {screen.canvasEnabled && screen.canvasWidth && screen.canvasHeight && profile?.width && profile?.height && (
