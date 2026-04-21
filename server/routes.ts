@@ -23,6 +23,7 @@ import { createWeatherForecastHandler } from "./weatherForecast";
 import { createNextSpaceXLaunchHandler } from "./spacexLaunch";
 import { createEarthquakesHandler } from "./usgsEarthquakes";
 import { createAircraftOverheadHandler } from "./openSkyAircraft";
+import { buildScreenPatchHandler } from "./screenPatchHandler";
 
 function generateTwoFactorSecret(email: string) {
   const secret = new OTPAuth.Secret({ size: 20 });
@@ -1149,58 +1150,12 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/screens/:id", requireAuth, loadUserContext, async (req, res) => {
-    try {
-      const existing = await storage.getScreen(req.params.id);
-      if (!existing) {
-        return res.status(404).json({ error: "Screen not found" });
-      }
-      if (existing.locked) {
-        return res.status(403).json({ error: "This screen is locked and cannot be modified. Unlock it first." });
-      }
-      const body = { ...req.body };
-      // Only normalize empty-string -> null for fields that are actually present
-      // in the request body. Otherwise a partial PATCH (e.g. toggling
-      // screenshotEnabled) would clobber the existing value with null.
-      if ("displayProfileId" in req.body) {
-        body.displayProfileId = req.body.displayProfileId || null;
-      }
-      if ("currentEventId" in req.body) {
-        body.currentEventId = req.body.currentEventId || null;
-      }
-      if ("clientId" in req.body) {
-        body.clientId = req.body.clientId || null;
-      }
-      if ("fallbackLayoutId" in req.body) {
-        body.fallbackLayoutId = req.body.fallbackLayoutId || null;
-      }
-      if ("fallbackPlaylistId" in req.body) {
-        body.fallbackPlaylistId = req.body.fallbackPlaylistId || null;
-      }
-      if (body.canvasEnabled) {
-        if (!body.canvasWidth || body.canvasWidth < 1 || !body.canvasHeight || body.canvasHeight < 1) {
-          return res.status(400).json({ error: "Canvas width and height are required when canvas positioning is enabled" });
-        }
-        body.canvasX = body.canvasX ?? 0;
-        body.canvasY = body.canvasY ?? 0;
-      } else if (body.canvasEnabled === false) {
-        body.canvasWidth = null;
-        body.canvasHeight = null;
-        body.canvasX = 0;
-        body.canvasY = 0;
-      }
-      const data = insertScreenSchema.partial().parse(body);
-      const screen = await storage.updateScreen(req.params.id, data);
-      logAudit(req, "update", "screen", screen!.id, { name: screen!.name });
-      res.json(screen);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.errors });
-      }
-      console.error("Error updating screen:", error);
-      res.status(500).json({ error: "Failed to update screen" });
-    }
-  });
+  app.patch(
+    "/api/screens/:id",
+    requireAuth,
+    loadUserContext,
+    buildScreenPatchHandler(storage, logAudit),
+  );
 
   app.post("/api/screens/:id/regenerate-pairing", requireAuth, async (req, res) => {
     try {
