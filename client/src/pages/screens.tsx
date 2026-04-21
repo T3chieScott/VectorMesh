@@ -274,13 +274,11 @@ function ScreenCard({
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const [screenshotOpen, setScreenshotOpen] = useState(false);
-  // Popup view mode: "screen" crops the snapshot to just the screen's AOI
-  // and scales it to fill the popup; "canvas" shows the entire captured
-  // canvas with the dashed AOI overlay (the legacy behavior, useful for
-  // understanding the screen's position within a multi-screen canvas).
-  // Only meaningful when the screen is canvas-enabled — non-canvas screens
-  // always show the full snapshot and the toggle is hidden.
   const [screenshotViewMode, setScreenshotViewMode] = useState<"screen" | "canvas">("screen");
+  const openScreenshotPopup = () => {
+    setScreenshotViewMode("screen");
+    setScreenshotOpen(true);
+  };
   const { toast } = useToast();
   const { user } = useAuth();
   const isUserAdmin = user?.role === "admin";
@@ -969,7 +967,7 @@ function ScreenCard({
               <div>
                 <button
                   type="button"
-                  onClick={() => setScreenshotOpen(true)}
+                  onClick={openScreenshotPopup}
                   className="relative block w-full cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   data-testid={`button-open-screenshot-${screen.id}`}
                   aria-label={`Open full-resolution screenshot of ${screen.name}`}
@@ -1054,14 +1052,6 @@ function ScreenCard({
                       </div>
                     </DialogHeader>
                     {screen.canvasEnabled && screen.canvasWidth && screen.canvasHeight && profile?.width && profile?.height && screenshotViewMode === "screen" ? (
-                      // SCREEN VIEW (canvas-enabled, default): crop the captured
-                      // canvas to just the AOI and scale it to fill the popup.
-                      // The wrapper enforces the screen aspect ratio and clamps
-                      // its size to fit within the popup (95vw wide, 85vh tall).
-                      // Inside, the <img> is sized so its canvas-width matches
-                      // the wrapper's screen-width via the canvasW/profileW
-                      // ratio, and translated so the AOI's top-left aligns to
-                      // the wrapper's (0,0). Pure CSS — no re-encoding.
                       <div className="flex items-center justify-center bg-black p-2">
                         <div
                           className="relative overflow-hidden bg-black"
@@ -1087,10 +1077,6 @@ function ScreenCard({
                         </div>
                       </div>
                     ) : (
-                      // CANVAS VIEW (legacy behavior): show the full captured
-                      // canvas at popup width with the dashed AOI overlay and
-                      // label. Also the only mode for non-canvas-enabled
-                      // screens (no toggle is rendered above).
                       <div className="relative w-full max-h-[85vh] overflow-auto bg-black">
                         <div className="relative w-full">
                           <img
