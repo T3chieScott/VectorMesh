@@ -2314,9 +2314,6 @@ export async function registerRoutes(
     try {
       const screenId = req.query.screenId as string | undefined;
       const groupId = req.query.groupId as string | undefined;
-      if (!screenId && !groupId) {
-        return res.status(400).json({ error: "screenId or groupId query parameter is required" });
-      }
       if (screenId) {
         const screen = await storage.getScreen(screenId);
         if (!screen) return res.status(404).json({ error: "Screen not found" });
@@ -2331,7 +2328,25 @@ export async function registerRoutes(
           return res.status(403).json({ error: "Access denied" });
         }
       }
-      const presets = await storage.getScreenPresets({ screenId, groupId });
+      let presets = await storage.getScreenPresets({ screenId, groupId });
+      if (!screenId && !groupId && !isAdmin(req)) {
+        const allowed = getAllowedClientIds(req) ?? [];
+        const allowedSet = new Set(allowed);
+        const [allScreens, allGroups] = await Promise.all([
+          storage.getScreens(),
+          storage.getScreenGroups(),
+        ]);
+        const accessibleScreenIds = new Set(
+          allScreens.filter(s => s.clientId && allowedSet.has(s.clientId)).map(s => s.id)
+        );
+        const accessibleGroupIds = new Set(
+          allGroups.filter(g => g.clientId && allowedSet.has(g.clientId)).map(g => g.id)
+        );
+        presets = presets.filter(p =>
+          (p.screenId && accessibleScreenIds.has(p.screenId)) ||
+          (p.groupId && accessibleGroupIds.has(p.groupId))
+        );
+      }
       const overrides = await storage.getLiveOverrides();
       const activePresetIds = new Set(
         overrides
