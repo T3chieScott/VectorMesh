@@ -1158,11 +1158,25 @@ export async function registerRoutes(
       if (existing.locked) {
         return res.status(403).json({ error: "This screen is locked and cannot be modified. Unlock it first." });
       }
-      const body = {
-        ...req.body,
-        displayProfileId: req.body.displayProfileId || null,
-        currentEventId: req.body.currentEventId || null,
-      };
+      const body: Record<string, any> = { ...req.body };
+      // Only normalize empty-string -> null for fields that are actually present
+      // in the request body. Otherwise a partial PATCH (e.g. toggling
+      // screenshotEnabled) would clobber the existing value with null.
+      if ("displayProfileId" in req.body) {
+        body.displayProfileId = req.body.displayProfileId || null;
+      }
+      if ("currentEventId" in req.body) {
+        body.currentEventId = req.body.currentEventId || null;
+      }
+      if ("clientId" in req.body) {
+        body.clientId = req.body.clientId || null;
+      }
+      if ("fallbackLayoutId" in req.body) {
+        body.fallbackLayoutId = req.body.fallbackLayoutId || null;
+      }
+      if ("fallbackPlaylistId" in req.body) {
+        body.fallbackPlaylistId = req.body.fallbackPlaylistId || null;
+      }
       if (body.canvasEnabled) {
         if (!body.canvasWidth || body.canvasWidth < 1 || !body.canvasHeight || body.canvasHeight < 1) {
           return res.status(400).json({ error: "Canvas width and height are required when canvas positioning is enabled" });
