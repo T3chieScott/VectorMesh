@@ -561,9 +561,12 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     ? layoutAspect.width / layoutAspect.height
     : (content?.profile ? (content.profile.width || 1920) / (content.profile.height || 1080) : 16 / 9);
 
-  const canvasEnabled = content?.screen?.canvasEnabled ?? false;
-  const canvasW = content?.screen?.canvasWidth || 1920;
-  const canvasH = content?.screen?.canvasHeight || 1080;
+  const rawCanvasW = content?.screen?.canvasWidth ?? 0;
+  const rawCanvasH = content?.screen?.canvasHeight ?? 0;
+  const canvasEnabled =
+    (content?.screen?.canvasEnabled ?? false) && rawCanvasW > 0 && rawCanvasH > 0;
+  const canvasW = canvasEnabled ? rawCanvasW : 1920;
+  const canvasH = canvasEnabled ? rawCanvasH : 1080;
   const playerCanvasX = content?.screen?.canvasX || 0;
   const playerCanvasY = content?.screen?.canvasY || 0;
   const playerScreenW = content?.profile?.width || 1920;
