@@ -601,21 +601,32 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const trueWidth = Math.round(REFERENCE_HEIGHT * displayAspect);
   const trueHeight = REFERENCE_HEIGHT;
 
-  const viewportW = useCanvasMode ? playerScreenW : trueWidth;
-  const viewportH = useCanvasMode ? playerScreenH : trueHeight;
+  // The html2canvas capture target. For canvas-enabled screens the player
+  // renders the whole canvas as its viewport (with the screen positioned at
+  // its AOI inside it), so the capture is the whole canvas. For non-canvas
+  // screens the capture is the screen viewport (legacy behavior).
+  const captureW = canvasEnabled ? canvasW : trueWidth;
+  const captureH = canvasEnabled ? canvasH : trueHeight;
+
+  // Inside the canvas viewport, the screen slot sits at the screen's AOI.
+  // Inside the slot, the zone frame either fills the slot (screen-fitted
+  // layouts) or is sized to the canvas and translated by -canvasX/-canvasY
+  // to display this screen's slice (canvas-spanning layouts; Task #74).
+  const slotW = canvasEnabled ? playerScreenW : trueWidth;
+  const slotH = canvasEnabled ? playerScreenH : trueHeight;
 
   useEffect(() => {
     const updateScale = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      const scaleX = w / viewportW;
-      const scaleY = h / viewportH;
+      const scaleX = w / captureW;
+      const scaleY = h / captureH;
       setScale(Math.min(scaleX, scaleY));
     };
     updateScale();
     window.addEventListener("resize", updateScale);
     return () => window.removeEventListener("resize", updateScale);
-  }, [viewportW, viewportH]);
+  }, [captureW, captureH]);
 
   const getZoneMedia = (zoneId: string): MediaAsset[] => {
     if (!content) return [];
@@ -685,16 +696,18 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   }
 
   if (content.screen.testPatternEnabled) {
-    const tpWidth = playerScreenW;
-    const tpHeight = playerScreenH;
-    const vpW = typeof window !== "undefined" ? window.innerWidth : tpWidth;
-    const vpH = typeof window !== "undefined" ? window.innerHeight : tpHeight;
-    const tpScale = Math.min(vpW / tpWidth, vpH / tpHeight);
-    const tpScaledWidth = tpWidth * tpScale;
-    const tpScaledHeight = tpHeight * tpScale;
+    const tpSlotW = playerScreenW;
+    const tpSlotH = playerScreenH;
+    const tpCaptureW = canvasEnabled ? canvasW : tpSlotW;
+    const tpCaptureH = canvasEnabled ? canvasH : tpSlotH;
+    const vpW = typeof window !== "undefined" ? window.innerWidth : tpCaptureW;
+    const vpH = typeof window !== "undefined" ? window.innerHeight : tpCaptureH;
+    const tpScale = Math.min(vpW / tpCaptureW, vpH / tpCaptureH);
+    const tpScaledWidth = tpCaptureW * tpScale;
+    const tpScaledHeight = tpCaptureH * tpScale;
 
-    const insetMaxW = Math.min(280, tpWidth * 0.28);
-    const insetMaxH = Math.min(200, tpHeight * 0.28);
+    const insetMaxW = Math.min(280, tpSlotW * 0.28);
+    const insetMaxH = Math.min(200, tpSlotH * 0.28);
     const insetScale = canvasEnabled
       ? Math.min(insetMaxW / Math.max(canvasW, 1), insetMaxH / Math.max(canvasH, 1))
       : 0;
@@ -705,6 +718,46 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     const insetScreenW = Math.max(playerScreenW * insetScale, 2);
     const insetScreenH = Math.max(playerScreenH * insetScale, 2);
 
+    const tpSlot = (
+      <>
+        <TestPattern screenName={content.screen.name} width={tpSlotW} height={tpSlotH} />
+        {canvasEnabled && (
+          <div
+            className="absolute bg-black/70 border border-white/40 rounded p-2 flex flex-col items-center gap-1.5"
+            style={{
+              top: `${Math.round(tpSlotH * 0.02)}px`,
+              right: `${Math.round(tpSlotW * 0.02)}px`,
+              zIndex: 10,
+            }}
+            data-testid="test-pattern-canvas-inset"
+          >
+            <div
+              className="relative border border-dashed border-white/60"
+              style={{ width: `${insetW}px`, height: `${insetH}px` }}
+            >
+              <div
+                className="absolute bg-yellow-400/40 border-2 border-yellow-400"
+                style={{
+                  left: `${insetScreenX}px`,
+                  top: `${insetScreenY}px`,
+                  width: `${insetScreenW}px`,
+                  height: `${insetScreenH}px`,
+                }}
+              />
+            </div>
+            <div
+              className="text-white/90 font-mono text-center leading-tight"
+              style={{ fontSize: `${Math.max(10, Math.round(Math.min(tpSlotW, tpSlotH) * 0.018))}px` }}
+            >
+              Canvas {canvasW}×{canvasH}
+              <br />
+              Screen at ({playerCanvasX}, {playerCanvasY})
+            </div>
+          </div>
+        )}
+      </>
+    );
+
     return (
       <div className="fixed inset-0 bg-black flex items-center justify-center overflow-hidden" style={{ cursor: "none" }}>
         <div
@@ -713,48 +766,31 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         >
           <div
             ref={containerRef}
+            className="bg-black"
             style={{
-              width: `${tpWidth}px`,
-              height: `${tpHeight}px`,
+              width: `${tpCaptureW}px`,
+              height: `${tpCaptureH}px`,
               transform: `scale(${tpScale})`,
               transformOrigin: "top left",
               position: "relative",
             }}
+            data-testid="player-capture-target"
           >
-            <TestPattern screenName={content.screen.name} width={tpWidth} height={tpHeight} />
-            {canvasEnabled && (
+            {canvasEnabled ? (
               <div
-                className="absolute bg-black/70 border border-white/40 rounded p-2 flex flex-col items-center gap-1.5"
+                className="absolute overflow-hidden"
                 style={{
-                  top: `${Math.round(tpHeight * 0.02)}px`,
-                  right: `${Math.round(tpWidth * 0.02)}px`,
-                  zIndex: 10,
+                  left: `${playerCanvasX}px`,
+                  top: `${playerCanvasY}px`,
+                  width: `${tpSlotW}px`,
+                  height: `${tpSlotH}px`,
                 }}
-                data-testid="test-pattern-canvas-inset"
+                data-testid="player-screen-slot"
               >
-                <div
-                  className="relative border border-dashed border-white/60"
-                  style={{ width: `${insetW}px`, height: `${insetH}px` }}
-                >
-                  <div
-                    className="absolute bg-yellow-400/40 border-2 border-yellow-400"
-                    style={{
-                      left: `${insetScreenX}px`,
-                      top: `${insetScreenY}px`,
-                      width: `${insetScreenW}px`,
-                      height: `${insetScreenH}px`,
-                    }}
-                  />
-                </div>
-                <div
-                  className="text-white/90 font-mono text-center leading-tight"
-                  style={{ fontSize: `${Math.max(10, Math.round(Math.min(tpWidth, tpHeight) * 0.018))}px` }}
-                >
-                  Canvas {canvasW}×{canvasH}
-                  <br />
-                  Screen at ({playerCanvasX}, {playerCanvasY})
-                </div>
+                {tpSlot}
               </div>
+            ) : (
+              tpSlot
             )}
           </div>
         </div>
@@ -779,8 +815,64 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     );
   }
 
-  const scaledWidth = viewportW * scale;
-  const scaledHeight = viewportH * scale;
+  const scaledWidth = captureW * scale;
+  const scaledHeight = captureH * scale;
+
+  // Screen slot contents (live override banner + zone frame). When
+  // canvas-enabled, this lives at (canvasX, canvasY) inside the canvas
+  // viewport. When not, it fills the screen viewport directly.
+  const slotContents = (
+    <>
+      {content.liveOverride && (
+        <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white px-3 py-1 flex items-center justify-center gap-2 text-sm font-medium">
+          LIVE: {content.liveOverride.name}
+        </div>
+      )}
+
+      <div
+        className="absolute"
+        style={
+          useCanvasMode
+            ? {
+                left: `${-playerCanvasX}px`,
+                top: `${-playerCanvasY}px`,
+                width: `${canvasW}px`,
+                height: `${canvasH}px`,
+              }
+            : { left: 0, top: 0, width: "100%", height: "100%" }
+        }
+        data-testid="player-zone-frame"
+      >
+        {zones.map((zone) => (
+          <div
+            key={isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
+            className="absolute"
+            style={{
+              left: `${zone.x}%`,
+              top: `${zone.y}%`,
+              width: `${zone.width}%`,
+              height: `${zone.height}%`,
+              zIndex: zone.zIndex || 1,
+            }}
+          >
+            <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
+              <ZoneRenderer
+                zone={zone}
+                media={getZoneMedia(zone.id)}
+                mediaIndex={getZoneMediaIndex(zone.id)}
+                isPlaying={true}
+                showBorder={false}
+                timezone={weatherTimezone}
+                fillContainer={true}
+                mediaBaseUrl="/api/player/media"
+                deviceToken={token}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
 
   return (
     <div className="fixed inset-0 bg-black flex items-center justify-center overflow-hidden" style={{ cursor: "none" }}>
@@ -793,62 +885,31 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       >
         <div
           ref={containerRef}
-          className="relative overflow-hidden"
+          className="relative overflow-hidden bg-black"
           style={{
-            width: `${viewportW}px`,
-            height: `${viewportH}px`,
+            width: `${captureW}px`,
+            height: `${captureH}px`,
             transform: `scale(${scale})`,
             transformOrigin: "top left",
           }}
+          data-testid="player-capture-target"
         >
-          {content.liveOverride && (
-            <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white px-3 py-1 flex items-center justify-center gap-2 text-sm font-medium">
-              LIVE: {content.liveOverride.name}
+          {canvasEnabled ? (
+            <div
+              className="absolute overflow-hidden"
+              style={{
+                left: `${playerCanvasX}px`,
+                top: `${playerCanvasY}px`,
+                width: `${slotW}px`,
+                height: `${slotH}px`,
+              }}
+              data-testid="player-screen-slot"
+            >
+              {slotContents}
             </div>
+          ) : (
+            slotContents
           )}
-
-          <div
-            className="absolute"
-            style={
-              useCanvasMode
-                ? {
-                    left: `${-playerCanvasX}px`,
-                    top: `${-playerCanvasY}px`,
-                    width: `${canvasW}px`,
-                    height: `${canvasH}px`,
-                  }
-                : { left: 0, top: 0, width: "100%", height: "100%" }
-            }
-            data-testid="player-zone-frame"
-          >
-            {zones.map((zone) => (
-              <div
-                key={isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
-                className="absolute"
-                style={{
-                  left: `${zone.x}%`,
-                  top: `${zone.y}%`,
-                  width: `${zone.width}%`,
-                  height: `${zone.height}%`,
-                  zIndex: zone.zIndex || 1,
-                }}
-              >
-                <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
-                  <ZoneRenderer
-                    zone={zone}
-                    media={getZoneMedia(zone.id)}
-                    mediaIndex={getZoneMediaIndex(zone.id)}
-                    isPlaying={true}
-                    showBorder={false}
-                    timezone={weatherTimezone}
-                    fillContainer={true}
-                    mediaBaseUrl="/api/player/media"
-                    deviceToken={token}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
       </div>
 

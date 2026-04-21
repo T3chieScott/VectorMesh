@@ -962,11 +962,6 @@ function ScreenCard({
                   src={screenshotQuery.data.screenshot}
                   alt={`${screen.name} live screenshot`}
                   className="w-full h-auto block"
-                  style={
-                    profile?.width && profile?.height
-                      ? { aspectRatio: `${profile.width} / ${profile.height}` }
-                      : undefined
-                  }
                   data-testid={`img-screenshot-${screen.id}`}
                 />
                 {screenshotQuery.data.screenshotAt && (
@@ -979,8 +974,9 @@ function ScreenCard({
               <div
                 className="w-full flex items-center justify-center text-xs text-muted-foreground"
                 style={{
-                  aspectRatio:
-                    profile?.width && profile?.height
+                  aspectRatio: screen.canvasEnabled && screen.canvasWidth && screen.canvasHeight
+                    ? `${screen.canvasWidth} / ${screen.canvasHeight}`
+                    : profile?.width && profile?.height
                       ? `${profile.width} / ${profile.height}`
                       : "16 / 9",
                 }}
