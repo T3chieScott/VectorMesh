@@ -1126,7 +1126,7 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Display Profile (optional)</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value || ""}>
                     <FormControl>
                       <SelectTrigger data-testid="select-screen-profile">
                         <SelectValue placeholder="Select a profile" />
@@ -1140,6 +1140,17 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
                       ))}
                     </SelectContent>
                   </Select>
+                  {!field.value && (
+                    <div
+                      className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400"
+                      data-testid="warning-no-display-profile-create"
+                    >
+                      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                      <span>
+                        No display profile selected. The simulator will fall back to the layout's dimensions, which may not match the real display. Pick a profile above to avoid a misconfigured screen.
+                      </span>
+                    </div>
+                  )}
                   <FormMessage />
                 </FormItem>
               )}
