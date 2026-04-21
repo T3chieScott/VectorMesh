@@ -3,7 +3,6 @@ import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, 
 import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
 import { TestPattern } from "@/components/test-pattern";
 import html2canvas from "html2canvas";
-import { computePlayerCaptureDims } from "@/lib/playerCaptureDims";
 
 interface PlayerContentData {
   screen: Screen;
@@ -625,16 +624,17 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const trueWidth = Math.round(REFERENCE_HEIGHT * displayAspect);
   const trueHeight = REFERENCE_HEIGHT;
 
-  // The html2canvas capture target. Centralized in computePlayerCaptureDims
-  // so the regression test in tests/player-capture-dims.test.ts can lock in
-  // the invariant the captureScreenshot callback relies on.
-  const { captureW, captureH } = computePlayerCaptureDims({
-    canvasEnabled,
-    canvasW,
-    canvasH,
-    trueWidth,
-    trueHeight,
-  });
+  // The html2canvas capture target. For canvas-enabled screens the player
+  // renders the whole canvas as its viewport (with the screen positioned at
+  // its AOI inside it), so the capture is the whole canvas. For non-canvas
+  // screens the capture is the screen viewport (legacy behavior).
+  // These values drive both the capture target's inline style.width /
+  // style.height AND html2canvas's explicit capture-box dims (via
+  // offsetWidth/offsetHeight at capture time). The regression test in
+  // tests/player-capture-dims.test.ts statically asserts the inline-style
+  // binding so this invariant cannot silently drift.
+  const captureW = canvasEnabled ? canvasW : trueWidth;
+  const captureH = canvasEnabled ? canvasH : trueHeight;
 
   // Inside the canvas viewport, the screen slot sits at the screen's AOI.
   // Inside the slot, the zone frame either fills the slot (screen-fitted
