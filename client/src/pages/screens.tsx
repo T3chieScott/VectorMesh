@@ -954,61 +954,42 @@ function ScreenCard({
             </div>
           </div>
         )}
-        {screen.screenshotEnabled && (() => {
-          const screenW = profile?.width || 1920;
-          const screenH = profile?.height || 1080;
-          const useCanvas = !!(screen.canvasEnabled && screen.canvasWidth && screen.canvasHeight);
-          const frameW = useCanvas ? (screen.canvasWidth || screenW) : screenW;
-          const frameH = useCanvas ? (screen.canvasHeight || screenH) : screenH;
-          const offsetXPct = useCanvas ? ((screen.canvasX || 0) / frameW) * 100 : 0;
-          const offsetYPct = useCanvas ? ((screen.canvasY || 0) / frameH) * 100 : 0;
-          const screenWPct = (screenW / frameW) * 100;
-          const screenHPct = (screenH / frameH) * 100;
-          const aspectRatio = `${frameW} / ${frameH}`;
-          return (
-            <div className="rounded-lg overflow-hidden border border-border bg-black">
-              {screenshotQuery.data?.screenshot ? (
-                <div>
-                  <div
-                    className="w-full relative bg-black"
-                    style={{ aspectRatio }}
-                    data-testid={`frame-screenshot-${screen.id}`}
-                  >
-                    <img
-                      src={screenshotQuery.data.screenshot}
-                      alt={`${screen.name} live screenshot`}
-                      className="absolute object-contain"
-                      style={{
-                        left: `${offsetXPct}%`,
-                        top: `${offsetYPct}%`,
-                        width: `${screenWPct}%`,
-                        height: `${screenHPct}%`,
-                      }}
-                      data-testid={`img-screenshot-${screen.id}`}
-                    />
-                  </div>
-                  {screenshotQuery.data.screenshotAt && (
-                    <p className="text-[10px] text-muted-foreground px-2 py-1 bg-muted/50">
-                      Captured {formatDistanceToNow(new Date(screenshotQuery.data.screenshotAt), { addSuffix: true })}
-                      {useCanvas && (
-                        <span className="ml-1 text-muted-foreground/70">
-                          • Screen at ({screen.canvasX || 0}, {screen.canvasY || 0}) on {frameW}×{frameH} canvas
-                        </span>
-                      )}
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div
-                  className="w-full flex items-center justify-center text-xs text-muted-foreground"
-                  style={{ aspectRatio }}
-                >
-                  {screenshotQuery.isLoading ? "Loading..." : "No screenshot available yet"}
-                </div>
-              )}
-            </div>
-          );
-        })()}
+        {screen.screenshotEnabled && (
+          <div className="rounded-lg overflow-hidden border border-border bg-black">
+            {screenshotQuery.data?.screenshot ? (
+              <div>
+                <img
+                  src={screenshotQuery.data.screenshot}
+                  alt={`${screen.name} live screenshot`}
+                  className="w-full h-auto block"
+                  style={
+                    profile?.width && profile?.height
+                      ? { aspectRatio: `${profile.width} / ${profile.height}` }
+                      : undefined
+                  }
+                  data-testid={`img-screenshot-${screen.id}`}
+                />
+                {screenshotQuery.data.screenshotAt && (
+                  <p className="text-[10px] text-muted-foreground px-2 py-1 bg-muted/50">
+                    Captured {formatDistanceToNow(new Date(screenshotQuery.data.screenshotAt), { addSuffix: true })}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div
+                className="w-full flex items-center justify-center text-xs text-muted-foreground"
+                style={{
+                  aspectRatio:
+                    profile?.width && profile?.height
+                      ? `${profile.width} / ${profile.height}`
+                      : "16 / 9",
+                }}
+              >
+                {screenshotQuery.isLoading ? "Loading..." : "No screenshot available yet"}
+              </div>
+            )}
+          </div>
+        )}
         <PresetManager
           targetType="screen"
           targetId={screen.id}
