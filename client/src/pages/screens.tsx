@@ -6,6 +6,7 @@ import { z } from "zod";
 import { addMinutes, formatDistanceToNow } from "date-fns";
 import { PresetManager } from "@/components/preset-manager";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -273,6 +274,13 @@ function ScreenCard({
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const [screenshotOpen, setScreenshotOpen] = useState(false);
+  // Popup view mode: "screen" crops the snapshot to just the screen's AOI
+  // and scales it to fill the popup; "canvas" shows the entire captured
+  // canvas with the dashed AOI overlay (the legacy behavior, useful for
+  // understanding the screen's position within a multi-screen canvas).
+  // Only meaningful when the screen is canvas-enabled — non-canvas screens
+  // always show the full snapshot and the toggle is hidden.
+  const [screenshotViewMode, setScreenshotViewMode] = useState<"screen" | "canvas">("screen");
   const { toast } = useToast();
   const { user } = useAuth();
   const isUserAdmin = user?.role === "admin";
@@ -1004,41 +1012,117 @@ function ScreenCard({
                     data-testid={`dialog-screenshot-${screen.id}`}
                   >
                     <DialogHeader className="px-4 py-2 border-b border-border bg-background">
-                      <DialogTitle className="text-sm" data-testid={`dialog-title-screenshot-${screen.id}`}>
-                        {screen.name} — live screenshot
-                      </DialogTitle>
-                    </DialogHeader>
-                    <div className="relative w-full max-h-[85vh] overflow-auto bg-black">
-                      <div className="relative w-full">
-                        <img
-                          src={screenshotQuery.data.screenshot}
-                          alt={`${screen.name} full-resolution screenshot`}
-                          className="block w-full h-auto"
-                          style={{ imageRendering: "auto" }}
-                          data-testid={`img-screenshot-full-${screen.id}`}
-                        />
+                      <div className="flex items-center justify-between gap-3 pr-8">
+                        <DialogTitle className="text-sm" data-testid={`dialog-title-screenshot-${screen.id}`}>
+                          {screen.name} — live screenshot
+                        </DialogTitle>
                         {screen.canvasEnabled && screen.canvasWidth && screen.canvasHeight && profile?.width && profile?.height && (
-                          <>
-                            <div
-                              className="absolute border-2 border-dashed border-white/60 pointer-events-none"
-                              style={{
-                                left: `${((screen.canvasX || 0) / screen.canvasWidth) * 100}%`,
-                                top: `${((screen.canvasY || 0) / screen.canvasHeight) * 100}%`,
-                                width: `${(profile.width / screen.canvasWidth) * 100}%`,
-                                height: `${(profile.height / screen.canvasHeight) * 100}%`,
-                              }}
-                              data-testid={`overlay-aoi-full-${screen.id}`}
-                            />
-                            <div
-                              className="absolute top-2 left-2 px-2 py-1 rounded bg-black/70 text-white text-xs font-mono pointer-events-none"
-                              data-testid={`label-aoi-full-${screen.id}`}
+                          <div
+                            className="inline-flex rounded-md border border-border overflow-hidden text-xs"
+                            data-testid={`toggle-screenshot-view-${screen.id}`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setScreenshotViewMode("screen")}
+                              className={cn(
+                                "px-3 py-1 transition-colors",
+                                screenshotViewMode === "screen"
+                                  ? "bg-primary text-primary-foreground"
+                                  : "bg-background text-muted-foreground hover-elevate",
+                              )}
+                              data-testid={`button-screenshot-view-screen-${screen.id}`}
+                              aria-pressed={screenshotViewMode === "screen"}
                             >
-                              Screen at ({screen.canvasX || 0},{screen.canvasY || 0}) on {screen.canvasWidth}×{screen.canvasHeight} canvas
-                            </div>
-                          </>
+                              Screen
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setScreenshotViewMode("canvas")}
+                              className={cn(
+                                "px-3 py-1 transition-colors border-l border-border",
+                                screenshotViewMode === "canvas"
+                                  ? "bg-primary text-primary-foreground"
+                                  : "bg-background text-muted-foreground hover-elevate",
+                              )}
+                              data-testid={`button-screenshot-view-canvas-${screen.id}`}
+                              aria-pressed={screenshotViewMode === "canvas"}
+                            >
+                              Canvas
+                            </button>
+                          </div>
                         )}
                       </div>
-                    </div>
+                    </DialogHeader>
+                    {screen.canvasEnabled && screen.canvasWidth && screen.canvasHeight && profile?.width && profile?.height && screenshotViewMode === "screen" ? (
+                      // SCREEN VIEW (canvas-enabled, default): crop the captured
+                      // canvas to just the AOI and scale it to fill the popup.
+                      // The wrapper enforces the screen aspect ratio and clamps
+                      // its size to fit within the popup (95vw wide, 85vh tall).
+                      // Inside, the <img> is sized so its canvas-width matches
+                      // the wrapper's screen-width via the canvasW/profileW
+                      // ratio, and translated so the AOI's top-left aligns to
+                      // the wrapper's (0,0). Pure CSS — no re-encoding.
+                      <div className="flex items-center justify-center bg-black p-2">
+                        <div
+                          className="relative overflow-hidden bg-black"
+                          style={{
+                            aspectRatio: `${profile.width} / ${profile.height}`,
+                            width: `min(100%, calc((85vh - 1rem) * ${profile.width} / ${profile.height}))`,
+                          }}
+                          data-testid={`screenshot-aoi-crop-${screen.id}`}
+                        >
+                          <img
+                            src={screenshotQuery.data.screenshot}
+                            alt={`${screen.name} screen content`}
+                            className="absolute block max-w-none"
+                            style={{
+                              width: `${(screen.canvasWidth / profile.width) * 100}%`,
+                              height: "auto",
+                              left: `${-((screen.canvasX || 0) / profile.width) * 100}%`,
+                              top: `${-((screen.canvasY || 0) / profile.height) * 100}%`,
+                              imageRendering: "auto",
+                            }}
+                            data-testid={`img-screenshot-full-${screen.id}`}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      // CANVAS VIEW (legacy behavior): show the full captured
+                      // canvas at popup width with the dashed AOI overlay and
+                      // label. Also the only mode for non-canvas-enabled
+                      // screens (no toggle is rendered above).
+                      <div className="relative w-full max-h-[85vh] overflow-auto bg-black">
+                        <div className="relative w-full">
+                          <img
+                            src={screenshotQuery.data.screenshot}
+                            alt={`${screen.name} full-resolution screenshot`}
+                            className="block w-full h-auto"
+                            style={{ imageRendering: "auto" }}
+                            data-testid={`img-screenshot-full-${screen.id}`}
+                          />
+                          {screen.canvasEnabled && screen.canvasWidth && screen.canvasHeight && profile?.width && profile?.height && (
+                            <>
+                              <div
+                                className="absolute border-2 border-dashed border-white/60 pointer-events-none"
+                                style={{
+                                  left: `${((screen.canvasX || 0) / screen.canvasWidth) * 100}%`,
+                                  top: `${((screen.canvasY || 0) / screen.canvasHeight) * 100}%`,
+                                  width: `${(profile.width / screen.canvasWidth) * 100}%`,
+                                  height: `${(profile.height / screen.canvasHeight) * 100}%`,
+                                }}
+                                data-testid={`overlay-aoi-full-${screen.id}`}
+                              />
+                              <div
+                                className="absolute top-2 left-2 px-2 py-1 rounded bg-black/70 text-white text-xs font-mono pointer-events-none"
+                                data-testid={`label-aoi-full-${screen.id}`}
+                              >
+                                Screen at ({screen.canvasX || 0},{screen.canvasY || 0}) on {screen.canvasWidth}×{screen.canvasHeight} canvas
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </DialogContent>
                 </Dialog>
               </div>
