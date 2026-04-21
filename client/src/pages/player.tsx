@@ -572,12 +572,24 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const playerScreenW = content?.profile?.width || 1920;
   const playerScreenH = content?.profile?.height || 1080;
 
+  const layoutIsCustom = layout?.aspectRatio === "custom";
+  const layoutCustomW = layout?.customWidth ?? 0;
+  const layoutCustomH = layout?.customHeight ?? 0;
+  const dimsMatch = (a: number, b: number) => Math.abs(a - b) <= 1;
+  const useCanvasMode =
+    canvasEnabled &&
+    layoutIsCustom &&
+    layoutCustomW > 0 &&
+    layoutCustomH > 0 &&
+    dimsMatch(layoutCustomW, canvasW) &&
+    dimsMatch(layoutCustomH, canvasH);
+
   const displayAspect = aspectRatio;
   const trueWidth = Math.round(REFERENCE_HEIGHT * displayAspect);
   const trueHeight = REFERENCE_HEIGHT;
 
-  const viewportW = canvasEnabled ? playerScreenW : trueWidth;
-  const viewportH = canvasEnabled ? playerScreenH : trueHeight;
+  const viewportW = useCanvasMode ? playerScreenW : trueWidth;
+  const viewportH = useCanvasMode ? playerScreenH : trueHeight;
 
   useEffect(() => {
     const updateScale = () => {
@@ -785,7 +797,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
           <div
             className="absolute"
             style={
-              canvasEnabled
+              useCanvasMode
                 ? {
                     left: `${-playerCanvasX}px`,
                     top: `${-playerCanvasY}px`,
