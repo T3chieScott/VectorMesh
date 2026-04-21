@@ -3,6 +3,7 @@ import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, 
 import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
 import { TestPattern } from "@/components/test-pattern";
 import html2canvas from "html2canvas";
+import { computePlayerCaptureDims } from "@/lib/playerCaptureDims";
 
 interface PlayerContentData {
   screen: Screen;
@@ -375,13 +376,36 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const captureScreenshot = useCallback(async () => {
     try {
       if (!containerRef.current) return;
-      const canvas = await html2canvas(containerRef.current, {
+      // Read the capture target's UN-transformed logical dimensions. The
+      // container has `transform: scale(...)` applied so it visually fits the
+      // browser window, but offsetWidth/offsetHeight return the layout size
+      // before transform — which is what html2canvas needs as its capture box.
+      // Without these explicit dims (and the transform reset in onclone below),
+      // html2canvas mis-calculates the render region and silently clips
+      // children that fall outside it (Task #80: cropped player snapshots).
+      const targetEl = containerRef.current;
+      const captureWidth = targetEl.offsetWidth;
+      const captureHeight = targetEl.offsetHeight;
+      const canvas = await html2canvas(targetEl, {
         scale: 0.3,
         useCORS: true,
         allowTaint: true,
         logging: false,
         backgroundColor: "#000000",
+        width: captureWidth,
+        height: captureHeight,
+        windowWidth: captureWidth,
+        windowHeight: captureHeight,
         onclone: (clonedDoc: Document) => {
+          // Neutralize the CSS scale on the cloned capture target so html2canvas
+          // renders it at its logical 1:1 size with no transform interference.
+          const clonedTarget = clonedDoc.querySelector(
+            '[data-testid="player-capture-target"]'
+          ) as HTMLElement | null;
+          if (clonedTarget) {
+            clonedTarget.style.transform = "none";
+            clonedTarget.style.transformOrigin = "top left";
+          }
           const iframes = clonedDoc.querySelectorAll('iframe[src*="youtube.com/embed"]');
           iframes.forEach((iframe) => {
             const parent = iframe.parentElement;
@@ -601,12 +625,16 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const trueWidth = Math.round(REFERENCE_HEIGHT * displayAspect);
   const trueHeight = REFERENCE_HEIGHT;
 
-  // The html2canvas capture target. For canvas-enabled screens the player
-  // renders the whole canvas as its viewport (with the screen positioned at
-  // its AOI inside it), so the capture is the whole canvas. For non-canvas
-  // screens the capture is the screen viewport (legacy behavior).
-  const captureW = canvasEnabled ? canvasW : trueWidth;
-  const captureH = canvasEnabled ? canvasH : trueHeight;
+  // The html2canvas capture target. Centralized in computePlayerCaptureDims
+  // so the regression test in tests/player-capture-dims.test.ts can lock in
+  // the invariant the captureScreenshot callback relies on.
+  const { captureW, captureH } = computePlayerCaptureDims({
+    canvasEnabled,
+    canvasW,
+    canvasH,
+    trueWidth,
+    trueHeight,
+  });
 
   // Inside the canvas viewport, the screen slot sits at the screen's AOI.
   // Inside the slot, the zone frame either fills the slot (screen-fitted
