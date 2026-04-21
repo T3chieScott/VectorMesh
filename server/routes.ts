@@ -323,9 +323,17 @@ export async function registerRoutes(
     try {
       const user = (req as any).dbUser;
       const tokens = await storage.getApiTokensByUser(user.id);
-      const newIpEvents = await storage.getRecentNewIpEventsForTokens(tokens.map(t => t.id));
+      const tokenIds = tokens.map(t => t.id);
+      const newIpEvents = await storage.getRecentNewIpEventsForTokens(tokenIds);
+      const ackActors = await storage.getLatestAckActorsForTokens(tokenIds);
       res.json(tokens.map(t => {
         const event = newIpEvents.get(t.id);
+        // Only surface the "last reviewed" line when there is no active alert,
+        // since the alert banner already shows its own dismiss affordance.
+        const ack = !event && t.newIpAcknowledgedAt ? ackActors.get(t.id) : undefined;
+        const ackName = ack
+          ? ([ack.firstName, ack.lastName].filter(Boolean).join(" ").trim() || ack.email || null)
+          : null;
         return {
           id: t.id,
           name: t.name,
@@ -334,6 +342,8 @@ export async function registerRoutes(
           createdAt: t.createdAt,
           revokedAt: t.revokedAt,
           newIp: event ? { ip: event.lastIp, at: event.lastAt, count: event.count } : null,
+          newIpAcknowledgedAt: !event ? t.newIpAcknowledgedAt : null,
+          newIpAcknowledgedBy: ack ? { id: ack.userId, name: ackName } : null,
         };
       }));
     } catch (error) {

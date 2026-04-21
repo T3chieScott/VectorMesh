@@ -469,6 +469,8 @@ interface ApiTokenData {
   createdAt: string | null;
   revokedAt: string | null;
   newIp: { ip: string | null; at: string | null; count: number } | null;
+  newIpAcknowledgedAt: string | null;
+  newIpAcknowledgedBy: { id: string | null; name: string | null } | null;
 }
 
 function ApiTokensCard() {
@@ -585,6 +587,17 @@ function ApiTokensCard() {
                             <> · Revoked: {new Date(t.revokedAt).toLocaleDateString()}</>
                           )}
                         </p>
+                        {!t.newIp && !isRevoked && t.newIpAcknowledgedAt && (
+                          <p
+                            className="mt-1 text-xs text-muted-foreground"
+                            data-testid={`text-last-reviewed-${t.id}`}
+                          >
+                            Last reviewed
+                            {t.newIpAcknowledgedBy?.name ? ` by ${t.newIpAcknowledgedBy.name}` : ""}
+                            {" on "}
+                            {new Date(t.newIpAcknowledgedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                          </p>
+                        )}
                         {t.newIp && !isRevoked && (
                           <div
                             className="mt-2 flex items-start gap-2 text-xs rounded-md border border-amber-300/60 bg-amber-50 px-2 py-1.5 dark:border-amber-700/60 dark:bg-amber-950/40"

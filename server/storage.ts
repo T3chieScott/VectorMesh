@@ -251,6 +251,7 @@ export interface IStorage {
   recordApiTokenIpUse(tokenId: string, ip: string): Promise<{ isNew: boolean }>;
   deleteApiTokenKnownIp(tokenId: string, ip: string): Promise<void>;
   getRecentNewIpEventsForTokens(tokenIds: string[]): Promise<Map<string, { lastIp: string | null; lastAt: Date | null; count: number }>>;
+  getLatestAckActorsForTokens(tokenIds: string[]): Promise<Map<string, { at: Date; userId: string | null; firstName: string | null; lastName: string | null; email: string | null }>>;
   acknowledgeApiTokenNewIp(tokenId: string, at: Date): Promise<void>;
 }
 
@@ -1180,6 +1181,39 @@ export class DatabaseStorage implements IStorage {
       } else {
         result.set(row.entityId, { lastIp: row.ip ?? null, lastAt: row.timestamp ?? null, count: 1 });
       }
+    }
+    return result;
+  }
+
+  async getLatestAckActorsForTokens(tokenIds: string[]): Promise<Map<string, { at: Date; userId: string | null; firstName: string | null; lastName: string | null; email: string | null }>> {
+    const result = new Map<string, { at: Date; userId: string | null; firstName: string | null; lastName: string | null; email: string | null }>();
+    if (tokenIds.length === 0) return result;
+    // Pull every ack_new_ip audit entry for these tokens ordered newest-first,
+    // then keep the first (most recent) row per token. We resolve actor info
+    // via a left join on users so deleted accounts still surface a timestamp.
+    const rows = await db
+      .select({
+        entityId: auditLogs.entityId,
+        timestamp: auditLogs.timestamp,
+        userId: auditLogs.userId,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+      })
+      .from(auditLogs)
+      .leftJoin(users, eq(auditLogs.userId, users.id))
+      .where(and(eq(auditLogs.action, "ack_new_ip"), eq(auditLogs.entityType, "api_token"), inArray(auditLogs.entityId, tokenIds)))
+      .orderBy(desc(auditLogs.timestamp));
+    for (const row of rows) {
+      if (!row.entityId || !row.timestamp) continue;
+      if (result.has(row.entityId)) continue;
+      result.set(row.entityId, {
+        at: row.timestamp,
+        userId: row.userId ?? null,
+        firstName: row.firstName ?? null,
+        lastName: row.lastName ?? null,
+        email: row.email ?? null,
+      });
     }
     return result;
   }
