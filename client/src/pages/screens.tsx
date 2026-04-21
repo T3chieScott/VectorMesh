@@ -958,12 +958,34 @@ function ScreenCard({
           <div className="rounded-lg overflow-hidden border border-border bg-black">
             {screenshotQuery.data?.screenshot ? (
               <div>
-                <img
-                  src={screenshotQuery.data.screenshot}
-                  alt={`${screen.name} live screenshot`}
-                  className="w-full h-auto block"
-                  data-testid={`img-screenshot-${screen.id}`}
-                />
+                <div className="relative">
+                  <img
+                    src={screenshotQuery.data.screenshot}
+                    alt={`${screen.name} live screenshot`}
+                    className="w-full h-auto block"
+                    data-testid={`img-screenshot-${screen.id}`}
+                  />
+                  {screen.canvasEnabled && screen.canvasWidth && screen.canvasHeight && profile?.width && profile?.height && (
+                    <>
+                      <div
+                        className="absolute border border-dashed border-white/40 pointer-events-none"
+                        style={{
+                          left: `${((screen.canvasX || 0) / screen.canvasWidth) * 100}%`,
+                          top: `${((screen.canvasY || 0) / screen.canvasHeight) * 100}%`,
+                          width: `${(profile.width / screen.canvasWidth) * 100}%`,
+                          height: `${(profile.height / screen.canvasHeight) * 100}%`,
+                        }}
+                        data-testid={`overlay-aoi-${screen.id}`}
+                      />
+                      <div
+                        className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/60 text-white text-[10px] font-mono pointer-events-none"
+                        data-testid={`label-aoi-${screen.id}`}
+                      >
+                        Screen at ({screen.canvasX || 0},{screen.canvasY || 0}) on {screen.canvasWidth}×{screen.canvasHeight} canvas
+                      </div>
+                    </>
+                  )}
+                </div>
                 {screenshotQuery.data.screenshotAt && (
                   <p className="text-[10px] text-muted-foreground px-2 py-1 bg-muted/50">
                     Captured {formatDistanceToNow(new Date(screenshotQuery.data.screenshotAt), { addSuffix: true })}
