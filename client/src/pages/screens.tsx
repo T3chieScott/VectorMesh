@@ -63,6 +63,7 @@ import {
   Camera,
   LayoutGrid,
   TestTube,
+  AlertTriangle,
 } from "lucide-react";
 import { useSiteContext } from "@/hooks/use-site-context";
 import { useAuth } from "@/hooks/use-auth";
@@ -516,6 +517,24 @@ function ScreenCard({
               ) : (
                 <Badge variant="secondary">Unpaired</Badge>
               )}
+              {!screen.displayProfileId && (
+                <button
+                  type="button"
+                  onClick={() => !screen.locked && setEditOpen(true)}
+                  disabled={!!screen.locked}
+                  className="inline-flex"
+                  title="Click to assign a display profile"
+                  data-testid={`button-no-profile-warning-${screen.id}`}
+                >
+                  <Badge
+                    variant="outline"
+                    className="gap-1 border-amber-500/40 text-amber-600 dark:text-amber-400 hover-elevate cursor-pointer"
+                  >
+                    <AlertTriangle className="h-3 w-3" />
+                    No Display Profile
+                  </Badge>
+                </button>
+              )}
             </div>
             {(screen.location || client || screen.hostname || (screen.isPaired && screen.ipAddress)) && (
               <div className="flex items-center gap-1 text-sm text-muted-foreground flex-wrap">
@@ -644,7 +663,7 @@ function ScreenCard({
                           <FormLabel>Display Profile</FormLabel>
                           <Select
                             onValueChange={field.onChange}
-                            defaultValue={field.value}
+                            value={field.value || ""}
                           >
                             <FormControl>
                               <SelectTrigger data-testid="select-edit-screen-profile">
@@ -659,6 +678,17 @@ function ScreenCard({
                               ))}
                             </SelectContent>
                           </Select>
+                          {!field.value && (
+                            <div
+                              className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400"
+                              data-testid={`warning-no-display-profile-${screen.id}`}
+                            >
+                              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                              <span>
+                                This screen has no display profile assigned. The simulator will fall back to the layout's dimensions, which may not match the real display. Pick a profile above to fix this.
+                              </span>
+                            </div>
+                          )}
                           <FormMessage />
                         </FormItem>
                       )}
