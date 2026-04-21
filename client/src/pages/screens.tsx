@@ -272,6 +272,7 @@ function ScreenCard({
   activeOverride: LiveOverride | null;
 }) {
   const [editOpen, setEditOpen] = useState(false);
+  const [screenshotOpen, setScreenshotOpen] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
   const isUserAdmin = user?.role === "admin";
@@ -958,7 +959,13 @@ function ScreenCard({
           <div className="rounded-lg overflow-hidden border border-border bg-black">
             {screenshotQuery.data?.screenshot ? (
               <div>
-                <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setScreenshotOpen(true)}
+                  className="relative block w-full cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  data-testid={`button-open-screenshot-${screen.id}`}
+                  aria-label={`Open full-resolution screenshot of ${screen.name}`}
+                >
                   <img
                     src={screenshotQuery.data.screenshot}
                     alt={`${screen.name} live screenshot`}
@@ -985,12 +992,54 @@ function ScreenCard({
                       </div>
                     </>
                   )}
-                </div>
+                </button>
                 {screenshotQuery.data.screenshotAt && (
                   <p className="text-[10px] text-muted-foreground px-2 py-1 bg-muted/50">
                     Captured {formatDistanceToNow(new Date(screenshotQuery.data.screenshotAt), { addSuffix: true })}
                   </p>
                 )}
+                <Dialog open={screenshotOpen} onOpenChange={setScreenshotOpen}>
+                  <DialogContent
+                    className="max-w-[95vw] w-[95vw] sm:max-w-[95vw] p-0 bg-black border-border"
+                    data-testid={`dialog-screenshot-${screen.id}`}
+                  >
+                    <DialogHeader className="px-4 py-2 border-b border-border bg-background">
+                      <DialogTitle className="text-sm" data-testid={`dialog-title-screenshot-${screen.id}`}>
+                        {screen.name} — live screenshot
+                      </DialogTitle>
+                    </DialogHeader>
+                    <div className="relative w-full max-h-[85vh] overflow-auto bg-black">
+                      <div className="relative inline-block">
+                        <img
+                          src={screenshotQuery.data.screenshot}
+                          alt={`${screen.name} full-resolution screenshot`}
+                          className="block max-w-none w-auto h-auto"
+                          data-testid={`img-screenshot-full-${screen.id}`}
+                        />
+                        {screen.canvasEnabled && screen.canvasWidth && screen.canvasHeight && profile?.width && profile?.height && (
+                          <>
+                            <div
+                              className="absolute border-2 border-dashed border-white/60 pointer-events-none"
+                              style={{
+                                left: `${((screen.canvasX || 0) / screen.canvasWidth) * 100}%`,
+                                top: `${((screen.canvasY || 0) / screen.canvasHeight) * 100}%`,
+                                width: `${(profile.width / screen.canvasWidth) * 100}%`,
+                                height: `${(profile.height / screen.canvasHeight) * 100}%`,
+                              }}
+                              data-testid={`overlay-aoi-full-${screen.id}`}
+                            />
+                            <div
+                              className="absolute top-2 left-2 px-2 py-1 rounded bg-black/70 text-white text-xs font-mono pointer-events-none"
+                              data-testid={`label-aoi-full-${screen.id}`}
+                            >
+                              Screen at ({screen.canvasX || 0},{screen.canvasY || 0}) on {screen.canvasWidth}×{screen.canvasHeight} canvas
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               </div>
             ) : (
               <div
