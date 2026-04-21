@@ -781,16 +781,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
 
           <div
             className="absolute"
-            style={
-              canvasEnabled
-                ? {
-                    left: `${-playerCanvasX}px`,
-                    top: `${-playerCanvasY}px`,
-                    width: `${canvasW}px`,
-                    height: `${canvasH}px`,
-                  }
-                : { left: 0, top: 0, width: "100%", height: "100%" }
-            }
+            style={{ left: 0, top: 0, width: "100%", height: "100%" }}
           >
             {zones.map((zone) => (
               <div
