@@ -251,6 +251,7 @@ export interface IStorage {
   recordApiTokenIpUse(tokenId: string, ip: string): Promise<{ isNew: boolean }>;
   deleteApiTokenKnownIp(tokenId: string, ip: string): Promise<void>;
   getRecentNewIpEventsForTokens(tokenIds: string[]): Promise<Map<string, { lastIp: string | null; lastAt: Date | null; count: number }>>;
+  acknowledgeApiTokenNewIp(tokenId: string, at: Date): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1150,6 +1151,16 @@ export class DatabaseStorage implements IStorage {
   async getRecentNewIpEventsForTokens(tokenIds: string[]): Promise<Map<string, { lastIp: string | null; lastAt: Date | null; count: number }>> {
     const result = new Map<string, { lastIp: string | null; lastAt: Date | null; count: number }>();
     if (tokenIds.length === 0) return result;
+    // Fetch per-token acknowledgement cutoffs so audit entries that the admin
+    // has already dismissed are excluded. A subsequent new-IP event with a
+    // strictly newer timestamp will still surface.
+    const ackRows = await db
+      .select({ id: apiTokens.id, ackAt: apiTokens.newIpAcknowledgedAt })
+      .from(apiTokens)
+      .where(inArray(apiTokens.id, tokenIds));
+    const ackByToken = new Map<string, Date | null>();
+    for (const row of ackRows) ackByToken.set(row.id, row.ackAt ?? null);
+
     const rows = await db
       .select({
         entityId: auditLogs.entityId,
@@ -1161,6 +1172,8 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(auditLogs.timestamp));
     for (const row of rows) {
       if (!row.entityId) continue;
+      const ackAt = ackByToken.get(row.entityId) ?? null;
+      if (ackAt && row.timestamp && row.timestamp.getTime() <= ackAt.getTime()) continue;
       const existing = result.get(row.entityId);
       if (existing) {
         existing.count += 1;
@@ -1169,6 +1182,22 @@ export class DatabaseStorage implements IStorage {
       }
     }
     return result;
+  }
+
+  async acknowledgeApiTokenNewIp(tokenId: string, at: Date): Promise<void> {
+    // Monotonic update: never let a stale session/tab regress the cutoff to
+    // an older timestamp and resurrect previously-dismissed alerts. Only
+    // advance the value when the incoming timestamp is strictly newer
+    // (or no prior ack exists).
+    await db
+      .update(apiTokens)
+      .set({ newIpAcknowledgedAt: at })
+      .where(
+        and(
+          eq(apiTokens.id, tokenId),
+          sql`(${apiTokens.newIpAcknowledgedAt} IS NULL OR ${apiTokens.newIpAcknowledgedAt} < ${at})`,
+        ),
+      );
   }
 
   async deleteApiTokenKnownIp(tokenId: string, ip: string): Promise<void> {

@@ -512,6 +512,19 @@ function ApiTokensCard() {
     },
   });
 
+  const dismissNewIpMutation = useMutation({
+    mutationFn: async ({ id, lastAt }: { id: string; lastAt: string }) => {
+      await apiRequest("POST", `/api/me/api-tokens/${id}/ack-new-ip`, { lastAt });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/me/api-tokens"] });
+      toast({ title: "New IP alert dismissed" });
+    },
+    onError: () => {
+      toast({ title: "Failed to dismiss alert", variant: "destructive" });
+    },
+  });
+
   const handleCopy = async () => {
     if (!revealedToken) return;
     try {
@@ -611,6 +624,17 @@ function ApiTokensCard() {
                                 >
                                   Revoke token
                                 </button>
+                                {t.newIp.at && (
+                                  <button
+                                    type="button"
+                                    onClick={() => dismissNewIpMutation.mutate({ id: t.id, lastAt: t.newIp!.at! })}
+                                    disabled={dismissNewIpMutation.isPending}
+                                    className="text-amber-800 dark:text-amber-300 hover:underline disabled:opacity-50"
+                                    data-testid={`button-dismiss-new-ip-${t.id}`}
+                                  >
+                                    Dismiss
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </div>

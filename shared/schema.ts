@@ -811,6 +811,10 @@ export const apiTokens = pgTable("api_tokens", {
   lastUsedAt: timestamp("last_used_at"),
   createdAt: timestamp("created_at").defaultNow(),
   revokedAt: timestamp("revoked_at"),
+  // Timestamp of the most recent api_token_new_ip audit entry that an admin
+  // has dismissed. Alerts at or before this point are hidden; a brand-new
+  // unexpected IP (with a strictly newer timestamp) re-raises the warning.
+  newIpAcknowledgedAt: timestamp("new_ip_acknowledged_at"),
 });
 
 export type ApiToken = typeof apiTokens.$inferSelect;

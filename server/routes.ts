@@ -373,6 +373,30 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/me/api-tokens/:id/ack-new-ip", requireAuth, async (req, res) => {
+    try {
+      const user = (req as any).dbUser;
+      const token = await storage.getApiToken(req.params.id);
+      if (!token || token.userId !== user.id) {
+        return res.status(404).json({ error: "Token not found" });
+      }
+      const lastAtRaw = req.body?.lastAt;
+      if (!lastAtRaw || typeof lastAtRaw !== "string") {
+        return res.status(400).json({ error: "lastAt is required" });
+      }
+      const lastAt = new Date(lastAtRaw);
+      if (Number.isNaN(lastAt.getTime())) {
+        return res.status(400).json({ error: "Invalid lastAt timestamp" });
+      }
+      await storage.acknowledgeApiTokenNewIp(token.id, lastAt);
+      logAudit(req, "ack_new_ip", "api_token", token.id, { lastAt: lastAt.toISOString() });
+      res.status(204).send();
+    } catch (error) {
+      console.error("Acknowledge api token new IP error:", error);
+      res.status(500).json({ error: "Failed to acknowledge new IP alert" });
+    }
+  });
+
   app.delete("/api/me/api-tokens/:id", requireAuth, async (req, res) => {
     try {
       const user = (req as any).dbUser;
