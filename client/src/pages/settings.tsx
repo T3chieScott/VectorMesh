@@ -595,13 +595,23 @@ function ApiTokensCard() {
                                   </span>
                                 )}
                               </p>
-                              <Link
-                                href={`/admin/activity?action=api_token_new_ip&entityType=api_token&entityId=${encodeURIComponent(t.id)}`}
-                                className="text-amber-800 dark:text-amber-300 hover:underline"
-                                data-testid={`link-view-token-uses-${t.id}`}
-                              >
-                                View all uses
-                              </Link>
+                              <div className="flex items-center gap-3">
+                                <Link
+                                  href={`/admin/activity?action=api_token_new_ip&entityType=api_token&entityId=${encodeURIComponent(t.id)}`}
+                                  className="text-amber-800 dark:text-amber-300 hover:underline"
+                                  data-testid={`link-view-token-uses-${t.id}`}
+                                >
+                                  View all uses
+                                </Link>
+                                <button
+                                  type="button"
+                                  onClick={() => setRevokeId(t.id)}
+                                  className="font-medium text-amber-900 dark:text-amber-200 hover:underline"
+                                  data-testid={`button-revoke-token-from-alert-${t.id}`}
+                                >
+                                  Revoke token
+                                </button>
+                              </div>
                             </div>
                           </div>
                         )}
