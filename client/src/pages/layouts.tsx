@@ -4,7 +4,15 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { PLAYER_VARIABLES, resolvePlayerVariables, type PlayerVariableContext } from "@/lib/player-variables";
+import {
+  PLAYER_VARIABLES,
+  resolvePlayerVariables,
+  extractTokensFromObject,
+  isTokenResolved,
+  unresolvedTokenReason,
+  type PlayerVariableContext,
+} from "@/lib/player-variables";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8912,14 +8920,158 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
   );
 }
 
+function VariableResolvedBadge({
+  layout,
+  previewScreenId,
+  previewCtx,
+  previewScreenName,
+  previewStatus,
+}: {
+  layout: LayoutTemplate;
+  previewScreenId: string;
+  previewCtx: PlayerVariableContext | null | undefined;
+  previewScreenName?: string;
+  previewStatus: "none" | "loading" | "ready" | "error";
+}) {
+  const tokens = useMemo(
+    () => extractTokensFromObject(layout.zones),
+    [layout.zones]
+  );
+
+  if (tokens.length === 0) return null;
+
+  if (previewStatus === "none") {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge
+            variant="outline"
+            className="text-xs cursor-help"
+            data-testid={`badge-tokens-unscoped-${layout.id}`}
+          >
+            {tokens.length} token{tokens.length === 1 ? "" : "s"}
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">
+          <div className="text-xs">
+            Pick a preview screen above to check whether these tokens resolve:
+            <ul className="mt-1 space-y-0.5">
+              {tokens.map((t) => (
+                <li key={t}>
+                  <code className="text-[11px]">{t}</code>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  if (previewStatus === "loading") {
+    return (
+      <Badge variant="outline" className="text-xs" data-testid={`badge-tokens-loading-${layout.id}`}>
+        checking tokens…
+      </Badge>
+    );
+  }
+
+  if (previewStatus === "error" || !previewCtx) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge
+            variant="outline"
+            className="text-xs cursor-help border-amber-500/40 text-amber-700 dark:text-amber-400"
+            data-testid={`badge-tokens-unknown-${layout.id}`}
+          >
+            tokens unknown
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">
+          <div className="text-xs">
+            Couldn't evaluate tokens for {previewScreenName || "this screen"}.
+            The screen may be missing or the player-vars endpoint failed.
+            Tokens used by this layout:
+            <ul className="mt-1 space-y-0.5">
+              {tokens.map((t) => (
+                <li key={t}>
+                  <code className="text-[11px]">{t}</code>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  const empty = tokens.filter((t) => !isTokenResolved(t, previewCtx));
+  const allOk = empty.length === 0;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge
+          variant={allOk ? "secondary" : "destructive"}
+          className={`text-xs cursor-help ${allOk ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30" : ""}`}
+          data-testid={`badge-tokens-${allOk ? "ok" : "empty"}-${layout.id}`}
+        >
+          {allOk
+            ? "Tokens OK"
+            : `${empty.length} token${empty.length === 1 ? "" : "s"} empty`}
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs">
+        <div className="text-xs space-y-1">
+          <div className="font-medium">
+            {allOk
+              ? `All ${tokens.length} token${tokens.length === 1 ? "" : "s"} resolve for ${previewScreenName || "this screen"}`
+              : `Unresolved on ${previewScreenName || "this screen"}:`}
+          </div>
+          {!allOk && (
+            <ul className="space-y-1">
+              {empty.map((t) => (
+                <li key={t}>
+                  <code className="text-[11px]">{t}</code>
+                  <div className="text-muted-foreground text-[11px]">
+                    {unresolvedTokenReason(t, previewCtx)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {allOk && (
+            <ul className="space-y-0.5">
+              {tokens.map((t) => (
+                <li key={t}>
+                  <code className="text-[11px]">{t}</code>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function LayoutListItem({ 
   layout, 
   isSelected, 
-  onSelect 
+  onSelect,
+  previewScreenId,
+  previewCtx,
+  previewScreenName,
+  previewStatus,
 }: { 
   layout: LayoutTemplate; 
   isSelected: boolean; 
   onSelect: () => void;
+  previewScreenId: string;
+  previewCtx: PlayerVariableContext | null | undefined;
+  previewScreenName?: string;
+  previewStatus: "none" | "loading" | "ready" | "error";
 }) {
   const zones = (layout.zones as LayoutZone[]) || [];
   const aspectDims = getAspectRatioDimensions(
@@ -8965,6 +9117,13 @@ function LayoutListItem({
                 ? `${layout.customWidth}×${layout.customHeight}px`
                 : layout.aspectRatio || "16:9"}
             </Badge>
+            <VariableResolvedBadge
+              layout={layout}
+              previewScreenId={previewScreenId}
+              previewCtx={previewCtx}
+              previewScreenName={previewScreenName}
+              previewStatus={previewStatus}
+            />
           </div>
         </div>
       </div>
@@ -9798,6 +9957,30 @@ export default function LayoutsPage() {
     ...eventsQuery,
   });
 
+  const previewScreenId = useVariablePreviewScreenId();
+  const { data: screensForPreview = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["/api/screens"],
+  });
+  const previewVarsQuery = useQuery<{ playerVars: PlayerVariableContext | null }>({
+    queryKey: ["/api/simulator", previewScreenId, "player-vars"],
+    queryFn: async () => {
+      const res = await fetch(`/api/simulator/${previewScreenId}/player-vars`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch preview vars");
+      return res.json();
+    },
+    enabled: !!previewScreenId,
+    refetchInterval: 60_000,
+  });
+  const previewCtx = previewVarsQuery.data?.playerVars ?? null;
+  const previewStatus: "none" | "loading" | "ready" | "error" = !previewScreenId
+    ? "none"
+    : previewVarsQuery.isError
+      ? "error"
+      : previewVarsQuery.data
+        ? "ready"
+        : "loading";
+  const previewScreenName = screensForPreview.find((s) => s.id === previewScreenId)?.name;
+
   const selectedLayout = layouts.find(l => l.id === selectedLayoutId);
   const savedZones = useMemo(() => (selectedLayout?.zones as LayoutZone[]) || [], [selectedLayout?.zones]);
   
@@ -9914,9 +10097,30 @@ export default function LayoutsPage() {
     <div className="-m-6 flex overflow-hidden" style={{ height: 'calc(100vh - 3.5rem)' }} data-testid="layouts-page">
       {(!selectedLayout || showLayoutList) && (
         <div className="w-80 min-w-80 flex-shrink-0 border-r flex flex-col overflow-hidden bg-background">
-          <div className="p-4 border-b flex items-center justify-between gap-2">
-            <h1 className="font-semibold" data-testid="text-layouts-title">Layouts</h1>
-            <CreateLayoutDialog events={events} />
+          <div className="p-4 border-b space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h1 className="font-semibold" data-testid="text-layouts-title">Layouts</h1>
+              <CreateLayoutDialog events={events} />
+            </div>
+            <div>
+              <Label className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 block">
+                Check tokens for screen
+              </Label>
+              <Select
+                value={previewScreenId || "none"}
+                onValueChange={(v) => setVariablePreviewScreenId(v === "none" ? "" : v)}
+              >
+                <SelectTrigger className="h-8 text-xs" data-testid="select-layouts-preview-screen">
+                  <SelectValue placeholder="No screen selected" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No screen selected</SelectItem>
+                  {screensForPreview.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <ScrollArea className="flex-1">
             <div className="p-2 space-y-1">
@@ -9929,6 +10133,10 @@ export default function LayoutsPage() {
                     setSelectedLayoutId(layout.id);
                     setShowLayoutList(false);
                   }}
+                  previewScreenId={previewScreenId}
+                  previewCtx={previewCtx}
+                  previewScreenName={previewScreenName}
+                  previewStatus={previewStatus}
                 />
               ))}
             </div>

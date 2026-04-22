@@ -84,6 +84,69 @@ export function resolvePlayerVariables(text: string | null | undefined, ctx?: Pl
   return out;
 }
 
+const TOKEN_REGEX = /\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}/gi;
+
+export function extractTokensFromText(text: string | null | undefined): string[] {
+  if (!text) return [];
+  const out: string[] = [];
+  const re = new RegExp(TOKEN_REGEX.source, TOKEN_REGEX.flags);
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    out.push(`{{${match[1].toLowerCase()}}}`);
+  }
+  return out;
+}
+
+export function extractTokensFromObject(value: unknown): string[] {
+  const seen = new Set<string>();
+  const visit = (v: unknown) => {
+    if (v == null) return;
+    if (typeof v === "string") {
+      for (const t of extractTokensFromText(v)) seen.add(t);
+    } else if (Array.isArray(v)) {
+      v.forEach(visit);
+    } else if (typeof v === "object") {
+      Object.values(v as Record<string, unknown>).forEach(visit);
+    }
+  };
+  visit(value);
+  return Array.from(seen);
+}
+
+export function isTokenResolved(token: string, ctx?: PlayerVariableContext): boolean {
+  if (!ctx) {
+    return token === "{{date}}" || token === "{{time}}" || token === "{{day}}";
+  }
+  const map = buildResolved(ctx);
+  const v = map[token];
+  return typeof v === "string" && v.length > 0;
+}
+
+export function unresolvedTokenReason(token: string, ctx?: PlayerVariableContext): string {
+  switch (token) {
+    case "{{screen_name}}": return "Screen has no name set";
+    case "{{room_name}}": return "Screen has no room/location set";
+    case "{{event_name}}":
+    case "{{event_start_date}}":
+    case "{{event_end_date}}":
+      return "Screen has no current event assigned";
+    case "{{client_name}}":
+      return "Screen is not assigned to a client";
+    case "{{room_capacity}}":
+      return "Room capacity is not set on this screen";
+    case "{{next_session_title}}":
+    case "{{next_session_time}}":
+    case "{{next_session_countdown}}":
+      return ctx?.eventName
+        ? "No upcoming session scheduled for this screen"
+        : "Screen has no current event with a programme";
+    case "{{weather_summary}}":
+      return "Screen has no weather location (lat/lng) set";
+    default:
+      return "Token has no value for this screen";
+  }
+}
+
 export function usePlayerVariableTick(intervalMs = 30_000): number {
   const [tick, setTick] = useState(0);
   useEffect(() => {
