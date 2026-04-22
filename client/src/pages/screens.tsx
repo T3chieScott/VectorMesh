@@ -84,6 +84,10 @@ const screenFormSchema = z.object({
   canvasHeight: z.number().min(1, "Canvas height is required").optional(),
   canvasX: z.number().min(0).default(0),
   canvasY: z.number().min(0).default(0),
+  roomCapacity: z.number().int().min(0).optional().nullable(),
+  weatherLat: z.string().optional(),
+  weatherLng: z.string().optional(),
+  weatherUnit: z.enum(["celsius", "fahrenheit"]).default("celsius"),
 }).refine(
   (data) => !data.canvasEnabled || (data.canvasWidth != null && data.canvasWidth >= 1),
   { message: "Canvas width is required when canvas positioning is enabled", path: ["canvasWidth"] }
@@ -252,6 +256,74 @@ function CanvasFields({
   );
 }
 
+function RoomAndWeatherFields({ form, prefix }: { form: any; prefix: string }) {
+  return (
+    <div className="space-y-3 rounded-lg border p-3 bg-muted/30">
+      <div className="flex items-center gap-2">
+        <MapPin className="h-4 w-4 text-muted-foreground" />
+        <Label className="text-sm font-medium">Room & Weather</Label>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Used by player tokens like <code className="font-mono">{`{{room_capacity}}`}</code> and{" "}
+        <code className="font-mono">{`{{weather_summary}}`}</code>. Leave blank to clear.
+      </p>
+      <div className="space-y-1">
+        <Label className="text-xs">Room Capacity</Label>
+        <Input
+          type="number"
+          min={0}
+          placeholder="e.g., 50"
+          value={form.watch("roomCapacity") ?? ""}
+          onChange={(e) => {
+            const v = e.target.value;
+            form.setValue("roomCapacity", v === "" ? null : parseInt(v, 10));
+          }}
+          data-testid={`${prefix}-room-capacity`}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <Label className="text-xs">Weather Latitude</Label>
+          <Input
+            type="text"
+            inputMode="decimal"
+            placeholder="51.5074"
+            value={form.watch("weatherLat") ?? ""}
+            onChange={(e) => form.setValue("weatherLat", e.target.value)}
+            data-testid={`${prefix}-weather-lat`}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Weather Longitude</Label>
+          <Input
+            type="text"
+            inputMode="decimal"
+            placeholder="-0.1278"
+            value={form.watch("weatherLng") ?? ""}
+            onChange={(e) => form.setValue("weatherLng", e.target.value)}
+            data-testid={`${prefix}-weather-lng`}
+          />
+        </div>
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Temperature Unit</Label>
+        <Select
+          value={form.watch("weatherUnit") || "celsius"}
+          onValueChange={(val) => form.setValue("weatherUnit", val)}
+        >
+          <SelectTrigger data-testid={`${prefix}-weather-unit`}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="celsius">Celsius (°C)</SelectItem>
+            <SelectItem value="fahrenheit">Fahrenheit (°F)</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  );
+}
+
 function generatePairingCode(): string {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
@@ -349,6 +421,10 @@ function ScreenCard({
       canvasHeight: screen.canvasHeight || undefined,
       canvasX: screen.canvasX || 0,
       canvasY: screen.canvasY || 0,
+      roomCapacity: screen.roomCapacity ?? null,
+      weatherLat: screen.weatherLat ?? "",
+      weatherLng: screen.weatherLng ?? "",
+      weatherUnit: (screen.weatherUnit === "fahrenheit" ? "fahrenheit" : "celsius") as "celsius" | "fahrenheit",
     },
   });
 
@@ -365,6 +441,10 @@ function ScreenCard({
         canvasHeight: data.canvasEnabled ? data.canvasHeight : null,
         canvasX: data.canvasEnabled ? (data.canvasX || 0) : 0,
         canvasY: data.canvasEnabled ? (data.canvasY || 0) : 0,
+        roomCapacity: data.roomCapacity == null || Number.isNaN(data.roomCapacity) ? null : data.roomCapacity,
+        weatherLat: data.weatherLat?.trim() ? data.weatherLat.trim() : null,
+        weatherLng: data.weatherLng?.trim() ? data.weatherLng.trim() : null,
+        weatherUnit: data.weatherUnit || "celsius",
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
@@ -799,6 +879,7 @@ function ScreenCard({
                       )}
                     />
                     <CanvasFields form={form} profiles={siteProfiles} prefix="edit" />
+                    <RoomAndWeatherFields form={form} prefix="edit" />
                     <div className="flex justify-end gap-2">
                       <Button
                         type="button"
@@ -1187,6 +1268,10 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
       canvasHeight: undefined,
       canvasX: 0,
       canvasY: 0,
+      roomCapacity: null,
+      weatherLat: "",
+      weatherLng: "",
+      weatherUnit: "celsius",
     },
   });
 
@@ -1205,6 +1290,10 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
         canvasHeight: data.canvasEnabled ? data.canvasHeight : null,
         canvasX: data.canvasEnabled ? (data.canvasX || 0) : 0,
         canvasY: data.canvasEnabled ? (data.canvasY || 0) : 0,
+        roomCapacity: data.roomCapacity == null || Number.isNaN(data.roomCapacity) ? null : data.roomCapacity,
+        weatherLat: data.weatherLat?.trim() ? data.weatherLat.trim() : null,
+        weatherLng: data.weatherLng?.trim() ? data.weatherLng.trim() : null,
+        weatherUnit: data.weatherUnit || "celsius",
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
@@ -1360,6 +1449,7 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
               )}
             />
             <CanvasFields form={form} profiles={siteProfiles} prefix="create" />
+            <RoomAndWeatherFields form={form} prefix="create" />
             <div className="flex justify-end gap-2">
               <Button
                 type="button"
