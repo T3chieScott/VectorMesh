@@ -4,6 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { PLAYER_VARIABLES, resolvePlayerVariables } from "@/lib/player-variables";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -292,25 +293,6 @@ function SignageIconPicker({ value, onChange, fillColor }: { value?: string; onC
       )}
     </div>
   );
-}
-
-const PLAYER_VARIABLES = [
-  { token: "{{screen_name}}", label: "Screen Name", description: "Name of the display screen", preview: "Lobby Screen 1" },
-  { token: "{{room_name}}", label: "Room Name", description: "Room or location name", preview: "Main Hall" },
-  { token: "{{event_name}}", label: "Event Name", description: "Current event name", preview: "Tech Summit 2025" },
-  { token: "{{client_name}}", label: "Client Name", description: "Client/brand name", preview: "Acme Corp" },
-  { token: "{{date}}", label: "Date", description: "Current date", preview: new Date().toLocaleDateString() },
-  { token: "{{time}}", label: "Time", description: "Current time", preview: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
-  { token: "{{day}}", label: "Day of Week", description: "Current day name", preview: new Date().toLocaleDateString('en', { weekday: 'long' }) },
-];
-
-function resolvePlayerVariables(text: string): string {
-  if (!text) return text;
-  let resolved = text;
-  for (const v of PLAYER_VARIABLES) {
-    resolved = resolved.replaceAll(v.token, v.preview);
-  }
-  return resolved;
 }
 
 function VariableInsertMenu({ onInsert, textareaRef }: { onInsert: (token: string) => void; textareaRef?: React.RefObject<HTMLTextAreaElement | null> }) {
@@ -2748,7 +2730,10 @@ function ZoneEditorDialog({
                   name="clockLabel"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Display Label (Optional)</FormLabel>
+                      <div className="flex items-center justify-between gap-2">
+                        <FormLabel>Display Label (Optional)</FormLabel>
+                        <VariableInsertMenu onInsert={(token) => field.onChange((field.value || "") + token)} />
+                      </div>
                       <FormControl>
                         <Input 
                           placeholder="e.g., New York, London, Tokyo" 
@@ -4235,7 +4220,10 @@ function ZoneEditorDialog({
                     name="qrLabel"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Label Text</FormLabel>
+                        <div className="flex items-center justify-between gap-2">
+                          <FormLabel>Label Text</FormLabel>
+                          <VariableInsertMenu onInsert={(token) => field.onChange((field.value || "") + token)} />
+                        </div>
                         <FormControl>
                           <Input
                             placeholder="Enter label text..."
@@ -4366,7 +4354,10 @@ function ZoneEditorDialog({
                   name="countdownTitle"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Title (optional)</FormLabel>
+                      <div className="flex items-center justify-between gap-2">
+                        <FormLabel>Title (optional)</FormLabel>
+                        <VariableInsertMenu onInsert={(token) => field.onChange((field.value || "") + token)} />
+                      </div>
                       <FormControl>
                         <Input
                           placeholder="e.g., Conference starts in..."
@@ -4387,7 +4378,10 @@ function ZoneEditorDialog({
                   name="countdownCompletionMessage"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Completion Message</FormLabel>
+                      <div className="flex items-center justify-between gap-2">
+                        <FormLabel>Completion Message</FormLabel>
+                        <VariableInsertMenu onInsert={(token) => field.onChange((field.value || "") + token)} />
+                      </div>
                       <FormControl>
                         <Input
                           placeholder="Event Started!"
@@ -5383,7 +5377,10 @@ function ZoneEditorDialog({
                   name="scheduleHeaderText"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Header Text</FormLabel>
+                      <div className="flex items-center justify-between gap-2">
+                        <FormLabel>Header Text</FormLabel>
+                        <VariableInsertMenu onInsert={(token) => field.onChange((field.value || "") + token)} />
+                      </div>
                       <FormControl>
                         <Input
                           placeholder="e.g. Conference Room A"
@@ -5436,6 +5433,13 @@ function ZoneEditorDialog({
                             form.setValue("scheduleEntries", entries);
                           }}
                           data-testid={`input-schedule-entry-title-${index}`}
+                        />
+                        <VariableInsertMenu
+                          onInsert={(token) => {
+                            const entries = [...(form.watch("scheduleEntries") || [])];
+                            entries[index] = { ...entries[index], title: (entries[index].title || "") + token };
+                            form.setValue("scheduleEntries", entries);
+                          }}
                         />
                         <Button
                           type="button"

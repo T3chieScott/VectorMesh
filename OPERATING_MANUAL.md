@@ -32,6 +32,7 @@ A practical guide to running VectorMesh — the onsite display management platfo
 24. [REST API Reference](#24-rest-api-reference)
 25. [Deployment & Updates](#25-deployment--updates)
 26. [Troubleshooting](#26-troubleshooting)
+27. [Player Variables](#27-player-variables)
 
 ---
 
@@ -630,6 +631,45 @@ VectorMesh runs on Replit during active development and on a Plesk-managed serve
 | Layout edits don't appear on player | Refresh button on screen card | Player cache; click **Refresh** or wait for next poll cycle. |
 | Video wall geometry looks wrong | Screen edit → Canvas section; Simulator (Full Canvas) | AOI coordinates don't match physical install. Fix `canvasX`, `canvasY`, `canvasWidth`, `canvasHeight`. |
 | Deploy package endpoint returns 401 | Token scope | The token must belong to an Admin user. |
+
+---
+
+## 27. Player Variables
+
+VectorMesh supports a small set of **template tokens** that are replaced at runtime with real values from the player's context. Use them anywhere they're supported to keep one layout reusable across many screens, rooms, events, and clients.
+
+### Supported tokens
+
+| Token | Replaced with | Source |
+|---|---|---|
+| `{{screen_name}}` | The display screen's name | Screen record |
+| `{{room_name}}` | The screen's room / location | Screen `location` field |
+| `{{event_name}}` | Current programmed event name | Screen's currently assigned event |
+| `{{client_name}}` | Owning client / brand name | Screen's owning client |
+| `{{date}}` | Today's date in the player's locale | Player clock |
+| `{{time}}` | Current time (HH:MM) | Player clock |
+| `{{day}}` | Current day of week (e.g. "Monday") | Player clock |
+
+### Where you can use them
+
+Click **Insert Variable** next to any of these fields in the layout editor:
+
+- Ticker text
+- Text widget content
+- Clock label
+- Countdown title
+- Countdown completion message
+- Schedule header text
+- QR code label
+
+Schedule entry titles and HTML widget content also resolve tokens at render time.
+
+### Behaviour notes
+
+- **Empty fallback.** If the screen has no event assigned, `{{event_name}}` becomes an empty string — never the literal token. Same for `{{room_name}}`, `{{client_name}}`, etc.
+- **Live refresh.** `{{date}}`, `{{time}}` and `{{day}}` re-render automatically while the player is running (within ~30 s). No reload needed.
+- **Editor previews.** In the layout editor and Player Simulator, tokens render as friendly sample values (e.g. `Tech Summit 2025`) so you can see the layout. Only the live player substitutes real screen-specific data.
+- **Case sensitive.** Tokens are lowercase with underscores: `{{event_name}}`, not `{{EventName}}`.
 
 ---
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
+import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem, Client, Event } from "@shared/schema";
 import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
 import { TestPattern } from "@/components/test-pattern";
 import html2canvas from "html2canvas";
@@ -14,7 +14,8 @@ interface PlayerContentData {
   layoutTemplates?: Record<string, LayoutTemplate>;
   zoneSources?: Array<{ zoneId: string; type: string; playlistId?: string }>;
   liveOverride: LiveOverride | null;
-  event: any;
+  event: Event | null;
+  client?: Client | null;
   timestamp: string;
   screenshotEnabled?: boolean;
   screenshotRequested?: boolean;
@@ -898,6 +899,12 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                 fillContainer={true}
                 mediaBaseUrl="/api/player/media"
                 deviceToken={token}
+                playerContext={{
+                  screenName: content.screen?.name,
+                  roomName: content.screen?.location,
+                  eventName: content.event?.name,
+                  clientName: content.client?.name,
+                }}
               />
             </div>
           </div>

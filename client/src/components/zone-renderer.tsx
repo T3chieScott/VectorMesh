@@ -43,24 +43,16 @@ import {
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
+import {
+  resolvePlayerVariables as resolveVars,
+  usePlayerVariableTick,
+  type PlayerVariableContext,
+} from "@/lib/player-variables";
 
-const PLAYER_VARIABLES: { token: string; preview: string }[] = [
-  { token: "{{screen_name}}", preview: "Lobby Screen 1" },
-  { token: "{{room_name}}", preview: "Main Hall" },
-  { token: "{{event_name}}", preview: "Tech Summit 2025" },
-  { token: "{{client_name}}", preview: "Acme Corp" },
-  { token: "{{date}}", preview: new Date().toLocaleDateString() },
-  { token: "{{time}}", preview: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
-  { token: "{{day}}", preview: new Date().toLocaleDateString('en', { weekday: 'long' }) },
-];
+export type { PlayerVariableContext } from "@/lib/player-variables";
 
-function resolvePlayerVariables(text: string): string {
-  if (!text) return text;
-  let resolved = text;
-  for (const v of PLAYER_VARIABLES) {
-    resolved = resolved.replaceAll(v.token, v.preview);
-  }
-  return resolved;
+function resolvePlayerVariables(text: string, ctx?: PlayerVariableContext): string {
+  return resolveVars(text, ctx);
 }
 
 export const zoneTypeIcons: Record<string, typeof Image> = {
@@ -89,10 +81,10 @@ export const zoneTypeIcons: Record<string, typeof Image> = {
   webrtc_stream: Wifi,
 };
 
-function TickerWidget({ content, speed, animation, fontSize }: { content?: string; speed?: number; animation?: string; fontSize?: number }) {
+function TickerWidget({ content, speed, animation, fontSize, ctx }: { content?: string; speed?: number; animation?: string; fontSize?: number; ctx?: PlayerVariableContext }) {
   const animationDuration = speed || 20;
   const animationType = animation || "scroll-left";
-  const displayContent = resolvePlayerVariables(content || "Breaking News: Welcome to VectorMesh • Latest updates coming soon • Stay tuned for announcements •");
+  const displayContent = resolvePlayerVariables(content || "Breaking News: Welcome to VectorMesh • Latest updates coming soon • Stay tuned for announcements •", ctx);
   const textSize = fontSize || 24;
   
   // Split content for animations that show items one at a time
@@ -245,6 +237,7 @@ function TickerWidget({ content, speed, animation, fontSize }: { content?: strin
 interface ClockWidgetProps {
   timezone?: string;
   label?: string;
+  ctx?: PlayerVariableContext;
   style?: "digital" | "analog";
   markerStyle?: "numbers" | "roman" | "dots" | "lines";
   showSecondHand?: boolean;
@@ -272,7 +265,9 @@ function ClockWidget({
   timeFontSize,
   labelFontSize,
   dateFontSize,
+  ctx,
 }: ClockWidgetProps) {
+  const resolvedLabel = label ? resolvePlayerVariables(label, ctx) : label;
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
@@ -355,7 +350,7 @@ function ClockWidget({
     return (
       <div className="h-full w-full flex flex-col items-center justify-center p-2">
         {label && (
-          <div className="font-semibold opacity-90 mb-1" style={{ fontSize: analogLabelFontSize, color: markerColor }}>{label}</div>
+          <div className="font-semibold opacity-90 mb-1" style={{ fontSize: analogLabelFontSize, color: markerColor }}>{resolvedLabel}</div>
         )}
         <div className="relative" style={{ width: "min(80%, 80cqh)", aspectRatio: "1" }}>
           <svg viewBox="0 0 200 200" className="w-full h-full">
@@ -486,7 +481,7 @@ function ClockWidget({
   return (
     <div className="h-full w-full flex flex-col items-center justify-center text-center p-2">
       {label && (
-        <div className="font-semibold opacity-90" style={{ fontSize: digitalLabelFontSize }}>{label}</div>
+        <div className="font-semibold opacity-90" style={{ fontSize: digitalLabelFontSize }}>{resolvedLabel}</div>
       )}
       <div className="font-mono font-bold" style={{ fontSize: digitalTimeFontSize }}>{formatTime(time)}</div>
       {showDate !== false && (
@@ -519,6 +514,7 @@ interface CountdownWidgetProps {
   unitGap?: number;
   timezone?: string;
   compact?: boolean;
+  ctx?: PlayerVariableContext;
 }
 
 function CountdownWidget({
@@ -544,9 +540,16 @@ function CountdownWidget({
   unitGap,
   timezone,
   compact = false,
+  ctx,
 }: CountdownWidgetProps) {
   const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
   const [isComplete, setIsComplete] = useState(false);
+  const resolvedTitle = title ? resolvePlayerVariables(title, ctx) : title;
+  const resolvedCompletionMessage = resolvePlayerVariables(completionMessage, ctx);
+  const resolvedDayLabel = resolvePlayerVariables(dayLabel, ctx);
+  const resolvedHourLabel = resolvePlayerVariables(hourLabel, ctx);
+  const resolvedMinuteLabel = resolvePlayerVariables(minuteLabel, ctx);
+  const resolvedSecondLabel = resolvePlayerVariables(secondLabel, ctx);
 
   const fontFamilyMap = {
     sans: "ui-sans-serif, system-ui, sans-serif",
@@ -683,17 +686,17 @@ function CountdownWidget({
             color: numberColor || "inherit"
           }}
         >
-          {completionMessage}
+          {resolvedCompletionMessage}
         </div>
       </div>
     );
   }
 
   const units: { value: number; label: string; show: boolean; maxDigits: number }[] = [
-    { value: timeLeft.days, label: dayLabel, show: showDays, maxDigits: 3 },
-    { value: timeLeft.hours, label: hourLabel, show: showHours, maxDigits: 2 },
-    { value: timeLeft.minutes, label: minuteLabel, show: showMinutes, maxDigits: 2 },
-    { value: timeLeft.seconds, label: secondLabel, show: showSeconds, maxDigits: 2 },
+    { value: timeLeft.days, label: resolvedDayLabel, show: showDays, maxDigits: 3 },
+    { value: timeLeft.hours, label: resolvedHourLabel, show: showHours, maxDigits: 2 },
+    { value: timeLeft.minutes, label: resolvedMinuteLabel, show: showMinutes, maxDigits: 2 },
+    { value: timeLeft.seconds, label: resolvedSecondLabel, show: showSeconds, maxDigits: 2 },
   ];
 
   const visibleUnits = units.filter(u => u.show);
@@ -711,7 +714,7 @@ function CountdownWidget({
             marginBottom: titleGap,
           }}
         >
-          {title}
+          {resolvedTitle}
         </div>
       )}
       <div className="flex flex-col items-center" style={{ gap: titleGap }}>
@@ -976,11 +979,13 @@ function TextWidget({
   fontSize = 24,
   align = "center",
   verticalAlign = "middle",
+  ctx,
 }: { 
   content?: string;
   fontSize?: number | string;
   align?: string;
   verticalAlign?: string;
+  ctx?: PlayerVariableContext;
 }) {
   const legacySizeMap: Record<string, number> = {
     small: 14,
@@ -1013,18 +1018,19 @@ function TextWidget({
         textAlign: align as "left" | "center" | "right",
       }}
     >
-      {resolvePlayerVariables(content || "Sample text content")}
+      {resolvePlayerVariables(content || "Sample text content", ctx)}
     </div>
   );
 }
 
-function HtmlWidget({ content }: { content?: string }) {
+function HtmlWidget({ content, ctx }: { content?: string; ctx?: PlayerVariableContext }) {
+  const resolved = resolvePlayerVariables(content || "", ctx);
   return (
     <div className="h-full w-full flex items-center justify-center p-4 text-center">
       <div className="space-y-2">
         <Code className="h-8 w-8 mx-auto text-muted-foreground" />
         <p className="text-sm text-muted-foreground">
-          {content ? "HTML Widget" : "Custom HTML Zone"}
+          {resolved || "Custom HTML Zone"}
         </p>
       </div>
     </div>
@@ -4823,6 +4829,7 @@ function QRCodeWidget({
   labelPosition = "below",
   labelFontSize = 16,
   labelColor = "#000000",
+  ctx,
 }: {
   contentType?: "url" | "email" | "phone" | "location" | "text" | "wifi" | "vcard";
   content?: string;
@@ -4843,7 +4850,9 @@ function QRCodeWidget({
   labelPosition?: "above" | "below";
   labelFontSize?: number | string;
   labelColor?: string;
+  ctx?: PlayerVariableContext;
 }) {
+  const resolvedLabel = label ? resolvePlayerVariables(label, ctx) : label;
   const generateQRContent = (): string => {
     switch (contentType) {
       case "url":
@@ -4895,7 +4904,7 @@ function QRCodeWidget({
   const resolvedFontSize = typeof labelFontSize === 'number' ? labelFontSize : (legacyFontSizeMap[labelFontSize] || 16);
   const fontSize = `${resolvedFontSize}px`;
 
-  const labelElement = label ? (
+  const labelElement = resolvedLabel ? (
     <p 
       className="text-center font-medium" 
       style={{ 
@@ -4905,13 +4914,13 @@ function QRCodeWidget({
         marginBottom: labelPosition === "above" ? "clamp(4px, 1cqh, 12px)" : 0,
       }}
     >
-      {label}
+      {resolvedLabel}
     </p>
   ) : null;
 
   return (
     <div 
-      className={`h-full w-full flex ${label ? "flex-col" : ""} items-center justify-center p-2`}
+      className={`h-full w-full flex ${resolvedLabel ? "flex-col" : ""} items-center justify-center p-2`}
       style={{ backgroundColor: transparentBackground ? undefined : backgroundColor }}
     >
       {labelPosition === "above" && labelElement}
@@ -4992,6 +5001,7 @@ function ScheduleWidget({
   startHour = 8,
   endHour = 18,
   headerText,
+  ctx,
 }: {
   viewMode?: string;
   entries?: Array<{ id: string; title: string; startTime: string; endTime: string; day?: string; color?: string; room?: string }>;
@@ -5000,7 +5010,10 @@ function ScheduleWidget({
   startHour?: number;
   endHour?: number;
   headerText?: string;
+  ctx?: PlayerVariableContext;
 }) {
+  const resolvedHeader = headerText ? resolvePlayerVariables(headerText, ctx) : headerText;
+  const resolveEntryTitle = (t: string) => resolvePlayerVariables(t, ctx);
   const formatTime = (time: string) => {
     if (timeFormat === "12h") {
       const [h, m] = time.split(":").map(Number);
@@ -5021,12 +5034,12 @@ function ScheduleWidget({
   if (viewMode === "agenda") {
     return (
       <div className="h-full w-full flex flex-col p-3 overflow-hidden">
-        {headerText && <div className="text-sm font-semibold mb-2 shrink-0">{headerText}</div>}
+        {resolvedHeader && <div className="text-sm font-semibold mb-2 shrink-0">{resolvedHeader}</div>}
         <div className="flex-1 overflow-auto space-y-1">
           {[...sampleEntries].sort((a, b) => a.startTime.localeCompare(b.startTime)).map((entry) => (
             <div key={entry.id} className="flex items-center gap-2 text-xs p-1.5 rounded" style={{ borderLeft: `3px solid ${entry.color || "#3b82f6"}` }}>
               <span className="font-mono text-muted-foreground shrink-0">{formatTime(entry.startTime)} - {formatTime(entry.endTime)}</span>
-              <span className="font-medium truncate">{entry.title}</span>
+              <span className="font-medium truncate">{resolveEntryTitle(entry.title)}</span>
             </div>
           ))}
         </div>
@@ -5039,7 +5052,7 @@ function ScheduleWidget({
     if (days.length === 0) days.push("Today");
     return (
       <div className="h-full w-full flex flex-col p-3 overflow-hidden">
-        {headerText && <div className="text-sm font-semibold mb-2 shrink-0">{headerText}</div>}
+        {resolvedHeader && <div className="text-sm font-semibold mb-2 shrink-0">{resolvedHeader}</div>}
         <div className="flex-1 overflow-auto space-y-3">
           {days.map((day) => (
             <div key={day}>
@@ -5051,7 +5064,7 @@ function ScheduleWidget({
                   .map((entry) => (
                     <div key={entry.id} className="flex items-center gap-2 text-xs p-1.5 rounded" style={{ borderLeft: `3px solid ${entry.color || "#3b82f6"}` }}>
                       <span className="font-mono text-muted-foreground shrink-0">{formatTime(entry.startTime)} - {formatTime(entry.endTime)}</span>
-                      <span className="font-medium truncate">{entry.title}</span>
+                      <span className="font-medium truncate">{resolveEntryTitle(entry.title)}</span>
                     </div>
                   ))}
               </div>
@@ -5064,7 +5077,7 @@ function ScheduleWidget({
 
   return (
     <div className="h-full w-full flex flex-col p-2 overflow-hidden">
-      {headerText && <div className="text-xs font-semibold mb-1 shrink-0">{headerText}</div>}
+      {resolvedHeader && <div className="text-xs font-semibold mb-1 shrink-0">{resolvedHeader}</div>}
       <div className="flex-1 overflow-auto relative">
         {Array.from({ length: totalHours + 1 }, (_, i) => startHour + i).map((hour) => (
           <div key={hour} className="flex items-start border-t border-border/30 relative" style={{ height: `${100 / (totalHours + 1)}%`, minHeight: "24px" }}>
@@ -5089,7 +5102,7 @@ function ScheduleWidget({
                 minHeight: "16px",
               }}
             >
-              {entry.title}
+              {resolveEntryTitle(entry.title)}
             </div>
           );
         })}
@@ -5635,6 +5648,7 @@ export interface ZoneRendererProps {
   fillContainer?: boolean;
   mediaBaseUrl?: string;
   deviceToken?: string;
+  playerContext?: PlayerVariableContext;
 }
 
 export function ZoneRenderer({
@@ -5649,8 +5663,12 @@ export function ZoneRenderer({
   fillContainer = false,
   mediaBaseUrl,
   deviceToken,
+  playerContext,
 }: ZoneRendererProps) {
   const ZoneIcon = zoneTypeIcons[zone.type] || Layers;
+  // Re-render every 30s so {{date}}/{{time}}/{{day}} stay current without reload
+  usePlayerVariableTick(30_000);
+  const ctx = playerContext;
 
   const renderContent = () => {
     switch (zone.type) {
@@ -5661,12 +5679,13 @@ export function ZoneRenderer({
         return <MediaWidget media={zoneMedia} mediaIndex={mediaIndex} isPlaying={isPlaying} mediaBaseUrl={mediaBaseUrl} deviceToken={deviceToken} />;
       }
       case "ticker":
-        return <TickerWidget content={zone.textContent} speed={zone.tickerScrollSpeed} animation={zone.tickerAnimation} fontSize={zone.tickerFontSize} />;
+        return <TickerWidget content={zone.textContent} speed={zone.tickerScrollSpeed} animation={zone.tickerAnimation} fontSize={zone.tickerFontSize} ctx={ctx} />;
       case "clock":
         return (
           <ClockWidget
             timezone={zone.clockTimezone || timezone}
             label={zone.clockLabel}
+            ctx={ctx}
             style={zone.clockStyle}
             markerStyle={zone.clockMarkerStyle}
             showSecondHand={zone.clockShowSecondHand}
@@ -5683,7 +5702,7 @@ export function ZoneRenderer({
       case "logo":
         return <LogoWidget />;
       case "html":
-        return <HtmlWidget />;
+        return <HtmlWidget content={zone.textContent} ctx={ctx} />;
       case "weather":
         return (
           <WeatherWidget 
@@ -5713,6 +5732,7 @@ export function ZoneRenderer({
             fontSize={zone.textFontSize}
             align={zone.textAlign}
             verticalAlign={zone.textVerticalAlign}
+            ctx={ctx}
           />
         );
       case "shader":
@@ -5765,6 +5785,7 @@ export function ZoneRenderer({
             labelPosition={zone.qrLabelPosition}
             labelFontSize={zone.qrLabelFontSize}
             labelColor={zone.qrLabelColor}
+            ctx={ctx}
           />
         );
       case "countdown":
@@ -5792,6 +5813,7 @@ export function ZoneRenderer({
             unitGap={zone.countdownUnitGap}
             timezone={zone.countdownTimezone}
             compact={zone.countdownCompact}
+            ctx={ctx}
           />
         );
       case "schedule":
@@ -5804,6 +5826,7 @@ export function ZoneRenderer({
             startHour={zone.scheduleStartHour}
             endHour={zone.scheduleEndHour}
             headerText={zone.scheduleHeaderText}
+            ctx={ctx}
           />
         );
       case "shape":

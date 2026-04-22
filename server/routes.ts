@@ -3008,6 +3008,11 @@ export async function registerRoutes(
         event = await storage.getEvent(screen.currentEventId);
       }
 
+      let client = null;
+      if (screen.clientId) {
+        client = await storage.getClient(screen.clientId);
+      }
+
       let refreshRequested = false;
       const refreshTs = pendingPlayerRefreshes.get(screen.id);
       if (refreshTs && (Date.now() - refreshTs) < REFRESH_SIGNAL_TTL) {
@@ -3037,6 +3042,7 @@ export async function registerRoutes(
         zoneSources: activeZoneSources,
         liveOverride,
         event,
+        client,
         timestamp: now.toISOString(),
         refreshRequested,
         screenshotEnabled: screen.screenshotEnabled || false,
