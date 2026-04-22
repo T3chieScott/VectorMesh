@@ -4,6 +4,20 @@ import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/co
 import { TestPattern } from "@/components/test-pattern";
 import html2canvas from "html2canvas";
 
+interface PlayerVarsData {
+  screenName?: string | null;
+  roomName?: string | null;
+  eventName?: string | null;
+  clientName?: string | null;
+  roomCapacity?: number | null;
+  eventStartDate?: string | null;
+  eventEndDate?: string | null;
+  nextSessionTitle?: string | null;
+  nextSessionTime?: string | null;
+  nextSessionCountdown?: string | null;
+  weatherSummary?: string | null;
+}
+
 interface PlayerContentData {
   screen: Screen;
   profile: DisplayProfile | null;
@@ -16,6 +30,7 @@ interface PlayerContentData {
   liveOverride: LiveOverride | null;
   event: Event | null;
   client?: Client | null;
+  playerVars?: PlayerVarsData;
   timestamp: string;
   screenshotEnabled?: boolean;
   screenshotRequested?: boolean;
@@ -900,10 +915,17 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                 mediaBaseUrl="/api/player/media"
                 deviceToken={token}
                 playerContext={{
-                  screenName: content.screen?.name,
-                  roomName: content.screen?.location,
-                  eventName: content.event?.name,
-                  clientName: content.client?.name,
+                  screenName: content.playerVars?.screenName ?? content.screen?.name,
+                  roomName: content.playerVars?.roomName ?? content.screen?.location,
+                  eventName: content.playerVars?.eventName ?? content.event?.name,
+                  clientName: content.playerVars?.clientName ?? content.client?.name,
+                  roomCapacity: content.playerVars?.roomCapacity,
+                  eventStartDate: content.playerVars?.eventStartDate,
+                  eventEndDate: content.playerVars?.eventEndDate,
+                  nextSessionTitle: content.playerVars?.nextSessionTitle,
+                  nextSessionTime: content.playerVars?.nextSessionTime,
+                  nextSessionCountdown: content.playerVars?.nextSessionCountdown,
+                  weatherSummary: content.playerVars?.weatherSummary,
                 }}
               />
             </div>

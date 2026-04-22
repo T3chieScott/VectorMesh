@@ -649,6 +649,13 @@ VectorMesh supports a small set of **template tokens** that are replaced at runt
 | `{{date}}` | Today's date in the player's locale | Player clock |
 | `{{time}}` | Current time (HH:MM) | Player clock |
 | `{{day}}` | Current day of week (e.g. "Monday") | Player clock |
+| `{{room_capacity}}` | Maximum capacity of the screen's room | Screen `roomCapacity` field |
+| `{{event_start_date}}` | Start date of the screen's current event | Event record |
+| `{{event_end_date}}` | End date of the screen's current event | Event record |
+| `{{next_session_title}}` | Name of the next published programme block targeting this screen | Programme schedule |
+| `{{next_session_time}}` | Start time (HH:MM) of the next programme block | Programme schedule |
+| `{{next_session_countdown}}` | Friendly countdown (e.g. "in 25 min") until the next session starts | Computed from programme schedule |
+| `{{weather_summary}}` | Short current-weather string for the screen's saved location (e.g. "Partly Cloudy, 18°C") | Screen `weatherLat` / `weatherLng` / `weatherUnit` (Open-Meteo, cached 10 min) |
 
 ### Where you can use them
 

@@ -25,6 +25,98 @@ import { createEarthquakesHandler } from "./usgsEarthquakes";
 import { createAircraftOverheadHandler } from "./openSkyAircraft";
 import { buildScreenPatchHandler } from "./screenPatchHandler";
 
+const playerWeatherSummaryCache = new Map<string, { summary: string; timestamp: number }>();
+const PLAYER_WEATHER_SUMMARY_TTL = 10 * 60 * 1000;
+const PLAYER_WEATHER_CONDITIONS: Record<number, string> = {
+  0: "Clear", 1: "Mainly Clear", 2: "Partly Cloudy", 3: "Overcast",
+  45: "Foggy", 48: "Rime Fog",
+  51: "Light Drizzle", 53: "Drizzle", 55: "Dense Drizzle",
+  61: "Light Rain", 63: "Rain", 65: "Heavy Rain",
+  71: "Light Snow", 73: "Snow", 75: "Heavy Snow",
+  80: "Rain Showers", 81: "Heavy Rain Showers", 82: "Violent Rain",
+  95: "Thunderstorm", 96: "Thunderstorm with Hail", 99: "Severe Thunderstorm",
+};
+
+async function fetchWeatherSummary(lat: number, lng: number, unit: string): Promise<string | null> {
+  const key = `${lat.toFixed(3)},${lng.toFixed(3)},${unit}`;
+  const cached = playerWeatherSummaryCache.get(key);
+  if (cached && Date.now() - cached.timestamp < PLAYER_WEATHER_SUMMARY_TTL) {
+    return cached.summary;
+  }
+  try {
+    const tempUnit = unit === "fahrenheit" ? "fahrenheit" : "celsius";
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,weather_code&temperature_unit=${tempUnit}&timezone=auto`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const current = data.current;
+    if (!current) return null;
+    const condition = PLAYER_WEATHER_CONDITIONS[current.weather_code] || "Unknown";
+    const symbol = unit === "fahrenheit" ? "°F" : "°C";
+    const summary = `${condition}, ${Math.round(current.temperature_2m)}${symbol}`;
+    playerWeatherSummaryCache.set(key, { summary, timestamp: Date.now() });
+    return summary;
+  } catch {
+    return null;
+  }
+}
+
+function computeNextSession(blocks: Array<{ name: string; targets?: any; timeRules?: any }>, screenId: string, now: Date): { title: string; time: string; countdown: string } | null {
+  let best: { startMs: number; name: string; timeStr: string } | null = null;
+  for (const block of blocks) {
+    const targets = (block.targets as any[]) || [];
+    const targetMatch = targets.length === 0 || targets.some((t: any) => t.type === "screen" && t.id === screenId);
+    if (!targetMatch) continue;
+    const rules = (block.timeRules as any[]) || [];
+    for (const rule of rules) {
+      if (!rule?.startTime) continue;
+      const [sh, sm] = String(rule.startTime).split(":").map(Number);
+      if (Number.isNaN(sh) || Number.isNaN(sm)) continue;
+      // Look up to 7 days ahead for the next occurrence respecting daysOfWeek/startDate/endDate.
+      for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
+        const candidate = new Date(now);
+        candidate.setDate(candidate.getDate() + dayOffset);
+        candidate.setHours(sh, sm, 0, 0);
+        if (candidate.getTime() <= now.getTime()) continue;
+        if (rule.startDate) {
+          const sd = new Date(String(rule.startDate) + "T00:00:00");
+          if (candidate < sd) continue;
+        }
+        if (rule.endDate) {
+          const ed = new Date(String(rule.endDate) + "T23:59:59");
+          if (candidate > ed) continue;
+        }
+        if (rule.daysOfWeek && Array.isArray(rule.daysOfWeek) && rule.daysOfWeek.length > 0) {
+          if (!rule.daysOfWeek.includes(candidate.getDay())) continue;
+        }
+        const timeStr = `${String(sh).padStart(2, "0")}:${String(sm).padStart(2, "0")}`;
+        if (!best || candidate.getTime() < best.startMs) {
+          best = { startMs: candidate.getTime(), name: block.name, timeStr };
+        }
+        break;
+      }
+    }
+  }
+  if (!best) return null;
+  const diffMin = Math.round((best.startMs - now.getTime()) / 60000);
+  let countdown: string;
+  if (diffMin < 1) countdown = "starting now";
+  else if (diffMin < 60) countdown = `in ${diffMin} min`;
+  else {
+    const h = Math.floor(diffMin / 60);
+    const m = diffMin % 60;
+    countdown = m === 0 ? `in ${h} h` : `in ${h} h ${m} min`;
+  }
+  return { title: best.name, time: best.timeStr, countdown };
+}
+
+function formatPlayerDate(d: Date | string | null | undefined): string {
+  if (!d) return "";
+  const date = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric" });
+}
+
 function generateTwoFactorSecret(email: string) {
   const secret = new OTPAuth.Secret({ size: 20 });
   const totp = new OTPAuth.TOTP({
@@ -2895,20 +2987,26 @@ export async function registerRoutes(
         activeZoneSources = (activeOverride.zoneSources as any[]) || [];
       }
 
-      if (!layout && screen.currentEventId) {
+      // Programme/version/block lookup is shared between layout selection and
+      // the next-session computation (Task #93) so we only hit storage once.
+      let eventBlocks: Awaited<ReturnType<typeof storage.getScheduleBlocks>> = [];
+      if (screen.currentEventId) {
         const [programmes, allVersions] = await Promise.all([
           storage.getProgrammes(),
           storage.getProgrammeVersions(),
         ]);
         const eventProgrammes = programmes.filter(p => p.eventId === screen.currentEventId);
-        const publishedVersions = allVersions.filter(v => 
+        const publishedVersions = allVersions.filter(v =>
           v.status === "published" && eventProgrammes.some(p => p.id === v.programmeId)
         );
-        
         const allBlocks = await Promise.all(
           publishedVersions.map(v => storage.getScheduleBlocks(v.id))
         );
-        const flatBlocks = allBlocks.flat().sort((a, b) => (b.priority || 0) - (a.priority || 0));
+        eventBlocks = allBlocks.flat();
+      }
+
+      if (!layout && screen.currentEventId) {
+        const flatBlocks = [...eventBlocks].sort((a, b) => (b.priority || 0) - (a.priority || 0));
 
         for (const block of flatBlocks) {
           const targets = block.targets as any[] || [];
@@ -3013,6 +3111,37 @@ export async function registerRoutes(
         client = await storage.getClient(screen.clientId);
       }
 
+      // ===== Extra player template variables (Task #93) =====
+      let nextSession: { title: string; time: string; countdown: string } | null = null;
+      if (eventBlocks.length > 0) {
+        try {
+          nextSession = computeNextSession(eventBlocks, screen.id, now);
+        } catch (e) {
+          console.warn("next session computation failed:", e);
+        }
+      }
+
+      let weatherSummary: string | null = null;
+      const wLat = screen.weatherLat ? parseFloat(screen.weatherLat) : NaN;
+      const wLng = screen.weatherLng ? parseFloat(screen.weatherLng) : NaN;
+      if (!isNaN(wLat) && !isNaN(wLng)) {
+        weatherSummary = await fetchWeatherSummary(wLat, wLng, screen.weatherUnit || "celsius");
+      }
+
+      const playerVars = {
+        screenName: screen.name ?? null,
+        roomName: screen.location ?? null,
+        eventName: event?.name ?? null,
+        clientName: client?.name ?? null,
+        roomCapacity: screen.roomCapacity ?? null,
+        eventStartDate: formatPlayerDate(event?.startDate),
+        eventEndDate: formatPlayerDate(event?.endDate),
+        nextSessionTitle: nextSession?.title ?? null,
+        nextSessionTime: nextSession?.time ?? null,
+        nextSessionCountdown: nextSession?.countdown ?? null,
+        weatherSummary,
+      };
+
       let refreshRequested = false;
       const refreshTs = pendingPlayerRefreshes.get(screen.id);
       if (refreshTs && (Date.now() - refreshTs) < REFRESH_SIGNAL_TTL) {
@@ -3043,6 +3172,7 @@ export async function registerRoutes(
         liveOverride,
         event,
         client,
+        playerVars,
         timestamp: now.toISOString(),
         refreshRequested,
         screenshotEnabled: screen.screenshotEnabled || false,

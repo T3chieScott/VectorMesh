@@ -25,6 +25,13 @@ export const PLAYER_VARIABLES: PlayerVariableDef[] = [
   { token: "{{date}}", label: "Date", description: "Current date", preview: sampleDate() },
   { token: "{{time}}", label: "Time", description: "Current time", preview: sampleTime() },
   { token: "{{day}}", label: "Day of Week", description: "Current day name", preview: sampleDay() },
+  { token: "{{room_capacity}}", label: "Room Capacity", description: "Maximum capacity of the screen's room (set on the screen)", preview: "250" },
+  { token: "{{event_start_date}}", label: "Event Start Date", description: "Start date of the screen's current event", preview: "Mar 12, 2026" },
+  { token: "{{event_end_date}}", label: "Event End Date", description: "End date of the screen's current event", preview: "Mar 14, 2026" },
+  { token: "{{next_session_title}}", label: "Next Session Title", description: "Name of the next scheduled programme block for this screen", preview: "Opening Keynote" },
+  { token: "{{next_session_time}}", label: "Next Session Time", description: "Start time of the next scheduled programme block", preview: "09:30" },
+  { token: "{{next_session_countdown}}", label: "Next Session Countdown", description: "Friendly countdown until the next session starts", preview: "in 25 min" },
+  { token: "{{weather_summary}}", label: "Weather Summary", description: "Current weather for the screen's configured location", preview: "Partly Cloudy, 18°C" },
 ];
 
 export interface PlayerVariableContext {
@@ -32,6 +39,13 @@ export interface PlayerVariableContext {
   roomName?: string | null;
   eventName?: string | null;
   clientName?: string | null;
+  roomCapacity?: number | string | null;
+  eventStartDate?: string | null;
+  eventEndDate?: string | null;
+  nextSessionTitle?: string | null;
+  nextSessionTime?: string | null;
+  nextSessionCountdown?: string | null;
+  weatherSummary?: string | null;
 }
 
 function buildResolved(ctx?: PlayerVariableContext): Record<string, string> {
@@ -41,6 +55,7 @@ function buildResolved(ctx?: PlayerVariableContext): Record<string, string> {
     return map;
   }
   const empty = "";
+  const cap = ctx.roomCapacity;
   return {
     "{{screen_name}}": ctx.screenName ?? empty,
     "{{room_name}}": ctx.roomName ?? empty,
@@ -49,6 +64,13 @@ function buildResolved(ctx?: PlayerVariableContext): Record<string, string> {
     "{{date}}": sampleDate(),
     "{{time}}": sampleTime(),
     "{{day}}": sampleDay(),
+    "{{room_capacity}}": cap === null || cap === undefined || cap === "" ? empty : String(cap),
+    "{{event_start_date}}": ctx.eventStartDate ?? empty,
+    "{{event_end_date}}": ctx.eventEndDate ?? empty,
+    "{{next_session_title}}": ctx.nextSessionTitle ?? empty,
+    "{{next_session_time}}": ctx.nextSessionTime ?? empty,
+    "{{next_session_countdown}}": ctx.nextSessionCountdown ?? empty,
+    "{{weather_summary}}": ctx.weatherSummary ?? empty,
   };
 }
 

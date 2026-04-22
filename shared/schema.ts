@@ -157,6 +157,10 @@ export const screens = pgTable("screens", {
   lastScreenshotAt: timestamp("last_screenshot_at"),
   testPatternEnabled: boolean("test_pattern_enabled").default(false),
   showLiveBanner: boolean("show_live_banner").default(false),
+  roomCapacity: integer("room_capacity"),
+  weatherLat: text("weather_lat"),
+  weatherLng: text("weather_lng"),
+  weatherUnit: text("weather_unit").default("celsius"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
