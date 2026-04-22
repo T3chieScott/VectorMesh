@@ -110,6 +110,77 @@ function computeNextSession(blocks: Array<{ name: string; targets?: any; timeRul
   return { title: best.name, time: best.timeStr, countdown };
 }
 
+interface PlayerVarsPayload {
+  screenName: string | null;
+  roomName: string | null;
+  eventName: string | null;
+  clientName: string | null;
+  roomCapacity: number | null;
+  eventStartDate: string;
+  eventEndDate: string;
+  nextSessionTitle: string | null;
+  nextSessionTime: string | null;
+  nextSessionCountdown: string | null;
+  weatherSummary: string | null;
+}
+
+async function buildPlayerVarsForScreen(screen: any, now: Date = new Date()): Promise<PlayerVarsPayload> {
+  let event: any = null;
+  if (screen.currentEventId) {
+    event = await storage.getEvent(screen.currentEventId);
+  }
+  let client: any = null;
+  if (screen.clientId) {
+    client = await storage.getClient(screen.clientId);
+  }
+
+  let eventBlocks: Awaited<ReturnType<typeof storage.getScheduleBlocks>> = [];
+  if (screen.currentEventId) {
+    const [programmes, allVersions] = await Promise.all([
+      storage.getProgrammes(),
+      storage.getProgrammeVersions(),
+    ]);
+    const eventProgrammes = programmes.filter((p: any) => p.eventId === screen.currentEventId);
+    const publishedVersions = allVersions.filter((v: any) =>
+      v.status === "published" && eventProgrammes.some((p: any) => p.id === v.programmeId)
+    );
+    const allBlocks = await Promise.all(
+      publishedVersions.map((v: any) => storage.getScheduleBlocks(v.id))
+    );
+    eventBlocks = allBlocks.flat();
+  }
+
+  let nextSession: { title: string; time: string; countdown: string } | null = null;
+  if (eventBlocks.length > 0) {
+    try {
+      nextSession = computeNextSession(eventBlocks, screen.id, now);
+    } catch (e) {
+      console.warn("next session computation failed:", e);
+    }
+  }
+
+  let weatherSummary: string | null = null;
+  const wLat = screen.weatherLat ? parseFloat(screen.weatherLat) : NaN;
+  const wLng = screen.weatherLng ? parseFloat(screen.weatherLng) : NaN;
+  if (!isNaN(wLat) && !isNaN(wLng)) {
+    weatherSummary = await fetchWeatherSummary(wLat, wLng, screen.weatherUnit || "celsius");
+  }
+
+  return {
+    screenName: screen.name ?? null,
+    roomName: screen.location ?? null,
+    eventName: event?.name ?? null,
+    clientName: client?.name ?? null,
+    roomCapacity: screen.roomCapacity ?? null,
+    eventStartDate: formatPlayerDate(event?.startDate),
+    eventEndDate: formatPlayerDate(event?.endDate),
+    nextSessionTitle: nextSession?.title ?? null,
+    nextSessionTime: nextSession?.time ?? null,
+    nextSessionCountdown: nextSession?.countdown ?? null,
+    weatherSummary,
+  };
+}
+
 function formatPlayerDate(d: Date | string | null | undefined): string {
   if (!d) return "";
   const date = d instanceof Date ? d : new Date(d);
@@ -3112,6 +3183,7 @@ export async function registerRoutes(
       }
 
       // ===== Extra player template variables (Task #93) =====
+      // Reuse cached event/client/eventBlocks already fetched above to avoid double-fetching.
       let nextSession: { title: string; time: string; countdown: string } | null = null;
       if (eventBlocks.length > 0) {
         try {
@@ -3128,7 +3200,7 @@ export async function registerRoutes(
         weatherSummary = await fetchWeatherSummary(wLat, wLng, screen.weatherUnit || "celsius");
       }
 
-      const playerVars = {
+      const playerVars: PlayerVarsPayload = {
         screenName: screen.name ?? null,
         roomName: screen.location ?? null,
         eventName: event?.name ?? null,
@@ -3295,16 +3367,57 @@ export async function registerRoutes(
         layoutSourceDetail = "Fallback Playlist";
       }
 
+      let playerVars: PlayerVarsPayload;
+      try {
+        playerVars = await buildPlayerVarsForScreen(screen, now);
+      } catch (e) {
+        console.warn("simulator playerVars computation failed:", e);
+        // Match the player endpoint's contract: always return an object,
+        // even if the helper fails — fall back to bare screen-derived fields.
+        playerVars = {
+          screenName: screen.name ?? null,
+          roomName: screen.location ?? null,
+          eventName: null,
+          clientName: null,
+          roomCapacity: screen.roomCapacity ?? null,
+          eventStartDate: "",
+          eventEndDate: "",
+          nextSessionTitle: null,
+          nextSessionTime: null,
+          nextSessionCountdown: null,
+          weatherSummary: null,
+        };
+      }
+
       res.json({
         layoutId: layout?.id || null,
         layoutSource,
         layoutSourceDetail,
         fallbackPlaylistId: (!layout && screen.fallbackPlaylistId) ? screen.fallbackPlaylistId : null,
+        playerVars,
         timestamp: now.toISOString(),
       });
     } catch (error) {
       console.error("Error fetching simulator content:", error);
       res.status(500).json({ error: "Failed to fetch simulator content" });
+    }
+  });
+
+  // Lightweight playerVars-only lookup for the layout editor's variable preview.
+  app.get("/api/simulator/:screenId/player-vars", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const screen = await storage.getScreen(req.params.screenId);
+      if (!screen) {
+        return res.status(404).json({ error: "Screen not found" });
+      }
+      if (screen.clientId && !canAccessClient(req, screen.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const playerVars = await buildPlayerVarsForScreen(screen);
+      res.json({ playerVars });
+    } catch (error) {
+      console.error("Error fetching simulator player vars:", error);
+      res.status(500).json({ error: "Failed to fetch player vars" });
     }
   });
 

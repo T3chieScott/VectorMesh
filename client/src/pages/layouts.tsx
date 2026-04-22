@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { PLAYER_VARIABLES, resolvePlayerVariables } from "@/lib/player-variables";
+import { PLAYER_VARIABLES, resolvePlayerVariables, type PlayerVariableContext } from "@/lib/player-variables";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -295,8 +295,45 @@ function SignageIconPicker({ value, onChange, fillColor }: { value?: string; onC
   );
 }
 
+// Persist the chosen preview screen across all VariableInsertMenu instances on
+// the page so designers don't have to re-pick it for every text field.
+let variablePreviewScreenId: string = "";
+const variablePreviewListeners = new Set<() => void>();
+function setVariablePreviewScreenId(id: string) {
+  variablePreviewScreenId = id;
+  variablePreviewListeners.forEach(fn => fn());
+}
+function useVariablePreviewScreenId(): string {
+  const [, setVersion] = useState(0);
+  useEffect(() => {
+    const listener = () => setVersion(v => v + 1);
+    variablePreviewListeners.add(listener);
+    return () => { variablePreviewListeners.delete(listener); };
+  }, []);
+  return variablePreviewScreenId;
+}
+
 function VariableInsertMenu({ onInsert, textareaRef }: { onInsert: (token: string) => void; textareaRef?: React.RefObject<HTMLTextAreaElement | null> }) {
   const [open, setOpen] = useState(false);
+  const previewScreenId = useVariablePreviewScreenId();
+
+  const { data: screens = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["/api/screens"],
+    enabled: open,
+  });
+
+  const { data: previewVarsData } = useQuery<{ playerVars: PlayerVariableContext | null }>({
+    queryKey: ["/api/simulator", previewScreenId, "player-vars"],
+    queryFn: async () => {
+      const res = await fetch(`/api/simulator/${previewScreenId}/player-vars`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch preview vars");
+      return res.json();
+    },
+    enabled: open && !!previewScreenId,
+    refetchInterval: 30_000,
+  });
+
+  const previewCtx = previewVarsData?.playerVars ?? undefined;
 
   const handleInsert = (token: string) => {
     onInsert(token);
@@ -316,19 +353,49 @@ function VariableInsertMenu({ onInsert, textareaRef }: { onInsert: (token: strin
         Insert Variable
       </Button>
       {open && (
-        <div className="absolute z-50 top-full mt-1 left-0 bg-popover border border-border rounded-md shadow-lg p-1 min-w-[220px]">
-          {PLAYER_VARIABLES.map((v) => (
-            <button
-              key={v.token}
-              type="button"
-              className="w-full text-left px-3 py-2 text-sm rounded-sm hover-elevate cursor-pointer flex items-center justify-between gap-2"
-              onClick={() => handleInsert(v.token)}
-              data-testid={`button-var-${v.label.toLowerCase().replace(/\s+/g, '-')}`}
+        <div className="absolute z-50 top-full mt-1 left-0 bg-popover border border-border rounded-md shadow-lg p-1 min-w-[280px] max-h-[400px] overflow-auto">
+          <div className="px-2 py-1.5 border-b border-border">
+            <Label className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 block">
+              Preview values from screen
+            </Label>
+            <Select
+              value={previewScreenId || "none"}
+              onValueChange={(v) => setVariablePreviewScreenId(v === "none" ? "" : v)}
             >
-              <span className="font-medium">{v.label}</span>
-              <code className="text-xs text-muted-foreground bg-muted px-1 rounded">{v.token}</code>
-            </button>
-          ))}
+              <SelectTrigger className="h-7 text-xs" data-testid="select-variable-preview-screen">
+                <SelectValue placeholder="Sample data" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Sample data</SelectItem>
+                {screens.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {PLAYER_VARIABLES.map((v) => {
+            const resolved = previewCtx
+              ? resolvePlayerVariables(v.token, previewCtx)
+              : v.preview;
+            const isEmpty = !resolved || resolved === v.token;
+            return (
+              <button
+                key={v.token}
+                type="button"
+                className="w-full text-left px-3 py-2 text-sm rounded-sm hover-elevate cursor-pointer flex flex-col gap-0.5"
+                onClick={() => handleInsert(v.token)}
+                data-testid={`button-var-${v.label.toLowerCase().replace(/\s+/g, '-')}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{v.label}</span>
+                  <code className="text-xs text-muted-foreground bg-muted px-1 rounded">{v.token}</code>
+                </div>
+                <div className="text-[11px] text-muted-foreground truncate">
+                  {isEmpty ? <span className="italic">(not set)</span> : `→ ${resolved}`}
+                </div>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

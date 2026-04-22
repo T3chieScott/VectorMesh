@@ -35,7 +35,7 @@ import {
   X,
 } from "lucide-react";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
-import { ZoneRenderer, zoneTypeIcons, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
+import { ZoneRenderer, zoneTypeIcons, getAspectRatioDimensions, getZoneFingerprint, type PlayerVariableContext } from "@/components/zone-renderer";
 
 interface SimulatorState {
   isPlaying: boolean;
@@ -58,6 +58,7 @@ function PlayerDisplay({
   skipNonce = 0,
   fallbackZones,
   useStableKeys = false,
+  playerContext,
 }: {
   screen: Screen | null;
   profile: DisplayProfile | null;
@@ -70,6 +71,7 @@ function PlayerDisplay({
   skipNonce?: number;
   fallbackZones?: LayoutZone[];
   useStableKeys?: boolean;
+  playerContext?: PlayerVariableContext;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0.5);
@@ -238,6 +240,7 @@ function PlayerDisplay({
                         playlistName={getPlaylistName(zone.id)}
                         timezone={weatherTimezone}
                         fillContainer={true}
+                        playerContext={playerContext}
                       />
                     </div>
                   </div>
@@ -282,6 +285,7 @@ function PlayerDisplay({
                 playlistName={getPlaylistName(zone.id)}
                 timezone={weatherTimezone}
                 fillContainer={true}
+                playerContext={playerContext}
               />
             </div>
           </div>
@@ -365,6 +369,7 @@ interface ResolvedContent {
   layoutSource: "none" | "live_override" | "scheduled" | "fallback";
   layoutSourceDetail: string | null;
   fallbackPlaylistId: string | null;
+  playerVars?: PlayerVariableContext | null;
 }
 
 export default function SimulatorPage() {
@@ -1076,6 +1081,7 @@ export default function SimulatorPage() {
                   skipNonce={mediaPlayerSkipNonce}
                   fallbackZones={isPlaylistPreview ? undefined : simulatorFallbackZones}
                   useStableKeys={isPlaylistPreview && previewHasLayoutItems}
+                  playerContext={isPlaylistPreview ? undefined : (resolvedContent?.playerVars ?? undefined)}
                 />
               )}
             </CardContent>
