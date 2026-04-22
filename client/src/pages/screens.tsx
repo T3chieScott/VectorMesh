@@ -70,6 +70,7 @@ import {
 import { useSiteContext } from "@/hooks/use-site-context";
 import { useAuth } from "@/hooks/use-auth";
 import type { Screen, DisplayProfile, LiveOverride, Event, LayoutTemplate, Client, Playlist } from "@shared/schema";
+import { WeatherLocationPicker } from "@/components/weather-location-picker";
 
 const screenFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -87,6 +88,7 @@ const screenFormSchema = z.object({
   roomCapacity: z.number().int().min(0).optional().nullable(),
   weatherLat: z.string().optional(),
   weatherLng: z.string().optional(),
+  weatherPlaceName: z.string().optional(),
   weatherUnit: z.enum(["celsius", "fahrenheit"]).default("celsius"),
 }).refine(
   (data) => !data.canvasEnabled || (data.canvasWidth != null && data.canvasWidth >= 1),
@@ -257,6 +259,10 @@ function CanvasFields({
 }
 
 function RoomAndWeatherFields({ form, prefix }: { form: any; prefix: string }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const placeName = form.watch("weatherPlaceName");
+  const lat = form.watch("weatherLat");
+  const lng = form.watch("weatherLng");
   return (
     <div className="space-y-3 rounded-lg border p-3 bg-muted/30">
       <div className="flex items-center gap-2">
@@ -281,6 +287,24 @@ function RoomAndWeatherFields({ form, prefix }: { form: any; prefix: string }) {
           data-testid={`${prefix}-room-capacity`}
         />
       </div>
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">Weather Location</Label>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setPickerOpen(true)}
+          data-testid={`${prefix}-pick-weather-location`}
+        >
+          <MapPin className="mr-1 h-3 w-3" />
+          {lat && lng ? "Change on map" : "Pick on map"}
+        </Button>
+      </div>
+      {placeName && (
+        <div className="rounded-md bg-background px-2 py-1 text-xs text-muted-foreground" data-testid={`${prefix}-weather-place-name`}>
+          {placeName}
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1">
           <Label className="text-xs">Weather Latitude</Label>
@@ -289,7 +313,10 @@ function RoomAndWeatherFields({ form, prefix }: { form: any; prefix: string }) {
             inputMode="decimal"
             placeholder="51.5074"
             value={form.watch("weatherLat") ?? ""}
-            onChange={(e) => form.setValue("weatherLat", e.target.value)}
+            onChange={(e) => {
+              form.setValue("weatherLat", e.target.value);
+              form.setValue("weatherPlaceName", "");
+            }}
             data-testid={`${prefix}-weather-lat`}
           />
         </div>
@@ -300,11 +327,26 @@ function RoomAndWeatherFields({ form, prefix }: { form: any; prefix: string }) {
             inputMode="decimal"
             placeholder="-0.1278"
             value={form.watch("weatherLng") ?? ""}
-            onChange={(e) => form.setValue("weatherLng", e.target.value)}
+            onChange={(e) => {
+              form.setValue("weatherLng", e.target.value);
+              form.setValue("weatherPlaceName", "");
+            }}
             data-testid={`${prefix}-weather-lng`}
           />
         </div>
       </div>
+      <WeatherLocationPicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        initialLat={lat}
+        initialLng={lng}
+        initialPlaceName={placeName}
+        onSelect={({ lat: newLat, lng: newLng, placeName: newPlaceName }) => {
+          form.setValue("weatherLat", newLat, { shouldDirty: true });
+          form.setValue("weatherLng", newLng, { shouldDirty: true });
+          form.setValue("weatherPlaceName", newPlaceName ?? "", { shouldDirty: true });
+        }}
+      />
       <div className="space-y-1">
         <Label className="text-xs">Temperature Unit</Label>
         <Select
@@ -424,6 +466,7 @@ function ScreenCard({
       roomCapacity: screen.roomCapacity ?? null,
       weatherLat: screen.weatherLat ?? "",
       weatherLng: screen.weatherLng ?? "",
+      weatherPlaceName: screen.weatherPlaceName ?? "",
       weatherUnit: (screen.weatherUnit === "fahrenheit" ? "fahrenheit" : "celsius") as "celsius" | "fahrenheit",
     },
   });
@@ -444,6 +487,7 @@ function ScreenCard({
         roomCapacity: data.roomCapacity == null || Number.isNaN(data.roomCapacity) ? null : data.roomCapacity,
         weatherLat: data.weatherLat?.trim() ? data.weatherLat.trim() : null,
         weatherLng: data.weatherLng?.trim() ? data.weatherLng.trim() : null,
+        weatherPlaceName: data.weatherPlaceName?.trim() ? data.weatherPlaceName.trim() : null,
         weatherUnit: data.weatherUnit || "celsius",
       }),
     onSuccess: () => {
@@ -1271,6 +1315,7 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
       roomCapacity: null,
       weatherLat: "",
       weatherLng: "",
+      weatherPlaceName: "",
       weatherUnit: "celsius",
     },
   });
@@ -1293,6 +1338,7 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
         roomCapacity: data.roomCapacity == null || Number.isNaN(data.roomCapacity) ? null : data.roomCapacity,
         weatherLat: data.weatherLat?.trim() ? data.weatherLat.trim() : null,
         weatherLng: data.weatherLng?.trim() ? data.weatherLng.trim() : null,
+        weatherPlaceName: data.weatherPlaceName?.trim() ? data.weatherPlaceName.trim() : null,
         weatherUnit: data.weatherUnit || "celsius",
       }),
     onSuccess: () => {

@@ -160,6 +160,7 @@ export const screens = pgTable("screens", {
   roomCapacity: integer("room_capacity"),
   weatherLat: text("weather_lat"),
   weatherLng: text("weather_lng"),
+  weatherPlaceName: text("weather_place_name"),
   weatherUnit: text("weather_unit").default("celsius"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
