@@ -610,6 +610,17 @@ export async function registerRoutes(
   }, 30000);
 
   // ============ HEALTH CHECK ============
+  app.get("/api/manual", requireAuth, async (_req, res) => {
+    try {
+      const manualPath = path.resolve(process.cwd(), "OPERATING_MANUAL.md");
+      const content = await fs.promises.readFile(manualPath, "utf8");
+      res.type("text/markdown; charset=utf-8").send(content);
+    } catch (error) {
+      console.error("Failed to read operating manual:", error);
+      res.status(500).type("text/plain").send("# Manual unavailable\n\nThe operating manual could not be loaded.");
+    }
+  });
+
   app.get("/api/health", async (req, res) => {
     try {
       const [screens, overrides] = await Promise.all([

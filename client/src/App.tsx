@@ -1,10 +1,12 @@
-import { Switch, Route, useRoute, Redirect } from "wouter";
+import { Switch, Route, useRoute, Redirect, Link } from "wouter";
+import { HelpCircle } from "lucide-react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { Button } from "@/components/ui/button";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { useAuth } from "@/hooks/use-auth";
@@ -38,6 +40,7 @@ import ActivityLogPage from "@/pages/activity-log";
 import StreamingServerPage from "@/pages/streaming-server";
 import ControlPanelPage from "@/pages/control-panel";
 import PlayerPage from "@/pages/player";
+import HelpPage from "@/pages/help";
 
 function AdminRoute({ component: Component }: { component: () => JSX.Element }) {
   const { user } = useAuth();
@@ -64,6 +67,7 @@ function AuthenticatedRouter() {
       <Route path="/simulator" component={SimulatorPage} />
       <Route path="/schedule" component={SchedulePage} />
       <Route path="/settings" component={SettingsPage} />
+      <Route path="/help" component={HelpPage} />
       <Route path="/change-password" component={ChangePasswordPage} />
       <Route path="/admin/users">{() => <AdminRoute component={AdminUsersPage} />}</Route>
       <Route path="/admin/display-profiles">{() => <AdminRoute component={AdminDisplayProfilesPage} />}</Route>
@@ -89,7 +93,20 @@ function AuthenticatedLayout() {
           <div className="flex flex-col flex-1 min-w-0">
             <header className="sticky top-0 z-40 flex h-14 items-center justify-between gap-4 border-b bg-background/80 backdrop-blur-lg px-4">
               <SidebarTrigger data-testid="button-sidebar-toggle" />
-              <ThemeToggle />
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  asChild
+                  title="Help & Manual"
+                  data-testid="button-help"
+                >
+                  <Link href="/help" aria-label="Help & Manual">
+                    <HelpCircle className="h-5 w-5" />
+                  </Link>
+                </Button>
+                <ThemeToggle />
+              </div>
             </header>
             <main className="flex-1 overflow-auto p-6">
               <AuthenticatedRouter />

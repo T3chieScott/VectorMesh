@@ -21,6 +21,7 @@ import {
   Globe,
   Radio,
   SlidersHorizontal,
+  HelpCircle,
 } from "lucide-react";
 import {
   Sidebar,
@@ -135,6 +136,14 @@ const systemNavItems = [
     title: "Settings",
     url: "/settings",
     icon: Settings,
+  },
+];
+
+const helpNavItems = [
+  {
+    title: "Help & Manual",
+    url: "/help",
+    icon: HelpCircle,
   },
 ];
 
@@ -284,6 +293,7 @@ export function AppSidebar() {
         {(user?.role === "admin" || user?.role === "account_manager") && (
           <NavGroup label="Admin" items={adminNavItems} />
         )}
+        <NavGroup label="Help" items={helpNavItems} />
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border p-4">
