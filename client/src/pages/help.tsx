@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
@@ -46,6 +46,7 @@ export default function HelpPage() {
 
   const toc = useMemo(() => (markdown ? extractToc(markdown) : []), [markdown]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const articleRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!markdown) return;
@@ -65,6 +66,7 @@ export default function HelpPage() {
 
   useEffect(() => {
     if (!markdown || toc.length === 0) return;
+    const root = articleRef.current;
     const observer = new IntersectionObserver(
       (entries) => {
         const visible = entries.filter((e) => e.isIntersecting);
@@ -75,7 +77,7 @@ export default function HelpPage() {
           if (top.target.id) setActiveId(top.target.id);
         }
       },
-      { rootMargin: "-80px 0px -70% 0px", threshold: 0 }
+      { root: root ?? null, rootMargin: "0px 0px -70% 0px", threshold: 0 }
     );
     const observed: HTMLElement[] = [];
     toc.forEach((item) => {
@@ -101,8 +103,8 @@ export default function HelpPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-7xl" data-testid="page-help">
-      <div className="mb-6 flex items-center gap-3">
+    <div className="mx-auto flex h-full w-full max-w-7xl flex-col" data-testid="page-help">
+      <div className="mb-6 flex shrink-0 items-center gap-3">
         <BookOpen className="h-6 w-6 text-primary" />
         <div>
           <h1 className="text-2xl font-semibold" data-testid="text-help-title">
@@ -128,10 +130,10 @@ export default function HelpPage() {
       )}
 
       {markdown && (
-        <div className="grid gap-8 lg:grid-cols-[16rem_minmax(0,1fr)]">
-          <aside className="hidden lg:block">
+        <div className="grid min-h-0 flex-1 gap-8 lg:grid-cols-[16rem_minmax(0,1fr)] lg:overflow-hidden">
+          <aside className="hidden min-h-0 lg:block lg:overflow-hidden">
             <nav
-              className="sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto pr-2 custom-scrollbar"
+              className="h-full overflow-y-auto pr-2 custom-scrollbar"
               data-testid="nav-help-toc"
             >
               <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -161,9 +163,11 @@ export default function HelpPage() {
           </aside>
 
           <article
+            ref={articleRef}
             className={cn(
               "prose prose-slate dark:prose-invert max-w-none",
-              "prose-headings:scroll-mt-20",
+              "min-h-0 lg:h-full lg:overflow-y-auto lg:pr-4 custom-scrollbar",
+              "prose-headings:scroll-mt-4",
               "prose-h1:text-3xl prose-h2:text-2xl prose-h3:text-xl",
               "prose-h2:mt-10 prose-h2:border-b prose-h2:border-border prose-h2:pb-2",
               "prose-a:text-primary prose-code:before:content-none prose-code:after:content-none",
