@@ -103,7 +103,7 @@ export default function HelpPage() {
   };
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-7xl flex-col" data-testid="page-help">
+    <div className="mx-auto flex w-full max-w-7xl flex-col lg:h-[calc(100vh-3.5rem-3rem)]" data-testid="page-help">
       <div className="mb-6 flex shrink-0 items-center gap-3">
         <BookOpen className="h-6 w-6 text-primary" />
         <div>
