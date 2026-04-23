@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   DndContext,
@@ -32,6 +32,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -434,6 +436,7 @@ function ScreenCard({
   onMoveToEnd,
   canMove = true,
   moveDisabledReason,
+  onDuplicate,
 }: {
   screen: Screen;
   profiles: DisplayProfile[];
@@ -449,6 +452,7 @@ function ScreenCard({
   onMoveToEnd?: () => void;
   canMove?: boolean;
   moveDisabledReason?: string;
+  onDuplicate?: () => void;
 }) {
   const [internalEditOpen, setInternalEditOpen] = useState(false);
   const isEditControlled = editOpenProp !== undefined;
@@ -1104,6 +1108,19 @@ function ScreenCard({
                 </DropdownMenuItem>
               </>
             )}
+            {onDuplicate && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={() => onDuplicate()}
+                  disabled={!!screen.locked}
+                  data-testid={`menu-duplicate-${screen.id}`}
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  Duplicate
+                </DropdownMenuItem>
+              </>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
@@ -1616,6 +1633,111 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
   );
 }
 
+function DuplicateScreenDialog({
+  screen,
+  onClose,
+}: {
+  screen: Screen | null;
+  onClose: () => void;
+}) {
+  const open = !!screen;
+  const [name, setName] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    if (screen) {
+      setName(`${screen.name} (Copy)`);
+      // Focus + select on next tick so the dialog has rendered
+      setTimeout(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }, 50);
+    }
+  }, [screen]);
+
+  const duplicateMutation = useMutation({
+    mutationFn: async () => {
+      if (!screen) throw new Error("No source screen");
+      const res = await apiRequest("POST", `/api/screens/${screen.id}/duplicate`, {
+        name: name.trim(),
+      });
+      return res;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
+      toast({ title: "Screen duplicated" });
+      onClose();
+    },
+    onError: async (err: any) => {
+      let msg = "Failed to duplicate screen";
+      try {
+        const text = err?.message || "";
+        const match = text.match(/^\d+:\s*([\s\S]*)$/);
+        if (match) {
+          const parsed = JSON.parse(match[1]);
+          if (typeof parsed.error === "string") msg = parsed.error;
+        }
+      } catch {}
+      toast({ title: msg, variant: "destructive" });
+    },
+  });
+
+  const trimmed = name.trim();
+  const submitDisabled = trimmed.length === 0 || duplicateMutation.isPending;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-md" data-testid="dialog-duplicate-screen">
+        <DialogHeader>
+          <DialogTitle>Duplicate screen</DialogTitle>
+          <DialogDescription>
+            Create a copy of <span className="font-medium">{screen?.name}</span> with a new name.
+            The duplicate will start unpaired and offline.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!submitDisabled) duplicateMutation.mutate();
+          }}
+          className="space-y-4"
+        >
+          <div className="space-y-2">
+            <Label htmlFor="duplicate-screen-name">Name</Label>
+            <Input
+              id="duplicate-screen-name"
+              ref={inputRef}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={200}
+              data-testid="input-duplicate-screen-name"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={duplicateMutation.isPending}
+              data-testid="button-duplicate-cancel"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={submitDisabled}
+              data-testid="button-duplicate-confirm"
+            >
+              {duplicateMutation.isPending ? "Duplicating..." : "Duplicate"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function SortableScreenCard(props: {
   screen: Screen;
   profiles: DisplayProfile[];
@@ -1628,6 +1750,7 @@ function SortableScreenCard(props: {
   dragDisabledReason?: string;
   onMoveToStart: () => void;
   onMoveToEnd: () => void;
+  onDuplicate: () => void;
 }) {
   const {
     attributes,
@@ -1680,6 +1803,7 @@ function SortableScreenCard(props: {
         onMoveToEnd={props.onMoveToEnd}
         canMove={props.dragEnabled}
         moveDisabledReason={props.dragDisabledReason}
+        onDuplicate={props.onDuplicate}
       />
     </div>
   );
@@ -1734,6 +1858,7 @@ export default function ScreensPage() {
   const userId = user?.id ?? null;
   const [view, setView] = useState<ScreensView>(() => loadViewPreference(userId));
   const [editingScreenId, setEditingScreenId] = useState<string | null>(null);
+  const [duplicatingScreen, setDuplicatingScreen] = useState<Screen | null>(null);
   const [filter, setFilter] = useState<"all" | "online" | "offline" | "unpaired">("all");
   const { toast: pageToast } = useToast();
 
@@ -2027,6 +2152,7 @@ export default function ScreensPage() {
                     dragDisabledReason={dragDisabledReason}
                     onMoveToStart={() => moveScreenTo(screen.id, "start")}
                     onMoveToEnd={() => moveScreenTo(screen.id, "end")}
+                    onDuplicate={() => setDuplicatingScreen(screen)}
                   />
                 ))}
               </div>
@@ -2040,6 +2166,7 @@ export default function ScreensPage() {
             layouts={layouts}
             getActiveOverrideForScreen={getActiveOverrideForScreen}
             onOpenScreen={(s) => setEditingScreenId(s.id)}
+            onDuplicateScreen={(s) => setDuplicatingScreen(s)}
             userId={userId}
           />
           {/*
@@ -2073,6 +2200,10 @@ export default function ScreensPage() {
           })()}
         </>
       )}
+      <DuplicateScreenDialog
+        screen={duplicatingScreen}
+        onClose={() => setDuplicatingScreen(null)}
+      />
     </div>
   );
 }

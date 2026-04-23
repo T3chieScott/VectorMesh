@@ -141,6 +141,7 @@ export interface IStorage {
   updateScreen(id: string, data: Partial<InsertScreen>): Promise<Screen | undefined>;
   deleteScreen(id: string): Promise<boolean>;
   reorderScreens(orderedIds: string[]): Promise<void>;
+  duplicateScreen(sourceId: string, name: string): Promise<Screen | undefined>;
 
   // Media Assets
   getMediaAssets(): Promise<MediaAsset[]>;
@@ -618,6 +619,52 @@ export class DatabaseStorage implements IStorage {
   async createScreen(data: InsertScreen): Promise<Screen> {
     const [screen] = await db.insert(screens).values(data).returning();
     return screen;
+  }
+
+  async duplicateScreen(sourceId: string, name: string): Promise<Screen | undefined> {
+    const [source] = await db.select().from(screens).where(eq(screens.id, sourceId));
+    if (!source) return undefined;
+    const [{ maxOrder }] = await db
+      .select({ maxOrder: sql<number | null>`max(${screens.displayOrder})` })
+      .from(screens);
+    const nextOrder = (typeof maxOrder === "number" ? maxOrder : -1) + 1;
+    const insertValues = {
+      name,
+      clientId: source.clientId,
+      location: source.location,
+      displayProfileId: source.displayProfileId,
+      fallbackLayoutId: source.fallbackLayoutId,
+      fallbackPlaylistId: source.fallbackPlaylistId,
+      canvasEnabled: source.canvasEnabled,
+      canvasWidth: source.canvasWidth,
+      canvasHeight: source.canvasHeight,
+      canvasX: source.canvasX,
+      canvasY: source.canvasY,
+      screenshotEnabled: source.screenshotEnabled,
+      testPatternEnabled: source.testPatternEnabled,
+      showLiveBanner: source.showLiveBanner,
+      roomCapacity: source.roomCapacity,
+      weatherLat: source.weatherLat,
+      weatherLng: source.weatherLng,
+      weatherPlaceName: source.weatherPlaceName,
+      weatherUnit: source.weatherUnit,
+      // Reset runtime / identity fields
+      pairingCode: null,
+      deviceToken: null,
+      isPaired: false,
+      isOnline: false,
+      lastSeen: null,
+      ipAddress: null,
+      hostname: null,
+      hardwareClass: null,
+      currentEventId: null,
+      lastScreenshot: null,
+      lastScreenshotAt: null,
+      locked: false,
+      displayOrder: nextOrder,
+    } as any;
+    const [created] = await db.insert(screens).values(insertValues).returning();
+    return created;
   }
 
   async updateScreen(id: string, data: Partial<InsertScreen>): Promise<Screen | undefined> {

@@ -1352,6 +1352,37 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/screens/:id/duplicate", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const sourceId = req.params.id;
+      const bodySchema = z.object({ name: z.string().trim().min(1).max(200) });
+      const parsed = bodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        const first = parsed.error.errors[0]?.message || "Invalid name";
+        return res.status(400).json({ error: first });
+      }
+      const source = await storage.getScreen(sourceId);
+      if (!source) return res.status(404).json({ error: "Screen not found" });
+      if (source.clientId && !canAccessClient(req, source.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      if (source.locked) {
+        return res.status(409).json({ error: "Cannot duplicate a locked screen" });
+      }
+      const created = await storage.duplicateScreen(sourceId, parsed.data.name);
+      if (!created) return res.status(404).json({ error: "Source screen not found" });
+      logAudit(req, "screen.duplicate", "screen", created.id, {
+        sourceId,
+        newId: created.id,
+        name: created.name,
+      });
+      res.status(201).json(created);
+    } catch (error) {
+      console.error("Error duplicating screen:", error);
+      res.status(500).json({ error: "Failed to duplicate screen" });
+    }
+  });
+
   app.patch(
     "/api/screens/:id",
     requireAuth,

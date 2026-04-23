@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowUpDown,
   Copy,
+  MoreHorizontal,
   Settings2,
   GripVertical,
   Zap,
@@ -25,6 +26,7 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -160,6 +162,7 @@ interface ScreensTableProps {
   layouts: LayoutTemplate[];
   getActiveOverrideForScreen: (screenId: string) => LiveOverride | null;
   onOpenScreen: (screen: Screen) => void;
+  onDuplicateScreen?: (screen: Screen) => void;
   userId?: string | null;
 }
 
@@ -168,6 +171,7 @@ export function ScreensTable({
   layouts,
   getActiveOverrideForScreen,
   onOpenScreen,
+  onDuplicateScreen,
   userId = null,
 }: ScreensTableProps) {
   const { toast } = useToast();
@@ -357,7 +361,33 @@ export function ScreensTable({
                     })}
                   </TableCell>
                 ))}
-                <TableCell />
+                <TableCell className="text-right">
+                  {onDuplicateScreen && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          aria-label="Row actions"
+                          data-testid={`button-row-actions-${screen.id}`}
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onSelect={() => onDuplicateScreen(screen)}
+                          disabled={!!screen.locked}
+                          data-testid={`menu-duplicate-row-${screen.id}`}
+                        >
+                          <Copy className="mr-2 h-4 w-4" />
+                          Duplicate
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                </TableCell>
               </TableRow>
             );
           })}
