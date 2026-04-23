@@ -172,8 +172,8 @@ export function ScreensTable({
 }: ScreensTableProps) {
   const { toast } = useToast();
   const [config, setConfig] = useState<PersistedConfig>(() => loadConfig(userId));
-  const [sort, setSort] = useState<{ column: ColumnId; dir: "asc" | "desc" }>({
-    column: "name",
+  const [sort, setSort] = useState<{ column: ColumnId | null; dir: "asc" | "desc" }>({
+    column: null,
     dir: "asc",
   });
   const dragColumn = useRef<ColumnId | null>(null);
@@ -240,11 +240,16 @@ export function ScreensTable({
   };
 
   const sortedScreens = useMemo(() => {
+    if (sort.column == null) {
+      // Default: preserve incoming order (server-side display_order, then created_at).
+      return screens;
+    }
+    const column = sort.column;
     const arr = [...screens];
     const dir = sort.dir === "asc" ? 1 : -1;
     arr.sort((a, b) => {
-      const av = sortValue(a, sort.column, layouts, getActiveOverrideForScreen);
-      const bv = sortValue(b, sort.column, layouts, getActiveOverrideForScreen);
+      const av = sortValue(a, column, layouts, getActiveOverrideForScreen);
+      const bv = sortValue(b, column, layouts, getActiveOverrideForScreen);
       if (av == null && bv == null) return 0;
       if (av == null) return 1;
       if (bv == null) return -1;

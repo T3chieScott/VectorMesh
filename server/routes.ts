@@ -1324,6 +1324,34 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/screens/reorder", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const { orderedIds } = req.body as { orderedIds: string[] };
+      if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+        return res.status(400).json({ error: "orderedIds array is required" });
+      }
+      if (!orderedIds.every(id => typeof id === "string" && id.length > 0)) {
+        return res.status(400).json({ error: "orderedIds must be non-empty strings" });
+      }
+      if (new Set(orderedIds).size !== orderedIds.length) {
+        return res.status(400).json({ error: "orderedIds must not contain duplicates" });
+      }
+      for (const id of orderedIds) {
+        const screen = await storage.getScreen(id);
+        if (!screen) return res.status(404).json({ error: `Screen ${id} not found` });
+        if (screen.clientId && !canAccessClient(req, screen.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
+      await storage.reorderScreens(orderedIds);
+      logAudit(req, "reorder", "screen", orderedIds[0], { count: orderedIds.length });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error reordering screens:", error);
+      res.status(500).json({ error: "Failed to reorder screens" });
+    }
+  });
+
   app.patch(
     "/api/screens/:id",
     requireAuth,

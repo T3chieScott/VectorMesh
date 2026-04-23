@@ -1,5 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -66,6 +83,9 @@ import {
   TestTube,
   AlertTriangle,
   Radio,
+  GripVertical,
+  ArrowUpToLine,
+  ArrowDownToLine,
 } from "lucide-react";
 import { useSiteContext } from "@/hooks/use-site-context";
 import { useAuth } from "@/hooks/use-auth";
@@ -409,6 +429,11 @@ function ScreenCard({
   activeOverride,
   editOpen: editOpenProp,
   onEditOpenChange,
+  dragHandle,
+  onMoveToStart,
+  onMoveToEnd,
+  canMove = true,
+  moveDisabledReason,
 }: {
   screen: Screen;
   profiles: DisplayProfile[];
@@ -419,6 +444,11 @@ function ScreenCard({
   activeOverride: LiveOverride | null;
   editOpen?: boolean;
   onEditOpenChange?: (open: boolean) => void;
+  dragHandle?: React.ReactNode;
+  onMoveToStart?: () => void;
+  onMoveToEnd?: () => void;
+  canMove?: boolean;
+  moveDisabledReason?: string;
 }) {
   const [internalEditOpen, setInternalEditOpen] = useState(false);
   const isEditControlled = editOpenProp !== undefined;
@@ -655,7 +685,8 @@ function ScreenCard({
   });
 
   return (
-    <Card className={`hover-elevate transition-all ${screen.locked ? "ring-1 ring-amber-500/30" : ""}`}>
+    <Card className={`relative hover-elevate transition-all ${screen.locked ? "ring-1 ring-amber-500/30" : ""}`}>
+      {dragHandle}
       <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3">
         <div className="flex items-center gap-3">
           <div
@@ -1035,6 +1066,29 @@ function ScreenCard({
                 <DropdownMenuItem onSelect={() => quickOverrideMutation.mutate(30)}>
                   <Zap className="mr-2 h-4 w-4" />
                   Override 30 min
+                </DropdownMenuItem>
+              </>
+            )}
+            {(onMoveToStart || onMoveToEnd) && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={!canMove}
+                  onSelect={() => onMoveToStart?.()}
+                  data-testid={`button-move-to-start-${screen.id}`}
+                  title={!canMove ? moveDisabledReason : undefined}
+                >
+                  <ArrowUpToLine className="mr-2 h-4 w-4" />
+                  Move to start
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!canMove}
+                  onSelect={() => onMoveToEnd?.()}
+                  data-testid={`button-move-to-end-${screen.id}`}
+                  title={!canMove ? moveDisabledReason : undefined}
+                >
+                  <ArrowDownToLine className="mr-2 h-4 w-4" />
+                  Move to end
                 </DropdownMenuItem>
               </>
             )}
@@ -1562,6 +1616,75 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
   );
 }
 
+function SortableScreenCard(props: {
+  screen: Screen;
+  profiles: DisplayProfile[];
+  events: Event[];
+  layouts: LayoutTemplate[];
+  playlists: Playlist[];
+  clients: Client[];
+  activeOverride: LiveOverride | null;
+  dragEnabled: boolean;
+  dragDisabledReason?: string;
+  onMoveToStart: () => void;
+  onMoveToEnd: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: props.screen.id, disabled: !props.dragEnabled });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : undefined,
+    opacity: isDragging ? 0.85 : undefined,
+  };
+
+  const handle = (
+    <button
+      type="button"
+      ref={setActivatorNodeRef}
+      {...(props.dragEnabled ? attributes : {})}
+      {...(props.dragEnabled ? listeners : {})}
+      disabled={!props.dragEnabled}
+      title={props.dragEnabled ? "Drag to reorder" : props.dragDisabledReason}
+      aria-label="Drag to reorder"
+      data-testid={`drag-handle-${props.screen.id}`}
+      className={cn(
+        "absolute left-1.5 top-1.5 z-10 inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground/50 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100",
+        props.dragEnabled ? "cursor-grab active:cursor-grabbing" : "cursor-not-allowed",
+      )}
+    >
+      <GripVertical className="h-4 w-4" />
+    </button>
+  );
+
+  return (
+    <div ref={setNodeRef} style={style} className="group">
+      <ScreenCard
+        screen={props.screen}
+        profiles={props.profiles}
+        events={props.events}
+        layouts={props.layouts}
+        playlists={props.playlists}
+        clients={props.clients}
+        activeOverride={props.activeOverride}
+        dragHandle={handle}
+        onMoveToStart={props.onMoveToStart}
+        onMoveToEnd={props.onMoveToEnd}
+        canMove={props.dragEnabled}
+        moveDisabledReason={props.dragDisabledReason}
+      />
+    </div>
+  );
+}
+
 export default function ScreensPage() {
   const screensQueryConfig = useSiteFilteredQuery<Screen[]>("/api/screens");
   const { data: screens = [], isLoading: screensLoading } = useQuery({ ...screensQueryConfig, refetchInterval: 10000 });
@@ -1611,6 +1734,85 @@ export default function ScreensPage() {
   const userId = user?.id ?? null;
   const [view, setView] = useState<ScreensView>(() => loadViewPreference(userId));
   const [editingScreenId, setEditingScreenId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<"all" | "online" | "offline" | "unpaired">("all");
+  const { toast: pageToast } = useToast();
+
+  const filteredScreens = useMemo(() => {
+    switch (filter) {
+      case "online": return screens.filter((s) => s.isOnline);
+      case "offline": return screens.filter((s) => !s.isOnline && s.isPaired);
+      case "unpaired": return screens.filter((s) => !s.isPaired);
+      default: return screens;
+    }
+  }, [screens, filter]);
+
+  // Local optimistic order, synced from server data when not actively dragging.
+  const [orderedIds, setOrderedIds] = useState<string[]>([]);
+  useEffect(() => {
+    setOrderedIds(screens.map((s) => s.id));
+  }, [screens]);
+
+  const orderedScreens = useMemo(() => {
+    const map = new Map(screens.map((s) => [s.id, s]));
+    const arr: Screen[] = [];
+    for (const id of orderedIds) {
+      const s = map.get(id);
+      if (s) arr.push(s);
+    }
+    // Append any screens not yet in orderedIds (e.g. just created)
+    for (const s of screens) {
+      if (!orderedIds.includes(s.id)) arr.push(s);
+    }
+    return arr;
+  }, [screens, orderedIds]);
+
+  const visibleCardScreens = useMemo(() => {
+    const visibleIds = new Set(filteredScreens.map((s) => s.id));
+    return orderedScreens.filter((s) => visibleIds.has(s.id));
+  }, [orderedScreens, filteredScreens]);
+
+  const reorderMutation = useMutation({
+    mutationFn: (newOrderedIds: string[]) =>
+      apiRequest("PATCH", "/api/screens/reorder", { orderedIds: newOrderedIds }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
+    },
+    onError: () => {
+      pageToast({ title: "Failed to save order", variant: "destructive" });
+      // Roll back to server state
+      setOrderedIds(screens.map((s) => s.id));
+    },
+  });
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const dragEnabled = filter === "all" && view === "cards";
+  const dragDisabledReason = filter !== "all"
+    ? "Clear the filter to reorder cards."
+    : undefined;
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = orderedIds.indexOf(String(active.id));
+    const newIndex = orderedIds.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    const next = arrayMove(orderedIds, oldIndex, newIndex);
+    setOrderedIds(next);
+    reorderMutation.mutate(next);
+  };
+
+  const moveScreenTo = (screenId: string, position: "start" | "end") => {
+    const idx = orderedIds.indexOf(screenId);
+    if (idx < 0) return;
+    const without = orderedIds.filter((id) => id !== screenId);
+    const next = position === "start" ? [screenId, ...without] : [...without, screenId];
+    setOrderedIds(next);
+    reorderMutation.mutate(next);
+  };
 
   // If the user identity becomes available after first render, re-load the
   // user-scoped preference (handles the case where useAuth resolves async).
@@ -1669,16 +1871,72 @@ export default function ScreensPage() {
 
       {/* Stats */}
       {!isLoading && screens.length > 0 && (
-        <div className="flex flex-wrap gap-4">
-          <Badge variant="secondary" className="bg-green-500/10 text-green-600 py-1.5 px-3">
-            {onlineCount} Online
-          </Badge>
-          <Badge variant="secondary" className="bg-red-500/10 text-red-600 py-1.5 px-3">
-            {offlineCount} Offline
-          </Badge>
-          <Badge variant="secondary" className="py-1.5 px-3">
-            {unpairedCount} Unpaired
-          </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setFilter(filter === "online" ? "all" : "online")}
+            data-testid="filter-online"
+            aria-pressed={filter === "online"}
+          >
+            <Badge
+              variant="secondary"
+              className={cn(
+                "bg-green-500/10 text-green-600 py-1.5 px-3 hover-elevate cursor-pointer",
+                filter === "online" && "ring-2 ring-green-500/40",
+              )}
+            >
+              {onlineCount} Online
+            </Badge>
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilter(filter === "offline" ? "all" : "offline")}
+            data-testid="filter-offline"
+            aria-pressed={filter === "offline"}
+          >
+            <Badge
+              variant="secondary"
+              className={cn(
+                "bg-red-500/10 text-red-600 py-1.5 px-3 hover-elevate cursor-pointer",
+                filter === "offline" && "ring-2 ring-red-500/40",
+              )}
+            >
+              {offlineCount} Offline
+            </Badge>
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilter(filter === "unpaired" ? "all" : "unpaired")}
+            data-testid="filter-unpaired"
+            aria-pressed={filter === "unpaired"}
+          >
+            <Badge
+              variant="secondary"
+              className={cn(
+                "py-1.5 px-3 hover-elevate cursor-pointer",
+                filter === "unpaired" && "ring-2 ring-amber-500/40",
+              )}
+            >
+              {unpairedCount} Unpaired
+            </Badge>
+          </button>
+          {filter !== "all" && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs"
+              onClick={() => setFilter("all")}
+              data-testid="button-clear-filter"
+            >
+              Clear filter
+            </Button>
+          )}
+          {view === "cards" && filter !== "all" && (
+            <span className="text-xs text-muted-foreground" data-testid="text-drag-disabled-note">
+              Drag-to-reorder is paused while a filter is active.
+            </span>
+          )}
         </div>
       )}
 
@@ -1724,24 +1982,40 @@ export default function ScreensPage() {
           </CardContent>
         </Card>
       ) : view === "cards" ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {screens.map((screen) => (
-            <ScreenCard
-              key={screen.id}
-              screen={screen}
-              profiles={profiles}
-              events={events}
-              layouts={layouts}
-              playlists={playlists}
-              clients={clients}
-              activeOverride={getActiveOverrideForScreen(screen.id)}
-            />
-          ))}
-        </div>
+        visibleCardScreens.length === 0 ? (
+          <Card className="py-8">
+            <CardContent className="flex flex-col items-center justify-center text-center text-sm text-muted-foreground">
+              No screens match the current filter.
+            </CardContent>
+          </Card>
+        ) : (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={visibleCardScreens.map((s) => s.id)} strategy={rectSortingStrategy}>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="grid-screen-cards">
+                {visibleCardScreens.map((screen) => (
+                  <SortableScreenCard
+                    key={screen.id}
+                    screen={screen}
+                    profiles={profiles}
+                    events={events}
+                    layouts={layouts}
+                    playlists={playlists}
+                    clients={clients}
+                    activeOverride={getActiveOverrideForScreen(screen.id)}
+                    dragEnabled={dragEnabled}
+                    dragDisabledReason={dragDisabledReason}
+                    onMoveToStart={() => moveScreenTo(screen.id, "start")}
+                    onMoveToEnd={() => moveScreenTo(screen.id, "end")}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+        )
       ) : (
         <>
           <ScreensTable
-            screens={screens}
+            screens={filteredScreens}
             layouts={layouts}
             getActiveOverrideForScreen={getActiveOverrideForScreen}
             onOpenScreen={(s) => setEditingScreenId(s.id)}

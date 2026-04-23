@@ -140,6 +140,7 @@ export interface IStorage {
   createScreen(data: InsertScreen): Promise<Screen>;
   updateScreen(id: string, data: Partial<InsertScreen>): Promise<Screen | undefined>;
   deleteScreen(id: string): Promise<boolean>;
+  reorderScreens(orderedIds: string[]): Promise<void>;
 
   // Media Assets
   getMediaAssets(): Promise<MediaAsset[]>;
@@ -553,7 +554,20 @@ export class DatabaseStorage implements IStorage {
 
   // Screens
   async getScreens(): Promise<Screen[]> {
-    return db.select().from(screens).orderBy(desc(screens.createdAt));
+    return db
+      .select()
+      .from(screens)
+      .orderBy(sql`${screens.displayOrder} ASC NULLS LAST`, asc(screens.createdAt));
+  }
+
+  async reorderScreens(orderedIds: string[]): Promise<void> {
+    await db.transaction(async (tx) => {
+      for (let i = 0; i < orderedIds.length; i++) {
+        await tx.update(screens)
+          .set({ displayOrder: i })
+          .where(eq(screens.id, orderedIds[i]));
+      }
+    });
   }
 
   async getScreen(id: string): Promise<Screen | undefined> {
