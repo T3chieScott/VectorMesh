@@ -66,6 +66,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { LocationPicker } from "@/components/location-picker";
 import { useToast } from "@/hooks/use-toast";
 import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import {
@@ -1245,6 +1246,7 @@ function ZoneEditorDialog({
 }) {
   const { toast } = useToast();
   const isEditing = !!zone;
+  const [aircraftBoundsPickerOpen, setAircraftBoundsPickerOpen] = useState(false);
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [geocodeResults, setGeocodeResults] = useState<Array<{ name: string; country: string; admin1?: string; lat: number; lng: number }>>([]);
   const [geocodeTarget, setGeocodeTarget] = useState<"weather" | "forecast" | "qr" | null>(null);
@@ -7098,7 +7100,36 @@ function ZoneEditorDialog({
                   )}
                 />
                 <div className="space-y-2">
-                  <p className="text-xs font-medium text-muted-foreground">Bounding Box (lat/lon)</p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium text-muted-foreground">Bounding Box (lat/lon)</p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setAircraftBoundsPickerOpen(true)}
+                      data-testid="button-aircraft-pick-on-map"
+                    >
+                      <MapPin className="mr-1 h-3 w-3" /> Pick on map
+                    </Button>
+                  </div>
+                  <LocationPicker
+                    mode="bounds"
+                    title="Pick aircraft radar area"
+                    open={aircraftBoundsPickerOpen}
+                    onOpenChange={setAircraftBoundsPickerOpen}
+                    initialBounds={{
+                      lamin: form.watch("aircraftBoundsLamin"),
+                      lamax: form.watch("aircraftBoundsLamax"),
+                      lomin: form.watch("aircraftBoundsLomin"),
+                      lomax: form.watch("aircraftBoundsLomax"),
+                    }}
+                    onSelect={(b) => {
+                      form.setValue("aircraftBoundsLamin", b.lamin, { shouldDirty: true });
+                      form.setValue("aircraftBoundsLamax", b.lamax, { shouldDirty: true });
+                      form.setValue("aircraftBoundsLomin", b.lomin, { shouldDirty: true });
+                      form.setValue("aircraftBoundsLomax", b.lomax, { shouldDirty: true });
+                    }}
+                  />
                   <div className="grid grid-cols-2 gap-3">
                     <FormField
                       control={form.control}
