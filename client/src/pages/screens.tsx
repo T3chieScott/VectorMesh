@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -71,6 +71,35 @@ import { useSiteContext } from "@/hooks/use-site-context";
 import { useAuth } from "@/hooks/use-auth";
 import type { Screen, DisplayProfile, LiveOverride, Event, LayoutTemplate, Client, Playlist } from "@shared/schema";
 import { WeatherLocationPicker } from "@/components/weather-location-picker";
+import { ScreensTable } from "@/components/screens-table";
+import { Table as TableIcon, LayoutGrid as LayoutGridIcon } from "lucide-react";
+
+type ScreensView = "cards" | "table";
+
+const LEGACY_VIEW_KEY = "vectormesh:screens-view";
+
+function viewStorageKey(userId: string | null | undefined): string {
+  return userId ? `vectormesh:${userId}:screens-view` : LEGACY_VIEW_KEY;
+}
+
+function loadViewPreference(userId: string | null | undefined): ScreensView {
+  try {
+    const key = viewStorageKey(userId);
+    let v = localStorage.getItem(key);
+    if (!v && userId) {
+      // One-time migration from the legacy unscoped key
+      const legacy = localStorage.getItem(LEGACY_VIEW_KEY);
+      if (legacy === "table" || legacy === "cards") {
+        v = legacy;
+        localStorage.setItem(key, legacy);
+      }
+    }
+    if (v === "table" || v === "cards") return v;
+  } catch {
+    // ignore
+  }
+  return "cards";
+}
 
 const screenFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -378,6 +407,8 @@ function ScreenCard({
   playlists,
   clients,
   activeOverride,
+  editOpen: editOpenProp,
+  onEditOpenChange,
 }: {
   screen: Screen;
   profiles: DisplayProfile[];
@@ -386,8 +417,20 @@ function ScreenCard({
   playlists: Playlist[];
   clients: Client[];
   activeOverride: LiveOverride | null;
+  editOpen?: boolean;
+  onEditOpenChange?: (open: boolean) => void;
 }) {
-  const [editOpen, setEditOpen] = useState(false);
+  const [internalEditOpen, setInternalEditOpen] = useState(false);
+  const isEditControlled = editOpenProp !== undefined;
+  const editOpen = isEditControlled ? !!editOpenProp : internalEditOpen;
+  const setEditOpen = (open: boolean) => {
+    if (isEditControlled) {
+      onEditOpenChange?.(open);
+    } else {
+      setInternalEditOpen(open);
+      onEditOpenChange?.(open);
+    }
+  };
   const [screenshotOpen, setScreenshotOpen] = useState(false);
   const [screenshotViewMode, setScreenshotViewMode] = useState<"screen" | "canvas">("screen");
   const openScreenshotPopup = () => {
@@ -1564,6 +1607,25 @@ export default function ScreensPage() {
   const offlineCount = screens.filter((s) => !s.isOnline && s.isPaired).length;
   const unpairedCount = screens.filter((s) => !s.isPaired).length;
 
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+  const [view, setView] = useState<ScreensView>(() => loadViewPreference(userId));
+  const [editingScreenId, setEditingScreenId] = useState<string | null>(null);
+
+  // If the user identity becomes available after first render, re-load the
+  // user-scoped preference (handles the case where useAuth resolves async).
+  useEffect(() => {
+    setView(loadViewPreference(userId));
+  }, [userId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(viewStorageKey(userId), view);
+    } catch {
+      // ignore
+    }
+  }, [view, userId]);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -1574,7 +1636,35 @@ export default function ScreensPage() {
             Manage display screens and their configurations
           </p>
         </div>
-        <CreateScreenDialog profiles={profiles} events={events} clients={clients} />
+        <div className="flex items-center gap-2">
+          <div className="inline-flex items-center rounded-md border bg-card p-0.5" role="group" aria-label="View mode">
+            <Button
+              type="button"
+              size="sm"
+              variant={view === "cards" ? "secondary" : "ghost"}
+              className="h-8 gap-1.5"
+              onClick={() => setView("cards")}
+              data-testid="button-view-cards"
+              aria-pressed={view === "cards"}
+            >
+              <LayoutGridIcon className="h-4 w-4" />
+              Cards
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={view === "table" ? "secondary" : "ghost"}
+              className="h-8 gap-1.5"
+              onClick={() => setView("table")}
+              data-testid="button-view-table"
+              aria-pressed={view === "table"}
+            >
+              <TableIcon className="h-4 w-4" />
+              Table
+            </Button>
+          </div>
+          <CreateScreenDialog profiles={profiles} events={events} clients={clients} />
+        </div>
       </div>
 
       {/* Stats */}
@@ -1594,24 +1684,33 @@ export default function ScreensPage() {
 
       {/* Content */}
       {isLoading ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {[...Array(6)].map((_, i) => (
-            <Card key={i}>
-              <CardHeader className="pb-3">
-                <div className="flex items-center gap-3">
-                  <Skeleton className="h-10 w-10 rounded-lg" />
-                  <div className="space-y-1.5">
-                    <Skeleton className="h-4 w-32" />
-                    <Skeleton className="h-3 w-24" />
+        view === "table" ? (
+          <div className="rounded-md border bg-card p-4 space-y-3" data-testid="skeleton-screens-table">
+            <Skeleton className="h-8 w-full" />
+            {[...Array(6)].map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[...Array(6)].map((_, i) => (
+              <Card key={i}>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-3">
+                    <Skeleton className="h-10 w-10 rounded-lg" />
+                    <div className="space-y-1.5">
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="h-3 w-24" />
+                    </div>
                   </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <Skeleton className="h-16" />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                </CardHeader>
+                <CardContent>
+                  <Skeleton className="h-16" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )
       ) : screens.length === 0 ? (
         <Card className="py-12">
           <CardContent className="flex flex-col items-center justify-center text-center">
@@ -1624,12 +1723,12 @@ export default function ScreensPage() {
             <CreateScreenDialog profiles={profiles} events={events} clients={clients} />
           </CardContent>
         </Card>
-      ) : (
+      ) : view === "cards" ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {screens.map((screen) => (
-            <ScreenCard 
-              key={screen.id} 
-              screen={screen} 
+            <ScreenCard
+              key={screen.id}
+              screen={screen}
               profiles={profiles}
               events={events}
               layouts={layouts}
@@ -1639,6 +1738,45 @@ export default function ScreensPage() {
             />
           ))}
         </div>
+      ) : (
+        <>
+          <ScreensTable
+            screens={screens}
+            layouts={layouts}
+            getActiveOverrideForScreen={getActiveOverrideForScreen}
+            onOpenScreen={(s) => setEditingScreenId(s.id)}
+            userId={userId}
+          />
+          {/*
+            Edit dialog host: mount a single ScreenCard for the screen the
+            user clicked in the table. The card itself is visually hidden;
+            its Dialog is rendered into a portal so the user sees only the
+            edit modal. This avoids mounting the entire card grid in table
+            mode while reusing the existing edit form.
+          */}
+          {editingScreenId && (() => {
+            const editingScreen = screens.find((s) => s.id === editingScreenId);
+            if (!editingScreen) return null;
+            return (
+              <div className="hidden" aria-hidden="true">
+                <ScreenCard
+                  key={`edit-${editingScreen.id}`}
+                  screen={editingScreen}
+                  profiles={profiles}
+                  events={events}
+                  layouts={layouts}
+                  playlists={playlists}
+                  clients={clients}
+                  activeOverride={getActiveOverrideForScreen(editingScreen.id)}
+                  editOpen={true}
+                  onEditOpenChange={(open) => {
+                    if (!open) setEditingScreenId(null);
+                  }}
+                />
+              </div>
+            );
+          })()}
+        </>
       )}
     </div>
   );
