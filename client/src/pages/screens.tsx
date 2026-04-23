@@ -1774,13 +1774,34 @@ export default function ScreensPage() {
   const reorderMutation = useMutation({
     mutationFn: (newOrderedIds: string[]) =>
       apiRequest("PATCH", "/api/screens/reorder", { orderedIds: newOrderedIds }),
+    onMutate: async (newOrderedIds: string[]) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/screens"] });
+      const previous = queryClient.getQueryData<Screen[]>(["/api/screens"]);
+      if (previous) {
+        const byId = new Map(previous.map((s) => [s.id, s]));
+        const reordered: Screen[] = [];
+        newOrderedIds.forEach((id) => {
+          const s = byId.get(id);
+          if (s) reordered.push(s);
+        });
+        previous.forEach((s) => {
+          if (!newOrderedIds.includes(s.id)) reordered.push(s);
+        });
+        queryClient.setQueryData(["/api/screens"], reordered);
+      }
+      return { previous };
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
     },
-    onError: () => {
+    onError: (_err, _vars, context) => {
       pageToast({ title: "Failed to save order", variant: "destructive" });
-      // Roll back to server state
-      setOrderedIds(screens.map((s) => s.id));
+      if (context?.previous) {
+        queryClient.setQueryData(["/api/screens"], context.previous);
+        setOrderedIds(context.previous.map((s) => s.id));
+      } else {
+        setOrderedIds(screens.map((s) => s.id));
+      }
     },
   });
 
