@@ -645,7 +645,7 @@ export class DatabaseStorage implements IStorage {
       weatherPlaceName: source.weatherPlaceName,
       weatherUnit: source.weatherUnit,
       // Reset runtime / identity fields
-      pairingCode: null,
+      pairingCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
       deviceToken: null,
       isPaired: false,
       isOnline: false,
