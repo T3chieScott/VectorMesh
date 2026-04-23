@@ -1669,13 +1669,13 @@ function DuplicateScreenDialog({
       toast({ title: "Screen duplicated" });
       onClose();
     },
-    onError: async (err: any) => {
+    onError: async (err: unknown) => {
       let msg = "Failed to duplicate screen";
       try {
-        const text = err?.message || "";
+        const text = err instanceof Error ? err.message : "";
         const match = text.match(/^\d+:\s*([\s\S]*)$/);
         if (match) {
-          const parsed = JSON.parse(match[1]);
+          const parsed = JSON.parse(match[1]) as { error?: unknown };
           if (typeof parsed.error === "string") msg = parsed.error;
         }
       } catch {}

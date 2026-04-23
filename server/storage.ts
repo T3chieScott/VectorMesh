@@ -624,11 +624,7 @@ export class DatabaseStorage implements IStorage {
   async duplicateScreen(sourceId: string, name: string): Promise<Screen | undefined> {
     const [source] = await db.select().from(screens).where(eq(screens.id, sourceId));
     if (!source) return undefined;
-    const [{ maxOrder }] = await db
-      .select({ maxOrder: sql<number | null>`max(${screens.displayOrder})` })
-      .from(screens);
-    const nextOrder = (typeof maxOrder === "number" ? maxOrder : -1) + 1;
-    const insertValues = {
+    const insertValues: InsertScreen = {
       name,
       clientId: source.clientId,
       location: source.location,
@@ -661,8 +657,9 @@ export class DatabaseStorage implements IStorage {
       lastScreenshot: null,
       lastScreenshotAt: null,
       locked: false,
-      displayOrder: nextOrder,
-    } as any;
+      // displayOrder computed atomically below via SQL subquery
+      displayOrder: sql<number>`coalesce((select max(${screens.displayOrder}) from ${screens}), -1) + 1` as unknown as number,
+    };
     const [created] = await db.insert(screens).values(insertValues).returning();
     return created;
   }
