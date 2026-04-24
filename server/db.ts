@@ -22,8 +22,6 @@ export async function ensureBookingMigration(): Promise<void> {
     await client.query("SELECT pg_advisory_lock($1)", [BOOKING_MIGRATION_LOCK_KEY.toString()]);
     haveLock = true;
 
-    await client.query("CREATE EXTENSION IF NOT EXISTS btree_gist");
-
     const { rows: bookingTbl } = await client.query<{ exists: boolean }>(
       `SELECT EXISTS (
          SELECT 1 FROM information_schema.tables
@@ -77,22 +75,17 @@ export async function ensureBookingMigration(): Promise<void> {
       await client.query(`ALTER TABLE screens DROP COLUMN IF EXISTS current_event_id`);
     }
 
-    const { rows } = await client.query<{ exists: boolean }>(
-      `SELECT EXISTS (
-         SELECT 1 FROM pg_constraint
-         WHERE conname = 'screen_event_bookings_no_overlap'
-       ) AS exists`,
+    // Booking overlap is now enforced in application code (see
+    // storage.createScreenEventBooking / updateScreenEventBooking) inside
+    // a per-screen advisory-locked transaction. The historical GIST
+    // exclusion constraint required the `btree_gist` extension, which
+    // unprivileged production DB users cannot install. We drop the
+    // legacy constraint here so previously-migrated environments
+    // converge with fresh installs. Idempotent.
+    await client.query(
+      `ALTER TABLE IF EXISTS screen_event_bookings
+         DROP CONSTRAINT IF EXISTS screen_event_bookings_no_overlap`,
     );
-    if (!rows[0]?.exists) {
-      await client.query(
-        `ALTER TABLE screen_event_bookings
-           ADD CONSTRAINT screen_event_bookings_no_overlap
-           EXCLUDE USING gist (
-             screen_id WITH =,
-             tsrange(starts_at, ends_at, '[)') WITH &&
-           )`,
-      );
-    }
   } finally {
     if (haveLock) {
       try {

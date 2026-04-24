@@ -54,6 +54,14 @@ async function cleanup() {
 }
 
 test.before(async () => {
+  // The legacy GIST exclusion constraint (which required `btree_gist`)
+  // is no longer created by the app, but a previously-migrated dev DB
+  // may still have it. The startup migration in server/db.ts drops it
+  // for the running server; tests bypass that path, so drop it here too.
+  await db.execute(sql`
+    ALTER TABLE IF EXISTS screen_event_bookings
+    DROP CONSTRAINT IF EXISTS screen_event_bookings_no_overlap
+  `);
   await cleanup();
   const [client] = await db
     .insert(clients)
@@ -125,14 +133,15 @@ test("treats endsAt as exclusive", async () => {
 });
 
 test("prefers the most-recently-started booking on overlap", async () => {
+  // Overlap prevention is now enforced in application code by
+  // storage.createScreenEventBooking, not by a DB constraint, so we can
+  // bypass it for this test by inserting directly via the raw drizzle
+  // client. This exercises the read path's tie-breaking when two
+  // bookings happen to overlap (e.g. data imported from outside the app).
   const screen = await makeScreen("overlap");
   const oldEvent = await makeEvent("old-event");
   const newEvent = await makeEvent("new-event");
 
-  await db.execute(sql`
-    ALTER TABLE ${screenEventBookings}
-    DROP CONSTRAINT IF EXISTS screen_event_bookings_no_overlap
-  `);
   try {
     await makeBooking(
       screen.id,
@@ -155,13 +164,5 @@ test("prefers the most-recently-started booking on overlap", async () => {
     await db
       .delete(screenEventBookings)
       .where(eq(screenEventBookings.screenId, screen.id));
-    await db.execute(sql`
-      ALTER TABLE ${screenEventBookings}
-      ADD CONSTRAINT screen_event_bookings_no_overlap
-      EXCLUDE USING gist (
-        screen_id WITH =,
-        tsrange(starts_at, ends_at, '[)') WITH &&
-      )
-    `);
   }
 });

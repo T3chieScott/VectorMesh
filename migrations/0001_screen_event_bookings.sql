@@ -1,7 +1,13 @@
--- 0001_screen_event_bookings: backfill + no-overlap constraint + drop legacy column.
--- Run after `npm run db:push`. Idempotent.
-
-CREATE EXTENSION IF NOT EXISTS btree_gist;
+-- 0001_screen_event_bookings: backfill + drop legacy column + drop legacy
+-- overlap constraint. Run after `npm run db:push`. Idempotent.
+--
+-- Booking overlap is now enforced in application code
+-- (storage.createScreenEventBooking / updateScreenEventBooking) inside a
+-- per-screen advisory-locked transaction. The original GIST exclusion
+-- constraint required the `btree_gist` extension, which unprivileged
+-- production DB users cannot install. We drop the legacy constraint here
+-- (and skip CREATE EXTENSION) so previously-migrated environments
+-- converge with fresh installs.
 
 DO $$
 BEGIN
@@ -24,20 +30,7 @@ BEGIN
   END IF;
 END $$;
 
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.tables WHERE table_name = 'screen_event_bookings'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'screen_event_bookings_no_overlap'
-  ) THEN
-    ALTER TABLE screen_event_bookings
-      ADD CONSTRAINT screen_event_bookings_no_overlap
-      EXCLUDE USING gist (
-        screen_id WITH =,
-        tsrange(starts_at, ends_at, '[)') WITH &&
-      );
-  END IF;
-END $$;
+ALTER TABLE IF EXISTS screen_event_bookings
+  DROP CONSTRAINT IF EXISTS screen_event_bookings_no_overlap;
 
 ALTER TABLE IF EXISTS screens DROP COLUMN IF EXISTS current_event_id;

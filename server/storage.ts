@@ -722,53 +722,43 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  private async findOverlappingBookings(
-    screenId: string,
-    startsAt: Date,
-    endsAt: Date,
-    excludeId?: string
-  ): Promise<ScreenEventBooking[]> {
-    const rows = await db
-      .select()
-      .from(screenEventBookings)
-      .where(
-        and(
-          eq(screenEventBookings.screenId, screenId),
-          lt(screenEventBookings.startsAt, endsAt),
-          sql`${screenEventBookings.endsAt} > ${startsAt}`,
-        )
-      );
-    return excludeId ? rows.filter(r => r.id !== excludeId) : rows;
-  }
-
-  private isOverlapConstraintViolation(err: unknown): boolean {
-    const e = err as { code?: string; constraint?: string; message?: string };
-    return (
-      e?.code === "23P01" ||
-      e?.constraint === "screen_event_bookings_no_overlap" ||
-      (typeof e?.message === "string" && e.message.includes("screen_event_bookings_no_overlap"))
-    );
-  }
-
+  // Booking overlap is enforced inside a per-screen advisory-locked
+  // transaction. We previously also had a Postgres GIST exclusion
+  // constraint as belt-and-braces, but it required the `btree_gist`
+  // extension which unprivileged production DB users cannot install.
+  // The advisory lock serialises all writers for a given screen, so
+  // the in-transaction overlap query is authoritative: between SELECT
+  // and INSERT/UPDATE no other booking-writing transaction for the
+  // same screen can commit.
   async createScreenEventBooking(data: InsertScreenEventBooking): Promise<ScreenEventBooking> {
     const startsAt = data.startsAt instanceof Date ? data.startsAt : new Date(data.startsAt);
     const endsAt = data.endsAt instanceof Date ? data.endsAt : new Date(data.endsAt);
     if (!(endsAt > startsAt)) {
       throw new Error("Booking end must be after start");
     }
-    const overlaps = await this.findOverlappingBookings(data.screenId, startsAt, endsAt);
-    if (overlaps.length > 0) {
-      throw new Error("Booking overlaps with an existing booking on this screen");
-    }
-    try {
-      const [row] = await db.insert(screenEventBookings).values({ ...data, startsAt, endsAt }).returning();
-      return row;
-    } catch (err) {
-      if (this.isOverlapConstraintViolation(err)) {
+    return await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${data.screenId}, 0))`,
+      );
+      const overlaps = await tx
+        .select({ id: screenEventBookings.id })
+        .from(screenEventBookings)
+        .where(
+          and(
+            eq(screenEventBookings.screenId, data.screenId),
+            lt(screenEventBookings.startsAt, endsAt),
+            sql`${screenEventBookings.endsAt} > ${startsAt}`,
+          ),
+        );
+      if (overlaps.length > 0) {
         throw new Error("Booking overlaps with an existing booking on this screen");
       }
-      throw err;
-    }
+      const [row] = await tx
+        .insert(screenEventBookings)
+        .values({ ...data, startsAt, endsAt })
+        .returning();
+      return row;
+    });
   }
 
   async updateScreenEventBooking(
@@ -787,23 +777,30 @@ export class DatabaseStorage implements IStorage {
     if (!(endsAt > startsAt)) {
       throw new Error("Booking end must be after start");
     }
-    const overlaps = await this.findOverlappingBookings(screenId, startsAt, endsAt, id);
-    if (overlaps.length > 0) {
-      throw new Error("Booking overlaps with an existing booking on this screen");
-    }
-    try {
-      const [row] = await db
+    return await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${screenId}, 0))`,
+      );
+      const overlaps = await tx
+        .select({ id: screenEventBookings.id })
+        .from(screenEventBookings)
+        .where(
+          and(
+            eq(screenEventBookings.screenId, screenId),
+            lt(screenEventBookings.startsAt, endsAt),
+            sql`${screenEventBookings.endsAt} > ${startsAt}`,
+          ),
+        );
+      if (overlaps.some((r) => r.id !== id)) {
+        throw new Error("Booking overlaps with an existing booking on this screen");
+      }
+      const [row] = await tx
         .update(screenEventBookings)
         .set({ ...data, startsAt, endsAt, updatedAt: new Date() })
         .where(eq(screenEventBookings.id, id))
         .returning();
       return row;
-    } catch (err) {
-      if (this.isOverlapConstraintViolation(err)) {
-        throw new Error("Booking overlaps with an existing booking on this screen");
-      }
-      throw err;
-    }
+    });
   }
 
   async deleteScreenEventBooking(id: string): Promise<boolean> {
