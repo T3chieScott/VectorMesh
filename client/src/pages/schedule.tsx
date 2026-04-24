@@ -271,6 +271,40 @@ function getBlockSummary(
   return { targetType, targetName, layoutName, primaryPlaylistName, zoneMappings, fallbackPlaylistName };
 }
 
+function resolveBlockScreenIds(
+  block: ScheduleBlock,
+  ctx: { screens: Screen[]; membershipsByGroup: Map<string, string[]> }
+): { ids: Set<string>; targetsAll: boolean } {
+  const targets = (block.targets as ScheduleTarget[]) || [];
+  if (targets.length === 0) {
+    return { ids: new Set(ctx.screens.map(s => s.id)), targetsAll: true };
+  }
+  const ids = new Set<string>();
+  for (const t of targets) {
+    if (t.type === "screen") {
+      if (ctx.screens.find(s => s.id === t.id)) ids.add(t.id);
+    } else if (t.type === "group") {
+      for (const memberId of ctx.membershipsByGroup.get(t.id) || []) {
+        ids.add(memberId);
+      }
+    }
+  }
+  return { ids, targetsAll: false };
+}
+
+function blockTargetsIntersect(
+  a: { ids: Set<string>; targetsAll: boolean },
+  b: { ids: Set<string>; targetsAll: boolean }
+): boolean {
+  if (a.targetsAll || b.targetsAll) return true;
+  const [small, large] = a.ids.size <= b.ids.size ? [a.ids, b.ids] : [b.ids, a.ids];
+  let found = false;
+  small.forEach((id) => {
+    if (!found && large.has(id)) found = true;
+  });
+  return found;
+}
+
 function getBlockIssues(
   block: ScheduleBlock,
   summary: BlockSummary,
@@ -1862,6 +1896,11 @@ export default function SchedulePage() {
     const seen = new Set<string>();
     const blocksWithRules = blocks.filter((b) => ((b.timeRules as TimeRule[]) || []).length > 0);
 
+    const screenIdsByBlock = new Map<string, { ids: Set<string>; targetsAll: boolean }>();
+    for (const b of blocksWithRules) {
+      screenIdsByBlock.set(b.id, resolveBlockScreenIds(b, { screens, membershipsByGroup }));
+    }
+
     for (const day of weekDays) {
       for (let i = 0; i < blocksWithRules.length; i++) {
         for (let j = i + 1; j < blocksWithRules.length; j++) {
@@ -1886,35 +1925,43 @@ export default function SchedulePage() {
           if (bEndMins <= bStartMins) bEndMins = 24 * 60;
 
           const overlaps = aStartMins < bEndMins && bStartMins < aEndMins;
+          if (!overlaps) continue;
 
-          if (overlaps) {
-            const dayKey = format(day, "yyyy-MM-dd");
-            const pairKey = `${dayKey}:${[a.id, b.id].sort().join("-")}`;
-            if (seen.has(pairKey)) continue;
-            seen.add(pairKey);
+          // Two blocks at the same time are only an actual conflict if they
+          // could both try to play on the same screen. Blocks targeting
+          // different screens (or different groups with no shared members)
+          // happily run side by side, so don't flag them.
+          const aScreens = screenIdsByBlock.get(a.id);
+          const bScreens = screenIdsByBlock.get(b.id);
+          if (!aScreens || !bScreens) continue;
+          if (!blockTargetsIntersect(aScreens, bScreens)) continue;
 
-            const winner = (a.priority || 0) >= (b.priority || 0) ? a : b;
-            const loser = winner === a ? b : a;
+          const dayKey = format(day, "yyyy-MM-dd");
+          const pairKey = `${dayKey}:${[a.id, b.id].sort().join("-")}`;
+          if (seen.has(pairKey)) continue;
+          seen.add(pairKey);
 
-            result.push({
-              blockId: winner.id,
-              conflictsWith: [loser.id],
-              winningBlockId: winner.id,
-              dateKey: dayKey,
-            });
-            result.push({
-              blockId: loser.id,
-              conflictsWith: [winner.id],
-              winningBlockId: winner.id,
-              dateKey: dayKey,
-            });
-          }
+          const winner = (a.priority || 0) >= (b.priority || 0) ? a : b;
+          const loser = winner === a ? b : a;
+
+          result.push({
+            blockId: winner.id,
+            conflictsWith: [loser.id],
+            winningBlockId: winner.id,
+            dateKey: dayKey,
+          });
+          result.push({
+            blockId: loser.id,
+            conflictsWith: [winner.id],
+            winningBlockId: winner.id,
+            dateKey: dayKey,
+          });
         }
       }
     }
 
     return result;
-  }, [blocks, weekDays]);
+  }, [blocks, weekDays, screens, membershipsByGroup]);
   
   const handlePrevious = () => {
     setCurrentDate((prev) => (viewMode === "week" ? subWeeks(prev, 1) : addDays(prev, -1)));
