@@ -1986,14 +1986,8 @@ export default function SchedulePage() {
   const mediaQ = useSiteFilteredQuery<MediaAsset[]>("/api/media");
 
   const { data: programmes = [], isLoading: programmesLoading } = useQuery<Programme[]>(programmesQ);
-  const { data: allVersions = [], isLoading: allVersionsLoading } = useQuery<ProgrammeVersion[]>({
-    queryKey: ["/api/programme-versions", selectedClientId],
-    queryFn: async () => {
-      const res = await fetch("/api/programme-versions", { credentials: "include" });
-      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
-      return res.json();
-    },
-  });
+  const allVersionsQ = useSiteFilteredQuery<ProgrammeVersion[]>("/api/programme-versions");
+  const { data: allVersions = [], isLoading: allVersionsLoading } = useQuery<ProgrammeVersion[]>(allVersionsQ);
   const { data: layouts = [] } = useQuery<LayoutTemplate[]>(layoutsQ);
   const { data: screens = [] } = useQuery<Screen[]>(screensQ);
   const screenGroupsQ = useSiteFilteredQuery<ScreenGroup[]>("/api/screen-groups");
