@@ -21,12 +21,19 @@ export const db = drizzle(pool, { schema });
 //      event). Skipped after the column has been dropped, which is
 //      the steady state of the application.
 //   3. ADD CONSTRAINT screen_event_bookings_no_overlap (EXCLUDE)
+//   4. Drop the legacy current_event_id column ONLY after the backfill
+//      has been verified to produce no orphan screens.
 //
-// The full migration is also documented in
-// migrations/0001_screen_event_bookings.sql for ops; this function
-// exists so a fresh checkout — including environments that drop the
-// DB and re-run `db:push` — boots into a working, backfilled state
-// without anyone having to run the SQL by hand.
+// Deployment ordering:
+//   The full ordered migration is in migrations/0001_screen_event_bookings.sql
+//   and the recommended deploy choreography is:
+//     a) `psql -f migrations/0001_screen_event_bookings.sql`
+//     b) `npm run db:push` (Drizzle then sees a no-op for screens.*)
+//     c) Boot the new server; this function runs as a final safety net
+//        and will SKIP cleanly if step (a) was already applied.
+//   On a fresh database that has only ever seen the new schema, step (a)
+//   becomes a no-op (no legacy column to read, table already created
+//   by db:push) and this function simply re-applies the constraint.
 //
 // Arbitrary 64-bit constant chosen for pg_advisory_lock. Two concurrent
 // boots will serialize on this lock so backfill + constraint creation
@@ -46,9 +53,29 @@ export async function ensureBookingMigration(): Promise<void> {
 
     await client.query("CREATE EXTENSION IF NOT EXISTS btree_gist");
 
-    // Backfill from the legacy column if it's still around. The
-    // information_schema check makes this a no-op once T010 has
-    // dropped the column — exactly what we want.
+    // Defensive guard: bail cleanly if the schema sync hasn't created
+    // screen_event_bookings yet. This avoids a hard server-boot crash
+    // in an environment where the operator started a new container
+    // before running `db:push`. They'll see the warning and re-run
+    // db:push; on the next boot we'll do the real work.
+    const { rows: bookingTbl } = await client.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.tables
+         WHERE table_name = 'screen_event_bookings'
+       ) AS exists`,
+    );
+    if (!bookingTbl[0]?.exists) {
+      console.warn(
+        "[ensureBookingMigration] screen_event_bookings table is missing; " +
+          "run `npm run db:push` (and migrations/0001_screen_event_bookings.sql) before booting.",
+      );
+      return;
+    }
+
+    // Step 2 — Backfill any legacy currentEventId rows. We do this
+    // ourselves (not just in the SQL file) so deployments that
+    // accidentally skipped the SQL step still get a backfill BEFORE
+    // we attempt the column drop in step 4.
     const { rows: legacyCol } = await client.query<{ exists: boolean }>(
       `SELECT EXISTS (
          SELECT 1 FROM information_schema.columns
@@ -79,6 +106,35 @@ export async function ensureBookingMigration(): Promise<void> {
           `[ensureBookingMigration] backfilled ${result.rowCount} screen booking(s) from legacy currentEventId`,
         );
       }
+
+      // Step 4 — Verify backfill is complete BEFORE dropping the
+      // column. If any non-null current_event_id row failed to land
+      // in screen_event_bookings (e.g. orphaned event id) we abort
+      // loudly rather than dropping data on the floor. The reviewer
+      // explicitly called this out as a deployment safety blocker.
+      const { rows: orphans } = await client.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n
+           FROM screens s
+          WHERE s.current_event_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM screen_event_bookings b
+               WHERE b.screen_id = s.id AND b.event_id = s.current_event_id
+            )`,
+      );
+      const orphanCount = orphans[0]?.n ?? 0;
+      if (orphanCount > 0) {
+        throw new Error(
+          `ensureBookingMigration: refusing to drop screens.current_event_id — ` +
+            `${orphanCount} legacy assignment(s) failed to backfill (likely orphaned event ids). ` +
+            `Investigate and re-run.`,
+        );
+      }
+      await client.query(
+        `ALTER TABLE screens DROP COLUMN IF EXISTS current_event_id`,
+      );
+      console.log(
+        "[ensureBookingMigration] dropped legacy screens.current_event_id after verified backfill",
+      );
     }
 
     const { rows } = await client.query<{ exists: boolean }>(
