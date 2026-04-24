@@ -5,6 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
+import { useSiteContext, useSiteFilteredQuery } from "@/hooks/use-site-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -652,20 +653,34 @@ export default function ControlPanelPage() {
   const canManage = user?.role === "admin" || user?.role === "account_manager";
   const [selectedTarget, setSelectedTarget] = useState<{ type: "screen" | "group"; id: string } | null>(null);
 
+  const { selectedClientId: activeSiteClientId } = useSiteContext();
+
+  const screensQuery = useSiteFilteredQuery<Screen[]>("/api/screens");
   const { data: screens = [], isLoading: screensLoading } = useQuery<Screen[]>({
-    queryKey: ["/api/screens"],
+    ...screensQuery,
   });
 
+  const groupsQuery = useSiteFilteredQuery<(ScreenGroup & { memberCount: number })[]>("/api/screen-groups");
   const { data: groups = [], isLoading: groupsLoading } = useQuery<(ScreenGroup & { memberCount: number })[]>({
-    queryKey: ["/api/screen-groups"],
-    queryFn: async () => {
-      const res = await fetch("/api/screen-groups", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed");
-      return res.json();
-    },
+    ...groupsQuery,
   });
 
   const isLoading = screensLoading || groupsLoading;
+
+  // If the active site changes and the previously selected target no longer
+  // belongs to it, clear the selection so the right-hand panel doesn't drive
+  // an off-site target.
+  useEffect(() => {
+    if (!selectedTarget) return;
+    if (screensLoading || groupsLoading) return;
+    const stillVisible =
+      selectedTarget.type === "screen"
+        ? screens.some((s) => s.id === selectedTarget.id)
+        : groups.some((g) => g.id === selectedTarget.id);
+    if (!stillVisible) {
+      setSelectedTarget(null);
+    }
+  }, [activeSiteClientId, selectedTarget, screens, groups, screensLoading, groupsLoading]);
 
   const selectedClientId = selectedTarget
     ? selectedTarget.type === "screen"
