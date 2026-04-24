@@ -162,6 +162,64 @@ test("two concurrent overlapping creates: exactly one wins", async () => {
   assert.equal(rows.length, 1, "only one row should be persisted");
 });
 
+test("concurrent move-into-occupied-screen: exactly one wins", async () => {
+  // Booking A on screen-source. Booking B already occupies a window
+  // on screen-target. Two concurrent updates both try to move A onto
+  // screen-target into B's window. With the SELECT FOR UPDATE on A's
+  // row inside the transaction plus per-screen advisory lock on the
+  // target screen, exactly one update should succeed (and even that
+  // one must lose to the existing B row -> both should fail). The
+  // important invariant: no overlapping pair persists.
+  const source = await makeScreen("move-source");
+  const target = await makeScreen("move-target");
+  const a = await storage.createScreenEventBooking({
+    screenId: source.id,
+    eventId: testEventId,
+    startsAt: new Date("2026-07-06T10:00:00Z"),
+    endsAt: new Date("2026-07-06T12:00:00Z"),
+  });
+  await storage.createScreenEventBooking({
+    screenId: target.id,
+    eventId: testEventId,
+    startsAt: new Date("2026-07-06T10:30:00Z"),
+    endsAt: new Date("2026-07-06T11:30:00Z"),
+  });
+  const results = await Promise.allSettled([
+    storage.updateScreenEventBooking(a.id, {
+      screenId: target.id,
+      startsAt: new Date("2026-07-06T10:00:00Z"),
+      endsAt: new Date("2026-07-06T11:00:00Z"),
+    }),
+    storage.updateScreenEventBooking(a.id, {
+      screenId: target.id,
+      startsAt: new Date("2026-07-06T11:00:00Z"),
+      endsAt: new Date("2026-07-06T12:00:00Z"),
+    }),
+  ]);
+  // Both updates must be rejected by the existing B row on the target.
+  for (const r of results) {
+    assert.equal(r.status, "rejected", "move into occupied screen must be rejected");
+    if (r.status === "rejected") {
+      assert.match(
+        String(r.reason?.message ?? r.reason),
+        /Booking overlaps with an existing booking on this screen/,
+      );
+    }
+  }
+  // A is still on the source screen, unchanged.
+  const stillThere = await db
+    .select()
+    .from(screenEventBookings)
+    .where(eq(screenEventBookings.id, a.id));
+  assert.equal(stillThere[0]?.screenId, source.id);
+  // Target screen still has exactly its one original booking.
+  const targetRows = await db
+    .select()
+    .from(screenEventBookings)
+    .where(eq(screenEventBookings.screenId, target.id));
+  assert.equal(targetRows.length, 1);
+});
+
 test("update that introduces an overlap is rejected", async () => {
   const screen = await makeScreen("update-overlap");
   const a = await storage.createScreenEventBooking({

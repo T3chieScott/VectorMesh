@@ -765,28 +765,41 @@ export class DatabaseStorage implements IStorage {
     id: string,
     data: Partial<InsertScreenEventBooking>,
   ): Promise<ScreenEventBooking | undefined> {
-    const existing = await this.getScreenEventBooking(id);
-    if (!existing) return undefined;
-    const screenId = data.screenId ?? existing.screenId;
-    const startsAt = data.startsAt
+    const candidateStarts = data.startsAt
       ? (data.startsAt instanceof Date ? data.startsAt : new Date(data.startsAt))
-      : existing.startsAt;
-    const endsAt = data.endsAt
+      : undefined;
+    const candidateEnds = data.endsAt
       ? (data.endsAt instanceof Date ? data.endsAt : new Date(data.endsAt))
-      : existing.endsAt;
-    if (!(endsAt > startsAt)) {
-      throw new Error("Booking end must be after start");
-    }
+      : undefined;
     return await db.transaction(async (tx) => {
+      // SELECT ... FOR UPDATE pins the booking row so any other concurrent
+      // update to the same booking blocks here until we commit. That means
+      // the target screenId we compute below is authoritative — no other
+      // transaction can have moved this booking out from under us between
+      // read and write.
+      const [existing] = await tx
+        .select()
+        .from(screenEventBookings)
+        .where(eq(screenEventBookings.id, id))
+        .for("update");
+      if (!existing) return undefined;
+      const targetScreenId = data.screenId ?? existing.screenId;
+      const startsAt = candidateStarts ?? existing.startsAt;
+      const endsAt = candidateEnds ?? existing.endsAt;
+      if (!(endsAt > startsAt)) {
+        throw new Error("Booking end must be after start");
+      }
+      // Per-screen advisory lock on the destination screen (we never add a
+      // booking to the source screen on update, so no source lock needed).
       await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${screenId}, 0))`,
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${targetScreenId}, 0))`,
       );
       const overlaps = await tx
         .select({ id: screenEventBookings.id })
         .from(screenEventBookings)
         .where(
           and(
-            eq(screenEventBookings.screenId, screenId),
+            eq(screenEventBookings.screenId, targetScreenId),
             lt(screenEventBookings.startsAt, endsAt),
             sql`${screenEventBookings.endsAt} > ${startsAt}`,
           ),
