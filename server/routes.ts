@@ -2192,14 +2192,23 @@ export async function registerRoutes(
         }
       }
 
-      // If eventId is being set, verify it belongs to the playlist's (current or new) site.
-      if (data.eventId) {
-        const event = await storage.getEvent(data.eventId);
+      // Determine the effective eventId after this update.
+      // If eventId is in the payload, use it; otherwise the existing one stays.
+      const effectiveEventId =
+        data.eventId !== undefined ? data.eventId : existing.eventId;
+
+      // If there is an effective event, it must belong to the effective site.
+      // This catches both: (a) setting a mismatched eventId, and
+      // (b) reassigning clientId while keeping a now-mismatched existing event.
+      if (effectiveEventId) {
+        const event = await storage.getEvent(effectiveEventId);
         if (!event) {
           return res.status(400).json({ error: "Selected event does not exist" });
         }
         if (targetClientId && event.clientId !== targetClientId) {
-          return res.status(400).json({ error: "Selected event belongs to a different site" });
+          return res.status(400).json({
+            error: "Playlist event belongs to a different site than the selected site. Clear or change the event before reassigning the site.",
+          });
         }
       }
 
