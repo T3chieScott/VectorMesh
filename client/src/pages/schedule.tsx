@@ -102,6 +102,14 @@ import type {
   ZoneSource,
   ScreenEventBooking,
 } from "@shared/schema";
+import {
+  evaluateBlockPlayabilityInWindow,
+  getBlockEffectiveEndDate,
+  getRuleForDay,
+  hasBookingCoveringBlock,
+  hasBookingCoveringWindow,
+  normaliseRuleDates,
+} from "@shared/schedule-diagnostics";
 
 type ViewMode = "day" | "week";
 
@@ -181,28 +189,9 @@ interface TimelineDragState {
   seriesId: string | null;
 }
 
-function normaliseRuleDates(rule: TimeRule): TimeRule {
-  if (rule.startDate && !rule.endDate) return { ...rule, endDate: rule.startDate };
-  if (rule.endDate && !rule.startDate) return { ...rule, startDate: rule.endDate };
-  return rule;
-}
-
-function getRuleForDay(timeRules: TimeRule[], date: Date): TimeRule | null {
-  const dayOfWeek = date.getDay();
-  const rule = timeRules.length > 0 ? normaliseRuleDates(timeRules[0]) : null;
-  if (!rule) return null;
-  const days = rule.daysOfWeek;
-  if (days && days.length > 0 && !days.includes(dayOfWeek)) return null;
-  if (rule.startDate) {
-    const sd = parseISO(rule.startDate);
-    if (date < startOfDay(sd)) return null;
-  }
-  if (rule.endDate) {
-    const ed = parseISO(rule.endDate);
-    if (date > endOfDay(ed)) return null;
-  }
-  return rule;
-}
+// normaliseRuleDates and getRuleForDay are imported from
+// @shared/schedule-diagnostics so the same intersection logic can be
+// covered by the unit tests in tests/schedule-diagnostics.test.ts.
 
 function hashStringToIndex(str: string): number {
   let hash = 0;
@@ -234,59 +223,10 @@ interface BlockIssue {
   message: string;
 }
 
-// Returns the latest possible firing date for a block, or null if it
-// repeats indefinitely (no endDate set on its rule).
-function getBlockEffectiveEndDate(block: ScheduleBlock): Date | null {
-  const rules = (block.timeRules as TimeRule[]) || [];
-  if (rules.length === 0) return null;
-  const rule = normaliseRuleDates(rules[0]);
-  if (!rule.endDate) return null;
-  return endOfDay(parseISO(rule.endDate));
-}
-
-// Returns true if any booking for one of `screenIds` covers any part of the
-// supplied window. Bookings are stored as half-open intervals
-// `[startsAt, endsAt)` and the window we evaluate here is also treated as
-// half-open: two intervals overlap iff `b.start < window.end && b.end >
-// window.start`. Adjacent (touching) intervals do NOT count as coverage.
-function hasBookingCoveringWindow(
-  screenIds: string[],
-  bookingsByScreen: Map<string, ScreenEventBooking[]>,
-  eventId: string,
-  windowStart: Date,
-  windowEnd: Date,
-): boolean {
-  for (const id of screenIds) {
-    const list = bookingsByScreen.get(id) || [];
-    for (const b of list) {
-      if (b.eventId !== eventId) continue;
-      const bs = new Date(b.startsAt);
-      const be = new Date(b.endsAt);
-      if (bs < windowEnd && be > windowStart) return true;
-    }
-  }
-  return false;
-}
-
-// Returns true if any booking for one of `screenIds` overlaps the block's
-// firing window (rule date range or "today + next 30 days" if open-ended).
-function hasBookingCoveringBlock(
-  block: ScheduleBlock,
-  screenIds: string[],
-  bookingsByScreen: Map<string, ScreenEventBooking[]>,
-  eventId: string,
-  now: Date,
-): boolean {
-  const rules = (block.timeRules as TimeRule[]) || [];
-  const rule = rules.length > 0 ? normaliseRuleDates(rules[0]) : null;
-  const rangeStart = rule?.startDate ? startOfDay(parseISO(rule.startDate)) : startOfDay(now);
-  // Half-open: end of day (23:59:59.999) is inclusive of the last day, and
-  // we add 1ms so the comparison `b.start < windowEnd` still catches a
-  // booking that starts at the very end of the last day.
-  const ruleEnd = rule?.endDate ? endOfDay(parseISO(rule.endDate)) : endOfDay(addDays(now, 30));
-  const rangeEnd = new Date(ruleEnd.getTime() + 1);
-  return hasBookingCoveringWindow(screenIds, bookingsByScreen, eventId, rangeStart, rangeEnd);
-}
+// getBlockEffectiveEndDate, hasBookingCoveringWindow and
+// hasBookingCoveringBlock are imported from @shared/schedule-diagnostics
+// — see tests/schedule-diagnostics.test.ts for the per-day intersection
+// coverage they back.
 
 function getBlockSummary(
   block: ScheduleBlock,
@@ -1937,22 +1877,8 @@ function PlaybackHealthBanner({
       continue;
     }
 
-    // Does the block's time rule fire on any day within the 7-day window?
-    let firesInWindow = false;
-    for (let d = new Date(windowStart); d <= windowEnd; d = addDays(d, 1)) {
-      if (getRuleForDay((b.timeRules as TimeRule[]) || [], d)) {
-        firesInWindow = true;
-        break;
-      }
-    }
-    if (!firesInWindow) {
-      issueCounts.set("no-firing-day", (issueCounts.get("no-firing-day") || 0) + 1);
-      continue;
-    }
-
-    // Does some screen this block targets have a booking that overlaps the
-    // 7-day window? Resolve targets independently so we evaluate against
-    // the window we actually care about, not the block's own date range.
+    // Resolve targets once; we need them both for the intersection check
+    // below and to fall through to the "no-target-screens" reason.
     const targets = (b.targets as ScheduleTarget[]) || [];
     let resolvedScreenIds: string[];
     if (targets.length === 0) {
@@ -1973,15 +1899,27 @@ function PlaybackHealthBanner({
       continue;
     }
 
-    const covered = hasBookingCoveringWindow(
+    // Strict intersection: a block is only playable if there is at least
+    // one day in the 7-day window where BOTH its time rule fires AND a
+    // targeted screen has a booking covering that day. This is the same
+    // routine the unit tests in tests/schedule-diagnostics.test.ts cover.
+    const result = evaluateBlockPlayabilityInWindow(
+      b,
       resolvedScreenIds,
       bookingsByScreen,
       eventId,
       windowStart,
-      windowEndExclusive,
+      windowEnd,
     );
-    if (!covered) {
-      issueCounts.set("no-booking-covers-block", (issueCounts.get("no-booking-covers-block") || 0) + 1);
+    if (result.kind === "no-firing-day") {
+      issueCounts.set("no-firing-day", (issueCounts.get("no-firing-day") || 0) + 1);
+      continue;
+    }
+    if (result.kind === "no-booking-covers-block") {
+      issueCounts.set(
+        "no-booking-covers-block",
+        (issueCounts.get("no-booking-covers-block") || 0) + 1,
+      );
       continue;
     }
 

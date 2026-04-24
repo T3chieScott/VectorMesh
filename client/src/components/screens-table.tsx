@@ -35,6 +35,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import type { Screen, LayoutTemplate, LiveOverride } from "@shared/schema";
+import { ScreenBookingStatus } from "@/components/screen-booking-status";
 
 type ColumnId =
   | "name"
@@ -42,6 +43,7 @@ type ColumnId =
   | "pairingCode"
   | "testPattern"
   | "nowDisplaying"
+  | "playback"
   | "location"
   | "lastSeen";
 
@@ -57,6 +59,11 @@ const COLUMNS: Record<ColumnId, ColumnDef> = {
   pairingCode: { id: "pairingCode", label: "Pairing code", sortable: true },
   testPattern: { id: "testPattern", label: "Test pattern", sortable: true },
   nowDisplaying: { id: "nowDisplaying", label: "Now displaying", sortable: true },
+  // Booking-derived "what's on the screen right now" — distinct from
+  // nowDisplaying which reflects the resolved layout/playlist on the
+  // device. Not sortable because the answer comes from a per-row async
+  // query and we don't materialise it into the row sort key.
+  playback: { id: "playback", label: "Playback", sortable: false },
   location: { id: "location", label: "Location", sortable: true },
   lastSeen: { id: "lastSeen", label: "Last seen", sortable: true },
 };
@@ -67,6 +74,7 @@ const DEFAULT_ORDER: ColumnId[] = [
   "pairingCode",
   "testPattern",
   "nowDisplaying",
+  "playback",
   "location",
   "lastSeen",
 ];
@@ -77,6 +85,7 @@ const DEFAULT_VISIBILITY: Record<ColumnId, boolean> = {
   pairingCode: true,
   testPattern: true,
   nowDisplaying: true,
+  playback: true,
   location: true,
   lastSeen: true,
 };
@@ -502,6 +511,8 @@ function renderCell(id: ColumnId, ctx: CellContext) {
           )}
         </div>
       );
+    case "playback":
+      return <ScreenBookingStatus screenId={screen.id} variant="table" />;
     case "location":
       return screen.location ? (
         <span data-testid={`text-location-${screen.id}`}>{screen.location}</span>
