@@ -59,6 +59,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
@@ -78,6 +83,10 @@ import {
   Copy,
   PlayCircle,
   Monitor,
+  MonitorSmartphone,
+  Users,
+  Globe,
+  ImageOff,
 } from "lucide-react";
 import type {
   ScheduleBlock,
@@ -203,6 +212,210 @@ function hashStringToIndex(str: string): number {
   return Math.abs(hash);
 }
 
+interface BlockSummary {
+  targetType: "all" | "screen" | "group";
+  targetName: string;
+  layoutName: string | null;
+  primaryPlaylistName: string | null;
+  zoneMappings: Array<{ zoneId: string; playlistName: string }>;
+  fallbackPlaylistName: string | null;
+}
+
+interface BlockIssue {
+  kind: "version-draft" | "missing-target" | "no-target-screens" | "missing-layout" | "no-content";
+  message: string;
+}
+
+function getBlockSummary(
+  block: ScheduleBlock,
+  ctx: {
+    screens: Screen[];
+    screenGroups: ScreenGroup[];
+    layouts: LayoutTemplate[];
+    playlists: Playlist[];
+  }
+): BlockSummary {
+  const targets = (block.targets as ScheduleTarget[]) || [];
+  const target = targets[0];
+  let targetType: BlockSummary["targetType"] = "all";
+  let targetName = "All screens on event";
+  if (target) {
+    if (target.type === "screen") {
+      targetType = "screen";
+      targetName = ctx.screens.find(s => s.id === target.id)?.name || "Unknown screen";
+    } else if (target.type === "group") {
+      targetType = "group";
+      targetName = ctx.screenGroups.find(g => g.id === target.id)?.name || "Unknown group";
+    }
+  }
+
+  const layoutName = block.layoutTemplateId
+    ? (ctx.layouts.find(l => l.id === block.layoutTemplateId)?.name || "Unknown layout")
+    : null;
+
+  const zoneSources = (block.zoneSources as ZoneSource[]) || [];
+  const fallback = zoneSources.find(zs => zs.zoneId === "__fallback__" && zs.type === "playlist");
+  const fallbackPlaylistName = fallback?.playlistId
+    ? (ctx.playlists.find(p => p.id === fallback.playlistId)?.name || "Unknown playlist")
+    : null;
+
+  const zoneMappings = zoneSources
+    .filter(zs => zs.zoneId !== "__fallback__" && zs.type === "playlist" && zs.playlistId)
+    .map(zs => ({
+      zoneId: zs.zoneId,
+      playlistName: ctx.playlists.find(p => p.id === zs.playlistId)?.name || "Unknown playlist",
+    }));
+
+  const primaryPlaylistName = fallbackPlaylistName || (zoneMappings[0]?.playlistName ?? null);
+
+  return { targetType, targetName, layoutName, primaryPlaylistName, zoneMappings, fallbackPlaylistName };
+}
+
+function getBlockIssues(
+  block: ScheduleBlock,
+  summary: BlockSummary,
+  ctx: {
+    screens: Screen[];
+    layouts: LayoutTemplate[];
+    membershipsByGroup: Map<string, string[]>;
+    versionStatus?: string;
+    eventId?: string | null;
+  }
+): BlockIssue[] {
+  const issues: BlockIssue[] = [];
+
+  if (ctx.versionStatus === "draft") {
+    issues.push({ kind: "version-draft", message: "Programme version is still a draft — publish to push to screens." });
+  }
+
+  if (block.layoutTemplateId && !ctx.layouts.find(l => l.id === block.layoutTemplateId)) {
+    issues.push({ kind: "missing-layout", message: "The layout this block uses no longer exists." });
+  }
+
+  const hasContent = !!block.layoutTemplateId || summary.zoneMappings.length > 0 || !!summary.fallbackPlaylistName;
+  if (!hasContent) {
+    issues.push({ kind: "no-content", message: "No layout or playlist set on this block — nothing will play." });
+  }
+
+  // Resolve which screens this block actually targets, then check that at least
+  // one of those screens currently has this event assigned.
+  const targets = (block.targets as ScheduleTarget[]) || [];
+  let resolvedScreenIds: string[] | null = null;
+  if (targets.length === 0) {
+    resolvedScreenIds = ctx.screens.map(s => s.id);
+  } else {
+    const ids: string[] = [];
+    for (const t of targets) {
+      if (t.type === "screen") {
+        if (ctx.screens.find(s => s.id === t.id)) ids.push(t.id);
+      } else if (t.type === "group") {
+        const memberIds = ctx.membershipsByGroup.get(t.id) || [];
+        ids.push(...memberIds);
+      }
+    }
+    resolvedScreenIds = Array.from(new Set(ids));
+    if (resolvedScreenIds.length === 0) {
+      issues.push({ kind: "missing-target", message: "Targeted screen or group no longer exists." });
+    }
+  }
+
+  if (ctx.eventId && resolvedScreenIds) {
+    if (resolvedScreenIds.length === 0 && targets.length === 0) {
+      issues.push({
+        kind: "no-target-screens",
+        message: "No screens are configured on this site yet — block won't play anywhere.",
+      });
+    } else if (resolvedScreenIds.length > 0) {
+      const screensOnEvent = resolvedScreenIds.filter(id => {
+        const s = ctx.screens.find(x => x.id === id);
+        return s?.currentEventId === ctx.eventId;
+      });
+      if (screensOnEvent.length === 0) {
+        issues.push({
+          kind: "no-target-screens",
+          message:
+            targets.length === 0
+              ? "No screens are currently assigned to this event — block won't play anywhere."
+              : "Targeted screens aren't currently assigned to this event — block won't play.",
+        });
+      }
+    }
+  }
+
+  return issues;
+}
+
+function TargetIcon({ type, className }: { type: BlockSummary["targetType"]; className?: string }) {
+  if (type === "all") return <Globe className={className} />;
+  if (type === "group") return <Users className={className} />;
+  return <MonitorSmartphone className={className} />;
+}
+
+function EditorWarningBanner({
+  versionStatus,
+  targetType,
+  targetId,
+  eventId,
+  screens,
+  membershipsByGroup,
+}: {
+  versionStatus?: string;
+  targetType: "all" | "screen" | "group";
+  targetId?: string;
+  eventId: string | null;
+  screens: Screen[];
+  membershipsByGroup: Map<string, string[]>;
+}) {
+  const messages: string[] = [];
+  if (versionStatus === "draft") {
+    messages.push("This programme version is a draft. Publish it before screens will pick up changes.");
+  }
+
+  if (eventId) {
+    let resolvedScreenIds: string[] = [];
+    if (targetType === "all") {
+      resolvedScreenIds = screens.map(s => s.id);
+    } else if (targetType === "screen" && targetId) {
+      resolvedScreenIds = [targetId];
+    } else if (targetType === "group" && targetId) {
+      resolvedScreenIds = membershipsByGroup.get(targetId) || [];
+    }
+
+    if (targetType === "all" && resolvedScreenIds.length === 0) {
+      messages.push("No screens are configured on this site yet, so this block won't play anywhere.");
+    } else if (resolvedScreenIds.length > 0) {
+      const onEvent = resolvedScreenIds.filter(id => {
+        const s = screens.find(x => x.id === id);
+        return s?.currentEventId === eventId;
+      });
+      if (onEvent.length === 0) {
+        messages.push(
+          targetType === "all"
+            ? "No screens are currently assigned to this event, so this block won't play anywhere yet."
+            : targetType === "group"
+              ? "None of the screens in this group are currently assigned to this event."
+              : "This screen isn't currently assigned to this event, so the block won't play."
+        );
+      }
+    }
+    // For non-"all" target types with no targetId picked yet, stay silent
+    // until the user makes a choice.
+  }
+
+  if (messages.length === 0) return null;
+
+  return (
+    <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3 space-y-1" data-testid="banner-editor-warnings">
+      {messages.map((msg, idx) => (
+        <div key={idx} className="flex items-start gap-2 text-sm text-amber-800 dark:text-amber-200">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+          <span>{msg}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TimeBlockRenderer({
   block,
   rule,
@@ -213,6 +426,8 @@ function TimeBlockRenderer({
   onClick,
   timelineDrag,
   onDragInit,
+  summary,
+  issues,
 }: {
   block: ScheduleBlockWithMeta;
   rule: TimeRule;
@@ -223,6 +438,8 @@ function TimeBlockRenderer({
   onClick: () => void;
   timelineDrag: TimelineDragState | null;
   onDragInit: (blockId: string, mode: DragMode, e: React.PointerEvent, origStartMin: number, origEndMin: number, date: Date, color: string, blockName: string, seriesId: string | null) => void;
+  summary: BlockSummary;
+  issues: BlockIssue[];
 }) {
   if (!rule?.startTime || !rule?.endTime) return null;
 
@@ -316,6 +533,97 @@ function TimeBlockRenderer({
     ? "bg-green-500/80 text-white"
     : timelineDrag?.shiftKey ? "bg-blue-500/80 text-white" : "bg-muted text-muted-foreground";
 
+  const hasIssues = issues.length > 0;
+  const showLayoutLine = height > 32;
+  const showPlaylistLine = height > 50;
+  const showTimeLine = height > 68;
+  const layoutLabel = summary.layoutName || (summary.fallbackPlaylistName ? "Playlist only" : "No layout");
+  const playlistLabel = summary.primaryPlaylistName
+    || (summary.zoneMappings.length > 0 ? `${summary.zoneMappings.length} zone playlist${summary.zoneMappings.length > 1 ? "s" : ""}` : null);
+
+  const blockBody = (
+    <div
+      className={`absolute left-1 right-1 rounded-md px-2 py-1 select-none group ${color} ${
+        hasConflict && !isWinner ? "opacity-50 border-2 border-dashed border-yellow-400" : ""
+      } ${hasIssues ? "ring-1 ring-amber-300/80" : ""} ${
+        isDragging ? "opacity-80 ring-2 ring-white/70 z-30 shadow-lg" : isStaticDuringDrag ? "opacity-40 border-2 border-dashed border-white/60" : "hover:ring-2 hover:ring-white/50"
+      }`}
+      style={{
+        top: `${top}px`,
+        height: `${height}px`,
+        cursor,
+        transform: dayShift !== 0 ? `translateX(${dayShift * 100}%)` : undefined,
+        transition: isDragging ? "none" : undefined,
+        zIndex: isDragging ? 50 : isStaticDuringDrag ? 51 : undefined,
+      }}
+      onPointerDown={(e) => handlePointerDown(e, "move")}
+      data-testid={`block-${block.id}-${rule.startTime}`}
+    >
+      <div
+        className="absolute top-0 left-0 right-0 h-2 cursor-ns-resize z-10 group-hover:bg-white/20 rounded-t-md"
+        onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, "resize-top"); }}
+        data-testid={`resize-top-${block.id}-${rule.startTime}`}
+      />
+      <div
+        className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize z-10 group-hover:bg-white/20 rounded-b-md"
+        onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, "resize-bottom"); }}
+        data-testid={`resize-bottom-${block.id}-${rule.startTime}`}
+      />
+
+      {isDragging && isOrigDay && (
+        <div className="absolute -top-6 left-0 bg-foreground text-background text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap z-40 flex items-center gap-1">
+          {minutesToTimeStr(displayStartMin)} – {minutesToTimeStr(displayEndMin)}
+          <span className={`ml-1 px-1 rounded ${dragBadgeClass}`}>
+            {dragBadgeLabel}
+          </span>
+        </div>
+      )}
+
+      {isCtrlDrag && isOrigDay && (
+        <div className="absolute -top-0.5 -right-0.5 pointer-events-none z-40">
+          <Copy className="h-3 w-3 text-white drop-shadow" />
+        </div>
+      )}
+
+      <div className="flex items-center gap-1 text-white text-xs font-medium pointer-events-none">
+        <TargetIcon type={summary.targetType} className="h-3 w-3 shrink-0 opacity-80" />
+        <span className="truncate" data-testid={`text-block-name-${block.id}`}>{block.name}</span>
+      </div>
+      {showLayoutLine && (
+        <div className="flex items-center gap-1 text-white/80 text-[11px] truncate pointer-events-none" data-testid={`text-block-layout-${block.id}`}>
+          <Layers className="h-3 w-3 shrink-0 opacity-70" />
+          <span className="truncate">{layoutLabel}</span>
+        </div>
+      )}
+      {showPlaylistLine && playlistLabel && (
+        <div className="flex items-center gap-1 text-white/70 text-[11px] truncate pointer-events-none" data-testid={`text-block-playlist-${block.id}`}>
+          <PlayCircle className="h-3 w-3 shrink-0 opacity-70" />
+          <span className="truncate">{playlistLabel}</span>
+        </div>
+      )}
+      {showTimeLine && (
+        <div className="text-white/60 text-[11px] truncate pointer-events-none">
+          {minutesToTimeStr(displayStartMin)} – {minutesToTimeStr(displayEndMin)}
+        </div>
+      )}
+      {hasConflict && (
+        <div className="absolute -top-1 -right-1 pointer-events-none">
+          <AlertTriangle className="h-4 w-4 text-yellow-400 drop-shadow" />
+        </div>
+      )}
+      {!hasConflict && hasIssues && (
+        <div className="absolute -top-1 -right-1 pointer-events-none" data-testid={`badge-block-issues-${block.id}`}>
+          <AlertTriangle className="h-4 w-4 text-amber-300 drop-shadow" />
+        </div>
+      )}
+      {(rule.daysOfWeek?.length || 0) > 0 && (
+        <div className="absolute bottom-1 right-1 pointer-events-none">
+          <Repeat className="h-3 w-3 text-white/70" />
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <>
       {isCtrlDrag && isOrigDay && (
@@ -327,64 +635,78 @@ function TimeBlockRenderer({
           <div className="text-white text-xs font-medium truncate pointer-events-none">{block.name}</div>
         </div>
       )}
-      <div
-        className={`absolute left-1 right-1 rounded-md px-2 py-1 select-none group ${color} ${
-          hasConflict && !isWinner ? "opacity-50 border-2 border-dashed border-yellow-400" : ""
-        } ${isDragging ? "opacity-80 ring-2 ring-white/70 z-30 shadow-lg" : isStaticDuringDrag ? "opacity-40 border-2 border-dashed border-white/60" : "hover:ring-2 hover:ring-white/50"}`}
-        style={{
-          top: `${top}px`,
-          height: `${height}px`,
-          cursor,
-          transform: dayShift !== 0 ? `translateX(${dayShift * 100}%)` : undefined,
-          transition: isDragging ? "none" : undefined,
-          zIndex: isDragging ? 50 : isStaticDuringDrag ? 51 : undefined,
-        }}
-        onPointerDown={(e) => handlePointerDown(e, "move")}
-        data-testid={`block-${block.id}-${rule.startTime}`}
-      >
-        <div
-          className="absolute top-0 left-0 right-0 h-2 cursor-ns-resize z-10 group-hover:bg-white/20 rounded-t-md"
-          onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, "resize-top"); }}
-          data-testid={`resize-top-${block.id}-${rule.startTime}`}
-        />
-        <div
-          className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize z-10 group-hover:bg-white/20 rounded-b-md"
-          onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, "resize-bottom"); }}
-          data-testid={`resize-bottom-${block.id}-${rule.startTime}`}
-        />
+      {isDragging ? (
+        blockBody
+      ) : (
+        <HoverCard openDelay={250} closeDelay={80}>
+          <HoverCardTrigger asChild>{blockBody}</HoverCardTrigger>
+          <HoverCardContent
+            className="w-80 text-sm"
+            side="right"
+            align="start"
+            data-testid={`hover-block-${block.id}`}
+          >
+            <div className="space-y-3">
+              <div>
+                <div className="font-semibold leading-tight">{block.name}</div>
+                <div className="text-xs text-muted-foreground">
+                  {minutesToTimeStr(origStartMinutes)} – {minutesToTimeStr(origEndMinutes)}
+                  {(rule.daysOfWeek?.length || 0) > 0 && " • Repeats"}
+                </div>
+              </div>
 
-        {isDragging && isOrigDay && (
-          <div className="absolute -top-6 left-0 bg-foreground text-background text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap z-40 flex items-center gap-1">
-            {minutesToTimeStr(displayStartMin)} – {minutesToTimeStr(displayEndMin)}
-            <span className={`ml-1 px-1 rounded ${dragBadgeClass}`}>
-              {dragBadgeLabel}
-            </span>
-          </div>
-        )}
+              <div className="grid grid-cols-[18px_1fr] gap-x-2 gap-y-1.5 items-start">
+                <TargetIcon type={summary.targetType} className="h-4 w-4 mt-0.5 text-muted-foreground" />
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">Target</div>
+                  <div>{summary.targetName}</div>
+                </div>
 
-        {isCtrlDrag && isOrigDay && (
-          <div className="absolute -top-0.5 -right-0.5 pointer-events-none z-40">
-            <Copy className="h-3 w-3 text-white drop-shadow" />
-          </div>
-        )}
+                <Layers className="h-4 w-4 mt-0.5 text-muted-foreground" />
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">Layout</div>
+                  <div>{summary.layoutName || <span className="text-muted-foreground italic">No layout (playlist-only)</span>}</div>
+                </div>
 
-        <div className="text-white text-xs font-medium truncate pointer-events-none">{block.name}</div>
-        {height > 30 && (
-          <div className="text-white/70 text-xs truncate pointer-events-none">
-            {minutesToTimeStr(displayStartMin)} - {minutesToTimeStr(displayEndMin)}
-          </div>
-        )}
-        {hasConflict && (
-          <div className="absolute -top-1 -right-1 pointer-events-none">
-            <AlertTriangle className="h-4 w-4 text-yellow-400 drop-shadow" />
-          </div>
-        )}
-        {(rule.daysOfWeek?.length || 0) > 0 && (
-          <div className="absolute bottom-1 right-1 pointer-events-none">
-            <Repeat className="h-3 w-3 text-white/70" />
-          </div>
-        )}
-      </div>
+                <PlayCircle className="h-4 w-4 mt-0.5 text-muted-foreground" />
+                <div className="space-y-1">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">Playlists</div>
+                  {summary.fallbackPlaylistName && (
+                    <div>
+                      <span className="text-muted-foreground">Fallback:</span> {summary.fallbackPlaylistName}
+                    </div>
+                  )}
+                  {summary.zoneMappings.map(zm => (
+                    <div key={zm.zoneId}>
+                      <span className="text-muted-foreground">Zone {zm.zoneId.slice(0, 6)}:</span> {zm.playlistName}
+                    </div>
+                  ))}
+                  {!summary.fallbackPlaylistName && summary.zoneMappings.length === 0 && (
+                    <div className="text-muted-foreground italic flex items-center gap-1">
+                      <ImageOff className="h-3 w-3" /> No playlist set
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {issues.length > 0 && (
+                <div className="border-t pt-2 space-y-1">
+                  {issues.map((iss, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300"
+                      data-testid={`hover-issue-${block.id}-${iss.kind}`}
+                    >
+                      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      <span>{iss.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </HoverCardContent>
+        </HoverCard>
+      )}
     </>
   );
 }
@@ -400,6 +722,8 @@ function DayColumn({
   timelineDrag,
   onDragInit,
   columnRef,
+  blockSummaries,
+  blockIssues,
 }: {
   date: Date;
   blocks: ScheduleBlockWithMeta[];
@@ -411,6 +735,8 @@ function DayColumn({
   timelineDrag: TimelineDragState | null;
   onDragInit: (blockId: string, mode: DragMode, e: React.PointerEvent, origStartMin: number, origEndMin: number, date: Date, color: string, blockName: string, seriesId: string | null) => void;
   columnRef?: (el: HTMLDivElement | null) => void;
+  blockSummaries: Map<string, BlockSummary>;
+  blockIssues: Map<string, BlockIssue[]>;
 }) {
   const isToday = isSameDay(date, new Date());
   const dayOfWeek = date.getDay();
@@ -481,6 +807,8 @@ function DayColumn({
               onClick={() => onBlockClick(block)}
               timelineDrag={timelineDrag}
               onDragInit={onDragInit}
+              summary={blockSummaries.get(block.id)!}
+              issues={blockIssues.get(block.id) || []}
             />
           );
         })}
@@ -531,6 +859,8 @@ function ScheduleBlockEditor({
   versionId,
   versionStatus,
   programmeId,
+  eventId,
+  membershipsByGroup,
   initialDate,
   initialHour,
   droppedItem,
@@ -547,6 +877,8 @@ function ScheduleBlockEditor({
   versionId: string;
   versionStatus?: string;
   programmeId?: string;
+  eventId?: string | null;
+  membershipsByGroup: Map<string, string[]>;
   initialDate?: Date;
   initialHour?: number;
   droppedItem?: { type: string; id: string; name: string } | null;
@@ -950,6 +1282,14 @@ function ScheduleBlockEditor({
         
         <Form {...form}>
           <form onSubmit={form.handleSubmit((data) => createMutation.mutate(data))} className="space-y-6">
+            <EditorWarningBanner
+              versionStatus={versionStatus}
+              targetType={form.watch("targetType")}
+              targetId={form.watch("targetId")}
+              eventId={eventId ?? null}
+              screens={screens}
+              membershipsByGroup={membershipsByGroup}
+            />
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
@@ -1437,7 +1777,19 @@ export default function SchedulePage() {
   const { data: screenGroups = [] } = useQuery<ScreenGroup[]>(screenGroupsQ);
   const { data: playlists = [] } = useQuery<Playlist[]>(playlistsQ);
   const { data: media = [] } = useQuery<MediaAsset[]>(mediaQ);
-  
+  const screenGroupMembershipsQ = useSiteFilteredQuery<Array<{ screenId: string; groupId: string }>>("/api/screen-group-memberships");
+  const { data: screenGroupMemberships = [] } = useQuery<Array<{ screenId: string; groupId: string }>>(screenGroupMembershipsQ);
+
+  const membershipsByGroup = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const m of screenGroupMemberships) {
+      const arr = map.get(m.groupId);
+      if (arr) arr.push(m.screenId);
+      else map.set(m.groupId, [m.screenId]);
+    }
+    return map;
+  }, [screenGroupMemberships]);
+
   const activeVersions = allVersions;
 
   useEffect(() => {
@@ -1463,6 +1815,34 @@ export default function SchedulePage() {
     enabled: !!selectedVersionId,
   });
   
+  const blockSummaries = useMemo(() => {
+    const map = new Map<string, BlockSummary>();
+    for (const b of blocks) {
+      map.set(b.id, getBlockSummary(b, { screens, screenGroups, layouts, playlists }));
+    }
+    return map;
+  }, [blocks, screens, screenGroups, layouts, playlists]);
+
+  const blockIssues = useMemo(() => {
+    const map = new Map<string, BlockIssue[]>();
+    const versionStatus = selectedVersion?.status ?? undefined;
+    const eventId = selectedProgramme?.eventId ?? null;
+    for (const b of blocks) {
+      const summary = blockSummaries.get(b.id)!;
+      map.set(
+        b.id,
+        getBlockIssues(b, summary, {
+          screens,
+          layouts,
+          membershipsByGroup,
+          versionStatus,
+          eventId,
+        })
+      );
+    }
+    return map;
+  }, [blocks, blockSummaries, screens, layouts, membershipsByGroup, selectedVersion?.status, selectedProgramme?.eventId]);
+
   const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
   const weekDays = viewMode === "week"
     ? Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
@@ -1993,6 +2373,8 @@ export default function SchedulePage() {
                           if (el) columnRefsMap.current.set(date.toISOString(), el);
                           else columnRefsMap.current.delete(date.toISOString());
                         }}
+                        blockSummaries={blockSummaries}
+                        blockIssues={blockIssues}
                       />
                     ))}
                   </div>
@@ -2072,8 +2454,10 @@ export default function SchedulePage() {
         onOpenChange={handleEditorClose}
         block={selectedBlock}
         versionId={selectedVersionId}
-        versionStatus={selectedVersion?.status}
+        versionStatus={selectedVersion?.status ?? undefined}
         programmeId={selectedProgramme?.id}
+        eventId={selectedProgramme?.eventId ?? null}
+        membershipsByGroup={membershipsByGroup}
         initialDate={clickedSlot?.date}
         initialHour={clickedSlot?.hour}
         droppedItem={droppedItem}

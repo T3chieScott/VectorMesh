@@ -127,6 +127,8 @@ export interface IStorage {
 
   // Screen Group Memberships
   getGroupMembers(groupId: string): Promise<Screen[]>;
+  getScreenGroupIds(screenId: string): Promise<string[]>;
+  getAllScreenGroupMemberships(): Promise<{ screenId: string; groupId: string }[]>;
   addScreenToGroup(groupId: string, screenId: string): Promise<void>;
   removeScreenFromGroup(groupId: string, screenId: string): Promise<boolean>;
 
@@ -535,6 +537,21 @@ export class DatabaseStorage implements IStorage {
       .where(eq(screenGroupMemberships.groupId, groupId))
       .orderBy(screens.name);
     return memberships.map(m => m.screen);
+  }
+
+  async getScreenGroupIds(screenId: string): Promise<string[]> {
+    const rows = await db
+      .select({ groupId: screenGroupMemberships.groupId })
+      .from(screenGroupMemberships)
+      .where(eq(screenGroupMemberships.screenId, screenId));
+    return rows.map(r => r.groupId);
+  }
+
+  async getAllScreenGroupMemberships(): Promise<{ screenId: string; groupId: string }[]> {
+    const rows = await db
+      .select({ screenId: screenGroupMemberships.screenId, groupId: screenGroupMemberships.groupId })
+      .from(screenGroupMemberships);
+    return rows;
   }
 
   async addScreenToGroup(groupId: string, screenId: string): Promise<void> {

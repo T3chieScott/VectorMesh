@@ -1225,6 +1225,32 @@ export async function registerRoutes(
     }
   });
 
+  // Flat membership list for clients that need to resolve "which screens are
+  // in which groups" without round-tripping every group. Site-filtered: only
+  // memberships whose screen is in an accessible site are returned.
+  app.get("/api/screen-group-memberships", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const memberships = await storage.getAllScreenGroupMemberships();
+      const allScreens = await storage.getScreens();
+      const allowed = getAllowedClientIds(req);
+      const clientId = req.query.clientId as string | undefined;
+      if (clientId && !canAccessClient(req, clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
+      }
+      const screenAllowed = new Set<string>();
+      for (const s of allScreens) {
+        if (clientId && s.clientId !== clientId) continue;
+        if (allowed && s.clientId && !allowed.includes(s.clientId)) continue;
+        screenAllowed.add(s.id);
+      }
+      const filtered = memberships.filter(m => screenAllowed.has(m.screenId));
+      res.json(filtered);
+    } catch (error) {
+      console.error("Error fetching screen group memberships:", error);
+      res.status(500).json({ error: "Failed to fetch memberships" });
+    }
+  });
+
   app.delete("/api/screen-groups/:id/members/:screenId", requireAuth, loadUserContext, async (req, res) => {
     try {
       const group = await storage.getScreenGroup(req.params.id);
@@ -3205,13 +3231,20 @@ export async function registerRoutes(
         eventBlocks = allBlocks.flat();
       }
 
+      // Pre-fetch this screen's group memberships once so target matching can
+      // honour {type:"group", id} entries — without this, group-targeted blocks
+      // were silently skipped and screens never received their content.
+      const screenGroupIds = await storage.getScreenGroupIds(screen.id);
+      const screenGroupSet = new Set(screenGroupIds);
+
       if (!layout && screen.currentEventId) {
         const flatBlocks = [...eventBlocks].sort((a, b) => (b.priority || 0) - (a.priority || 0));
 
         for (const block of flatBlocks) {
           const targets = block.targets as any[] || [];
-          const targetMatch = targets.length === 0 || targets.some((t: any) => 
-            t.type === "screen" && t.id === screen.id
+          const targetMatch = targets.length === 0 || targets.some((t: any) =>
+            (t.type === "screen" && t.id === screen.id) ||
+            (t.type === "group" && screenGroupSet.has(t.id))
           );
           if (!targetMatch) continue;
 
@@ -3254,14 +3287,23 @@ export async function registerRoutes(
 
           if (timeMatch) {
             if (block.layoutTemplateId) {
-              layout = await storage.getLayoutTemplate(block.layoutTemplateId);
+              const fetchedLayout = await storage.getLayoutTemplate(block.layoutTemplateId);
+              if (!fetchedLayout) {
+                // Layout was deleted out from under the block. Don't break with
+                // stale state — keep looking for another matching block instead.
+                console.warn(`[player-content] screen=${screen.id} block=${block.id} (${block.name}) references missing layoutTemplate=${block.layoutTemplateId}; skipping`);
+                continue;
+              }
+              layout = fetchedLayout;
               activeZoneSources = (block.zoneSources as any[]) || [];
+              console.log(`[player-content] screen=${screen.id} matched block=${block.id} (${block.name}) layout=${layout.id} zoneSources=${activeZoneSources.length}`);
               break;
             }
             const blockZoneSources = (block.zoneSources as any[]) || [];
             const hasFallback = blockZoneSources.some((zs: any) => zs.zoneId === "__fallback__" && zs.type === "playlist" && zs.playlistId);
             if (hasFallback) {
               activeZoneSources = blockZoneSources;
+              console.log(`[player-content] screen=${screen.id} matched block=${block.id} (${block.name}) layout=null fallbackPlaylist`);
               break;
             }
           }
@@ -3432,10 +3474,14 @@ export async function registerRoutes(
         );
         const flatBlocks = allBlocks.flat().sort((a, b) => (b.priority || 0) - (a.priority || 0));
 
+        const simScreenGroupIds = await storage.getScreenGroupIds(screen.id);
+        const simScreenGroupSet = new Set(simScreenGroupIds);
+
         for (const block of flatBlocks) {
           const targets = block.targets as any[] || [];
           const targetMatch = targets.length === 0 || targets.some((t: any) =>
-            t.type === "screen" && t.id === screen.id
+            (t.type === "screen" && t.id === screen.id) ||
+            (t.type === "group" && simScreenGroupSet.has(t.id))
           );
           if (!targetMatch) continue;
 

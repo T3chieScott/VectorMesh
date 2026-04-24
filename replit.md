@@ -2,37 +2,7 @@
 
 ## Overview
 
-VectorMesh is an onsite display management platform designed for conference and exhibition centers. Its primary purpose is to manage content display across diverse screen types, including meeting-room screens, indoor public displays, and large external LED walls. The platform offers multi-client branding capabilities, scheduled content programming, live override functionalities for urgent announcements, and real-time diagnostics for Raspberry Pi-based display nodes. It aims to provide a robust and flexible solution for dynamic digital signage in complex event environments.
-
-Key capabilities include:
-- Management of over 50 screens with varied sizes and aspect ratios.
-- Support for various media types: images, videos, GIFs, and HTML widgets, with client-specific ownership.
-- Automatic video thumbnail generation and serving.
-- Zone-based layouts featuring tickers, clocks, logos, QR codes, countdown timers, schedules, media players, football league tables, Premier League upcoming fixtures, Heathrow flight boards (arrivals/departures), weather forecasts, SpaceX launch countdowns, global earthquakes, aircraft overhead radar, SRT live feeds, WebRTC streams (OvenMediaEngine), and media regions.
-- Advanced media player zones with playlist management, transition effects, and playback controls.
-- **Layout rotation in playlists**: Playlist items can reference either a media asset or a layout template. When a playlist contains layout items, the player rotates through those entire layouts on a timer (using each item's `duration` field, defaulting to 30 seconds). The `playlist_items` table has nullable `mediaAssetId` and `layoutTemplateId` columns. The playlist editor UI has "Add Media" and "Add Layout" buttons. The player content endpoint returns a `layoutTemplates` map for all referenced layouts, and the player auto-detects and handles layout rotation. **Zone stability**: During layout rotation, zones are keyed by a content-based fingerprint (`getZoneFingerprint` in `zone-renderer.tsx`) instead of their layout-specific ID. This means zones that are identical across consecutive layouts (same type, position, size, and config) are preserved by React without unmounting — videos keep playing, tickers keep scrolling, clocks keep ticking. Only zones that actually change between layouts are re-rendered.
-- Customizable QR code zones supporting URL, WiFi, and vCard content.
-- Dynamic countdown timers with extensive customization options.
-- Flexible layout aspect ratio support for diverse display hardware.
-- **Canvas positioning for video walls**: Screens can be positioned within a larger virtual canvas (e.g., placing a 348×1044 screen at coordinates (0,0) on a 1920×1080 canvas). Canvas positioning fields (`canvasEnabled`, `canvasWidth`, `canvasHeight`, `canvasX`, `canvasY`) are on the screens table with validation enforced both client-side and server-side. The layout fills the screen's AOI (its own resolution area) — the rest of the canvas is black. The Player Simulator has a Full Canvas / Screen AOI toggle: Full Canvas shows the entire canvas with the layout inside the AOI rectangle and black elsewhere; Screen AOI shows just the screen's viewport with the layout filling it. The player device renders the full canvas with the layout positioned inside the AOI.
-- Room schedule zones with multiple viewing modes.
-- Dynamic player variables for personalized content display.
-- Event-specific color palettes for consistent branding.
-- Integration of signage icons with text labels for directional and informational purposes.
-- Global site context switcher for filtering UI content by client.
-- **Site filtering convention**: Any page that fetches a site-scoped resource (screens, screen groups, playlists, media, layouts, events, programmes, schedules, live overrides, display profiles, screen presets) MUST go through the `useSiteFilteredQuery` helper from `client/src/hooks/use-site-context.tsx`. The helper appends `?clientId=<active-site>` to the request and includes the site id in the query key so cache invalidation works correctly. Bypassing it with a plain `useQuery({ queryKey: ["/api/..."] })` will silently leak cross-site data when a multi-site user switches sites. Exceptions (admin-wide endpoints like `/api/admin/*`, `/api/health`, `/api/clients`, `/api/manual`, `/api/programme-versions`, and the OvenMediaEngine `/api/ome/*` endpoints) are intentional — they are either system-wide or already filtered server-side via `programmeId` joins. Pages whose clientId comes from the selected target rather than the active site (e.g. Control Panel, where the user picks a screen/group and the layout list must follow that target's site, which may differ from the global site picker) use `useExplicitClientFilteredQuery` from the same module. Audited 2026-04 (Task #124).
-- **Site-scoped layouts**: Layouts have a `clientId` column linking them to a site. The GET endpoint filters by clientId, and the Layouts/Screens/Programmes pages use site-filtered queries. Admin users can copy or move layouts between sites via the layout card dropdown menu. PATCH/DELETE routes enforce site-level access control.
-- **Site-specific display profiles**: Display profiles are scoped to a site (clientId) and managed from a dedicated Admin page (`/admin/display-profiles`). The Screens page profile dropdown is filtered to show only profiles from the same site.
-- **Screen groups with membership management**: Groups auto-inherit site from the current site context. Screens can be added/removed from groups via a management dialog, constrained to same-site screens only. Member counts displayed on group cards.
-- **Live screenshots**: Players can capture and upload screenshots of their rendered content using `html2canvas`. Feature is togglable per screen via a switch on the screen card. When enabled, the player captures a compressed JPEG screenshot every 60 seconds and uploads it to the server. Screenshots are stored as base64 data URLs in the `lastScreenshot` column. The admin screens page shows a collapsible screenshot preview with capture timestamp, auto-refreshing every 30 seconds.
-- **Screen presets & control panel**: Pre-configured layout+zone combinations ("presets") can be saved per screen or screen group. Presets are activated via a one-click control panel (at `/control-panel`), which creates a high-priority (200) live override targeting the screen(s). Deactivation removes the override, returning to scheduled content. Designed for Stream Deck integration via the REST API. All preset endpoints enforce tenant-scoped access control. Empty-target activation is blocked.
-- **API tokens for external integrations (Stream Deck / Bitfocus Companion)**: Users can mint personal long-lived bearer tokens from Settings → API Tokens. Tokens are formatted `vm_<base64url>`, shown once at creation, and stored as SHA-256 hashes in the `api_tokens` table. The shared `requireAuth` middleware accepts `Authorization: Bearer vm_...` and hydrates the token's owner into the same `req.dbUser` context that session auth uses, so all tenant scoping (`canAccessClient`, `loadUserContext`, role guards) applies automatically. `lastUsedAt` is touched at most once per minute per token. New endpoint `GET /api/screen-presets/active` returns the currently-live presets (presetId, name, screenIds, since) for Companion polling. Revoked tokens are rejected immediately.
-- Secure device pairing for display nodes using unique tokens.
-- **Programme scheduling**: Full block editor with time rules (start/end times, date ranges), recurring schedules (day-of-week selectors), target screen/group selection, layout assignment, and priority. Blocks display time and target info in the programme list.
-- **Fallback playlist support**: Screens can have both a `fallbackLayoutId` and a `fallbackPlaylistId`. When no scheduled layout or fallback layout resolves, the fallback playlist is used — rendering its media items full-screen via a synthetic zone. The player, simulator, and screen edit UI all support this. Priority chain: live override → scheduled programme → fallback layout → fallback playlist.
-- Real-time player simulator with auto-refresh for content testing. Auto-resolves the active layout for a selected screen using the same priority as the real player (live override → scheduled programme → fallback layout → fallback playlist), with a source badge showing why a layout is active.
-- Raspberry Pi setup script for kiosk mode configuration.
-- **Offline player capability**: Service Worker (`client/public/player-sw.js`) caches layout data and media assets so display nodes continue running autonomously if the internet connection drops. Layout JSON is also cached in localStorage as a fallback. An "Offline" badge appears on the player when running from cache. Media assets are pre-cached in the background when a layout is loaded, and stale assets are cleaned up when the layout changes.
+VectorMesh is an onsite display management platform for conference and exhibition centers. It manages content across various screen types, including meeting rooms, public displays, and large LED walls. The platform offers multi-client branding, scheduled content programming, live override capabilities for urgent announcements, and real-time diagnostics for Raspberry Pi-based display nodes. It supports over 50 screens with diverse sizes and aspect ratios, handles various media types (images, videos, GIFs, HTML widgets), and provides advanced features like automatic video thumbnail generation, zone-based layouts, and customizable QR codes. Key capabilities include layout rotation in playlists, canvas positioning for video walls, site-scoped content management (layouts, display profiles, screen groups), live screen screenshots, and screen presets activatable via a control panel or API tokens. It also features robust programme scheduling with fallback playlist support, a real-time player simulator, secure device pairing, and offline player capability via a Service Worker for continuous operation.
 
 ## User Preferences
 
@@ -41,16 +11,16 @@ Preferred communication style: Simple, everyday language.
 ## System Architecture
 
 ### Frontend Architecture
-The frontend is built with React 18 and TypeScript, utilizing Wouter for client-side routing and TanStack React Query for server state management. UI components are developed using shadcn/ui, based on Radix UI primitives, and styled with Tailwind CSS, leveraging CSS variables for theming. Vite serves as the build tool, supporting Hot Module Replacement (HMR). File uploads are handled by Uppy with XHR direct uploads to the server. The architecture follows a page-based structure for organization, with shared components centralized.
+The frontend is built with React 18 and TypeScript, using Wouter for routing and TanStack React Query for server state. UI components are built with shadcn/ui (based on Radix UI primitives) and styled with Tailwind CSS, utilizing CSS variables for theming. Vite is used for building and HMR. File uploads are managed by Uppy with direct XHR to the server. The structure is page-based with centralized shared components.
 
 ### Backend Architecture
-The backend is a Node.js application using Express, written in TypeScript and compiled with tsx/esbuild. It exposes a RESTful JSON API. Authentication is custom email/password with session-based auth using a PostgreSQL session store. File storage uses the local filesystem with configurable upload root directory. The server's entry point manages routes and business logic.
+The backend is a Node.js application using Express, written in TypeScript and compiled with tsx/esbuild. It provides a RESTful JSON API. Authentication is custom email/password with session-based auth and a PostgreSQL session store. File storage is local filesystem-based, with configurable upload root directories.
 
 ### Data Storage
-PostgreSQL is the chosen database, accessed via Drizzle ORM. The database schema is defined once in `shared/schema.ts` for both client and server use, and migrations are managed with Drizzle Kit. Core entities include Clients, Events, Media Assets, Layouts, Screens, Programmes, and Player Heartbeats.
+PostgreSQL is the chosen database, accessed via Drizzle ORM. The schema is defined once in `shared/schema.ts` for consistency. Drizzle Kit manages migrations. Core entities include Clients, Events, Media Assets, Layouts, Screens, Programmes, and Player Heartbeats.
 
 ### Authentication & Authorization
-The system implements custom email/password authentication with bcryptjs for password hashing and PostgreSQL for session storage. It features mandatory TOTP-based Two-Factor Authentication (2FA) using the `otpauth` library — every user must set up an authenticator app (Google Authenticator, Authy, etc.) on their first login. The login flow is two-phase: credentials first, then TOTP code verification. 2FA setup is enforced at user creation (not optional), and the initial admin setup also includes mandatory 2FA enrollment. The system uses a robust Role-Based Access Control (RBAC) system with three tiers: Admin, Account Manager, and Site User, each with specific permissions and data visibility. Authentication APIs handle login, logout, 2FA setup/validation, user information retrieval, password management, and initial setup. An extensive audit logging system tracks all mutating actions and authentication events, storing them in an `audit_logs` table for accountability and analytics. Email alerts are configurable for screen status changes (offline/online), scoped per client, with recipient management and cooldown mechanisms.
+The system uses custom email/password authentication with bcryptjs for hashing and PostgreSQL for session storage. Mandatory TOTP-based Two-Factor Authentication (2FA) is enforced for all users via `otpauth`. A robust Role-Based Access Control (RBAC) system defines Admin, Account Manager, and Site User tiers. An audit logging system tracks all mutating actions and authentication events. Configurable email alerts notify about screen status changes.
 
 ### Key Design Patterns
 - **Shared Schema**: Ensures type consistency across frontend and backend.
@@ -58,41 +28,40 @@ The system implements custom email/password authentication with bcryptjs for pas
 - **API Client**: Centralized fetch wrapper for API interactions.
 - **Component Library**: Reusable UI components based on shadcn/ui.
 
+### Technical Implementations
+- **Layout Rotation**: Playlist items can reference media assets or layout templates. The player rotates through entire layouts on a timer, with zones identified by content-based fingerprints (`getZoneFingerprint`) to maintain state (e.g., videos keep playing) for identical zones across layouts.
+- **Canvas Positioning for Video Walls**: Screens can be placed within a larger virtual canvas, with layout content filling the screen's Area of Interest (AOI). The player simulator offers a "Full Canvas / Screen AOI" toggle for testing.
+- **Site Filtering**: Most UI components fetching site-scoped resources use `useSiteFilteredQuery` to prevent cross-site data leakage. Exceptions exist for system-wide or already server-filtered endpoints.
+- **Live Screenshots**: Players capture and upload compressed JPEG screenshots every 60 seconds (if enabled), stored as base64 data URLs. The admin screen page displays these with auto-refresh.
+- **Screen Presets & Control Panel**: Pre-configured layout+zone combinations can be saved and activated via a one-click control panel, creating high-priority live overrides. Deactivation removes the override. This supports Stream Deck integration via REST API.
+- **API Tokens**: Users can mint personal long-lived bearer tokens for external integrations. Tokens are hashed and stored, accepting `Authorization: Bearer vm_...` and applying existing tenant scoping rules.
+- **Programme Scheduling**: Features a block editor with time rules, recurring schedules, target selection (screen/group), layout assignment, and priority. Displays target, layout, and playlist information, with warnings for misconfigured blocks. Player resolver handles both screen and group targets.
+- **Fallback Playlist Support**: Screens can have a `fallbackLayoutId` and `fallbackPlaylistId`. If no scheduled or fallback layout resolves, the fallback playlist is used, rendering media items full-screen. Priority chain: live override → scheduled programme → fallback layout → fallback playlist.
+- **Offline Player Capability**: A Service Worker caches layout data and media assets, enabling display nodes to function offline. Layout JSON is also stored in localStorage.
+
 ## External Dependencies
 
 ### Database
-- **PostgreSQL**: Primary database for all application data.
-- **Drizzle ORM**: Used for database interactions and schema management.
+- **PostgreSQL**: Primary application database.
+- **Drizzle ORM**: Database interaction and schema management.
 
 ### Authentication
-- **bcryptjs**: For secure password hashing.
-- **otpauth**: For TOTP-based two-factor authentication generation and verification.
-- **qrcode**: For generating QR code images for authenticator app enrollment.
-- **Nodemailer**: For sending emails, including password reset and alert notifications.
+- **bcryptjs**: Password hashing.
+- **otpauth**: TOTP-based 2FA generation and verification.
+- **qrcode**: QR code generation for 2FA enrollment.
+- **Nodemailer**: Email sending (password reset, alerts).
 
 ### File Storage
-- **Local Filesystem**: Media files stored on the server's local disk. Upload root directory is configurable via admin settings UI or `UPLOAD_DIR` environment variable (defaults to `./data/uploads`). Files are organized into per-site subfolders: `<root>/<clientId>/uploads/` for media and `<root>/<clientId>/thumbnails/` for video thumbnails.
-- **multer**: Express middleware for handling multipart file uploads.
-- **System Settings**: A `system_settings` database table stores the `uploadRootDir` setting, configurable from the admin Settings page.
+- **Local Filesystem**: Media files stored on the server's local disk.
+- **multer**: Express middleware for file uploads.
 
 ### Frontend Libraries
-- **Radix UI**: Provides accessible and unstyled UI primitives.
-- **Uppy**: Robust JavaScript uploader for handling file uploads.
-- **date-fns**: For efficient date manipulation.
-- **react-day-picker**: For calendar and date selection components.
-- **embla-carousel**: For creating flexible and touch-friendly carousels.
-- **Leaflet / react-leaflet v4**: Interactive map display for the aircraft radar "Map" display mode. Uses CartoDB dark tiles.
+- **Radix UI**: Accessible and unstyled UI primitives.
+- **Uppy**: File uploader.
+- **date-fns**: Date manipulation.
+- **react-day-picker**: Calendar and date selection.
+- **embla-carousel**: Carousel components.
+- **Leaflet / react-leaflet v4**: Interactive map display for aircraft radar.
 
-### Required Environment Variables
-- `DATABASE_URL`: Connection string for PostgreSQL.
-- `SESSION_SECRET`: Secret key for session encryption.
-- `NODE_ENV`: Set to `production` for production deployments.
-
-### Optional Environment Variables
-- `UPLOAD_DIR`: Override default upload root directory (defaults to `./data/uploads`). Can also be set via admin UI.
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`: SMTP server configuration for email sending.
-- `APP_URL`: Base URL for application links in emails.
-- `AERODATABOX_RAPIDAPI_KEY`: Required. RapidAPI key for AeroDataBox flight data.
-- `AERODATABOX_RAPIDAPI_HOST`: Optional. Defaults to "aerodatabox.p.rapidapi.com".
-- `AERODATABOX_BASE_URL`: Optional. Defaults to "https://aerodatabox.p.rapidapi.com".
-- `AERODATABOX_TIMEOUT_MS`: Optional. Fetch timeout in ms (default 10000).
+### APIs
+- **AeroDataBox**: Flight data (requires `AERODATABOX_RAPIDAPI_KEY`).
