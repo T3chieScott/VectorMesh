@@ -452,65 +452,45 @@ function formatBookingRange(starts: Date, ends: Date): string {
   return `${startStr} → ${endStr}`;
 }
 
-interface BookingDisplay {
-  active: ScreenEventBooking | null;
-  next: ScreenEventBooking | null;
-  hasAny: boolean;
+// Server-derived playback view returned by GET /api/screens/:id/playback.
+// The shape mirrors the route handler: an active event (if a booking
+// covers `now`), a block status (only meaningful when activeEvent is
+// non-null) and a fallback "next booking" pointer for days when nothing
+// is on yet.
+type PlaybackBlockStatus =
+  | { kind: "playing"; blockId: string; blockName: string; endsAt: string }
+  | { kind: "playsNext"; blockId: string; blockName: string; startsAt: string }
+  | { kind: "noBlockToday" }
+  | { kind: "noEvent" };
+
+interface ScreenPlaybackResponse {
+  now: string;
+  activeEvent: { id: string; name: string } | null;
+  block: PlaybackBlockStatus;
+  nextBooking: { eventId: string; eventName: string; startsAt: string } | null;
 }
 
-// Picks the booking active at `now` (if any) and the next booking starting
-// after `now`. Used by the screen card and the up-next badge.
-function pickActiveAndNextBooking(
-  bookings: ScreenEventBooking[],
-  now: Date,
-): BookingDisplay {
-  let active: ScreenEventBooking | null = null;
-  let next: ScreenEventBooking | null = null;
-  for (const b of bookings) {
-    const startsAt = new Date(b.startsAt);
-    const endsAt = new Date(b.endsAt);
-    if (startsAt <= now && endsAt > now) {
-      // Prefer the booking that started most recently if there is somehow
-      // overlap (legacy data); the API rejects new overlaps.
-      if (!active || startsAt > new Date(active.startsAt)) active = b;
-    } else if (startsAt > now) {
-      if (!next || startsAt < new Date(next.startsAt)) next = b;
-    }
-  }
-  return { active, next, hasAny: bookings.length > 0 };
-}
-
-// Compact "now playing / up next" line shown on each screen card. Loads the
-// screen's bookings and surfaces the active and next entries.
 function ScreenBookingStatus({
   screenId,
-  events,
 }: {
   screenId: string;
-  events: Event[];
 }) {
-  const { data: bookings = [] } = useQuery<ScreenEventBooking[]>({
-    queryKey: ["/api/screens", screenId, "bookings"],
+  // The /playback endpoint combines the active event booking with the
+  // event's published schedule blocks so we display the same answer the
+  // player will actually serve — not just "is there a booking today?".
+  const { data } = useQuery<ScreenPlaybackResponse>({
+    queryKey: ["/api/screens", screenId, "playback"],
     queryFn: async () => {
-      const res = await fetch(`/api/screens/${screenId}/bookings`, {
+      const res = await fetch(`/api/screens/${screenId}/playback`, {
         credentials: "include",
       });
-      if (!res.ok) return [];
+      if (!res.ok) throw new Error("Failed to load playback status");
       return res.json();
     },
+    // Auto-refresh once a minute so "Now" / "Plays next at" stays current
+    // without the operator having to hard-refresh the page.
+    refetchInterval: 60_000,
   });
-
-  const now = new Date();
-  const { active, next } = pickActiveAndNextBooking(bookings, now);
-  const eventName = (id: string) => events.find(e => e.id === id)?.name || "Unknown event";
-
-  // Anything starting before midnight tonight (in the user's timezone) counts
-  // as "today" so the operator immediately sees what's lined up for the rest
-  // of the day vs. something further out.
-  const endOfToday = new Date(now);
-  endOfToday.setHours(23, 59, 59, 999);
-  const nextStarts = next ? new Date(next.startsAt) : null;
-  const nextIsToday = nextStarts ? nextStarts <= endOfToday : false;
 
   const hhmm = (d: Date) =>
     d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
@@ -522,37 +502,78 @@ function ScreenBookingStatus({
       minute: "2-digit",
     });
 
-  if (active) {
-    const endsAt = new Date(active.endsAt);
+  if (!data) {
     return (
-      <div className="text-sm" data-testid={`text-screen-now-playing-${screenId}`}>
-        <span className="font-medium">Now: </span>
-        <span>{eventName(active.eventId)}</span>
-        <span className="text-muted-foreground"> · until {dayTime(endsAt)}</span>
+      <div
+        className="text-sm text-muted-foreground"
+        data-testid={`text-screen-playback-loading-${screenId}`}
+      >
+        Loading…
       </div>
     );
   }
-  if (next && nextIsToday && nextStarts) {
+
+  // Block is currently firing — this is the strongest signal we can
+  // give the operator: a real piece of content is on screen right now.
+  if (data.block.kind === "playing") {
+    const endsAt = new Date(data.block.endsAt);
+    return (
+      <div className="text-sm" data-testid={`text-screen-now-playing-${screenId}`}>
+        <span className="font-medium">Now: </span>
+        <span>
+          {data.activeEvent?.name ?? "Unknown event"} — {data.block.blockName}
+        </span>
+        <span className="text-muted-foreground"> · until {hhmm(endsAt)}</span>
+      </div>
+    );
+  }
+
+  // A block is queued up later today within the active event.
+  if (data.block.kind === "playsNext") {
+    const startsAt = new Date(data.block.startsAt);
     return (
       <div
         className="text-sm text-muted-foreground"
         data-testid={`text-screen-plays-next-${screenId}`}
       >
         <span className="font-medium">Plays </span>
-        <span>{eventName(next.eventId)}</span>
-        <span> next at {hhmm(nextStarts)}</span>
+        <span>{data.block.blockName}</span>
+        <span> next at {hhmm(startsAt)}</span>
       </div>
     );
   }
-  if (next && nextStarts) {
+
+  // The screen has an event but no block fires today — surface that
+  // explicitly so the operator knows the schedule, not the booking, is
+  // the gap.
+  if (data.block.kind === "noBlockToday") {
     return (
-      <div className="text-sm text-muted-foreground" data-testid={`text-screen-up-next-${screenId}`}>
-        <span className="font-medium">Up next: </span>
-        <span>{eventName(next.eventId)}</span>
-        <span> · {dayTime(nextStarts)}</span>
+      <div
+        className="text-sm text-muted-foreground"
+        data-testid={`text-screen-no-block-today-${screenId}`}
+      >
+        <span className="font-medium">{data.activeEvent?.name ?? "Event"}</span>
+        <span> booked, but no block fires today</span>
       </div>
     );
   }
+
+  // No active event booking. Fall back to the next future booking so
+  // operators can see what's lined up rather than just "nothing".
+  if (data.nextBooking) {
+    const startsAt = new Date(data.nextBooking.startsAt);
+    return (
+      <div
+        className="text-sm text-muted-foreground"
+        data-testid={`text-screen-up-next-${screenId}`}
+      >
+        <span className="font-medium">Up next: </span>
+        <span>{data.nextBooking.eventName}</span>
+        <span> · {dayTime(startsAt)}</span>
+      </div>
+    );
+  }
+
   return (
     <div
       className="text-sm text-muted-foreground"
@@ -765,10 +786,11 @@ function BookingsPanel({
       setEndsAt("");
       toast({ title: "Booking added" });
     },
-    onError: (err: any) => {
-      const msg = err?.message?.includes("overlap")
+    onError: (err: unknown) => {
+      const errMsg = err instanceof Error ? err.message : "";
+      const msg = errMsg.includes("overlap")
         ? "That overlaps with another booking on this screen."
-        : err?.message || "Failed to add booking";
+        : errMsg || "Failed to add booking";
       toast({ title: msg, variant: "destructive" });
     },
   });
@@ -1562,7 +1584,7 @@ function ScreenCard({
             Position ({screen.canvasX || 0}, {screen.canvasY || 0}) on {screen.canvasWidth}×{screen.canvasHeight} canvas
           </div>
         )}
-        <ScreenBookingStatus screenId={screen.id} events={events} />
+        <ScreenBookingStatus screenId={screen.id} />
         {!screen.isPaired && screen.pairingCode && (
           <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
             <div>

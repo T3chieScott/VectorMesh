@@ -5,7 +5,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { initStorage } from "./fileStorage";
 import { convertBadges } from "../scripts/convert-badges";
-import { ensureBookingConstraints } from "./db";
+import { ensureBookingMigration } from "./db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -67,7 +67,7 @@ app.use((req, res, next) => {
 (async () => {
   await initStorage();
   await convertBadges();
-  await ensureBookingConstraints();
+  await ensureBookingMigration();
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

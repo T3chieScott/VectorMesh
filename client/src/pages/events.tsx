@@ -701,10 +701,11 @@ function EventBookingsDialog({
       setScreenId("");
       toast({ title: "Booking added" });
     },
-    onError: (err: any) => {
-      const msg = err?.message?.includes("overlap")
+    onError: (err: unknown) => {
+      const errMsg = err instanceof Error ? err.message : "";
+      const msg = errMsg.includes("overlap")
         ? "That overlaps with another booking on the same screen."
-        : err?.message || "Failed to add booking";
+        : errMsg || "Failed to add booking";
       toast({ title: msg, variant: "destructive" });
     },
   });

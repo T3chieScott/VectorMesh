@@ -6,7 +6,8 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
-import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema } from "@shared/schema";
+import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema, type InsertScreenEventBooking, type TimeRule, type ScheduleTarget } from "@shared/schema";
+import { derivePlaybackStatus } from "@shared/playback-derivation";
 import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
 import { setupAuth, isAuthenticated, isAuthenticatedOrToken, hashApiToken } from "./auth";
 import multer from "multer";
@@ -2659,6 +2660,103 @@ export async function registerRoutes(
   });
 
   // List bookings for one screen, ordered by start time.
+  // Per-screen playback derivation: combines the active event booking with
+  // the published programme's schedule blocks to answer "what's on this
+  // screen now / what plays next today". Used by the screens page so
+  // operators can see status without context-switching to the schedule.
+  app.get("/api/screens/:id/playback", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const screen = await storage.getScreen(req.params.id);
+      if (!screen) return res.status(404).json({ error: "Screen not found" });
+      if (screen.clientId && !canAccessClient(req, screen.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const now = req.query.now ? new Date(String(req.query.now)) : new Date();
+      const activeEvent = await storage.getCurrentEventForScreen(screen.id, now);
+
+      // No active event ⇒ skip the (expensive) block lookup; the screen
+      // has nothing on for today by definition.
+      const blocks: Array<{
+        id: string;
+        name: string;
+        timeRules: TimeRule[] | null;
+        priority: number | null;
+      }> = [];
+      if (activeEvent) {
+        // Resolve this screen's group memberships so we can honour
+        // {type:"group"} targets exactly the way the player resolver
+        // does — without this, group-targeted blocks would be
+        // silently skipped and the operator would see "noBlockToday"
+        // even when the player is happily serving content.
+        const screenGroupIds = await storage.getScreenGroupIds(screen.id);
+        const screenGroupSet = new Set(screenGroupIds);
+
+        const programmes = await storage.getProgrammes();
+        const eventProgrammeIds = programmes
+          .filter(p => p.eventId === activeEvent.id)
+          .map(p => p.id);
+        if (eventProgrammeIds.length > 0) {
+          const allVersions = await storage.getProgrammeVersions();
+          const publishedVersions = allVersions.filter(
+            v => v.status === "published" && eventProgrammeIds.includes(v.programmeId),
+          );
+          for (const version of publishedVersions) {
+            const versionBlocks = await storage.getScheduleBlocks(version.id);
+            for (const block of versionBlocks) {
+              const targets = (block.targets as ScheduleTarget[] | null) || [];
+              const fires =
+                targets.length === 0 ||
+                targets.some(
+                  t =>
+                    (t.type === "screen" && t.id === screen.id) ||
+                    (t.type === "group" && screenGroupSet.has(t.id)),
+                );
+              if (fires) {
+                blocks.push({
+                  id: block.id,
+                  name: block.name,
+                  timeRules: (block.timeRules as TimeRule[] | null) || null,
+                  priority: block.priority ?? null,
+                });
+              }
+            }
+          }
+        }
+      }
+
+      const status = derivePlaybackStatus(blocks, !!activeEvent, now);
+
+      // Pull the next future booking (regardless of programme/blocks) so the
+      // UI can fall back to "Up next" when nothing fires today.
+      const allForScreen = await storage.getScreenEventBookings({ screenId: screen.id });
+      const futureBookings = allForScreen
+        .filter(b => new Date(b.startsAt) > now)
+        .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+      const nextBooking = futureBookings[0];
+      const nextEvent = nextBooking
+        ? await storage.getEvent(nextBooking.eventId)
+        : undefined;
+
+      res.json({
+        now: now.toISOString(),
+        activeEvent: activeEvent
+          ? { id: activeEvent.id, name: activeEvent.name }
+          : null,
+        block: status,
+        nextBooking: nextBooking && nextEvent
+          ? {
+              eventId: nextEvent.id,
+              eventName: nextEvent.name,
+              startsAt: nextBooking.startsAt,
+            }
+          : null,
+      });
+    } catch (error) {
+      console.error("Error deriving playback status:", error);
+      res.status(500).json({ error: "Failed to derive playback status" });
+    }
+  });
+
   app.get("/api/screens/:screenId/bookings", requireAuth, loadUserContext, async (req, res) => {
     try {
       const screen = await storage.getScreen(req.params.screenId);
@@ -2717,8 +2815,8 @@ export async function registerRoutes(
           eventId: booking.eventId,
         });
         res.status(201).json(booking);
-      } catch (e: any) {
-        const msg = e?.message || "Failed to create booking";
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Failed to create booking";
         if (msg.includes("overlap")) return res.status(409).json({ error: msg });
         if (msg.includes("end must be after start")) return res.status(400).json({ error: msg });
         throw e;
@@ -2738,7 +2836,7 @@ export async function registerRoutes(
       if (screen?.clientId && !canAccessClient(req, screen.clientId)) {
         return res.status(403).json({ error: "Access denied" });
       }
-      const patch: Record<string, unknown> = {};
+      const patch: Partial<InsertScreenEventBooking> = {};
       if (req.body.startsAt !== undefined) patch.startsAt = new Date(req.body.startsAt);
       if (req.body.endsAt !== undefined) patch.endsAt = new Date(req.body.endsAt);
       if (req.body.eventId !== undefined) {
@@ -2750,11 +2848,11 @@ export async function registerRoutes(
         patch.eventId = ev.id;
       }
       try {
-        const booking = await storage.updateScreenEventBooking(existing.id, patch as any);
+        const booking = await storage.updateScreenEventBooking(existing.id, patch);
         logAudit(req, "update", "screen_booking", existing.id, patch);
         res.json(booking);
-      } catch (e: any) {
-        const msg = e?.message || "Failed to update booking";
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Failed to update booking";
         if (msg.includes("overlap")) return res.status(409).json({ error: msg });
         if (msg.includes("end must be after start")) return res.status(400).json({ error: msg });
         throw e;
