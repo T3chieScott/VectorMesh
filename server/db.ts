@@ -13,17 +13,12 @@ if (!process.env.DATABASE_URL) {
 export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 export const db = drizzle(pool, { schema });
 
-// Applies bookkeeping that Drizzle can't express: btree_gist extension,
-// legacy currentEventId backfill, and the no-overlap EXCLUDE constraint.
-// `db:push` must have already created the screen_event_bookings table —
-// if it hasn't we throw so deploys fail fast instead of half-running.
 const BOOKING_MIGRATION_LOCK_KEY = 715129_001n;
 
 export async function ensureBookingMigration(): Promise<void> {
   const client = await pool.connect();
   let haveLock = false;
   try {
-    // Serialize concurrent boots so two replicas don't race on backfill.
     await client.query("SELECT pg_advisory_lock($1)", [BOOKING_MIGRATION_LOCK_KEY.toString()]);
     haveLock = true;
 
@@ -48,9 +43,6 @@ export async function ensureBookingMigration(): Promise<void> {
        ) AS exists`,
     );
     if (legacyCol[0]?.exists) {
-      // Backfill, verify nothing was dropped on the floor, then drop
-      // the legacy column. We do this here (not just in the SQL file)
-      // so the boot path is self-healing.
       const result = await client.query(
         `INSERT INTO screen_event_bookings (id, screen_id, event_id, starts_at, ends_at, created_at, updated_at)
          SELECT gen_random_uuid(), s.id, s.current_event_id, e.start_date, e.end_date, now(), now()
@@ -92,8 +84,6 @@ export async function ensureBookingMigration(): Promise<void> {
        ) AS exists`,
     );
     if (!rows[0]?.exists) {
-      // tsrange (not tstzrange) because starts_at/ends_at are timestamp
-      // without time zone; the 3-arg form is IMMUTABLE as required.
       await client.query(
         `ALTER TABLE screen_event_bookings
            ADD CONSTRAINT screen_event_bookings_no_overlap
@@ -115,5 +105,4 @@ export async function ensureBookingMigration(): Promise<void> {
   }
 }
 
-// Backwards-compatible alias kept so any in-flight callers don't break.
 export const ensureBookingConstraints = ensureBookingMigration;

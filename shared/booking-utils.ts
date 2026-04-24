@@ -66,8 +66,5 @@ export function canAccessBooking(
   const allowedSet = new Set(allowed);
   const screenOk = screenClientId === null || allowedSet.has(screenClientId);
   const eventOk = eventClientId === null || allowedSet.has(eventClientId);
-  // Strict policy: BOTH sides must be accessible. A user with access
-  // to client A can't mutate a booking on a shared screen tied to a
-  // client B event, and vice versa.
   return screenOk && eventOk;
 }

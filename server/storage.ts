@@ -722,15 +722,12 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  // Returns existing bookings on the same screen whose [start,end) interval
-  // overlaps the proposed [start,end). Used by create/update for validation.
   private async findOverlappingBookings(
     screenId: string,
     startsAt: Date,
     endsAt: Date,
     excludeId?: string
   ): Promise<ScreenEventBooking[]> {
-    // Two ranges overlap iff a.start < b.end AND b.start < a.end.
     const rows = await db
       .select()
       .from(screenEventBookings)
@@ -744,12 +741,6 @@ export class DatabaseStorage implements IStorage {
     return excludeId ? rows.filter(r => r.id !== excludeId) : rows;
   }
 
-  // Maps the Postgres EXCLUDE-constraint violation that backstops our
-  // overlap check to a friendly user-facing error. The application-level
-  // overlap check above is racy under concurrent inserts; the
-  // `screen_event_bookings_no_overlap` exclusion constraint
-  // (added via ALTER TABLE; see Multi-Event Screen Bookings in replit.md)
-  // makes the rejection authoritative.
   private isOverlapConstraintViolation(err: unknown): boolean {
     const e = err as { code?: string; constraint?: string; message?: string };
     return (
@@ -821,10 +812,6 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCurrentEventForScreen(screenId: string, now: Date = new Date()): Promise<Event | undefined> {
-    // Booking is "active" when startsAt <= now < endsAt. If two bookings somehow
-    // sit on top of `now` (older data; new bookings can't overlap), prefer the
-    // one that started most recently so a hand-over reads as "the new event has
-    // started" rather than "the old one is still going".
     const [booking] = await db
       .select()
       .from(screenEventBookings)

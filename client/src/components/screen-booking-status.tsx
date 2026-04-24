@@ -20,8 +20,6 @@ export function ScreenBookingStatus({
   screenId: string;
   variant?: "card" | "table";
 }) {
-  // /playback combines the active booking with the programme's schedule
-  // blocks, so this matches what the player will actually serve.
   const { data } = useQuery<ScreenPlaybackResponse>({
     queryKey: ["/api/screens", screenId, "playback"],
     queryFn: async () => {
@@ -44,9 +42,6 @@ export function ScreenBookingStatus({
       minute: "2-digit",
     });
 
-  // The table variant trims the "Now: " / "Plays " prefixes so the cell
-  // reads tighter alongside other table columns. The card variant is the
-  // existing dialog/card copy.
   const tight = variant === "table";
 
   if (!data) {

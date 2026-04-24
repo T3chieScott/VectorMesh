@@ -1,29 +1,9 @@
-/**
- * Pure helpers that turn a screen's published schedule blocks into a
- * human-readable "what's playing now / what's up next" status. The logic
- * is shared so both the server (for the /api/screens/:id/playback
- * endpoint) and any future cross-checks (tests, simulators) compute
- * identical answers.
- *
- * A block fires when its `timeRules[0]` admits today's day-of-week and
- * today is within the rule's [startDate, endDate] range. Within a
- * matching day the block fires from `startTime` to `endTime` (HH:MM
- * in the operator's local time).
- *
- * If a block has no time rule it never fires — the operator must add
- * one. We deliberately ignore additional rules beyond the first to
- * stay consistent with the rest of the codebase (see
- * client/src/pages/schedule.tsx getRuleForDay).
- */
 import type { TimeRule } from "./schema";
 
 export interface PlaybackBlock {
   id: string;
   name: string;
   timeRules: TimeRule[] | null;
-  // Priority mirrors the field on the schedule_blocks table: when two
-  // blocks fire concurrently the one with the higher priority wins,
-  // matching the player content resolver in /api/player/content.
   priority?: number | null;
 }
 
@@ -54,9 +34,6 @@ function endOfDay(d: Date): Date {
   return out;
 }
 
-// Returns true when `date` falls within `rule`'s recurring window:
-// matches one of `daysOfWeek` (or daysOfWeek is empty) and lies between
-// startDate and endDate (inclusive at both ends).
 export function ruleAdmitsDay(rule: TimeRule, date: Date): boolean {
   const days = rule.daysOfWeek;
   if (days && days.length > 0 && !days.includes(date.getDay())) return false;
@@ -71,8 +48,6 @@ export function ruleAdmitsDay(rule: TimeRule, date: Date): boolean {
   return true;
 }
 
-// Returns the [start, end) firing window of `block` on `date`'s day,
-// or null if the block doesn't fire that day or has no time rule.
 export function blockFiringWindowForDay(
   block: PlaybackBlock,
   date: Date,
@@ -88,13 +63,6 @@ export function blockFiringWindowForDay(
   return { start, end };
 }
 
-/**
- * Computes the playback status of a screen. Caller is responsible for
- * filtering `blocks` to those targeting this specific screen and
- * belonging to the screen's *currently-active event's* published
- * programme version. If `hasActiveEvent` is false we don't even look
- * at the blocks — the screen has nothing on for today by definition.
- */
 export function derivePlaybackStatus(
   blocks: PlaybackBlock[],
   hasActiveEvent: boolean,

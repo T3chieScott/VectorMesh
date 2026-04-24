@@ -126,9 +126,6 @@ interface PlayerVarsPayload {
   weatherSummary: string | null;
 }
 
-// Resolves the event currently booked on a screen, if any. Replaces the old
-// `screen.currentEventId` field with the active booking from
-// `screen_event_bookings`. Returns null when nothing is booked at `now`.
 async function getActiveEventForScreen(screenId: string, now: Date = new Date()) {
   const event = await storage.getCurrentEventForScreen(screenId, now);
   return event ?? null;
@@ -137,9 +134,6 @@ async function getActiveEventForScreen(screenId: string, now: Date = new Date())
 async function buildPlayerVarsForScreen(
   screen: any,
   now: Date = new Date(),
-  // When set, redact event-derived vars if the caller can't access the
-  // active event's tenant. Used by simulator endpoints; device-token
-  // player endpoints leave this undefined to preserve existing behaviour.
   accessFilter?: { allowed: readonly string[] | null },
 ): Promise<PlayerVarsPayload> {
   const rawEvent = await getActiveEventForScreen(screen.id, now);
@@ -335,9 +329,6 @@ async function refreshScreensForVersion(versionId: string) {
     const allScreens = await storage.getScreens();
     const now = Date.now();
     const nowDate = new Date(now);
-    // A screen needs to refresh if its currently-active booking points at this
-    // programme's event. Each screen requires a single booking lookup; this
-    // path runs only when a programme version is published.
     for (const s of allScreens) {
       const activeEvent = await storage.getCurrentEventForScreen(s.id, nowDate);
       if (activeEvent?.id === programme.eventId) {
@@ -771,9 +762,6 @@ export async function registerRoutes(
           const eventClientMap = new Map(allEvents.map(e => [e.id, e.clientId]));
 
           for (const screen of offlineScreens) {
-            // Use the booking that's active right now to decide which client's
-            // alert recipients to notify. If nothing is booked we have no idea
-            // who owns the screen for alerting purposes, so we skip.
             const activeEvent = await storage.getCurrentEventForScreen(screen.id);
             const screenClientId = activeEvent ? eventClientMap.get(activeEvent.id) : null;
             if (!screenClientId) continue;
@@ -1348,8 +1336,6 @@ export async function registerRoutes(
 
   app.post("/api/screens", requireAuth, loadUserContext, async (req, res) => {
     try {
-      // currentEventId no longer lives on the screen — bookings handle this.
-      // Strip it defensively in case a stale client still sends it.
       const { currentEventId: _ignoredCurrentEventId, ...incoming } =
         req.body as Record<string, unknown>;
       const body: Record<string, unknown> = {
@@ -2654,23 +2640,12 @@ export async function registerRoutes(
   });
 
   // ============ SCREEN EVENT BOOKINGS ============
-  // Each booking links one screen to one event for a date range. A screen can
-  // have many non-overlapping bookings; the booking active at "now" is what
-  // the player and dashboards consider the screen's current event.
 
-  // List bookings, optionally filtered by site (clientId via the screen).
-  // Used by the schedule diagnostics layer.
   app.get("/api/screen-bookings", requireAuth, loadUserContext, async (req, res) => {
     try {
       const allBookings = await storage.getScreenEventBookings();
       const allowed = getAllowedClientIds(req);
       if (!allowed) return res.json(allBookings);
-      // Dual-side filter via shared canAccessBooking: a booking is
-      // visible only when the caller can access BOTH the screen's
-      // client and the event's client (with null on either side
-      // counted as "site-level / accessible to anyone with access to
-      // the other side"). Mirrors the per-screen and per-event
-      // bookings endpoints.
       const [screensById, eventsById] = await Promise.all([
         storage.getScreens().then(rows => new Map(rows.map(s => [s.id, s]))),
         storage.getEvents().then(rows => new Map(rows.map(e => [e.id, e]))),
@@ -2688,11 +2663,6 @@ export async function registerRoutes(
     }
   });
 
-  // List bookings for one screen, ordered by start time.
-  // Per-screen playback derivation: combines the active event booking with
-  // the published programme's schedule blocks to answer "what's on this
-  // screen now / what plays next today". Used by the screens page so
-  // operators can see status without context-switching to the schedule.
   app.get("/api/screens/:id/playback", requireAuth, loadUserContext, async (req, res) => {
     try {
       const screen = await storage.getScreen(req.params.id);
@@ -2703,11 +2673,6 @@ export async function registerRoutes(
       const now = req.query.now ? new Date(String(req.query.now)) : new Date();
       const rawActiveEvent = await storage.getCurrentEventForScreen(screen.id, now);
 
-      // Redact the active event up-front: blocks, derived status, and
-      // every event-derived field below must be computed from the
-      // VISIBLE event so we don't leak foreign tenant block names /
-      // schedule timing on a shared screen. canAccessBooking handles
-      // both null-allowed (admin) and both-null (no boundary).
       const allowed = getAllowedClientIds(req);
       const screenClientId = screen.clientId ?? null;
       const visibleActiveEvent = rawActiveEvent &&
@@ -2715,8 +2680,6 @@ export async function registerRoutes(
           ? rawActiveEvent
           : null;
 
-      // No active event ⇒ skip the (expensive) block lookup; the screen
-      // has nothing on for today by definition.
       const blocks: Array<{
         id: string;
         name: string;
@@ -2724,11 +2687,6 @@ export async function registerRoutes(
         priority: number | null;
       }> = [];
       if (visibleActiveEvent) {
-        // Resolve this screen's group memberships so we can honour
-        // {type:"group"} targets exactly the way the player resolver
-        // does — without this, group-targeted blocks would be
-        // silently skipped and the operator would see "noBlockToday"
-        // even when the player is happily serving content.
         const screenGroupIds = await storage.getScreenGroupIds(screen.id);
         const screenGroupSet = new Set(screenGroupIds);
 
@@ -2767,11 +2725,6 @@ export async function registerRoutes(
 
       const status = derivePlaybackStatus(blocks, !!visibleActiveEvent, now);
 
-      // Pull the next future booking (regardless of programme/blocks) so the
-      // UI can fall back to "Up next" when nothing fires today. The
-      // active event was already redacted up-front; here we walk forward
-      // through the future-booking queue so a foreign tenant booking
-      // sitting at the front doesn't mask our own visible "up next" entry.
       const allForScreen = await storage.getScreenEventBookings({ screenId: screen.id });
       const futureBookings = allForScreen
         .filter(b => new Date(b.startsAt) > now)
@@ -2817,10 +2770,6 @@ export async function registerRoutes(
       }
       const allowed = getAllowedClientIds(req);
       const bookings = await storage.getScreenEventBookings({ screenId: screen.id });
-      // For shared screens (clientId == null) the screen-level check
-      // above is permissive — bookings may belong to different client
-      // events. Run the canAccessBooking dual-side check on every
-      // returned row to avoid leaking cross-tenant booking metadata.
       if (!allowed) return res.json(bookings);
       const eventIds = Array.from(new Set(bookings.map(b => b.eventId)));
       const events = await Promise.all(eventIds.map(id => storage.getEvent(id)));
@@ -2852,11 +2801,6 @@ export async function registerRoutes(
       }
       const bookings = await storage.getScreenEventBookings({ eventId: event.id });
       const allowed = getAllowedClientIds(req);
-      // Site-level events on shared screens (event.clientId == null
-      // and screen.clientId == null) plus admin (allowed === null)
-      // pass through unchanged. For client-scoped operators we apply
-      // the dual-side check to avoid leaking screens belonging to
-      // other tenants under the strict-AND policy.
       if (!allowed) return res.json(bookings);
       const screenIds = Array.from(new Set(bookings.map(b => b.screenId)));
       const screens = await Promise.all(screenIds.map(id => storage.getScreen(id)));
@@ -2878,8 +2822,6 @@ export async function registerRoutes(
     }
   });
 
-  // Create a booking on a screen. Overlap with another booking on the same
-  // screen is rejected by the storage layer (409 Conflict).
   app.post("/api/screens/:screenId/bookings", requireAuth, loadUserContext, async (req, res) => {
     try {
       const screen = await storage.getScreen(req.params.screenId);
@@ -2924,11 +2866,6 @@ export async function registerRoutes(
       if (!existing) return res.status(404).json({ error: "Booking not found" });
       const screen = await storage.getScreen(existing.screenId);
       const currentEvent = await storage.getEvent(existing.eventId);
-      // Authorize on BOTH the screen and the existing event. For shared
-      // screens (clientId == null) the screen check passes for everyone,
-      // so the event-side check is what actually protects cross-tenant
-      // mutation. canAccessClient with a null clientId is treated as
-      // "site-level, anyone authenticated may access".
       if (screen?.clientId && !canAccessClient(req, screen.clientId)) {
         return res.status(403).json({ error: "Access denied" });
       }
@@ -2969,9 +2906,6 @@ export async function registerRoutes(
       if (!existing) return res.status(404).json({ error: "Booking not found" });
       const screen = await storage.getScreen(existing.screenId);
       const ev = await storage.getEvent(existing.eventId);
-      // Authorize on BOTH sides — see PATCH for the rationale. Shared
-      // screens (clientId == null) would otherwise let any client user
-      // delete bookings tied to other clients' events.
       if (screen?.clientId && !canAccessClient(req, screen.clientId)) {
         return res.status(403).json({ error: "Access denied" });
       }
@@ -3583,8 +3517,6 @@ export async function registerRoutes(
         activeZoneSources = (activeOverride.zoneSources as any[]) || [];
       }
 
-      // The active event for this screen comes from the booking active at
-      // `now`; this replaces the legacy `screen.currentEventId` field.
       const activeEvent = await getActiveEventForScreen(screen.id, now);
 
       // Programme/version/block lookup is shared between layout selection and
@@ -3717,7 +3649,6 @@ export async function registerRoutes(
         }
       }
 
-      // Reuse the active event resolved earlier in this request.
       const event = activeEvent;
 
       let client = null;
@@ -3831,10 +3762,6 @@ export async function registerRoutes(
         layoutSourceDetail = activeOverride.message || "Live Override";
       }
 
-      // Tenant fence: shared screens (clientId == null) pass the
-      // screen-level check above for everyone; the active event may
-      // belong to another tenant. Redact before deriving layouts /
-      // playerVars so we don't leak schedules across clients.
       const simAllowed = getAllowedClientIds(req);
       const rawSimActiveEvent = await getActiveEventForScreen(screen.id, now);
       const simActiveEvent =
@@ -4485,9 +4412,6 @@ export async function registerRoutes(
       const clients = allowed ? allClients.filter(c => allowed.includes(c.id)) : allClients;
       const clientIds = new Set(clients.map(c => c.id));
       const eventIds = new Set(allEvents.filter(e => clientIds.has(e.clientId)).map(e => e.id));
-      // A screen is "owned" by a client if it has any booking to one of that
-      // client's events (past, present, or future). Without bookings the
-      // screen does not belong to any client and is hidden from non-admins.
       const allBookings = await storage.getScreenEventBookings();
       const screensWithAllowedBooking = new Set(
         allBookings.filter(b => eventIds.has(b.eventId)).map(b => b.screenId),

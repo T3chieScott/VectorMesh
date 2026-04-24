@@ -1,12 +1,8 @@
--- Migration 0001: screen_event_bookings (Task #129)
---
--- Run AFTER `npm run db:push` so the table exists. Idempotent: safe to
--- re-run. Server boot's ensureBookingMigration() in server/db.ts also
--- applies these steps so this file is mostly for ops visibility.
+-- 0001_screen_event_bookings: backfill + no-overlap constraint + drop legacy column.
+-- Run after `npm run db:push`. Idempotent.
 
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 
--- Backfill any rows still living on the legacy currentEventId column.
 DO $$
 BEGIN
   IF EXISTS (
@@ -28,9 +24,6 @@ BEGIN
   END IF;
 END $$;
 
--- No-overlap constraint. tsrange (not tstzrange) because starts_at /
--- ends_at are timestamp without time zone; '[)' makes back-to-back
--- bookings legal.
 DO $$
 BEGIN
   IF EXISTS (
