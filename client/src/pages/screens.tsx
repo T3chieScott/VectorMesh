@@ -91,7 +91,7 @@ import {
 } from "lucide-react";
 import { useSiteContext } from "@/hooks/use-site-context";
 import { useAuth } from "@/hooks/use-auth";
-import type { Screen, DisplayProfile, LiveOverride, Event, LayoutTemplate, Client, Playlist } from "@shared/schema";
+import type { Screen, DisplayProfile, LiveOverride, Event, LayoutTemplate, Client, Playlist, ScreenEventBooking } from "@shared/schema";
 import { WeatherLocationPicker } from "@/components/weather-location-picker";
 import { ScreensTable } from "@/components/screens-table";
 import { Table as TableIcon, LayoutGrid as LayoutGridIcon } from "lucide-react";
@@ -128,7 +128,6 @@ const screenFormSchema = z.object({
   location: z.string().optional(),
   clientId: z.string().nullable().optional(),
   displayProfileId: z.string().optional(),
-  currentEventId: z.string().nullable().optional(),
   fallbackLayoutId: z.string().nullable().optional(),
   fallbackPlaylistId: z.string().nullable().optional(),
   canvasEnabled: z.boolean().default(false),
@@ -421,6 +420,315 @@ function generatePairingCode(): string {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
+// Format a Date as the value expected by <input type="datetime-local"> in
+// the user's local timezone (yyyy-MM-ddTHH:mm).
+function toLocalDateTimeInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
+function formatBookingRange(starts: Date, ends: Date): string {
+  const sameDay =
+    starts.getFullYear() === ends.getFullYear() &&
+    starts.getMonth() === ends.getMonth() &&
+    starts.getDate() === ends.getDate();
+  const startStr = starts.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const endStr = sameDay
+    ? ends.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+    : ends.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+  return `${startStr} → ${endStr}`;
+}
+
+interface BookingDisplay {
+  active: ScreenEventBooking | null;
+  next: ScreenEventBooking | null;
+  hasAny: boolean;
+}
+
+// Picks the booking active at `now` (if any) and the next booking starting
+// after `now`. Used by the screen card and the up-next badge.
+function pickActiveAndNextBooking(
+  bookings: ScreenEventBooking[],
+  now: Date,
+): BookingDisplay {
+  let active: ScreenEventBooking | null = null;
+  let next: ScreenEventBooking | null = null;
+  for (const b of bookings) {
+    const startsAt = new Date(b.startsAt);
+    const endsAt = new Date(b.endsAt);
+    if (startsAt <= now && endsAt > now) {
+      // Prefer the booking that started most recently if there is somehow
+      // overlap (legacy data); the API rejects new overlaps.
+      if (!active || startsAt > new Date(active.startsAt)) active = b;
+    } else if (startsAt > now) {
+      if (!next || startsAt < new Date(next.startsAt)) next = b;
+    }
+  }
+  return { active, next, hasAny: bookings.length > 0 };
+}
+
+// Compact "now playing / up next" line shown on each screen card. Loads the
+// screen's bookings and surfaces the active and next entries.
+function ScreenBookingStatus({
+  screenId,
+  events,
+}: {
+  screenId: string;
+  events: Event[];
+}) {
+  const { data: bookings = [] } = useQuery<ScreenEventBooking[]>({
+    queryKey: ["/api/screens", screenId, "bookings"],
+    queryFn: async () => {
+      const res = await fetch(`/api/screens/${screenId}/bookings`, {
+        credentials: "include",
+      });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  const { active, next } = pickActiveAndNextBooking(bookings, new Date());
+  const eventName = (id: string) => events.find(e => e.id === id)?.name || "Unknown event";
+
+  if (active) {
+    const endsAt = new Date(active.endsAt);
+    return (
+      <div className="text-sm" data-testid={`text-screen-now-playing-${screenId}`}>
+        <span className="font-medium">Now: </span>
+        <span>{eventName(active.eventId)}</span>
+        <span className="text-muted-foreground">
+          {" "}
+          · until{" "}
+          {endsAt.toLocaleString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </span>
+      </div>
+    );
+  }
+  if (next) {
+    const startsAt = new Date(next.startsAt);
+    return (
+      <div className="text-sm text-muted-foreground" data-testid={`text-screen-up-next-${screenId}`}>
+        <span className="font-medium">Up next: </span>
+        <span>{eventName(next.eventId)}</span>
+        <span>
+          {" "}
+          ·{" "}
+          {startsAt.toLocaleString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="text-sm text-muted-foreground"
+      data-testid={`text-screen-no-event-${screenId}`}
+    >
+      No event scheduled
+    </div>
+  );
+}
+
+// Inline booking manager mounted inside the screen edit dialog. Lets users
+// list, add, and remove the events scheduled on this screen. Overlap is
+// validated server-side.
+function BookingsPanel({
+  screenId,
+  events,
+}: {
+  screenId: string;
+  events: Event[];
+}) {
+  const { toast } = useToast();
+  const { data: bookings = [], isLoading } = useQuery<ScreenEventBooking[]>({
+    queryKey: ["/api/screens", screenId, "bookings"],
+    queryFn: async () => {
+      const res = await fetch(`/api/screens/${screenId}/bookings`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to load bookings");
+      return res.json();
+    },
+  });
+
+  const [eventId, setEventId] = useState<string>("");
+  const [startsAt, setStartsAt] = useState<string>("");
+  const [endsAt, setEndsAt] = useState<string>("");
+
+  // When the user selects an event, pre-fill the date range from the event so
+  // the common case (book the screen for the whole event) is one click.
+  function handleEventChange(id: string) {
+    setEventId(id);
+    const ev = events.find(e => e.id === id);
+    if (ev?.startDate) setStartsAt(toLocalDateTimeInput(new Date(ev.startDate)));
+    if (ev?.endDate) setEndsAt(toLocalDateTimeInput(new Date(ev.endDate)));
+  }
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      if (!eventId) throw new Error("Pick an event");
+      if (!startsAt || !endsAt) throw new Error("Pick a date range");
+      const startDate = new Date(startsAt);
+      const endDate = new Date(endsAt);
+      if (!(endDate > startDate)) throw new Error("End must be after start");
+      return apiRequest("POST", `/api/screens/${screenId}/bookings`, {
+        eventId,
+        startsAt: startDate.toISOString(),
+        endsAt: endDate.toISOString(),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screens", screenId, "bookings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/screen-bookings"] });
+      setEventId("");
+      setStartsAt("");
+      setEndsAt("");
+      toast({ title: "Booking added" });
+    },
+    onError: (err: any) => {
+      const msg = err?.message?.includes("overlap")
+        ? "That overlaps with another booking on this screen."
+        : err?.message || "Failed to add booking";
+      toast({ title: msg, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => apiRequest("DELETE", `/api/screen-bookings/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screens", screenId, "bookings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/screen-bookings"] });
+      toast({ title: "Booking removed" });
+    },
+    onError: () => toast({ title: "Failed to remove booking", variant: "destructive" }),
+  });
+
+  return (
+    <div className="space-y-3 rounded-md border p-3" data-testid="panel-screen-bookings">
+      <div className="flex items-center justify-between">
+        <Label className="text-sm font-medium">Event bookings</Label>
+        <span className="text-xs text-muted-foreground">
+          When this screen plays each event
+        </span>
+      </div>
+      {isLoading ? (
+        <Skeleton className="h-12 w-full" />
+      ) : bookings.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          No bookings yet. Add one below to schedule an event for this screen.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {bookings.map(b => {
+            const ev = events.find(e => e.id === b.eventId);
+            const starts = new Date(b.startsAt);
+            const ends = new Date(b.endsAt);
+            return (
+              <li
+                key={b.id}
+                className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2 py-1.5 text-sm"
+                data-testid={`row-booking-${b.id}`}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium" data-testid={`text-booking-event-${b.id}`}>
+                    {ev?.name || "Unknown event"}
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {formatBookingRange(starts, ends)}
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => deleteMutation.mutate(b.id)}
+                  data-testid={`button-delete-booking-${b.id}`}
+                  title="Remove booking"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="space-y-2 border-t pt-3">
+        <Label className="text-xs text-muted-foreground">Add a booking</Label>
+        <Select value={eventId} onValueChange={handleEventChange}>
+          <SelectTrigger data-testid="select-new-booking-event">
+            <SelectValue placeholder="Pick an event" />
+          </SelectTrigger>
+          <SelectContent>
+            {events.length === 0 ? (
+              <div className="px-2 py-1.5 text-xs text-muted-foreground">No events available</div>
+            ) : (
+              events.map(e => (
+                <SelectItem key={e.id} value={e.id}>
+                  {e.name}
+                </SelectItem>
+              ))
+            )}
+          </SelectContent>
+        </Select>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <Label className="text-xs">Starts</Label>
+            <Input
+              type="datetime-local"
+              value={startsAt}
+              onChange={e => setStartsAt(e.target.value)}
+              data-testid="input-new-booking-starts"
+            />
+          </div>
+          <div>
+            <Label className="text-xs">Ends</Label>
+            <Input
+              type="datetime-local"
+              value={endsAt}
+              onChange={e => setEndsAt(e.target.value)}
+              data-testid="input-new-booking-ends"
+            />
+          </div>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          disabled={createMutation.isPending || !eventId || !startsAt || !endsAt}
+          onClick={() => createMutation.mutate()}
+          data-testid="button-add-booking"
+        >
+          <Plus className="mr-1 h-3.5 w-3.5" />
+          Add booking
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function ScreenCard({
   screen,
   profiles,
@@ -532,7 +840,6 @@ function ScreenCard({
       location: screen.location || "",
       clientId: screen.clientId || "",
       displayProfileId: screen.displayProfileId || "",
-      currentEventId: screen.currentEventId || "",
       fallbackLayoutId: screen.fallbackLayoutId || "",
       fallbackPlaylistId: screen.fallbackPlaylistId || "",
       canvasEnabled: screen.canvasEnabled || false,
@@ -553,7 +860,6 @@ function ScreenCard({
       apiRequest("PATCH", `/api/screens/${screen.id}`, {
         ...data,
         clientId: data.clientId || null,
-        currentEventId: data.currentEventId || null,
         fallbackLayoutId: data.fallbackLayoutId || null,
         fallbackPlaylistId: data.fallbackPlaylistId || null,
         canvasEnabled: data.canvasEnabled || false,
@@ -915,34 +1221,7 @@ function ScreenCard({
                         </FormItem>
                       )}
                     />
-                    <FormField
-                      control={form.control}
-                      name="currentEventId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Current Event</FormLabel>
-                          <Select
-                            onValueChange={(val) => field.onChange(val === "__none__" ? null : val)}
-                            defaultValue={field.value || "__none__"}
-                          >
-                            <FormControl>
-                              <SelectTrigger data-testid="select-edit-screen-event">
-                                <SelectValue placeholder="No event assigned" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="__none__">No event assigned</SelectItem>
-                              {events.map((e) => (
-                                <SelectItem key={e.id} value={e.id}>
-                                  {e.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    <BookingsPanel screenId={screen.id} events={events} />
                     <FormField
                       control={form.control}
                       name="fallbackLayoutId"
@@ -1145,11 +1424,7 @@ function ScreenCard({
             Position ({screen.canvasX || 0}, {screen.canvasY || 0}) on {screen.canvasWidth}×{screen.canvasHeight} canvas
           </div>
         )}
-        {screen.currentEventId && (
-          <div className="text-sm text-muted-foreground">
-            Event: {events.find((e) => e.id === screen.currentEventId)?.name || "Unknown"}
-          </div>
-        )}
+        <ScreenBookingStatus screenId={screen.id} events={events} />
         {!screen.isPaired && screen.pairingCode && (
           <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
             <div>
@@ -1420,7 +1695,6 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
       location: "",
       clientId: selectedClientId || "",
       displayProfileId: "",
-      currentEventId: "",
       canvasEnabled: false,
       canvasWidth: undefined,
       canvasHeight: undefined,
@@ -1442,7 +1716,6 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
       apiRequest("POST", "/api/screens", {
         ...data,
         clientId: data.clientId || null,
-        currentEventId: data.currentEventId || null,
         pairingCode: generatePairingCode(),
         canvasEnabled: data.canvasEnabled || false,
         canvasWidth: data.canvasEnabled ? data.canvasWidth : null,
@@ -1580,34 +1853,12 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
                 </FormItem>
               )}
             />
-            <FormField
-              control={form.control}
-              name="currentEventId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Current Event (optional)</FormLabel>
-                  <Select
-                    onValueChange={(val) => field.onChange(val === "__none__" ? null : val)}
-                    defaultValue={field.value || "__none__"}
-                  >
-                    <FormControl>
-                      <SelectTrigger data-testid="select-screen-event">
-                        <SelectValue placeholder="No event assigned" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="__none__">No event assigned</SelectItem>
-                      {events.map((e) => (
-                        <SelectItem key={e.id} value={e.id}>
-                          {e.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <div
+              className="rounded-md border border-dashed p-3 text-xs text-muted-foreground"
+              data-testid="hint-bookings-after-create"
+            >
+              You can book this screen for one or more events after it's created — open the screen and use the Event bookings panel.
+            </div>
             <CanvasFields form={form} profiles={siteProfiles} prefix="create" />
             <RoomAndWeatherFields form={form} prefix="create" />
             <div className="flex justify-end gap-2">

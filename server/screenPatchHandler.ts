@@ -7,10 +7,11 @@ import type { IStorage } from "./storage";
  * Normalises the body of a PATCH /api/screens/:id request.
  *
  * The screens PATCH endpoint accepts partial updates. Several reference
- * columns (`displayProfileId`, `currentEventId`, `clientId`,
- * `fallbackLayoutId`, `fallbackPlaylistId`) historically came from form
- * inputs that submit `""` to mean "clear", so we normalise empty strings
- * to `null` for those fields.
+ * columns (`displayProfileId`, `clientId`, `fallbackLayoutId`,
+ * `fallbackPlaylistId`) historically came from form inputs that submit
+ * `""` to mean "clear", so we normalise empty strings to `null` for those
+ * fields. The legacy `currentEventId` field has been replaced by
+ * `screen_event_bookings`; the column was dropped from the schema.
  *
  * IMPORTANT: only normalise fields that are actually present in the
  * request body. Earlier versions of this handler unconditionally wrote
@@ -27,7 +28,6 @@ export function normalizeScreenPatchBody(
   const out: Record<string, unknown> = { ...body };
   const nullableRefFields = [
     "displayProfileId",
-    "currentEventId",
     "clientId",
     "fallbackLayoutId",
     "fallbackPlaylistId",

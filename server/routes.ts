@@ -6,7 +6,7 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
-import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema } from "@shared/schema";
+import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema } from "@shared/schema";
 import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
 import { setupAuth, isAuthenticated, isAuthenticatedOrToken, hashApiToken } from "./auth";
 import multer from "multer";
@@ -124,23 +124,28 @@ interface PlayerVarsPayload {
   weatherSummary: string | null;
 }
 
+// Resolves the event currently booked on a screen, if any. Replaces the old
+// `screen.currentEventId` field with the active booking from
+// `screen_event_bookings`. Returns null when nothing is booked at `now`.
+async function getActiveEventForScreen(screenId: string, now: Date = new Date()) {
+  const event = await storage.getCurrentEventForScreen(screenId, now);
+  return event ?? null;
+}
+
 async function buildPlayerVarsForScreen(screen: any, now: Date = new Date()): Promise<PlayerVarsPayload> {
-  let event: any = null;
-  if (screen.currentEventId) {
-    event = await storage.getEvent(screen.currentEventId);
-  }
+  const event = await getActiveEventForScreen(screen.id, now);
   let client: any = null;
   if (screen.clientId) {
     client = await storage.getClient(screen.clientId);
   }
 
   let eventBlocks: Awaited<ReturnType<typeof storage.getScheduleBlocks>> = [];
-  if (screen.currentEventId) {
+  if (event) {
     const [programmes, allVersions] = await Promise.all([
       storage.getProgrammes(),
       storage.getProgrammeVersions(),
     ]);
-    const eventProgrammes = programmes.filter((p: any) => p.eventId === screen.currentEventId);
+    const eventProgrammes = programmes.filter((p: any) => p.eventId === event.id);
     const publishedVersions = allVersions.filter((v: any) =>
       v.status === "published" && eventProgrammes.some((p: any) => p.id === v.programmeId)
     );
@@ -310,8 +315,13 @@ async function refreshScreensForVersion(versionId: string) {
     if (!programme?.eventId) return;
     const allScreens = await storage.getScreens();
     const now = Date.now();
+    const nowDate = new Date(now);
+    // A screen needs to refresh if its currently-active booking points at this
+    // programme's event. Each screen requires a single booking lookup; this
+    // path runs only when a programme version is published.
     for (const s of allScreens) {
-      if (s.currentEventId === programme.eventId) {
+      const activeEvent = await storage.getCurrentEventForScreen(s.id, nowDate);
+      if (activeEvent?.id === programme.eventId) {
         pendingPlayerRefreshes.set(s.id, now);
       }
     }
@@ -742,7 +752,11 @@ export async function registerRoutes(
           const eventClientMap = new Map(allEvents.map(e => [e.id, e.clientId]));
 
           for (const screen of offlineScreens) {
-            const screenClientId = screen.currentEventId ? eventClientMap.get(screen.currentEventId) : null;
+            // Use the booking that's active right now to decide which client's
+            // alert recipients to notify. If nothing is booked we have no idea
+            // who owns the screen for alerting purposes, so we skip.
+            const activeEvent = await storage.getCurrentEventForScreen(screen.id);
+            const screenClientId = activeEvent ? eventClientMap.get(activeEvent.id) : null;
             if (!screenClientId) continue;
 
             const alertSetting = enabledAlertSettings.find(s => s.clientId === screenClientId);
@@ -1319,8 +1333,9 @@ export async function registerRoutes(
         ...req.body,
         clientId: req.body.clientId || null,
         displayProfileId: req.body.displayProfileId || null,
-        currentEventId: req.body.currentEventId || null,
       };
+      // currentEventId no longer lives on the screen — bookings handle this.
+      delete (body as any).currentEventId;
       if (body.canvasEnabled) {
         if (!body.canvasWidth || body.canvasWidth < 1 || !body.canvasHeight || body.canvasHeight < 1) {
           return res.status(400).json({ error: "Canvas width and height are required when canvas positioning is enabled" });
@@ -2617,6 +2632,155 @@ export async function registerRoutes(
     }
   });
 
+  // ============ SCREEN EVENT BOOKINGS ============
+  // Each booking links one screen to one event for a date range. A screen can
+  // have many non-overlapping bookings; the booking active at "now" is what
+  // the player and dashboards consider the screen's current event.
+
+  // List bookings, optionally filtered by site (clientId via the screen).
+  // Used by the schedule diagnostics layer.
+  app.get("/api/screen-bookings", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const allBookings = await storage.getScreenEventBookings();
+      const allowed = getAllowedClientIds(req);
+      if (!allowed) return res.json(allBookings);
+      const screensById = new Map((await storage.getScreens()).map(s => [s.id, s]));
+      const filtered = allBookings.filter(b => {
+        const sc = screensById.get(b.screenId);
+        return sc && sc.clientId && allowed.includes(sc.clientId);
+      });
+      res.json(filtered);
+    } catch (error) {
+      console.error("Error listing bookings:", error);
+      res.status(500).json({ error: "Failed to list bookings" });
+    }
+  });
+
+  // List bookings for one screen, ordered by start time.
+  app.get("/api/screens/:screenId/bookings", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const screen = await storage.getScreen(req.params.screenId);
+      if (!screen) return res.status(404).json({ error: "Screen not found" });
+      if (screen.clientId && !canAccessClient(req, screen.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const bookings = await storage.getScreenEventBookings({ screenId: screen.id });
+      res.json(bookings);
+    } catch (error) {
+      console.error("Error fetching screen bookings:", error);
+      res.status(500).json({ error: "Failed to fetch bookings" });
+    }
+  });
+
+  // List bookings for one event (used on the event detail page).
+  app.get("/api/events/:eventId/bookings", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const event = await storage.getEvent(req.params.eventId);
+      if (!event) return res.status(404).json({ error: "Event not found" });
+      if (event.clientId && !canAccessClient(req, event.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const bookings = await storage.getScreenEventBookings({ eventId: event.id });
+      res.json(bookings);
+    } catch (error) {
+      console.error("Error fetching event bookings:", error);
+      res.status(500).json({ error: "Failed to fetch bookings" });
+    }
+  });
+
+  // Create a booking on a screen. Overlap with another booking on the same
+  // screen is rejected by the storage layer (409 Conflict).
+  app.post("/api/screens/:screenId/bookings", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const screen = await storage.getScreen(req.params.screenId);
+      if (!screen) return res.status(404).json({ error: "Screen not found" });
+      if (screen.clientId && !canAccessClient(req, screen.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const event = await storage.getEvent(String(req.body.eventId || ""));
+      if (!event) return res.status(400).json({ error: "Event not found" });
+      if (event.clientId && !canAccessClient(req, event.clientId)) {
+        return res.status(403).json({ error: "Access denied to event" });
+      }
+      const data = insertScreenEventBookingSchema.parse({
+        screenId: screen.id,
+        eventId: event.id,
+        startsAt: new Date(req.body.startsAt),
+        endsAt: new Date(req.body.endsAt),
+      });
+      try {
+        const booking = await storage.createScreenEventBooking(data);
+        logAudit(req, "create", "screen_booking", booking.id, {
+          screenId: booking.screenId,
+          eventId: booking.eventId,
+        });
+        res.status(201).json(booking);
+      } catch (e: any) {
+        const msg = e?.message || "Failed to create booking";
+        if (msg.includes("overlap")) return res.status(409).json({ error: msg });
+        if (msg.includes("end must be after start")) return res.status(400).json({ error: msg });
+        throw e;
+      }
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      console.error("Error creating booking:", error);
+      res.status(500).json({ error: "Failed to create booking" });
+    }
+  });
+
+  app.patch("/api/screen-bookings/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const existing = await storage.getScreenEventBooking(req.params.id);
+      if (!existing) return res.status(404).json({ error: "Booking not found" });
+      const screen = await storage.getScreen(existing.screenId);
+      if (screen?.clientId && !canAccessClient(req, screen.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const patch: Record<string, unknown> = {};
+      if (req.body.startsAt !== undefined) patch.startsAt = new Date(req.body.startsAt);
+      if (req.body.endsAt !== undefined) patch.endsAt = new Date(req.body.endsAt);
+      if (req.body.eventId !== undefined) {
+        const ev = await storage.getEvent(String(req.body.eventId));
+        if (!ev) return res.status(400).json({ error: "Event not found" });
+        if (ev.clientId && !canAccessClient(req, ev.clientId)) {
+          return res.status(403).json({ error: "Access denied to event" });
+        }
+        patch.eventId = ev.id;
+      }
+      try {
+        const booking = await storage.updateScreenEventBooking(existing.id, patch as any);
+        logAudit(req, "update", "screen_booking", existing.id, patch);
+        res.json(booking);
+      } catch (e: any) {
+        const msg = e?.message || "Failed to update booking";
+        if (msg.includes("overlap")) return res.status(409).json({ error: msg });
+        if (msg.includes("end must be after start")) return res.status(400).json({ error: msg });
+        throw e;
+      }
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      console.error("Error updating booking:", error);
+      res.status(500).json({ error: "Failed to update booking" });
+    }
+  });
+
+  app.delete("/api/screen-bookings/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const existing = await storage.getScreenEventBooking(req.params.id);
+      if (!existing) return res.status(404).json({ error: "Booking not found" });
+      const screen = await storage.getScreen(existing.screenId);
+      if (screen?.clientId && !canAccessClient(req, screen.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      await storage.deleteScreenEventBooking(existing.id);
+      logAudit(req, "delete", "screen_booking", existing.id);
+      res.status(204).end();
+    } catch (error) {
+      console.error("Error deleting booking:", error);
+      res.status(500).json({ error: "Failed to delete booking" });
+    }
+  });
+
   // ============ SCREEN PRESETS ============
 
   async function resolvePresetClientId(preset: { screenId: string | null; groupId: string | null }): Promise<string | null> {
@@ -3092,9 +3256,9 @@ export async function registerRoutes(
           console.error("Failed to clear alert history:", err)
         );
         try {
-          if (screen.currentEventId) {
-            const event = await storage.getEvent(screen.currentEventId);
-            if (event?.clientId) {
+          const event = await storage.getCurrentEventForScreen(screen.id);
+          if (event) {
+            if (event.clientId) {
               const alertSetting = await storage.getAlertSetting("screen_offline", event.clientId);
               if (alertSetting?.enabled && alertSetting.recipients.length > 0) {
                 sendScreenOnlineAlert(
@@ -3213,15 +3377,19 @@ export async function registerRoutes(
         activeZoneSources = (activeOverride.zoneSources as any[]) || [];
       }
 
+      // The active event for this screen comes from the booking active at
+      // `now`; this replaces the legacy `screen.currentEventId` field.
+      const activeEvent = await getActiveEventForScreen(screen.id, now);
+
       // Programme/version/block lookup is shared between layout selection and
       // the next-session computation (Task #93) so we only hit storage once.
       let eventBlocks: Awaited<ReturnType<typeof storage.getScheduleBlocks>> = [];
-      if (screen.currentEventId) {
+      if (activeEvent) {
         const [programmes, allVersions] = await Promise.all([
           storage.getProgrammes(),
           storage.getProgrammeVersions(),
         ]);
-        const eventProgrammes = programmes.filter(p => p.eventId === screen.currentEventId);
+        const eventProgrammes = programmes.filter(p => p.eventId === activeEvent.id);
         const publishedVersions = allVersions.filter(v =>
           v.status === "published" && eventProgrammes.some(p => p.id === v.programmeId)
         );
@@ -3237,7 +3405,7 @@ export async function registerRoutes(
       const screenGroupIds = await storage.getScreenGroupIds(screen.id);
       const screenGroupSet = new Set(screenGroupIds);
 
-      if (!layout && screen.currentEventId) {
+      if (!layout && activeEvent) {
         const flatBlocks = [...eventBlocks].sort((a, b) => (b.priority || 0) - (a.priority || 0));
 
         for (const block of flatBlocks) {
@@ -3343,10 +3511,8 @@ export async function registerRoutes(
         }
       }
 
-      let event = null;
-      if (screen.currentEventId) {
-        event = await storage.getEvent(screen.currentEventId);
-      }
+      // Reuse the active event resolved earlier in this request.
+      const event = activeEvent;
 
       let client = null;
       if (screen.clientId) {
@@ -3459,12 +3625,14 @@ export async function registerRoutes(
         layoutSourceDetail = activeOverride.message || "Live Override";
       }
 
-      if (!layout && screen.currentEventId) {
+      const simActiveEvent = await getActiveEventForScreen(screen.id, now);
+
+      if (!layout && simActiveEvent) {
         const [programmes, allVersions] = await Promise.all([
           storage.getProgrammes(),
           storage.getProgrammeVersions(),
         ]);
-        const eventProgrammes = programmes.filter(p => p.eventId === screen.currentEventId);
+        const eventProgrammes = programmes.filter(p => p.eventId === simActiveEvent.id);
         const publishedVersions = allVersions.filter(v =>
           v.status === "published" && eventProgrammes.some(p => p.id === v.programmeId)
         );
@@ -4095,7 +4263,14 @@ export async function registerRoutes(
       const clients = allowed ? allClients.filter(c => allowed.includes(c.id)) : allClients;
       const clientIds = new Set(clients.map(c => c.id));
       const eventIds = new Set(allEvents.filter(e => clientIds.has(e.clientId)).map(e => e.id));
-      const screens = allScreens.filter(s => !allowed || (s.currentEventId && eventIds.has(s.currentEventId)));
+      // A screen is "owned" by a client if it has any booking to one of that
+      // client's events (past, present, or future). Without bookings the
+      // screen does not belong to any client and is hidden from non-admins.
+      const allBookings = await storage.getScreenEventBookings();
+      const screensWithAllowedBooking = new Set(
+        allBookings.filter(b => eventIds.has(b.eventId)).map(b => b.screenId),
+      );
+      const screens = allScreens.filter(s => !allowed || screensWithAllowedBooking.has(s.id));
       const mediaAssets = allowed ? allMedia.filter(m => m.eventId && eventIds.has(m.eventId)) : allMedia;
       const overrides = allowed ? allOverrides.filter(o => o.eventId && eventIds.has(o.eventId)) : allOverrides;
       const users = allowed ? allUsers.filter(u => {

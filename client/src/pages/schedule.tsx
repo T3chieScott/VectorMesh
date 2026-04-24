@@ -100,6 +100,7 @@ import type {
   TimeRule,
   ScheduleTarget,
   ZoneSource,
+  ScreenEventBooking,
 } from "@shared/schema";
 
 type ViewMode = "day" | "week";
@@ -222,8 +223,69 @@ interface BlockSummary {
 }
 
 interface BlockIssue {
-  kind: "version-draft" | "missing-target" | "no-target-screens" | "missing-layout" | "no-content";
+  kind:
+    | "version-draft"
+    | "missing-target"
+    | "no-target-screens"
+    | "missing-layout"
+    | "no-content"
+    | "block-in-past"
+    | "no-booking-covers-block";
   message: string;
+}
+
+// Returns the latest possible firing date for a block, or null if it
+// repeats indefinitely (no endDate set on its rule).
+function getBlockEffectiveEndDate(block: ScheduleBlock): Date | null {
+  const rules = (block.timeRules as TimeRule[]) || [];
+  if (rules.length === 0) return null;
+  const rule = normaliseRuleDates(rules[0]);
+  if (!rule.endDate) return null;
+  return endOfDay(parseISO(rule.endDate));
+}
+
+// Returns true if any booking for one of `screenIds` covers any part of the
+// supplied window. Bookings are stored as half-open intervals
+// `[startsAt, endsAt)` and the window we evaluate here is also treated as
+// half-open: two intervals overlap iff `b.start < window.end && b.end >
+// window.start`. Adjacent (touching) intervals do NOT count as coverage.
+function hasBookingCoveringWindow(
+  screenIds: string[],
+  bookingsByScreen: Map<string, ScreenEventBooking[]>,
+  eventId: string,
+  windowStart: Date,
+  windowEnd: Date,
+): boolean {
+  for (const id of screenIds) {
+    const list = bookingsByScreen.get(id) || [];
+    for (const b of list) {
+      if (b.eventId !== eventId) continue;
+      const bs = new Date(b.startsAt);
+      const be = new Date(b.endsAt);
+      if (bs < windowEnd && be > windowStart) return true;
+    }
+  }
+  return false;
+}
+
+// Returns true if any booking for one of `screenIds` overlaps the block's
+// firing window (rule date range or "today + next 30 days" if open-ended).
+function hasBookingCoveringBlock(
+  block: ScheduleBlock,
+  screenIds: string[],
+  bookingsByScreen: Map<string, ScreenEventBooking[]>,
+  eventId: string,
+  now: Date,
+): boolean {
+  const rules = (block.timeRules as TimeRule[]) || [];
+  const rule = rules.length > 0 ? normaliseRuleDates(rules[0]) : null;
+  const rangeStart = rule?.startDate ? startOfDay(parseISO(rule.startDate)) : startOfDay(now);
+  // Half-open: end of day (23:59:59.999) is inclusive of the last day, and
+  // we add 1ms so the comparison `b.start < windowEnd` still catches a
+  // booking that starts at the very end of the last day.
+  const ruleEnd = rule?.endDate ? endOfDay(parseISO(rule.endDate)) : endOfDay(addDays(now, 30));
+  const rangeEnd = new Date(ruleEnd.getTime() + 1);
+  return hasBookingCoveringWindow(screenIds, bookingsByScreen, eventId, rangeStart, rangeEnd);
 }
 
 function getBlockSummary(
@@ -314,6 +376,8 @@ function getBlockIssues(
     membershipsByGroup: Map<string, string[]>;
     versionStatus?: string;
     eventId?: string | null;
+    bookingsByScreen: Map<string, ScreenEventBooking[]>;
+    now: Date;
   }
 ): BlockIssue[] {
   const issues: BlockIssue[] = [];
@@ -331,8 +395,16 @@ function getBlockIssues(
     issues.push({ kind: "no-content", message: "No layout or playlist set on this block — nothing will play." });
   }
 
-  // Resolve which screens this block actually targets, then check that at least
-  // one of those screens currently has this event assigned.
+  // Block whose entire firing window is in the past will never play again.
+  const effectiveEnd = getBlockEffectiveEndDate(block);
+  if (effectiveEnd && effectiveEnd < ctx.now) {
+    issues.push({
+      kind: "block-in-past",
+      message: "This block's date range has already ended — it won't play again.",
+    });
+  }
+
+  // Resolve which screens this block actually targets.
   const targets = (block.targets as ScheduleTarget[]) || [];
   let resolvedScreenIds: string[] | null = null;
   if (targets.length === 0) {
@@ -360,17 +432,20 @@ function getBlockIssues(
         message: "No screens are configured on this site yet — block won't play anywhere.",
       });
     } else if (resolvedScreenIds.length > 0) {
-      const screensOnEvent = resolvedScreenIds.filter(id => {
-        const s = ctx.screens.find(x => x.id === id);
-        return s?.currentEventId === ctx.eventId;
-      });
-      if (screensOnEvent.length === 0) {
+      const covered = hasBookingCoveringBlock(
+        block,
+        resolvedScreenIds,
+        ctx.bookingsByScreen,
+        ctx.eventId,
+        ctx.now,
+      );
+      if (!covered) {
         issues.push({
-          kind: "no-target-screens",
+          kind: "no-booking-covers-block",
           message:
             targets.length === 0
-              ? "No screens are currently assigned to this event — block won't play anywhere."
-              : "Targeted screens aren't currently assigned to this event — block won't play.",
+              ? "No screens have a booking for this event covering the block's dates — it won't play anywhere."
+              : "Targeted screens have no booking for this event covering the block's dates — it won't play.",
         });
       }
     }
@@ -392,6 +467,7 @@ function EditorWarningBanner({
   eventId,
   screens,
   membershipsByGroup,
+  bookingsByScreen,
 }: {
   versionStatus?: string;
   targetType: "all" | "screen" | "group";
@@ -399,6 +475,7 @@ function EditorWarningBanner({
   eventId: string | null;
   screens: Screen[];
   membershipsByGroup: Map<string, string[]>;
+  bookingsByScreen: Map<string, ScreenEventBooking[]>;
 }) {
   const messages: string[] = [];
   if (versionStatus === "draft") {
@@ -418,17 +495,25 @@ function EditorWarningBanner({
     if (targetType === "all" && resolvedScreenIds.length === 0) {
       messages.push("No screens are configured on this site yet, so this block won't play anywhere.");
     } else if (resolvedScreenIds.length > 0) {
+      const now = new Date();
+      // A screen is "covered" if it has any booking for this event whose window
+      // overlaps the next 30 days — close enough for editor warning purposes.
+      const horizonEnd = endOfDay(addDays(now, 30));
       const onEvent = resolvedScreenIds.filter(id => {
-        const s = screens.find(x => x.id === id);
-        return s?.currentEventId === eventId;
+        const list = bookingsByScreen.get(id) || [];
+        return list.some(b =>
+          b.eventId === eventId &&
+          new Date(b.startsAt) <= horizonEnd &&
+          new Date(b.endsAt) >= startOfDay(now),
+        );
       });
       if (onEvent.length === 0) {
         messages.push(
           targetType === "all"
-            ? "No screens are currently assigned to this event, so this block won't play anywhere yet."
+            ? "No screens have a booking for this event in the next 30 days, so this block won't play anywhere yet."
             : targetType === "group"
-              ? "None of the screens in this group are currently assigned to this event."
-              : "This screen isn't currently assigned to this event, so the block won't play."
+              ? "None of the screens in this group have a booking for this event in the next 30 days."
+              : "This screen has no booking for this event in the next 30 days, so the block won't play."
         );
       }
     }
@@ -904,6 +989,7 @@ function ScheduleBlockEditor({
   playlists,
   media,
   blocks,
+  bookingsByScreen,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -922,6 +1008,7 @@ function ScheduleBlockEditor({
   playlists: Playlist[];
   media: MediaAsset[];
   blocks: ScheduleBlock[];
+  bookingsByScreen: Map<string, ScreenEventBooking[]>;
 }) {
   const { toast } = useToast();
   const isEditing = !!block;
@@ -1323,6 +1410,7 @@ function ScheduleBlockEditor({
               eventId={eventId ?? null}
               screens={screens}
               membershipsByGroup={membershipsByGroup}
+              bookingsByScreen={bookingsByScreen}
             />
             <div className="grid grid-cols-2 gap-4">
               <FormField
@@ -1785,6 +1873,159 @@ function DragItem({ item, type }: { item: { id: string; name: string }; type: "p
   );
 }
 
+// Top-of-page banner that summarises playback health for the selected
+// programme version over a strict 7-day horizon. This is intentionally
+// self-contained rather than reusing `blockIssues` — `blockIssues` evaluates
+// booking coverage over a 30-day rolling window for open-ended blocks, which
+// would produce false negatives here (a block could be flagged as "playable"
+// because a booking exists in day 20 even though no booking covers any of
+// the next 7 days).
+function PlaybackHealthBanner({
+  blocks,
+  blockSummaries,
+  blockIssues,
+  screens,
+  membershipsByGroup,
+  bookingsByScreen,
+  eventId,
+}: {
+  blocks: ScheduleBlock[];
+  blockSummaries: Map<string, BlockSummary>;
+  blockIssues: Map<string, BlockIssue[]>;
+  screens: Screen[];
+  membershipsByGroup: Map<string, string[]>;
+  bookingsByScreen: Map<string, ScreenEventBooking[]>;
+  eventId: string | null;
+}) {
+  // Don't surface the banner until the user has selected a programme that has
+  // an event — otherwise the empty state from no-event noise overwhelms.
+  if (!eventId) return null;
+
+  const now = new Date();
+  const windowStart = startOfDay(now);
+  const windowEnd = endOfDay(addDays(now, 6));
+  // Half-open upper bound so a booking that starts at 23:59:59.999 of the
+  // last day in the window still counts as covering it.
+  const windowEndExclusive = new Date(windowEnd.getTime() + 1);
+
+  type Reason =
+    | "missing-target"
+    | "no-target-screens"
+    | "missing-layout"
+    | "no-content"
+    | "block-in-past"
+    | "no-booking-covers-block"
+    | "no-firing-day";
+
+  let playableCount = 0;
+  const issueCounts = new Map<Reason, number>();
+
+  for (const b of blocks) {
+    const issues = blockIssues.get(b.id) || [];
+    const summary = blockSummaries.get(b.id);
+
+    // Per-block fatal issues that are window-independent.
+    const structural = issues.find(i =>
+      i.kind === "missing-target" ||
+      i.kind === "no-target-screens" ||
+      i.kind === "missing-layout" ||
+      i.kind === "no-content" ||
+      i.kind === "block-in-past",
+    );
+    if (structural) {
+      issueCounts.set(structural.kind as Reason, (issueCounts.get(structural.kind as Reason) || 0) + 1);
+      continue;
+    }
+
+    // Does the block's time rule fire on any day within the 7-day window?
+    let firesInWindow = false;
+    for (let d = new Date(windowStart); d <= windowEnd; d = addDays(d, 1)) {
+      if (getRuleForDay((b.timeRules as TimeRule[]) || [], d)) {
+        firesInWindow = true;
+        break;
+      }
+    }
+    if (!firesInWindow) {
+      issueCounts.set("no-firing-day", (issueCounts.get("no-firing-day") || 0) + 1);
+      continue;
+    }
+
+    // Does some screen this block targets have a booking that overlaps the
+    // 7-day window? Resolve targets independently so we evaluate against
+    // the window we actually care about, not the block's own date range.
+    const targets = (b.targets as ScheduleTarget[]) || [];
+    let resolvedScreenIds: string[];
+    if (targets.length === 0) {
+      resolvedScreenIds = screens.map(s => s.id);
+    } else {
+      const ids: string[] = [];
+      for (const t of targets) {
+        if (t.type === "screen") {
+          if (screens.find(s => s.id === t.id)) ids.push(t.id);
+        } else if (t.type === "group") {
+          ids.push(...(membershipsByGroup.get(t.id) || []));
+        }
+      }
+      resolvedScreenIds = Array.from(new Set(ids));
+    }
+    if (resolvedScreenIds.length === 0) {
+      issueCounts.set("no-target-screens", (issueCounts.get("no-target-screens") || 0) + 1);
+      continue;
+    }
+
+    const covered = hasBookingCoveringWindow(
+      resolvedScreenIds,
+      bookingsByScreen,
+      eventId,
+      windowStart,
+      windowEndExclusive,
+    );
+    if (!covered) {
+      issueCounts.set("no-booking-covers-block", (issueCounts.get("no-booking-covers-block") || 0) + 1);
+      continue;
+    }
+
+    void summary;
+    playableCount += 1;
+  }
+
+  if (blocks.length === 0 || playableCount > 0) return null;
+
+  const reasonLabels: Record<Reason, string> = {
+    "missing-target": "broken targets",
+    "no-target-screens": "no targeted screens",
+    "missing-layout": "missing layouts",
+    "no-content": "no layout or playlist set",
+    "block-in-past": "date range already ended",
+    "no-booking-covers-block": "no screen booking covers the next 7 days",
+    "no-firing-day": "schedule has no firing day this week",
+  };
+  const topReasons = Array.from(issueCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([k]) => reasonLabels[k]);
+
+  return (
+    <div
+      className="flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
+      data-testid="banner-playback-health"
+    >
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+      <div className="space-y-0.5">
+        <div className="font-medium text-destructive">
+          No blocks will play on any screen in the next 7 days.
+        </div>
+        <div className="text-muted-foreground">
+          {topReasons.length > 0
+            ? `Most common reasons: ${topReasons.join(", ")}.`
+            : "Open each block to see why it can't play."}{" "}
+          Add a screen booking for this event, or fix the affected blocks.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SchedulePage() {
   const [viewMode, setViewMode] = useState<ViewMode>("week");
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -1813,6 +2054,18 @@ export default function SchedulePage() {
   const { data: media = [] } = useQuery<MediaAsset[]>(mediaQ);
   const screenGroupMembershipsQ = useSiteFilteredQuery<Array<{ screenId: string; groupId: string }>>("/api/screen-group-memberships");
   const { data: screenGroupMemberships = [] } = useQuery<Array<{ screenId: string; groupId: string }>>(screenGroupMembershipsQ);
+  const screenBookingsQ = useSiteFilteredQuery<ScreenEventBooking[]>("/api/screen-bookings");
+  const { data: screenBookings = [] } = useQuery<ScreenEventBooking[]>(screenBookingsQ);
+
+  const bookingsByScreen = useMemo(() => {
+    const map = new Map<string, ScreenEventBooking[]>();
+    for (const b of screenBookings) {
+      const arr = map.get(b.screenId);
+      if (arr) arr.push(b);
+      else map.set(b.screenId, [b]);
+    }
+    return map;
+  }, [screenBookings]);
 
   const membershipsByGroup = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -1861,6 +2114,7 @@ export default function SchedulePage() {
     const map = new Map<string, BlockIssue[]>();
     const versionStatus = selectedVersion?.status ?? undefined;
     const eventId = selectedProgramme?.eventId ?? null;
+    const now = new Date();
     for (const b of blocks) {
       const summary = blockSummaries.get(b.id)!;
       map.set(
@@ -1871,11 +2125,13 @@ export default function SchedulePage() {
           membershipsByGroup,
           versionStatus,
           eventId,
+          bookingsByScreen,
+          now,
         })
       );
     }
     return map;
-  }, [blocks, blockSummaries, screens, layouts, membershipsByGroup, selectedVersion?.status, selectedProgramme?.eventId]);
+  }, [blocks, blockSummaries, screens, layouts, membershipsByGroup, selectedVersion?.status, selectedProgramme?.eventId, bookingsByScreen]);
 
   const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
   const weekDays = viewMode === "week"
@@ -2338,7 +2594,17 @@ export default function SchedulePage() {
           </Button>
         </div>
       </div>
-      
+
+      <PlaybackHealthBanner
+        blocks={blocks}
+        blockSummaries={blockSummaries}
+        blockIssues={blockIssues}
+        screens={screens}
+        membershipsByGroup={membershipsByGroup}
+        bookingsByScreen={bookingsByScreen}
+        eventId={selectedProgramme?.eventId ?? null}
+      />
+
       <div className="grid gap-6 lg:grid-cols-4">
         <div className="lg:col-span-3 space-y-4">
           <Card>
@@ -2514,6 +2780,7 @@ export default function SchedulePage() {
         playlists={playlists}
         media={media}
         blocks={blocks}
+        bookingsByScreen={bookingsByScreen}
       />
     </div>
   );

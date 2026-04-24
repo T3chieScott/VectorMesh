@@ -59,9 +59,10 @@ import {
   Clock,
   Palette,
   X,
+  MonitorSmartphone,
 } from "lucide-react";
 import { useSiteFilteredQuery } from "@/hooks/use-site-context";
-import type { Client, Event } from "@shared/schema";
+import type { Client, Event, Screen, ScreenEventBooking } from "@shared/schema";
 
 const eventFormSchema = z.object({
   clientId: z.string().min(1, "Client is required"),
@@ -165,6 +166,7 @@ function ColorPaletteEditor({
 
 function EventCard({ event, client }: { event: Event; client?: Client }) {
   const [editOpen, setEditOpen] = useState(false);
+  const [bookingsOpen, setBookingsOpen] = useState(false);
   const { toast } = useToast();
 
   const { data: clients = [] } = useQuery<Client[]>({
@@ -447,6 +449,16 @@ function EventCard({ event, client }: { event: Event; client?: Client }) {
               </DialogContent>
             </Dialog>
             <DropdownMenuItem
+              onSelect={(e) => {
+                e.preventDefault();
+                setBookingsOpen(true);
+              }}
+              data-testid={`menu-event-bookings-${event.id}`}
+            >
+              <MonitorSmartphone className="mr-2 h-4 w-4" />
+              Screen bookings
+            </DropdownMenuItem>
+            <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onSelect={() => deleteMutation.mutate()}
             >
@@ -455,6 +467,11 @@ function EventCard({ event, client }: { event: Event; client?: Client }) {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <EventBookingsDialog
+          event={event}
+          open={bookingsOpen}
+          onOpenChange={setBookingsOpen}
+        />
       </CardHeader>
       <CardContent className="pt-0 space-y-2">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -480,6 +497,195 @@ function EventCard({ event, client }: { event: Event; client?: Client }) {
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+function toLocalDateTimeInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
+// Manage every screen booked into a single event. Lets the operator add,
+// remove, and adjust which screens play this event and when. The list and
+// the picker stay focused to the event's parent client.
+function EventBookingsDialog({
+  event,
+  open,
+  onOpenChange,
+}: {
+  event: Event;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const { data: bookings = [], isLoading } = useQuery<ScreenEventBooking[]>({
+    queryKey: ["/api/events", event.id, "bookings"],
+    queryFn: async () => {
+      const res = await fetch(`/api/events/${event.id}/bookings`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to load bookings");
+      return res.json();
+    },
+    enabled: open,
+  });
+  const { data: screens = [] } = useQuery<Screen[]>({
+    queryKey: ["/api/screens"],
+    enabled: open,
+  });
+
+  const eventScreens = screens.filter(s => s.clientId === event.clientId);
+
+  const [screenId, setScreenId] = useState("");
+  const [startsAt, setStartsAt] = useState(toLocalDateTimeInput(new Date(event.startDate)));
+  const [endsAt, setEndsAt] = useState(toLocalDateTimeInput(new Date(event.endDate)));
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      if (!screenId) throw new Error("Pick a screen");
+      const startDate = new Date(startsAt);
+      const endDate = new Date(endsAt);
+      if (!(endDate > startDate)) throw new Error("End must be after start");
+      return apiRequest("POST", `/api/screens/${screenId}/bookings`, {
+        eventId: event.id,
+        startsAt: startDate.toISOString(),
+        endsAt: endDate.toISOString(),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/events", event.id, "bookings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/screen-bookings"] });
+      setScreenId("");
+      toast({ title: "Booking added" });
+    },
+    onError: (err: any) => {
+      const msg = err?.message?.includes("overlap")
+        ? "That overlaps with another booking on the same screen."
+        : err?.message || "Failed to add booking";
+      toast({ title: msg, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => apiRequest("DELETE", `/api/screen-bookings/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/events", event.id, "bookings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/screen-bookings"] });
+      toast({ title: "Booking removed" });
+    },
+    onError: () => toast({ title: "Failed to remove booking", variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Screen bookings — {event.name}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div>
+            <Label className="text-sm font-medium">Booked screens</Label>
+            {isLoading ? (
+              <Skeleton className="mt-2 h-12 w-full" />
+            ) : bookings.length === 0 ? (
+              <p className="mt-2 text-sm text-muted-foreground" data-testid="text-event-bookings-empty">
+                No screens are booked for this event yet. Add one below.
+              </p>
+            ) : (
+              <ScrollArea className="mt-2 max-h-64">
+                <ul className="space-y-1.5 pr-2">
+                  {bookings.map(b => {
+                    const sc = screens.find(s => s.id === b.screenId);
+                    const starts = new Date(b.startsAt);
+                    const ends = new Date(b.endsAt);
+                    return (
+                      <li
+                        key={b.id}
+                        className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2 py-1.5 text-sm"
+                        data-testid={`row-event-booking-${b.id}`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium">{sc?.name || "Unknown screen"}</div>
+                          <div className="truncate text-xs text-muted-foreground">
+                            {format(starts, "MMM d, HH:mm")} → {format(ends, "MMM d, HH:mm")}
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                          disabled={deleteMutation.isPending}
+                          onClick={() => deleteMutation.mutate(b.id)}
+                          data-testid={`button-delete-event-booking-${b.id}`}
+                          title="Remove booking"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </ScrollArea>
+            )}
+          </div>
+          <div className="space-y-2 border-t pt-3">
+            <Label className="text-xs text-muted-foreground">Add a booking</Label>
+            <Select value={screenId} onValueChange={setScreenId}>
+              <SelectTrigger data-testid="select-event-booking-screen">
+                <SelectValue placeholder="Pick a screen" />
+              </SelectTrigger>
+              <SelectContent>
+                {eventScreens.length === 0 ? (
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                    No screens belong to this client yet.
+                  </div>
+                ) : (
+                  eventScreens.map(s => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Starts</Label>
+                <Input
+                  type="datetime-local"
+                  value={startsAt}
+                  onChange={e => setStartsAt(e.target.value)}
+                  data-testid="input-event-booking-starts"
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Ends</Label>
+                <Input
+                  type="datetime-local"
+                  value={endsAt}
+                  onChange={e => setEndsAt(e.target.value)}
+                  data-testid="input-event-booking-ends"
+                />
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              disabled={createMutation.isPending || !screenId}
+              onClick={() => createMutation.mutate()}
+              data-testid="button-add-event-booking"
+            >
+              <Plus className="mr-1 h-3.5 w-3.5" />
+              Add booking
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

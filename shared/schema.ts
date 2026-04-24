@@ -143,7 +143,6 @@ export const screens = pgTable("screens", {
   ipAddress: text("ip_address"),
   hostname: text("hostname"),
   hardwareClass: text("hardware_class"),
-  currentEventId: varchar("current_event_id").references(() => events.id),
   fallbackLayoutId: varchar("fallback_layout_id").references(() => layoutTemplates.id, { onDelete: "set null" }),
   fallbackPlaylistId: varchar("fallback_playlist_id").references(() => playlists.id, { onDelete: "set null" }),
   canvasEnabled: boolean("canvas_enabled").default(false),
@@ -170,7 +169,6 @@ export const screens = pgTable("screens", {
 export const screensRelations = relations(screens, ({ one, many }) => ({
   client: one(clients, { fields: [screens.clientId], references: [clients.id] }),
   displayProfile: one(displayProfiles, { fields: [screens.displayProfileId], references: [displayProfiles.id] }),
-  currentEvent: one(events, { fields: [screens.currentEventId], references: [events.id] }),
   fallbackLayout: one(layoutTemplates, { fields: [screens.fallbackLayoutId], references: [layoutTemplates.id] }),
   fallbackPlaylist: one(playlists, { fields: [screens.fallbackPlaylistId], references: [playlists.id] }),
   groupMemberships: many(screenGroupMemberships),
@@ -193,6 +191,31 @@ export const screenGroupMembershipsRelations = relations(screenGroupMemberships,
   screen: one(screens, { fields: [screenGroupMemberships.screenId], references: [screens.id] }),
   group: one(screenGroups, { fields: [screenGroupMemberships.groupId], references: [screenGroups.id] }),
 }));
+
+// ============ SCREEN EVENT BOOKINGS ============
+
+export const screenEventBookings = pgTable("screen_event_bookings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  screenId: varchar("screen_id").notNull().references(() => screens.id, { onDelete: "cascade" }),
+  eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+  startsAt: timestamp("starts_at").notNull(),
+  endsAt: timestamp("ends_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const screenEventBookingsRelations = relations(screenEventBookings, ({ one }) => ({
+  screen: one(screens, { fields: [screenEventBookings.screenId], references: [screens.id] }),
+  event: one(events, { fields: [screenEventBookings.eventId], references: [events.id] }),
+}));
+
+export const insertScreenEventBookingSchema = createInsertSchema(screenEventBookings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertScreenEventBooking = z.infer<typeof insertScreenEventBookingSchema>;
+export type ScreenEventBooking = typeof screenEventBookings.$inferSelect;
 
 // ============ MEDIA ASSETS ============
 

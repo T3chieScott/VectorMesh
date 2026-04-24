@@ -23,7 +23,6 @@ function makeScreen(overrides: Partial<DbScreen> & { id: string }): DbScreen {
     ipAddress: null,
     hostname: null,
     hardwareClass: null,
-    currentEventId: null,
     fallbackLayoutId: null,
     fallbackPlaylistId: null,
     canvasEnabled: false,
@@ -104,7 +103,6 @@ test("normalizeScreenPatchBody leaves absent ref keys absent", () => {
     false,
     "displayProfileId must not appear when not in input",
   );
-  assert.equal("currentEventId" in out, false);
   assert.equal("clientId" in out, false);
   assert.equal("fallbackLayoutId" in out, false);
   assert.equal("fallbackPlaylistId" in out, false);
@@ -114,13 +112,11 @@ test("normalizeScreenPatchBody leaves absent ref keys absent", () => {
 test("normalizeScreenPatchBody coerces empty string to null for ref fields", () => {
   const out = normalizeScreenPatchBody({
     displayProfileId: "",
-    currentEventId: "",
     clientId: "",
     fallbackLayoutId: "",
     fallbackPlaylistId: "",
   });
   assert.equal(out.displayProfileId, null);
-  assert.equal(out.currentEventId, null);
   assert.equal(out.clientId, null);
   assert.equal(out.fallbackLayoutId, null);
   assert.equal(out.fallbackPlaylistId, null);
@@ -135,18 +131,18 @@ test("normalizeScreenPatchBody passes explicit null through for ref fields", () 
 test("normalizeScreenPatchBody preserves real ref ids", () => {
   const out = normalizeScreenPatchBody({
     displayProfileId: "dp-123",
-    currentEventId: "evt-456",
+    fallbackLayoutId: "layout-456",
   });
   assert.equal(out.displayProfileId, "dp-123");
-  assert.equal(out.currentEventId, "evt-456");
+  assert.equal(out.fallbackLayoutId, "layout-456");
 });
 
-test("PATCH /api/screens/:id with only screenshotEnabled does NOT clobber displayProfileId or currentEventId", async () => {
+test("PATCH /api/screens/:id with only screenshotEnabled does NOT clobber displayProfileId or fallbackLayoutId", async () => {
   const fake = makeFakeStorage(makeScreen({
     id: "screen-1",
     locked: false,
     displayProfileId: "dp-existing",
-    currentEventId: "evt-existing",
+    fallbackLayoutId: "layout-existing",
     screenshotEnabled: false,
     name: "Lobby",
   }));
@@ -165,23 +161,23 @@ test("PATCH /api/screens/:id with only screenshotEnabled does NOT clobber displa
     "regression: PATCH must not send displayProfileId when caller did not include it",
   );
   assert.equal(
-    "currentEventId" in arg!,
+    "fallbackLayoutId" in arg!,
     false,
-    "regression: PATCH must not send currentEventId when caller did not include it",
+    "regression: PATCH must not send fallbackLayoutId when caller did not include it",
   );
   assert.equal(arg!.screenshotEnabled, true);
 
   const row = fake.getRow();
   assert.equal(row.displayProfileId, "dp-existing");
-  assert.equal(row.currentEventId, "evt-existing");
+  assert.equal(row.fallbackLayoutId, "layout-existing");
 });
 
-test("PATCH /api/screens/:id with only testPatternEnabled does NOT clobber displayProfileId or currentEventId", async () => {
+test("PATCH /api/screens/:id with only testPatternEnabled does NOT clobber displayProfileId or fallbackLayoutId", async () => {
   const fake = makeFakeStorage(makeScreen({
     id: "screen-1",
     locked: false,
     displayProfileId: "dp-existing",
-    currentEventId: "evt-existing",
+    fallbackLayoutId: "layout-existing",
     testPatternEnabled: false,
     name: "Lobby",
   }));
@@ -193,7 +189,7 @@ test("PATCH /api/screens/:id with only testPatternEnabled does NOT clobber displ
   assert.equal(status, 200);
   const row = fake.getRow();
   assert.equal(row.displayProfileId, "dp-existing");
-  assert.equal(row.currentEventId, "evt-existing");
+  assert.equal(row.fallbackLayoutId, "layout-existing");
 });
 
 test("PATCH /api/screens/:id with explicit null displayProfileId clears the column", async () => {
@@ -201,7 +197,7 @@ test("PATCH /api/screens/:id with explicit null displayProfileId clears the colu
     id: "screen-1",
     locked: false,
     displayProfileId: "dp-existing",
-    currentEventId: "evt-existing",
+    fallbackLayoutId: "layout-existing",
     name: "Lobby",
   }));
 
@@ -213,9 +209,9 @@ test("PATCH /api/screens/:id with explicit null displayProfileId clears the colu
   const row = fake.getRow();
   assert.equal(row.displayProfileId, null);
   assert.equal(
-    row.currentEventId,
-    "evt-existing",
-    "currentEventId should be untouched when not in body",
+    row.fallbackLayoutId,
+    "layout-existing",
+    "fallbackLayoutId should be untouched when not in body",
   );
 });
 
@@ -224,7 +220,7 @@ test("PATCH /api/screens/:id with empty-string displayProfileId clears the colum
     id: "screen-1",
     locked: false,
     displayProfileId: "dp-existing",
-    currentEventId: "evt-existing",
+    fallbackLayoutId: "layout-existing",
     name: "Lobby",
   }));
 
@@ -235,7 +231,7 @@ test("PATCH /api/screens/:id with empty-string displayProfileId clears the colum
   assert.equal(status, 200);
   const row = fake.getRow();
   assert.equal(row.displayProfileId, null);
-  assert.equal(row.currentEventId, "evt-existing");
+  assert.equal(row.fallbackLayoutId, "layout-existing");
 });
 
 test("PATCH /api/screens/:id refuses to mutate a locked screen", async () => {
@@ -243,7 +239,7 @@ test("PATCH /api/screens/:id refuses to mutate a locked screen", async () => {
     id: "screen-1",
     locked: true,
     displayProfileId: "dp-existing",
-    currentEventId: "evt-existing",
+    fallbackLayoutId: "layout-existing",
     name: "Lobby",
   }));
 
@@ -260,7 +256,7 @@ test("PATCH /api/screens/:id returns 404 for unknown screen", async () => {
     id: "screen-1",
     locked: false,
     displayProfileId: null,
-    currentEventId: null,
+    fallbackLayoutId: null,
     name: "Lobby",
   }));
 

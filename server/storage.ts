@@ -8,6 +8,7 @@ import {
   screenGroups,
   screens,
   screenGroupMemberships,
+  screenEventBookings,
   mediaAssets,
   mediaShares,
   layoutTemplates,
@@ -60,6 +61,8 @@ import {
   type AlertHistory,
   type ScreenPreset,
   type InsertScreenPreset,
+  type ScreenEventBooking,
+  type InsertScreenEventBooking,
   systemSettings,
   type SystemSetting,
 } from "@shared/schema";
@@ -144,6 +147,15 @@ export interface IStorage {
   deleteScreen(id: string): Promise<boolean>;
   reorderScreens(orderedIds: string[]): Promise<void>;
   duplicateScreen(sourceId: string, name: string): Promise<Screen | undefined>;
+
+  // Screen Event Bookings
+  getScreenEventBookings(filter?: { screenId?: string; eventId?: string }): Promise<ScreenEventBooking[]>;
+  getScreenEventBooking(id: string): Promise<ScreenEventBooking | undefined>;
+  createScreenEventBooking(data: InsertScreenEventBooking): Promise<ScreenEventBooking>;
+  updateScreenEventBooking(id: string, data: Partial<InsertScreenEventBooking>): Promise<ScreenEventBooking | undefined>;
+  deleteScreenEventBooking(id: string): Promise<boolean>;
+  // Returns the event currently booked on the screen at `now`, if any.
+  getCurrentEventForScreen(screenId: string, now?: Date): Promise<Event | undefined>;
 
   // Media Assets
   getMediaAssets(): Promise<MediaAsset[]>;
@@ -670,7 +682,6 @@ export class DatabaseStorage implements IStorage {
       ipAddress: null,
       hostname: null,
       hardwareClass: null,
-      currentEventId: null,
       lastScreenshot: null,
       lastScreenshotAt: null,
       locked: false,
@@ -693,6 +704,142 @@ export class DatabaseStorage implements IStorage {
   async deleteScreen(id: string): Promise<boolean> {
     const result = await db.delete(screens).where(eq(screens.id, id));
     return (result.rowCount ?? 0) > 0;
+  }
+
+  // Screen Event Bookings
+  async getScreenEventBookings(filter?: { screenId?: string; eventId?: string }): Promise<ScreenEventBooking[]> {
+    const conditions = [];
+    if (filter?.screenId) conditions.push(eq(screenEventBookings.screenId, filter.screenId));
+    if (filter?.eventId) conditions.push(eq(screenEventBookings.eventId, filter.eventId));
+    if (conditions.length > 0) {
+      return db.select().from(screenEventBookings).where(and(...conditions)).orderBy(asc(screenEventBookings.startsAt));
+    }
+    return db.select().from(screenEventBookings).orderBy(asc(screenEventBookings.startsAt));
+  }
+
+  async getScreenEventBooking(id: string): Promise<ScreenEventBooking | undefined> {
+    const [row] = await db.select().from(screenEventBookings).where(eq(screenEventBookings.id, id));
+    return row;
+  }
+
+  // Returns existing bookings on the same screen whose [start,end) interval
+  // overlaps the proposed [start,end). Used by create/update for validation.
+  private async findOverlappingBookings(
+    screenId: string,
+    startsAt: Date,
+    endsAt: Date,
+    excludeId?: string
+  ): Promise<ScreenEventBooking[]> {
+    // Two ranges overlap iff a.start < b.end AND b.start < a.end.
+    const rows = await db
+      .select()
+      .from(screenEventBookings)
+      .where(
+        and(
+          eq(screenEventBookings.screenId, screenId),
+          lt(screenEventBookings.startsAt, endsAt),
+          sql`${screenEventBookings.endsAt} > ${startsAt}`,
+        )
+      );
+    return excludeId ? rows.filter(r => r.id !== excludeId) : rows;
+  }
+
+  // Maps the Postgres EXCLUDE-constraint violation that backstops our
+  // overlap check to a friendly user-facing error. The application-level
+  // overlap check above is racy under concurrent inserts; the
+  // `screen_event_bookings_no_overlap` exclusion constraint
+  // (added via ALTER TABLE; see Multi-Event Screen Bookings in replit.md)
+  // makes the rejection authoritative.
+  private isOverlapConstraintViolation(err: unknown): boolean {
+    const e = err as { code?: string; constraint?: string; message?: string };
+    return (
+      e?.code === "23P01" ||
+      e?.constraint === "screen_event_bookings_no_overlap" ||
+      (typeof e?.message === "string" && e.message.includes("screen_event_bookings_no_overlap"))
+    );
+  }
+
+  async createScreenEventBooking(data: InsertScreenEventBooking): Promise<ScreenEventBooking> {
+    const startsAt = data.startsAt instanceof Date ? data.startsAt : new Date(data.startsAt);
+    const endsAt = data.endsAt instanceof Date ? data.endsAt : new Date(data.endsAt);
+    if (!(endsAt > startsAt)) {
+      throw new Error("Booking end must be after start");
+    }
+    const overlaps = await this.findOverlappingBookings(data.screenId, startsAt, endsAt);
+    if (overlaps.length > 0) {
+      throw new Error("Booking overlaps with an existing booking on this screen");
+    }
+    try {
+      const [row] = await db.insert(screenEventBookings).values({ ...data, startsAt, endsAt }).returning();
+      return row;
+    } catch (err) {
+      if (this.isOverlapConstraintViolation(err)) {
+        throw new Error("Booking overlaps with an existing booking on this screen");
+      }
+      throw err;
+    }
+  }
+
+  async updateScreenEventBooking(
+    id: string,
+    data: Partial<InsertScreenEventBooking>,
+  ): Promise<ScreenEventBooking | undefined> {
+    const existing = await this.getScreenEventBooking(id);
+    if (!existing) return undefined;
+    const screenId = data.screenId ?? existing.screenId;
+    const startsAt = data.startsAt
+      ? (data.startsAt instanceof Date ? data.startsAt : new Date(data.startsAt))
+      : existing.startsAt;
+    const endsAt = data.endsAt
+      ? (data.endsAt instanceof Date ? data.endsAt : new Date(data.endsAt))
+      : existing.endsAt;
+    if (!(endsAt > startsAt)) {
+      throw new Error("Booking end must be after start");
+    }
+    const overlaps = await this.findOverlappingBookings(screenId, startsAt, endsAt, id);
+    if (overlaps.length > 0) {
+      throw new Error("Booking overlaps with an existing booking on this screen");
+    }
+    try {
+      const [row] = await db
+        .update(screenEventBookings)
+        .set({ ...data, startsAt, endsAt, updatedAt: new Date() })
+        .where(eq(screenEventBookings.id, id))
+        .returning();
+      return row;
+    } catch (err) {
+      if (this.isOverlapConstraintViolation(err)) {
+        throw new Error("Booking overlaps with an existing booking on this screen");
+      }
+      throw err;
+    }
+  }
+
+  async deleteScreenEventBooking(id: string): Promise<boolean> {
+    const result = await db.delete(screenEventBookings).where(eq(screenEventBookings.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async getCurrentEventForScreen(screenId: string, now: Date = new Date()): Promise<Event | undefined> {
+    // Booking is "active" when startsAt <= now < endsAt. If two bookings somehow
+    // sit on top of `now` (older data; new bookings can't overlap), prefer the
+    // one that started most recently so a hand-over reads as "the new event has
+    // started" rather than "the old one is still going".
+    const [booking] = await db
+      .select()
+      .from(screenEventBookings)
+      .where(
+        and(
+          eq(screenEventBookings.screenId, screenId),
+          lte(screenEventBookings.startsAt, now),
+          sql`${screenEventBookings.endsAt} > ${now}`,
+        )
+      )
+      .orderBy(desc(screenEventBookings.startsAt))
+      .limit(1);
+    if (!booking) return undefined;
+    const [event] = await db.select().from(events).where(eq(events.id, booking.eventId));
+    return event;
   }
 
   // Media Assets
@@ -1143,10 +1290,16 @@ export class DatabaseStorage implements IStorage {
     const allOverrides = await db.select().from(liveOverrides);
     const now = new Date();
 
+    const allBookings = await db.select().from(screenEventBookings);
     return allClients.map(client => {
       const clientEvents = allEvents.filter(e => e.clientId === client.id);
-      const clientEventIds = clientEvents.map(e => e.id);
-      const clientScreens = allScreens.filter(s => s.currentEventId && clientEventIds.includes(s.currentEventId));
+      const clientEventIds = new Set(clientEvents.map(e => e.id));
+      // Screens "belong to" a client if they have any booking referencing one
+      // of that client's events. Replaces the legacy currentEventId field.
+      const screensForClient = new Set(
+        allBookings.filter(b => clientEventIds.has(b.eventId)).map(b => b.screenId),
+      );
+      const clientScreens = allScreens.filter(s => screensForClient.has(s.id));
       const clientMedia = allMedia.filter(m => m.eventId && clientEventIds.includes(m.eventId));
       const clientOverrides = allOverrides.filter(o => o.eventId && clientEventIds.includes(o.eventId) && o.isActive && new Date(o.endTime) > now);
 
