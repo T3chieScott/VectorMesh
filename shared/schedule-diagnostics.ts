@@ -61,6 +61,9 @@ export function hasBookingCoveringBlock(
   const rules = (block.timeRules as TimeRule[]) || [];
   const rule = rules.length > 0 ? normaliseRuleDates(rules[0]) : null;
   const rangeStart = rule?.startDate ? startOfDay(parseISO(rule.startDate)) : startOfDay(now);
+  // Open-ended blocks (no endDate) use a 30-day rolling horizon so the
+  // diagnostic stays actionable; bookings beyond that window will not silence
+  // the warning until they fall inside the rolling window.
   const ruleEnd = rule?.endDate ? endOfDay(parseISO(rule.endDate)) : endOfDay(addDays(now, 30));
   const rangeEnd = new Date(ruleEnd.getTime() + 1);
   return hasBookingCoveringWindow(screenIds, bookingsByScreen, eventId, rangeStart, rangeEnd);
