@@ -20,11 +20,8 @@ export function ScreenBookingStatus({
   screenId: string;
   variant?: "card" | "table";
 }) {
-  // Hits the playback derivation endpoint that combines the active event
-  // booking with the published programme's schedule blocks so we display
-  // the same answer the player will actually serve — not just "is there
-  // a booking today?". React Query caches per-screen so the same payload
-  // is shared across the screens table and the screen card / dialog.
+  // /playback combines the active booking with the programme's schedule
+  // blocks, so this matches what the player will actually serve.
   const { data } = useQuery<ScreenPlaybackResponse>({
     queryKey: ["/api/screens", screenId, "playback"],
     queryFn: async () => {

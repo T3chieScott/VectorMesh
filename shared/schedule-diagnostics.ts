@@ -7,10 +7,8 @@ export function normaliseRuleDates(rule: TimeRule): TimeRule {
   return rule;
 }
 
-// Returns the effective TimeRule for `date` if the block fires that day,
-// or null if it does not. Mirrors the player's day-of-week + date-range
-// gating: if `daysOfWeek` is set we require membership; if a startDate
-// or endDate is set the date must fall within `[start, endOfDay(end)]`.
+// Returns the effective TimeRule if the block fires on `date`, else null.
+// Mirrors the player's day-of-week + date-range gating.
 export function getRuleForDay(timeRules: TimeRule[], date: Date): TimeRule | null {
   const dayOfWeek = date.getDay();
   const rule = timeRules.length > 0 ? normaliseRuleDates(timeRules[0]) : null;
