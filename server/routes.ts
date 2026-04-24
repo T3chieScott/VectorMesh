@@ -2108,20 +2108,22 @@ export async function registerRoutes(
     try {
       const playlists = await storage.getPlaylists();
       const allowed = getAllowedClientIds(req);
-      const allEventsForPlaylists = await storage.getEvents();
-      let filtered = playlists;
-      if (allowed) {
-        const allowedEventIds = new Set(allEventsForPlaylists.filter(e => allowed.includes(e.clientId)).map(e => e.id));
-        filtered = playlists.filter(p => !p.eventId || allowedEventIds.has(p.eventId));
-      }
       const clientId = req.query.clientId as string | undefined;
+
+      let filtered = playlists;
+
       if (clientId) {
         if (!canAccessClient(req, clientId)) {
           return res.status(403).json({ error: "Access denied to requested site" });
         }
-        const clientEventIds = new Set(allEventsForPlaylists.filter(e => e.clientId === clientId).map(e => e.id));
-        filtered = filtered.filter(p => !p.eventId || clientEventIds.has(p.eventId));
+        filtered = filtered.filter(p => p.clientId === clientId);
+      } else if (allowed) {
+        // Restricted user with no explicit site filter: only playlists in their sites.
+        // Orphans (no clientId) are excluded.
+        filtered = filtered.filter(p => !!p.clientId && allowed.includes(p.clientId));
       }
+      // Else: admin / super-admin with no client filter — include all (incl. orphans for cleanup).
+
       res.json(filtered);
     } catch (error) {
       console.error("Error fetching playlists:", error);
@@ -2132,14 +2134,26 @@ export async function registerRoutes(
   app.post("/api/playlists", requireAuth, loadUserContext, async (req, res) => {
     try {
       const data = insertPlaylistSchema.parse(req.body);
+      if (!data.clientId) {
+        return res.status(400).json({ error: "A site (clientId) is required for new playlists" });
+      }
+      if (!canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
+      }
       if (data.eventId) {
         const event = await storage.getEvent(data.eventId);
-        if (event && !canAccessClient(req, event.clientId)) {
-          return res.status(403).json({ error: "Access denied" });
+        if (!event) {
+          return res.status(400).json({ error: "Selected event does not exist" });
+        }
+        if (event.clientId !== data.clientId) {
+          return res.status(400).json({ error: "Selected event belongs to a different site" });
         }
       }
       const playlist = await storage.createPlaylist(data);
-      logAudit(req, "create", "playlist", playlist.id, { name: playlist.name });
+      logAudit(req, "create", "playlist", playlist.id, {
+        name: playlist.name,
+        clientId: playlist.clientId,
+      });
       res.status(201).json(playlist);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -2150,9 +2164,45 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/playlists/:id", requireAuth, async (req, res) => {
+  app.patch("/api/playlists/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
+      const existing = await storage.getPlaylist(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Playlist not found" });
+      }
+      // Authz on the existing playlist's site (orphans require admin).
+      if (existing.clientId) {
+        if (!canAccessClient(req, existing.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      } else if (!isAdmin(req)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
       const data = insertPlaylistSchema.partial().parse(req.body);
+
+      // If clientId is being changed (e.g. admin reassigning an orphan), require access to the new site.
+      const targetClientId = data.clientId !== undefined ? data.clientId : existing.clientId;
+      if (data.clientId !== undefined && data.clientId !== existing.clientId) {
+        if (!data.clientId) {
+          return res.status(400).json({ error: "A site (clientId) is required" });
+        }
+        if (!canAccessClient(req, data.clientId)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+      }
+
+      // If eventId is being set, verify it belongs to the playlist's (current or new) site.
+      if (data.eventId) {
+        const event = await storage.getEvent(data.eventId);
+        if (!event) {
+          return res.status(400).json({ error: "Selected event does not exist" });
+        }
+        if (targetClientId && event.clientId !== targetClientId) {
+          return res.status(400).json({ error: "Selected event belongs to a different site" });
+        }
+      }
+
       const playlist = await storage.updatePlaylist(req.params.id, data);
       if (!playlist) {
         return res.status(404).json({ error: "Playlist not found" });
@@ -2168,8 +2218,19 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/playlists/:id", requireAuth, async (req, res) => {
+  app.delete("/api/playlists/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
+      const existing = await storage.getPlaylist(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Playlist not found" });
+      }
+      if (existing.clientId) {
+        if (!canAccessClient(req, existing.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      } else if (!isAdmin(req)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const deleted = await storage.deletePlaylist(req.params.id);
       if (!deleted) {
         return res.status(404).json({ error: "Playlist not found" });
@@ -2249,9 +2310,9 @@ export async function registerRoutes(
     if (!allowed) return false;
     const playlist = await storage.getPlaylist(playlistId);
     if (!playlist) return false;
-    if (!playlist.eventId) return true;
-    const event = await storage.getEvent(playlist.eventId);
-    return event ? allowed.includes(event.clientId) : false;
+    // Orphan playlists (no clientId) are admin-only.
+    if (!playlist.clientId) return false;
+    return allowed.includes(playlist.clientId);
   }
 
   app.post("/api/playlists/:playlistId/items", requireAuth, loadUserContext, async (req, res) => {

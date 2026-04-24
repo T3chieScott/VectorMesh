@@ -617,6 +617,7 @@ export interface ZoneSource {
 
 export const playlists = pgTable("playlists", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").references(() => clients.id, { onDelete: "cascade" }),
   eventId: varchar("event_id").references(() => events.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description"),
@@ -625,6 +626,7 @@ export const playlists = pgTable("playlists", {
 });
 
 export const playlistsRelations = relations(playlists, ({ one, many }) => ({
+  client: one(clients, { fields: [playlists.clientId], references: [clients.id] }),
   event: one(events, { fields: [playlists.eventId], references: [events.id] }),
   items: many(playlistItems),
 }));

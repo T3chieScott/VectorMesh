@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
@@ -48,7 +48,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
-import { useSiteFilteredQuery } from "@/hooks/use-site-context";
+import { useSiteFilteredQuery, useSiteContext } from "@/hooks/use-site-context";
 import { Plus, MoreHorizontal, Pencil, Trash2, FolderOpen, Image, Calendar, ChevronDown, ChevronUp, ListVideo, Clock, Layers, GripVertical, Play, LayoutGrid } from "lucide-react";
 import type { Playlist, Event, MediaAsset, PlaylistItem, LayoutTemplate } from "@shared/schema";
 
@@ -56,6 +56,7 @@ const playlistFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().optional(),
   eventId: z.string().optional(),
+  clientId: z.string().min(1, "Site is required"),
 });
 
 type PlaylistFormValues = z.infer<typeof playlistFormSchema>;
@@ -601,6 +602,7 @@ function PlaylistCard({ playlist, event, mediaAssets, layouts, usedIn }: { playl
       name: playlist.name,
       description: playlist.description || "",
       eventId: playlist.eventId || "",
+      clientId: playlist.clientId || "",
     },
   });
 
@@ -818,6 +820,7 @@ function PlaylistCard({ playlist, event, mediaAssets, layouts, usedIn }: { playl
 function CreatePlaylistDialog({ events }: { events: Event[] }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
+  const { selectedClientId, clients, selectedClient } = useSiteContext();
 
   const form = useForm<PlaylistFormValues>({
     resolver: zodResolver(playlistFormSchema),
@@ -825,8 +828,16 @@ function CreatePlaylistDialog({ events }: { events: Event[] }) {
       name: "",
       description: "",
       eventId: "",
+      clientId: selectedClientId || "",
     },
   });
+
+  // Keep clientId in sync if the active site changes while the dialog is open.
+  useEffect(() => {
+    if (selectedClientId) {
+      form.setValue("clientId", selectedClientId);
+    }
+  }, [selectedClientId, form]);
 
   const createMutation = useMutation({
     mutationFn: (data: PlaylistFormValues) =>
