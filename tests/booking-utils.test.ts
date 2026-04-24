@@ -4,6 +4,7 @@ import {
   rangesOverlap,
   isValidRange,
   pickActiveBooking,
+  canAccessBooking,
 } from "../shared/booking-utils";
 
 test("rangesOverlap detects fully-contained interval", () => {
@@ -93,4 +94,51 @@ test("pickActiveBooking prefers most-recently-started booking on overlap", () =>
   const now = new Date("2026-01-12");
   assert.equal(pickActiveBooking([older, newer], now)?.id, "new");
   assert.equal(pickActiveBooking([newer, older], now)?.id, "new");
+});
+
+test("canAccessBooking: unrestricted caller (allowed=null) sees everything", () => {
+  // Admins / site operators have no allowedClientIds restriction.
+  assert.equal(canAccessBooking("client-a", "client-b", null), true);
+  assert.equal(canAccessBooking(null, null, null), true);
+  assert.equal(canAccessBooking("client-x", null, null), true);
+});
+
+test("canAccessBooking: matching client on both sides allows access", () => {
+  assert.equal(canAccessBooking("client-a", "client-a", ["client-a"]), true);
+  assert.equal(canAccessBooking("client-a", "client-a", ["client-a", "client-b"]), true);
+});
+
+test("canAccessBooking: shared screen + own client event is accessible", () => {
+  // Shared screen (clientId == null) booked into your own event.
+  assert.equal(canAccessBooking(null, "client-a", ["client-a"]), true);
+});
+
+test("canAccessBooking: own screen + site-level event is accessible", () => {
+  assert.equal(canAccessBooking("client-a", null, ["client-a"]), true);
+});
+
+test("canAccessBooking: both sides null is accessible to any restricted caller", () => {
+  // A booking on a shared screen for a site-level event has no tenant
+  // boundary to enforce, so a restricted caller may still view it.
+  assert.equal(canAccessBooking(null, null, ["client-a"]), true);
+});
+
+test("canAccessBooking: cross-tenant event on shared screen is BLOCKED", () => {
+  // Regression: shared screen leaks if we only check the screen side.
+  // client-a user must NOT touch a booking pointing at a client-b event.
+  assert.equal(canAccessBooking(null, "client-b", ["client-a"]), false);
+});
+
+test("canAccessBooking: cross-tenant screen + own event is BLOCKED", () => {
+  // Mirror case: client-a user can't touch a booking on a client-b
+  // screen even if the event is one of theirs.
+  assert.equal(canAccessBooking("client-b", "client-a", ["client-a"]), false);
+});
+
+test("canAccessBooking: empty allowed list denies everything client-scoped", () => {
+  assert.equal(canAccessBooking("client-a", "client-a", []), false);
+  assert.equal(canAccessBooking(null, "client-a", []), false);
+  assert.equal(canAccessBooking("client-a", null, []), false);
+  // Both null still has no tenant boundary -> accessible.
+  assert.equal(canAccessBooking(null, null, []), true);
 });

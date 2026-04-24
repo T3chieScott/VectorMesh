@@ -8,6 +8,7 @@ import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
 import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema, type InsertScreenEventBooking, type TimeRule, type ScheduleTarget } from "@shared/schema";
 import { derivePlaybackStatus } from "@shared/playback-derivation";
+import { canAccessBooking } from "@shared/booking-utils";
 import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
 import { setupAuth, isAuthenticated, isAuthenticatedOrToken, hashApiToken } from "./auth";
 import multer from "multer";
@@ -133,8 +134,25 @@ async function getActiveEventForScreen(screenId: string, now: Date = new Date())
   return event ?? null;
 }
 
-async function buildPlayerVarsForScreen(screen: any, now: Date = new Date()): Promise<PlayerVarsPayload> {
-  const event = await getActiveEventForScreen(screen.id, now);
+async function buildPlayerVarsForScreen(
+  screen: any,
+  now: Date = new Date(),
+  // When set, redact event-derived vars if the caller can't access the
+  // active event's tenant. Used by simulator endpoints; device-token
+  // player endpoints leave this undefined to preserve existing behaviour.
+  accessFilter?: { allowed: readonly string[] | null },
+): Promise<PlayerVarsPayload> {
+  const rawEvent = await getActiveEventForScreen(screen.id, now);
+  const event = (() => {
+    if (!rawEvent) return rawEvent;
+    if (!accessFilter) return rawEvent;
+    const ok = canAccessBooking(
+      screen.clientId ?? null,
+      rawEvent.clientId ?? null,
+      accessFilter.allowed,
+    );
+    return ok ? rawEvent : null;
+  })();
   let client: any = null;
   if (screen.clientId) {
     client = await storage.getClient(screen.clientId);
@@ -2647,24 +2665,21 @@ export async function registerRoutes(
       const allBookings = await storage.getScreenEventBookings();
       const allowed = getAllowedClientIds(req);
       if (!allowed) return res.json(allBookings);
-      // A booking is visible to the user iff *either* its screen *or*
-      // its event belongs to a client they can access. Screens often
-      // have screen.clientId = null (shared/site-level), so filtering
-      // only by screen ownership would hide bookings into client
-      // events and produce false-negative diagnostics. Dual-check
-      // mirrors the access logic on the per-screen and per-event
-      // endpoints (canAccessClient on either side).
+      // Dual-side filter via shared canAccessBooking: a booking is
+      // visible only when the caller can access BOTH the screen's
+      // client and the event's client (with null on either side
+      // counted as "site-level / accessible to anyone with access to
+      // the other side"). Mirrors the per-screen and per-event
+      // bookings endpoints.
       const [screensById, eventsById] = await Promise.all([
         storage.getScreens().then(rows => new Map(rows.map(s => [s.id, s]))),
         storage.getEvents().then(rows => new Map(rows.map(e => [e.id, e]))),
       ]);
-      const allowedSet = new Set(allowed);
       const filtered = allBookings.filter(b => {
         const sc = screensById.get(b.screenId);
         const ev = eventsById.get(b.eventId);
-        const screenOk = !!(sc && sc.clientId && allowedSet.has(sc.clientId));
-        const eventOk = !!(ev && ev.clientId && allowedSet.has(ev.clientId));
-        return screenOk || eventOk;
+        if (!sc || !ev) return false;
+        return canAccessBooking(sc.clientId ?? null, ev.clientId ?? null, allowed);
       });
       res.json(filtered);
     } catch (error) {
@@ -2686,7 +2701,19 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Access denied" });
       }
       const now = req.query.now ? new Date(String(req.query.now)) : new Date();
-      const activeEvent = await storage.getCurrentEventForScreen(screen.id, now);
+      const rawActiveEvent = await storage.getCurrentEventForScreen(screen.id, now);
+
+      // Redact the active event up-front: blocks, derived status, and
+      // every event-derived field below must be computed from the
+      // VISIBLE event so we don't leak foreign tenant block names /
+      // schedule timing on a shared screen. canAccessBooking handles
+      // both null-allowed (admin) and both-null (no boundary).
+      const allowed = getAllowedClientIds(req);
+      const screenClientId = screen.clientId ?? null;
+      const visibleActiveEvent = rawActiveEvent &&
+        canAccessBooking(screenClientId, rawActiveEvent.clientId ?? null, allowed)
+          ? rawActiveEvent
+          : null;
 
       // No active event ⇒ skip the (expensive) block lookup; the screen
       // has nothing on for today by definition.
@@ -2696,7 +2723,7 @@ export async function registerRoutes(
         timeRules: TimeRule[] | null;
         priority: number | null;
       }> = [];
-      if (activeEvent) {
+      if (visibleActiveEvent) {
         // Resolve this screen's group memberships so we can honour
         // {type:"group"} targets exactly the way the player resolver
         // does — without this, group-targeted blocks would be
@@ -2707,7 +2734,7 @@ export async function registerRoutes(
 
         const programmes = await storage.getProgrammes();
         const eventProgrammeIds = programmes
-          .filter(p => p.eventId === activeEvent.id)
+          .filter(p => p.eventId === visibleActiveEvent.id)
           .map(p => p.id);
         if (eventProgrammeIds.length > 0) {
           const allVersions = await storage.getProgrammeVersions();
@@ -2738,30 +2765,40 @@ export async function registerRoutes(
         }
       }
 
-      const status = derivePlaybackStatus(blocks, !!activeEvent, now);
+      const status = derivePlaybackStatus(blocks, !!visibleActiveEvent, now);
 
       // Pull the next future booking (regardless of programme/blocks) so the
-      // UI can fall back to "Up next" when nothing fires today.
+      // UI can fall back to "Up next" when nothing fires today. The
+      // active event was already redacted up-front; here we walk forward
+      // through the future-booking queue so a foreign tenant booking
+      // sitting at the front doesn't mask our own visible "up next" entry.
       const allForScreen = await storage.getScreenEventBookings({ screenId: screen.id });
       const futureBookings = allForScreen
         .filter(b => new Date(b.startsAt) > now)
         .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
-      const nextBooking = futureBookings[0];
-      const nextEvent = nextBooking
-        ? await storage.getEvent(nextBooking.eventId)
-        : undefined;
+
+      let visibleNextBooking: typeof futureBookings[number] | undefined;
+      let visibleNextEvent: Awaited<ReturnType<typeof storage.getEvent>> | undefined;
+      for (const b of futureBookings) {
+        const ev = await storage.getEvent(b.eventId);
+        if (!ev) continue;
+        if (!canAccessBooking(screenClientId, ev.clientId ?? null, allowed)) continue;
+        visibleNextBooking = b;
+        visibleNextEvent = ev;
+        break;
+      }
 
       res.json({
         now: now.toISOString(),
-        activeEvent: activeEvent
-          ? { id: activeEvent.id, name: activeEvent.name }
+        activeEvent: visibleActiveEvent
+          ? { id: visibleActiveEvent.id, name: visibleActiveEvent.name }
           : null,
         block: status,
-        nextBooking: nextBooking && nextEvent
+        nextBooking: visibleNextBooking && visibleNextEvent
           ? {
-              eventId: nextEvent.id,
-              eventName: nextEvent.name,
-              startsAt: nextBooking.startsAt,
+              eventId: visibleNextEvent.id,
+              eventName: visibleNextEvent.name,
+              startsAt: visibleNextBooking.startsAt,
             }
           : null,
       });
@@ -2778,8 +2815,27 @@ export async function registerRoutes(
       if (screen.clientId && !canAccessClient(req, screen.clientId)) {
         return res.status(403).json({ error: "Access denied" });
       }
+      const allowed = getAllowedClientIds(req);
       const bookings = await storage.getScreenEventBookings({ screenId: screen.id });
-      res.json(bookings);
+      // For shared screens (clientId == null) the screen-level check
+      // above is permissive — bookings may belong to different client
+      // events. Run the canAccessBooking dual-side check on every
+      // returned row to avoid leaking cross-tenant booking metadata.
+      if (!allowed) return res.json(bookings);
+      const eventIds = Array.from(new Set(bookings.map(b => b.eventId)));
+      const events = await Promise.all(eventIds.map(id => storage.getEvent(id)));
+      const eventClientById = new Map<string, string | null>();
+      for (const ev of events) {
+        if (ev) eventClientById.set(ev.id, ev.clientId ?? null);
+      }
+      const filtered = bookings.filter(b =>
+        canAccessBooking(
+          screen.clientId ?? null,
+          eventClientById.get(b.eventId) ?? null,
+          allowed,
+        ),
+      );
+      res.json(filtered);
     } catch (error) {
       console.error("Error fetching screen bookings:", error);
       res.status(500).json({ error: "Failed to fetch bookings" });
@@ -2795,7 +2851,27 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Access denied" });
       }
       const bookings = await storage.getScreenEventBookings({ eventId: event.id });
-      res.json(bookings);
+      const allowed = getAllowedClientIds(req);
+      // Site-level events on shared screens (event.clientId == null
+      // and screen.clientId == null) plus admin (allowed === null)
+      // pass through unchanged. For client-scoped operators we apply
+      // the dual-side check to avoid leaking screens belonging to
+      // other tenants under the strict-AND policy.
+      if (!allowed) return res.json(bookings);
+      const screenIds = Array.from(new Set(bookings.map(b => b.screenId)));
+      const screens = await Promise.all(screenIds.map(id => storage.getScreen(id)));
+      const screenClientById = new Map<string, string | null>();
+      for (const s of screens) {
+        if (s) screenClientById.set(s.id, s.clientId ?? null);
+      }
+      const filtered = bookings.filter(b =>
+        canAccessBooking(
+          screenClientById.get(b.screenId) ?? null,
+          event.clientId ?? null,
+          allowed,
+        ),
+      );
+      res.json(filtered);
     } catch (error) {
       console.error("Error fetching event bookings:", error);
       res.status(500).json({ error: "Failed to fetch bookings" });
@@ -2847,8 +2923,17 @@ export async function registerRoutes(
       const existing = await storage.getScreenEventBooking(req.params.id);
       if (!existing) return res.status(404).json({ error: "Booking not found" });
       const screen = await storage.getScreen(existing.screenId);
+      const currentEvent = await storage.getEvent(existing.eventId);
+      // Authorize on BOTH the screen and the existing event. For shared
+      // screens (clientId == null) the screen check passes for everyone,
+      // so the event-side check is what actually protects cross-tenant
+      // mutation. canAccessClient with a null clientId is treated as
+      // "site-level, anyone authenticated may access".
       if (screen?.clientId && !canAccessClient(req, screen.clientId)) {
         return res.status(403).json({ error: "Access denied" });
+      }
+      if (currentEvent?.clientId && !canAccessClient(req, currentEvent.clientId)) {
+        return res.status(403).json({ error: "Access denied to booking's event" });
       }
       const patch: Partial<InsertScreenEventBooking> = {};
       if (req.body.startsAt !== undefined) patch.startsAt = new Date(req.body.startsAt);
@@ -2883,8 +2968,15 @@ export async function registerRoutes(
       const existing = await storage.getScreenEventBooking(req.params.id);
       if (!existing) return res.status(404).json({ error: "Booking not found" });
       const screen = await storage.getScreen(existing.screenId);
+      const ev = await storage.getEvent(existing.eventId);
+      // Authorize on BOTH sides — see PATCH for the rationale. Shared
+      // screens (clientId == null) would otherwise let any client user
+      // delete bookings tied to other clients' events.
       if (screen?.clientId && !canAccessClient(req, screen.clientId)) {
         return res.status(403).json({ error: "Access denied" });
+      }
+      if (ev?.clientId && !canAccessClient(req, ev.clientId)) {
+        return res.status(403).json({ error: "Access denied to booking's event" });
       }
       await storage.deleteScreenEventBooking(existing.id);
       logAudit(req, "delete", "screen_booking", existing.id);
@@ -3739,7 +3831,21 @@ export async function registerRoutes(
         layoutSourceDetail = activeOverride.message || "Live Override";
       }
 
-      const simActiveEvent = await getActiveEventForScreen(screen.id, now);
+      // Tenant fence: shared screens (clientId == null) pass the
+      // screen-level check above for everyone; the active event may
+      // belong to another tenant. Redact before deriving layouts /
+      // playerVars so we don't leak schedules across clients.
+      const simAllowed = getAllowedClientIds(req);
+      const rawSimActiveEvent = await getActiveEventForScreen(screen.id, now);
+      const simActiveEvent =
+        rawSimActiveEvent &&
+        canAccessBooking(
+          screen.clientId ?? null,
+          rawSimActiveEvent.clientId ?? null,
+          simAllowed,
+        )
+          ? rawSimActiveEvent
+          : null;
 
       if (!layout && simActiveEvent) {
         const [programmes, allVersions] = await Promise.all([
@@ -3826,7 +3932,7 @@ export async function registerRoutes(
 
       let playerVars: PlayerVarsPayload;
       try {
-        playerVars = await buildPlayerVarsForScreen(screen, now);
+        playerVars = await buildPlayerVarsForScreen(screen, now, { allowed: simAllowed });
       } catch (e) {
         console.warn("simulator playerVars computation failed:", e);
         // Match the player endpoint's contract: always return an object,
@@ -3870,7 +3976,9 @@ export async function registerRoutes(
       if (screen.clientId && !canAccessClient(req, screen.clientId)) {
         return res.status(403).json({ error: "Access denied" });
       }
-      const playerVars = await buildPlayerVarsForScreen(screen);
+      const playerVars = await buildPlayerVarsForScreen(screen, undefined, {
+        allowed: getAllowedClientIds(req),
+      });
       res.json({ playerVars });
     } catch (error) {
       console.error("Error fetching simulator player vars:", error);

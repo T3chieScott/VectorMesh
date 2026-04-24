@@ -1985,7 +1985,6 @@ function PlaybackHealthBanner({
       continue;
     }
 
-    void summary;
     playableCount += 1;
   }
 
