@@ -667,9 +667,16 @@ export default function ControlPanelPage() {
 
   const isLoading = screensLoading || groupsLoading;
 
-  // If the active site changes and the previously selected target no longer
-  // belongs to it, clear the selection so the right-hand panel doesn't drive
-  // an off-site target.
+  // Clear the selected target immediately when the active site changes, so
+  // the right-hand panel never drives an off-site target — even briefly while
+  // the new screen/group lists are being refetched.
+  useEffect(() => {
+    setSelectedTarget(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSiteClientId]);
+
+  // Belt-and-braces: if the lists arrive and the selected target isn't in
+  // them (e.g. it was deleted elsewhere), clear it.
   useEffect(() => {
     if (!selectedTarget) return;
     if (screensLoading || groupsLoading) return;
@@ -680,7 +687,7 @@ export default function ControlPanelPage() {
     if (!stillVisible) {
       setSelectedTarget(null);
     }
-  }, [activeSiteClientId, selectedTarget, screens, groups, screensLoading, groupsLoading]);
+  }, [selectedTarget, screens, groups, screensLoading, groupsLoading]);
 
   const selectedClientId = selectedTarget
     ? selectedTarget.type === "screen"
