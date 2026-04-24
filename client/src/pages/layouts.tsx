@@ -326,8 +326,9 @@ function VariableInsertMenu({ onInsert, textareaRef }: { onInsert: (token: strin
   const [open, setOpen] = useState(false);
   const previewScreenId = useVariablePreviewScreenId();
 
+  const screensQuery = useSiteFilteredQuery<{ id: string; name: string }[]>("/api/screens");
   const { data: screens = [] } = useQuery<{ id: string; name: string }[]>({
-    queryKey: ["/api/screens"],
+    ...screensQuery,
     enabled: open,
   });
 
@@ -9989,9 +9990,8 @@ export default function LayoutsPage() {
   });
 
   const previewScreenId = useVariablePreviewScreenId();
-  const { data: screensForPreview = [] } = useQuery<{ id: string; name: string }[]>({
-    queryKey: ["/api/screens"],
-  });
+  const previewScreensQuery = useSiteFilteredQuery<{ id: string; name: string }[]>("/api/screens");
+  const { data: screensForPreview = [] } = useQuery<{ id: string; name: string }[]>(previewScreensQuery);
   const previewVarsQuery = useQuery<{ playerVars: PlayerVariableContext | null }>({
     queryKey: ["/api/simulator", previewScreenId, "player-vars"],
     queryFn: async () => {

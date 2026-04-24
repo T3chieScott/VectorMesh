@@ -398,12 +398,11 @@ export default function SimulatorPage() {
   const mediaQ = useSiteFilteredQuery<MediaAsset[]>("/api/media");
   const overridesQ = useSiteFilteredQuery<LiveOverride[]>("/api/live-overrides");
   const playlistsQ = useSiteFilteredQuery<Playlist[]>("/api/playlists");
+  const profilesQ = useSiteFilteredQuery<DisplayProfile[]>("/api/display-profiles");
 
   const { data: screens = [], isLoading: screensLoading } = useQuery<Screen[]>(screensQ);
 
-  const { data: profiles = [] } = useQuery<DisplayProfile[]>({
-    queryKey: ["/api/display-profiles"],
-  });
+  const { data: profiles = [] } = useQuery<DisplayProfile[]>(profilesQ);
 
   const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
     ...layoutsQ,

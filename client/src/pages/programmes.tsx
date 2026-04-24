@@ -1266,13 +1266,11 @@ export default function ProgrammesPage() {
   const playlistsQ = useSiteFilteredQuery<Playlist[]>("/api/playlists");
   const { data: playlists = [] } = useQuery(playlistsQ);
 
-  const { data: screens = [] } = useQuery<Screen[]>({
-    queryKey: ["/api/screens"],
-  });
+  const screensQ = useSiteFilteredQuery<Screen[]>("/api/screens");
+  const { data: screens = [] } = useQuery<Screen[]>(screensQ);
 
-  const { data: screenGroups = [] } = useQuery<ScreenGroup[]>({
-    queryKey: ["/api/screen-groups"],
-  });
+  const screenGroupsQ = useSiteFilteredQuery<ScreenGroup[]>("/api/screen-groups");
+  const { data: screenGroups = [] } = useQuery<ScreenGroup[]>(screenGroupsQ);
 
   const isLoading = programmesLoading || eventsLoading;
 

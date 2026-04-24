@@ -1433,7 +1433,8 @@ export default function SchedulePage() {
   const { data: allVersions = [] } = useQuery<ProgrammeVersion[]>({ queryKey: ["/api/programme-versions"] });
   const { data: layouts = [] } = useQuery<LayoutTemplate[]>(layoutsQ);
   const { data: screens = [] } = useQuery<Screen[]>(screensQ);
-  const { data: screenGroups = [] } = useQuery<ScreenGroup[]>({ queryKey: ["/api/screen-groups"] });
+  const screenGroupsQ = useSiteFilteredQuery<ScreenGroup[]>("/api/screen-groups");
+  const { data: screenGroups = [] } = useQuery<ScreenGroup[]>(screenGroupsQ);
   const { data: playlists = [] } = useQuery<Playlist[]>(playlistsQ);
   const { data: media = [] } = useQuery<MediaAsset[]>(mediaQ);
   

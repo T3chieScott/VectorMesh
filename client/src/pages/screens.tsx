@@ -1813,11 +1813,8 @@ export default function ScreensPage() {
   const screensQueryConfig = useSiteFilteredQuery<Screen[]>("/api/screens");
   const { data: screens = [], isLoading: screensLoading } = useQuery({ ...screensQueryConfig, refetchInterval: 10000 });
 
-  const { data: profiles = [], isLoading: profilesLoading } = useQuery<
-    DisplayProfile[]
-  >({
-    queryKey: ["/api/display-profiles"],
-  });
+  const profilesQueryConfig = useSiteFilteredQuery<DisplayProfile[]>("/api/display-profiles");
+  const { data: profiles = [], isLoading: profilesLoading } = useQuery<DisplayProfile[]>(profilesQueryConfig);
 
   const { data: clients = [] } = useQuery<Client[]>({
     queryKey: ["/api/clients"],

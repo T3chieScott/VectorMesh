@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Marker, Tooltip, useMap } from "react-leaflet"
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useQuery } from "@tanstack/react-query";
+import { useOptionalSiteFilteredQuery } from "@/hooks/use-site-context";
 import { WORLD_MAP_PATHS, WORLD_MAP_VIEWBOX } from "./world-map-paths";
 import {
   Clock,
@@ -3989,8 +3990,9 @@ function MontageWidget({
   const isMountedRef = useRef(true);
 
   const hasProvidedMedia = providedMedia && providedMedia.length > 0;
+  const mediaQueryConfig = useOptionalSiteFilteredQuery<MediaAsset[]>("/api/media");
   const { data: fetchedMedia = [], isLoading: isMediaLoading } = useQuery<MediaAsset[]>({
-    queryKey: ["/api/media"],
+    ...mediaQueryConfig,
     enabled: !hasProvidedMedia,
   });
   const allMedia = hasProvidedMedia ? providedMedia : fetchedMedia;
@@ -5372,8 +5374,9 @@ function MediaPlayerWidget({
   deviceToken?: string;
 }) {
   const hasProvidedMedia = providedMedia && providedMedia.length > 0;
+  const mediaQueryConfig = useOptionalSiteFilteredQuery<MediaAsset[]>("/api/media");
   const { data: fetchedMedia = [], isLoading: isMediaLoading } = useQuery<MediaAsset[]>({
-    queryKey: ["/api/media"],
+    ...mediaQueryConfig,
     enabled: !hasProvidedMedia,
   });
   const allMedia = hasProvidedMedia ? providedMedia : fetchedMedia;

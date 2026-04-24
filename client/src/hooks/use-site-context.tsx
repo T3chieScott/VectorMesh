@@ -109,6 +109,47 @@ export function useSiteContext() {
   return context;
 }
 
+export function useExplicitClientFilteredQuery<T>(
+  baseUrl: string,
+  clientId: string | null | undefined,
+  options?: { enabled?: boolean; extraParams?: Record<string, string> }
+) {
+  const params = new URLSearchParams();
+  if (clientId) params.set("clientId", clientId);
+  if (options?.extraParams) Object.entries(options.extraParams).forEach(([k, v]) => params.set(k, v));
+  const qs = params.toString();
+  const url = qs ? `${baseUrl}?${qs}` : baseUrl;
+
+  return {
+    queryKey: [baseUrl, clientId ?? null] as const,
+    queryFn: async (): Promise<T> => {
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+    enabled: options?.enabled,
+  };
+}
+
+export function useOptionalSiteFilteredQuery<T>(baseUrl: string, extraParams?: Record<string, string>) {
+  const ctx = useContext(SiteContext);
+  const selectedClientId = ctx?.selectedClientId ?? null;
+  const params = new URLSearchParams();
+  if (selectedClientId) params.set("clientId", selectedClientId);
+  if (extraParams) Object.entries(extraParams).forEach(([k, v]) => params.set(k, v));
+  const qs = params.toString();
+  const url = qs ? `${baseUrl}?${qs}` : baseUrl;
+
+  return {
+    queryKey: [baseUrl, selectedClientId] as const,
+    queryFn: async (): Promise<T> => {
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+  };
+}
+
 export function useSiteFilteredQuery<T>(baseUrl: string, extraParams?: Record<string, string>) {
   const { selectedClientId } = useSiteContext();
   const params = new URLSearchParams();

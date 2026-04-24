@@ -33,7 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { useSiteContext, useSiteFilteredQuery } from "@/hooks/use-site-context";
+import { useSiteContext, useSiteFilteredQuery, useExplicitClientFilteredQuery } from "@/hooks/use-site-context";
 import { Plus, MoreHorizontal, Pencil, Trash2, Tv2, Monitor, Users, X, UserPlus } from "lucide-react";
 import type { ScreenGroup, Screen, Client, LayoutTemplate, Playlist } from "@shared/schema";
 
@@ -65,14 +65,13 @@ function ManageMembersDialog({
     enabled: open,
   });
 
+  const siteScreensQuery = useExplicitClientFilteredQuery<Screen[]>(
+    "/api/screens",
+    group.clientId,
+    { enabled: !!group.clientId }
+  );
   const { data: siteScreens = [] } = useQuery<Screen[]>({
-    queryKey: ["/api/screens", group.clientId],
-    queryFn: async () => {
-      if (!group.clientId) return [];
-      const res = await fetch(`/api/screens?clientId=${group.clientId}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch screens");
-      return res.json();
-    },
+    ...siteScreensQuery,
     enabled: open && !!group.clientId,
   });
 
@@ -503,13 +502,11 @@ export default function ScreenGroupsPage() {
     queryKey: ["/api/clients"],
   });
 
-  const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
-    queryKey: ["/api/layout-templates"],
-  });
+  const layoutsQueryConfig = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
+  const { data: layouts = [] } = useQuery<LayoutTemplate[]>(layoutsQueryConfig);
 
-  const { data: playlists = [] } = useQuery<Playlist[]>({
-    queryKey: ["/api/playlists"],
-  });
+  const playlistsQueryConfig = useSiteFilteredQuery<Playlist[]>("/api/playlists");
+  const { data: playlists = [] } = useQuery<Playlist[]>(playlistsQueryConfig);
 
   return (
     <div className="space-y-6">

@@ -5,7 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
-import { useSiteContext, useSiteFilteredQuery } from "@/hooks/use-site-context";
+import { useSiteContext, useSiteFilteredQuery, useExplicitClientFilteredQuery } from "@/hooks/use-site-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -695,27 +695,19 @@ export default function ControlPanelPage() {
       : groups.find((g) => g.id === selectedTarget.id)?.clientId
     : undefined;
 
-  const { data: layouts = [] } = useQuery<LayoutTemplate[]>({
-    queryKey: ["/api/layouts", selectedClientId],
-    queryFn: async () => {
-      const url = selectedClientId ? `/api/layouts?clientId=${selectedClientId}` : "/api/layouts";
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch layouts");
-      return res.json();
-    },
-    enabled: !!selectedTarget,
-  });
+  const layoutsQuery = useExplicitClientFilteredQuery<LayoutTemplate[]>(
+    "/api/layouts",
+    selectedClientId,
+    { enabled: !!selectedTarget }
+  );
+  const { data: layouts = [] } = useQuery<LayoutTemplate[]>(layoutsQuery);
 
-  const { data: playlists = [] } = useQuery<Playlist[]>({
-    queryKey: ["/api/playlists", selectedClientId],
-    queryFn: async () => {
-      const url = selectedClientId ? `/api/playlists?clientId=${selectedClientId}` : "/api/playlists";
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch playlists");
-      return res.json();
-    },
-    enabled: !!selectedTarget,
-  });
+  const playlistsQuery = useExplicitClientFilteredQuery<Playlist[]>(
+    "/api/playlists",
+    selectedClientId,
+    { enabled: !!selectedTarget }
+  );
+  const { data: playlists = [] } = useQuery<Playlist[]>(playlistsQuery);
 
   const selectedName = selectedTarget
     ? selectedTarget.type === "screen"

@@ -566,6 +566,7 @@ export default function LiveOverridePage() {
   const overridesQ = useSiteFilteredQuery<LiveOverride[]>("/api/live-overrides");
   const screensQ = useSiteFilteredQuery<Screen[]>("/api/screens");
   const layoutsQ = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
+  const groupsQ = useSiteFilteredQuery<ScreenGroup[]>("/api/screen-groups");
 
   const { data: overrides = [], isLoading: overridesLoading } = useQuery<LiveOverride[]>({
     ...overridesQ,
@@ -577,7 +578,7 @@ export default function LiveOverridePage() {
   });
 
   const { data: groups = [] } = useQuery<ScreenGroup[]>({
-    queryKey: ["/api/screen-groups"],
+    ...groupsQ,
   });
 
   const { data: layouts = [] } = useQuery<LayoutTemplate[]>({

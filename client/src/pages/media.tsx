@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { useSiteContext } from "@/hooks/use-site-context";
+import { useSiteContext, useSiteFilteredQuery } from "@/hooks/use-site-context";
 import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -544,7 +544,7 @@ export default function MediaPage() {
   const [sitePickerOpen, setSitePickerOpen] = useState(false);
   const [pendingUploadResult, setPendingUploadResult] = useState<any>(null);
   const { toast } = useToast();
-  const { selectedClientId, buildQueryString } = useSiteContext();
+  const { selectedClientId } = useSiteContext();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
 
@@ -552,15 +552,8 @@ export default function MediaPage() {
     queryKey: ["/api/clients"],
   });
 
-  const { data: media = [], isLoading } = useQuery<MediaAsset[]>({
-    queryKey: ["/api/media", selectedClientId],
-    queryFn: async () => {
-      const url = "/api/media" + (selectedClientId ? "?clientId=" + selectedClientId : "");
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch media");
-      return res.json();
-    },
-  });
+  const mediaQueryConfig = useSiteFilteredQuery<MediaAsset[]>("/api/media");
+  const { data: media = [], isLoading } = useQuery<MediaAsset[]>(mediaQueryConfig);
 
   const filteredMedia = media.filter((asset) => {
     const matchesSearch = asset.name
