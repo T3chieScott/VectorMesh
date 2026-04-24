@@ -49,8 +49,9 @@ import {
 } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
 import { useSiteFilteredQuery, useSiteContext } from "@/hooks/use-site-context";
-import { Plus, MoreHorizontal, Pencil, Trash2, FolderOpen, Image, Calendar, ChevronDown, ChevronUp, ListVideo, Clock, Layers, GripVertical, Play, LayoutGrid } from "lucide-react";
-import type { Playlist, Event, MediaAsset, PlaylistItem, LayoutTemplate } from "@shared/schema";
+import { useAuth } from "@/hooks/use-auth";
+import { Plus, MoreHorizontal, Pencil, Trash2, FolderOpen, Image, Calendar, ChevronDown, ChevronUp, ListVideo, Clock, Layers, GripVertical, Play, LayoutGrid, AlertTriangle } from "lucide-react";
+import type { Playlist, Event, MediaAsset, PlaylistItem, LayoutTemplate, Client } from "@shared/schema";
 
 const playlistFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -955,11 +956,157 @@ function CreatePlaylistDialog({ events }: { events: Event[] }) {
   );
 }
 
+function OrphanPlaylistCard({ playlist, clients }: { playlist: Playlist; clients: Client[] }) {
+  const { toast } = useToast();
+  const [targetSite, setTargetSite] = useState<string>("");
+
+  const reassignMutation = useMutation({
+    mutationFn: (clientId: string) =>
+      apiRequest("PATCH", `/api/playlists/${playlist.id}`, { clientId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/playlists"] });
+      toast({ title: "Playlist reassigned" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: "Failed to reassign playlist",
+        description: err instanceof Error ? err.message : undefined,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/playlists/${playlist.id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/playlists"] });
+      toast({ title: "Orphan playlist deleted" });
+    },
+    onError: () => {
+      toast({ title: "Failed to delete playlist", variant: "destructive" });
+    },
+  });
+
+  return (
+    <Card data-testid={`card-orphan-playlist-${playlist.id}`}>
+      <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3 min-w-0">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-destructive/10">
+            <AlertTriangle className="h-5 w-5 text-destructive" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span
+                className="font-medium truncate"
+                data-testid={`text-orphan-playlist-name-${playlist.id}`}
+              >
+                {playlist.name}
+              </span>
+              <Badge
+                variant="destructive"
+                data-testid={`badge-no-site-${playlist.id}`}
+              >
+                No site assigned
+              </Badge>
+            </div>
+            {playlist.description && (
+              <p className="text-sm text-muted-foreground line-clamp-1">
+                {playlist.description}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Select
+            value={targetSite}
+            onValueChange={setTargetSite}
+            disabled={reassignMutation.isPending || deleteMutation.isPending}
+          >
+            <SelectTrigger
+              className="w-[180px]"
+              data-testid={`select-orphan-site-${playlist.id}`}
+            >
+              <SelectValue placeholder="Choose site..." />
+            </SelectTrigger>
+            <SelectContent>
+              {clients.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            size="sm"
+            disabled={!targetSite || reassignMutation.isPending || deleteMutation.isPending}
+            onClick={() => reassignMutation.mutate(targetSite)}
+            data-testid={`button-reassign-orphan-${playlist.id}`}
+          >
+            {reassignMutation.isPending ? "Saving..." : "Reassign"}
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={deleteMutation.isPending}
+            onClick={() => {
+              if (confirm(`Delete orphan playlist "${playlist.name}"? This cannot be undone.`)) {
+                deleteMutation.mutate();
+              }
+            }}
+            data-testid={`button-delete-orphan-${playlist.id}`}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function OrphanPlaylistsSection({ orphans, clients }: { orphans: Playlist[]; clients: Client[] }) {
+  if (orphans.length === 0) return null;
+  return (
+    <Card
+      className="border-destructive/40 bg-destructive/5"
+      data-testid="section-orphan-playlists"
+    >
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <AlertTriangle className="h-5 w-5 text-destructive" />
+          Orphan playlists ({orphans.length})
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          These playlists have no site and are invisible to ordinary users. Reassign each one to a site or delete it.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {orphans.map((p) => (
+          <OrphanPlaylistCard key={p.id} playlist={p} clients={clients} />
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function PlaylistsPage() {
+  const { user } = useAuth();
+  const { selectedClientId, clients } = useSiteContext();
+  const isAdmin = user?.role === "admin";
+  const showOrphans = isAdmin && !selectedClientId;
+
   const playlistsQuery = useSiteFilteredQuery<Playlist[]>("/api/playlists");
   const { data: playlists = [], isLoading: playlistsLoading } = useQuery<Playlist[]>({
     ...playlistsQuery,
   });
+
+  const orphans = useMemo(
+    () => (showOrphans ? playlists.filter((p) => !p.clientId) : []),
+    [playlists, showOrphans],
+  );
+  const sitedPlaylists = useMemo(
+    () => (showOrphans ? playlists.filter((p) => !!p.clientId) : playlists),
+    [playlists, showOrphans],
+  );
 
   const eventsQuery = useSiteFilteredQuery<Event[]>("/api/events");
   const { data: events = [] } = useQuery<Event[]>({
@@ -995,6 +1142,8 @@ export default function PlaylistsPage() {
         <CreatePlaylistDialog events={events} />
       </div>
 
+      {showOrphans && <OrphanPlaylistsSection orphans={orphans} clients={clients} />}
+
       {/* Content */}
       {playlistsLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -1015,7 +1164,8 @@ export default function PlaylistsPage() {
             </Card>
           ))}
         </div>
-      ) : playlists.length === 0 ? (
+      ) : sitedPlaylists.length === 0 ? (
+        orphans.length > 0 ? null : (
         <Card className="py-12">
           <CardContent className="flex flex-col items-center justify-center text-center">
             <FolderOpen className="h-12 w-12 text-muted-foreground/50 mb-4" />
@@ -1027,9 +1177,10 @@ export default function PlaylistsPage() {
             <CreatePlaylistDialog events={events} />
           </CardContent>
         </Card>
+        )
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {playlists.map((playlist) => (
+          {sitedPlaylists.map((playlist) => (
             <PlaylistCard
               key={playlist.id}
               playlist={playlist}
