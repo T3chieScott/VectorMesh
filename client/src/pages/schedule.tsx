@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useSiteFilteredQuery } from "@/hooks/use-site-context";
+import { useSiteFilteredQuery, useSiteContext } from "@/hooks/use-site-context";
 import {
   format,
   startOfWeek,
@@ -1973,16 +1973,27 @@ export default function SchedulePage() {
   const [droppedItem, setDroppedItem] = useState<{ type: string; id: string; name: string } | null>(null);
   const [timelineDrag, setTimelineDrag] = useState<TimelineDragState | null>(null);
   const columnRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
+  const timelineScrollRef = useCallback((el: HTMLDivElement | null) => {
+    if (el) el.scrollTop = 8 * HOUR_HEIGHT;
+  }, []);
   const { toast } = useToast();
-  
+  const { selectedClientId } = useSiteContext();
+
   const programmesQ = useSiteFilteredQuery<Programme[]>("/api/programmes");
   const layoutsQ = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
   const screensQ = useSiteFilteredQuery<Screen[]>("/api/screens");
   const playlistsQ = useSiteFilteredQuery<Playlist[]>("/api/playlists");
   const mediaQ = useSiteFilteredQuery<MediaAsset[]>("/api/media");
 
-  const { data: programmes = [] } = useQuery<Programme[]>(programmesQ);
-  const { data: allVersions = [] } = useQuery<ProgrammeVersion[]>({ queryKey: ["/api/programme-versions"] });
+  const { data: programmes = [], isLoading: programmesLoading } = useQuery<Programme[]>(programmesQ);
+  const { data: allVersions = [], isLoading: allVersionsLoading } = useQuery<ProgrammeVersion[]>({
+    queryKey: ["/api/programme-versions", selectedClientId],
+    queryFn: async () => {
+      const res = await fetch("/api/programme-versions", { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+  });
   const { data: layouts = [] } = useQuery<LayoutTemplate[]>(layoutsQ);
   const { data: screens = [] } = useQuery<Screen[]>(screensQ);
   const screenGroupsQ = useSiteFilteredQuery<ScreenGroup[]>("/api/screen-groups");
@@ -2014,15 +2025,34 @@ export default function SchedulePage() {
     return map;
   }, [screenGroupMemberships]);
 
-  const activeVersions = allVersions;
+  const programmeIdsForSite = useMemo(
+    () => new Set(programmes.map((p) => p.id)),
+    [programmes],
+  );
+
+  const activeVersions = useMemo(
+    () => allVersions.filter((v) => programmeIdsForSite.has(v.programmeId)),
+    [allVersions, programmeIdsForSite],
+  );
 
   useEffect(() => {
-    if (selectedVersionId || allVersions.length === 0) return;
-    const published = allVersions.find((v) => v.status === "published");
+    setSelectedVersionId("");
+  }, [selectedClientId]);
+
+  useEffect(() => {
+    if (programmesLoading || allVersionsLoading) return;
+    if (selectedVersionId) {
+      if (!activeVersions.some((v) => v.id === selectedVersionId)) {
+        setSelectedVersionId("");
+      }
+      return;
+    }
+    if (activeVersions.length === 0) return;
+    const published = activeVersions.find((v) => v.status === "published");
     if (published) setSelectedVersionId(published.id);
-  }, [allVersions, selectedVersionId]);
-  
-  const selectedVersion = allVersions.find((v) => v.id === selectedVersionId);
+  }, [activeVersions, selectedVersionId, programmesLoading, allVersionsLoading]);
+
+  const selectedVersion = activeVersions.find((v) => v.id === selectedVersionId);
   const isSelectedDraft = selectedVersion?.status === "draft";
   const selectedProgramme = selectedVersion
     ? programmes.find((p) => p.id === selectedVersion.programmeId)
@@ -2604,7 +2634,7 @@ export default function SchedulePage() {
                   <Skeleton className="h-[400px] w-full" />
                 </div>
               ) : (
-                <div className="h-[600px] overflow-auto relative">
+                <div ref={timelineScrollRef} className="h-[600px] overflow-auto relative">
                   <div className="flex" style={{ minWidth: `${64 + weekDays.length * 140}px` }}>
                     <TimeGutter />
                     {weekDays.map((date) => (
