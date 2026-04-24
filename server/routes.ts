@@ -2647,10 +2647,24 @@ export async function registerRoutes(
       const allBookings = await storage.getScreenEventBookings();
       const allowed = getAllowedClientIds(req);
       if (!allowed) return res.json(allBookings);
-      const screensById = new Map((await storage.getScreens()).map(s => [s.id, s]));
+      // A booking is visible to the user iff *either* its screen *or*
+      // its event belongs to a client they can access. Screens often
+      // have screen.clientId = null (shared/site-level), so filtering
+      // only by screen ownership would hide bookings into client
+      // events and produce false-negative diagnostics. Dual-check
+      // mirrors the access logic on the per-screen and per-event
+      // endpoints (canAccessClient on either side).
+      const [screensById, eventsById] = await Promise.all([
+        storage.getScreens().then(rows => new Map(rows.map(s => [s.id, s]))),
+        storage.getEvents().then(rows => new Map(rows.map(e => [e.id, e]))),
+      ]);
+      const allowedSet = new Set(allowed);
       const filtered = allBookings.filter(b => {
         const sc = screensById.get(b.screenId);
-        return sc && sc.clientId && allowed.includes(sc.clientId);
+        const ev = eventsById.get(b.eventId);
+        const screenOk = !!(sc && sc.clientId && allowedSet.has(sc.clientId));
+        const eventOk = !!(ev && ev.clientId && allowedSet.has(ev.clientId));
+        return screenOk || eventOk;
       });
       res.json(filtered);
     } catch (error) {

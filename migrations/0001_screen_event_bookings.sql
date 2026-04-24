@@ -63,3 +63,10 @@ ALTER TABLE screen_event_bookings
     screen_id WITH =,
     tsrange(starts_at, ends_at, '[)') WITH &&
   );
+
+-- 4. Drop the legacy single-event column. Skipped if already dropped
+--    so re-running the migration is safe. The application has fully
+--    moved to screen_event_bookings; nothing reads current_event_id
+--    any more.
+ALTER TABLE IF EXISTS screens
+  DROP COLUMN IF EXISTS current_event_id;
