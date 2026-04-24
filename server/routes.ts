@@ -1329,13 +1329,15 @@ export async function registerRoutes(
 
   app.post("/api/screens", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const body = {
-        ...req.body,
-        clientId: req.body.clientId || null,
-        displayProfileId: req.body.displayProfileId || null,
-      };
       // currentEventId no longer lives on the screen — bookings handle this.
-      delete (body as any).currentEventId;
+      // Strip it defensively in case a stale client still sends it.
+      const { currentEventId: _ignoredCurrentEventId, ...incoming } =
+        req.body as Record<string, unknown>;
+      const body: Record<string, unknown> = {
+        ...incoming,
+        clientId: incoming.clientId || null,
+        displayProfileId: incoming.displayProfileId || null,
+      };
       if (body.canvasEnabled) {
         if (!body.canvasWidth || body.canvasWidth < 1 || !body.canvasHeight || body.canvasHeight < 1) {
           return res.status(400).json({ error: "Canvas width and height are required when canvas positioning is enabled" });

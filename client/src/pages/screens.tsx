@@ -500,8 +500,27 @@ function ScreenBookingStatus({
     },
   });
 
-  const { active, next } = pickActiveAndNextBooking(bookings, new Date());
+  const now = new Date();
+  const { active, next } = pickActiveAndNextBooking(bookings, now);
   const eventName = (id: string) => events.find(e => e.id === id)?.name || "Unknown event";
+
+  // Anything starting before midnight tonight (in the user's timezone) counts
+  // as "today" so the operator immediately sees what's lined up for the rest
+  // of the day vs. something further out.
+  const endOfToday = new Date(now);
+  endOfToday.setHours(23, 59, 59, 999);
+  const nextStarts = next ? new Date(next.startsAt) : null;
+  const nextIsToday = nextStarts ? nextStarts <= endOfToday : false;
+
+  const hhmm = (d: Date) =>
+    d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const dayTime = (d: Date) =>
+    d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
   if (active) {
     const endsAt = new Date(active.endsAt);
@@ -509,35 +528,28 @@ function ScreenBookingStatus({
       <div className="text-sm" data-testid={`text-screen-now-playing-${screenId}`}>
         <span className="font-medium">Now: </span>
         <span>{eventName(active.eventId)}</span>
-        <span className="text-muted-foreground">
-          {" "}
-          · until{" "}
-          {endsAt.toLocaleString(undefined, {
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-        </span>
+        <span className="text-muted-foreground"> · until {dayTime(endsAt)}</span>
       </div>
     );
   }
-  if (next) {
-    const startsAt = new Date(next.startsAt);
+  if (next && nextIsToday && nextStarts) {
+    return (
+      <div
+        className="text-sm text-muted-foreground"
+        data-testid={`text-screen-plays-next-${screenId}`}
+      >
+        <span className="font-medium">Plays </span>
+        <span>{eventName(next.eventId)}</span>
+        <span> next at {hhmm(nextStarts)}</span>
+      </div>
+    );
+  }
+  if (next && nextStarts) {
     return (
       <div className="text-sm text-muted-foreground" data-testid={`text-screen-up-next-${screenId}`}>
         <span className="font-medium">Up next: </span>
         <span>{eventName(next.eventId)}</span>
-        <span>
-          {" "}
-          ·{" "}
-          {startsAt.toLocaleString(undefined, {
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-        </span>
+        <span> · {dayTime(nextStarts)}</span>
       </div>
     );
   }
@@ -546,14 +558,160 @@ function ScreenBookingStatus({
       className="text-sm text-muted-foreground"
       data-testid={`text-screen-no-event-${screenId}`}
     >
-      No event scheduled
+      No event today
     </div>
   );
 }
 
+// One row in a list of bookings. Defaults to a compact display row with
+// edit/delete buttons; the edit button swaps the row into an inline form
+// for changing the booking's start/end times. The event itself is not
+// editable from this row — to move a booking to a different event,
+// delete it and add a new one (this matches how venue staff think about
+// "moving" a booking).
+function BookingRow({
+  booking,
+  eventName,
+  invalidateKeys,
+  onDelete,
+  deleting,
+}: {
+  booking: ScreenEventBooking;
+  eventName: string;
+  invalidateKeys: ReadonlyArray<ReadonlyArray<string>>;
+  onDelete: () => void;
+  deleting: boolean;
+}) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [startsAt, setStartsAt] = useState(toLocalDateTimeInput(new Date(booking.startsAt)));
+  const [endsAt, setEndsAt] = useState(toLocalDateTimeInput(new Date(booking.endsAt)));
+
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      const startDate = new Date(startsAt);
+      const endDate = new Date(endsAt);
+      if (!(endDate > startDate)) throw new Error("End must be after start");
+      return apiRequest("PATCH", `/api/screen-bookings/${booking.id}`, {
+        startsAt: startDate.toISOString(),
+        endsAt: endDate.toISOString(),
+      });
+    },
+    onSuccess: () => {
+      for (const key of invalidateKeys) {
+        queryClient.invalidateQueries({ queryKey: key as unknown[] });
+      }
+      setEditing(false);
+      toast({ title: "Booking updated" });
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error && err.message?.includes("overlap")
+        ? "That overlaps with another booking on this screen."
+        : (err instanceof Error ? err.message : "Failed to update booking");
+      toast({ title: msg, variant: "destructive" });
+    },
+  });
+
+  if (editing) {
+    return (
+      <li
+        className="space-y-2 rounded-md bg-muted/40 px-2 py-2 text-sm"
+        data-testid={`row-booking-edit-${booking.id}`}
+      >
+        <div className="truncate font-medium">{eventName}</div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <Label className="text-xs">Starts</Label>
+            <Input
+              type="datetime-local"
+              value={startsAt}
+              onChange={e => setStartsAt(e.target.value)}
+              data-testid={`input-edit-booking-starts-${booking.id}`}
+            />
+          </div>
+          <div>
+            <Label className="text-xs">Ends</Label>
+            <Input
+              type="datetime-local"
+              value={endsAt}
+              onChange={e => setEndsAt(e.target.value)}
+              data-testid={`input-edit-booking-ends-${booking.id}`}
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setStartsAt(toLocalDateTimeInput(new Date(booking.startsAt)));
+              setEndsAt(toLocalDateTimeInput(new Date(booking.endsAt)));
+              setEditing(false);
+            }}
+            data-testid={`button-cancel-edit-booking-${booking.id}`}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={updateMutation.isPending}
+            onClick={() => updateMutation.mutate()}
+            data-testid={`button-save-edit-booking-${booking.id}`}
+          >
+            Save
+          </Button>
+        </div>
+      </li>
+    );
+  }
+
+  const starts = new Date(booking.startsAt);
+  const ends = new Date(booking.endsAt);
+  return (
+    <li
+      className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2 py-1.5 text-sm"
+      data-testid={`row-booking-${booking.id}`}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-medium" data-testid={`text-booking-event-${booking.id}`}>
+          {eventName}
+        </div>
+        <div className="truncate text-xs text-muted-foreground">
+          {formatBookingRange(starts, ends)}
+        </div>
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+        onClick={() => setEditing(true)}
+        data-testid={`button-edit-booking-${booking.id}`}
+        title="Edit booking dates"
+      >
+        <Pencil className="h-4 w-4" />
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+        disabled={deleting}
+        onClick={onDelete}
+        data-testid={`button-delete-booking-${booking.id}`}
+        title="Remove booking"
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </li>
+  );
+}
+
 // Inline booking manager mounted inside the screen edit dialog. Lets users
-// list, add, and remove the events scheduled on this screen. Overlap is
-// validated server-side.
+// list, add, edit, and remove the events scheduled on this screen. Overlap
+// is validated server-side.
 function BookingsPanel({
   screenId,
   events,
@@ -641,39 +799,19 @@ function BookingsPanel({
         </p>
       ) : (
         <ul className="space-y-1.5">
-          {bookings.map(b => {
-            const ev = events.find(e => e.id === b.eventId);
-            const starts = new Date(b.startsAt);
-            const ends = new Date(b.endsAt);
-            return (
-              <li
-                key={b.id}
-                className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2 py-1.5 text-sm"
-                data-testid={`row-booking-${b.id}`}
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium" data-testid={`text-booking-event-${b.id}`}>
-                    {ev?.name || "Unknown event"}
-                  </div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    {formatBookingRange(starts, ends)}
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                  disabled={deleteMutation.isPending}
-                  onClick={() => deleteMutation.mutate(b.id)}
-                  data-testid={`button-delete-booking-${b.id}`}
-                  title="Remove booking"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </li>
-            );
-          })}
+          {bookings.map(b => (
+            <BookingRow
+              key={b.id}
+              booking={b}
+              eventName={events.find(e => e.id === b.eventId)?.name || "Unknown event"}
+              invalidateKeys={[
+                ["/api/screens", screenId, "bookings"],
+                ["/api/screen-bookings"],
+              ]}
+              onDelete={() => deleteMutation.mutate(b.id)}
+              deleting={deleteMutation.isPending}
+            />
+          ))}
         </ul>
       )}
       <div className="space-y-2 border-t pt-3">

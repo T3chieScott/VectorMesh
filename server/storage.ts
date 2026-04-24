@@ -1300,8 +1300,8 @@ export class DatabaseStorage implements IStorage {
         allBookings.filter(b => clientEventIds.has(b.eventId)).map(b => b.screenId),
       );
       const clientScreens = allScreens.filter(s => screensForClient.has(s.id));
-      const clientMedia = allMedia.filter(m => m.eventId && clientEventIds.includes(m.eventId));
-      const clientOverrides = allOverrides.filter(o => o.eventId && clientEventIds.includes(o.eventId) && o.isActive && new Date(o.endTime) > now);
+      const clientMedia = allMedia.filter(m => m.eventId && clientEventIds.has(m.eventId));
+      const clientOverrides = allOverrides.filter(o => o.eventId && clientEventIds.has(o.eventId) && o.isActive && new Date(o.endTime) > now);
 
       return {
         clientId: client.id,

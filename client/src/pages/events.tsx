@@ -511,6 +511,146 @@ function toLocalDateTimeInput(d: Date): string {
 // Manage every screen booked into a single event. Lets the operator add,
 // remove, and adjust which screens play this event and when. The list and
 // the picker stay focused to the event's parent client.
+// One row in the event-bookings dialog. Display by default; "edit" swaps to
+// inline date inputs that PATCH the booking. Mirrors BookingRow on the
+// screens page but keyed by event-side cache invalidation.
+function EventBookingRow({
+  booking,
+  screenName,
+  eventId,
+  onDelete,
+  deleting,
+}: {
+  booking: ScreenEventBooking;
+  screenName: string;
+  eventId: string;
+  onDelete: () => void;
+  deleting: boolean;
+}) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [startsAt, setStartsAt] = useState(toLocalDateTimeInput(new Date(booking.startsAt)));
+  const [endsAt, setEndsAt] = useState(toLocalDateTimeInput(new Date(booking.endsAt)));
+
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      const startDate = new Date(startsAt);
+      const endDate = new Date(endsAt);
+      if (!(endDate > startDate)) throw new Error("End must be after start");
+      return apiRequest("PATCH", `/api/screen-bookings/${booking.id}`, {
+        startsAt: startDate.toISOString(),
+        endsAt: endDate.toISOString(),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/events", eventId, "bookings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/screen-bookings"] });
+      setEditing(false);
+      toast({ title: "Booking updated" });
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error && err.message?.includes("overlap")
+        ? "That overlaps with another booking on the same screen."
+        : (err instanceof Error ? err.message : "Failed to update booking");
+      toast({ title: msg, variant: "destructive" });
+    },
+  });
+
+  if (editing) {
+    return (
+      <li
+        className="space-y-2 rounded-md bg-muted/40 px-2 py-2 text-sm"
+        data-testid={`row-event-booking-edit-${booking.id}`}
+      >
+        <div className="truncate font-medium">{screenName}</div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <Label className="text-xs">Starts</Label>
+            <Input
+              type="datetime-local"
+              value={startsAt}
+              onChange={e => setStartsAt(e.target.value)}
+              data-testid={`input-edit-event-booking-starts-${booking.id}`}
+            />
+          </div>
+          <div>
+            <Label className="text-xs">Ends</Label>
+            <Input
+              type="datetime-local"
+              value={endsAt}
+              onChange={e => setEndsAt(e.target.value)}
+              data-testid={`input-edit-event-booking-ends-${booking.id}`}
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setStartsAt(toLocalDateTimeInput(new Date(booking.startsAt)));
+              setEndsAt(toLocalDateTimeInput(new Date(booking.endsAt)));
+              setEditing(false);
+            }}
+            data-testid={`button-cancel-edit-event-booking-${booking.id}`}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={updateMutation.isPending}
+            onClick={() => updateMutation.mutate()}
+            data-testid={`button-save-edit-event-booking-${booking.id}`}
+          >
+            Save
+          </Button>
+        </div>
+      </li>
+    );
+  }
+
+  const starts = new Date(booking.startsAt);
+  const ends = new Date(booking.endsAt);
+  return (
+    <li
+      className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2 py-1.5 text-sm"
+      data-testid={`row-event-booking-${booking.id}`}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-medium">{screenName}</div>
+        <div className="truncate text-xs text-muted-foreground">
+          {format(starts, "MMM d, HH:mm")} → {format(ends, "MMM d, HH:mm")}
+        </div>
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+        onClick={() => setEditing(true)}
+        data-testid={`button-edit-event-booking-${booking.id}`}
+        title="Edit booking dates"
+      >
+        <Pencil className="h-4 w-4" />
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+        disabled={deleting}
+        onClick={onDelete}
+        data-testid={`button-delete-event-booking-${booking.id}`}
+        title="Remove booking"
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </li>
+  );
+}
+
 function EventBookingsDialog({
   event,
   open,
@@ -597,37 +737,16 @@ function EventBookingsDialog({
             ) : (
               <ScrollArea className="mt-2 max-h-64">
                 <ul className="space-y-1.5 pr-2">
-                  {bookings.map(b => {
-                    const sc = screens.find(s => s.id === b.screenId);
-                    const starts = new Date(b.startsAt);
-                    const ends = new Date(b.endsAt);
-                    return (
-                      <li
-                        key={b.id}
-                        className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2 py-1.5 text-sm"
-                        data-testid={`row-event-booking-${b.id}`}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate font-medium">{sc?.name || "Unknown screen"}</div>
-                          <div className="truncate text-xs text-muted-foreground">
-                            {format(starts, "MMM d, HH:mm")} → {format(ends, "MMM d, HH:mm")}
-                          </div>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                          disabled={deleteMutation.isPending}
-                          onClick={() => deleteMutation.mutate(b.id)}
-                          data-testid={`button-delete-event-booking-${b.id}`}
-                          title="Remove booking"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </li>
-                    );
-                  })}
+                  {bookings.map(b => (
+                    <EventBookingRow
+                      key={b.id}
+                      booking={b}
+                      screenName={screens.find(s => s.id === b.screenId)?.name || "Unknown screen"}
+                      eventId={event.id}
+                      onDelete={() => deleteMutation.mutate(b.id)}
+                      deleting={deleteMutation.isPending}
+                    />
+                  ))}
                 </ul>
               </ScrollArea>
             )}
