@@ -3,6 +3,7 @@ import {
   resolveScreenContent,
   type ResolverDeps,
 } from "./contentResolver";
+import { getPathParam } from "./requestParams";
 import type { Client, Screen } from "@shared/schema";
 import {
   DEFAULT_SCHEDULE_TIMEZONE_FALLBACK,
@@ -35,7 +36,7 @@ export function buildContentTraceHandler(
 ) {
   return async (req: Request, res: Response) => {
     try {
-      const screen = await deps.getScreen(req.params.id);
+      const screen = await deps.getScreen(getPathParam(req, "id"));
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }

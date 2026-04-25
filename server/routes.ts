@@ -38,6 +38,7 @@ import { createNextSpaceXLaunchHandler } from "./spacexLaunch";
 import { createEarthquakesHandler } from "./usgsEarthquakes";
 import { createAircraftOverheadHandler } from "./openSkyAircraft";
 import { buildScreenPatchHandler } from "./screenPatchHandler";
+import { getPathParam, getQueryString } from "./requestParams";
 
 const playerWeatherSummaryCache = new Map<string, { summary: string; timestamp: number }>();
 const PLAYER_WEATHER_SUMMARY_TTL = 10 * 60 * 1000;
@@ -319,7 +320,7 @@ async function validateDeviceToken(req: Request, res: Response, next: NextFuncti
     return res.status(401).json({ error: "Device token required" });
   }
 
-  const screenId = req.params.screenId;
+  const screenId = getPathParam(req, "screenId");
   if (screenId) {
     const screen = await storage.getScreen(screenId);
     if (!screen || screen.deviceToken !== token) {
@@ -599,7 +600,7 @@ export async function registerRoutes(
   app.post("/api/me/api-tokens/:id/ack-new-ip", requireAuth, async (req, res) => {
     try {
       const user = (req as any).dbUser;
-      const token = await storage.getApiToken(req.params.id);
+      const token = await storage.getApiToken(getPathParam(req, "id"));
       if (!token || token.userId !== user.id) {
         return res.status(404).json({ error: "Token not found" });
       }
@@ -623,7 +624,7 @@ export async function registerRoutes(
   app.delete("/api/me/api-tokens/:id", requireAuth, async (req, res) => {
     try {
       const user = (req as any).dbUser;
-      const token = await storage.getApiToken(req.params.id);
+      const token = await storage.getApiToken(getPathParam(req, "id"));
       if (!token || token.userId !== user.id) {
         return res.status(404).json({ error: "Token not found" });
       }
@@ -880,7 +881,7 @@ export async function registerRoutes(
 
   app.get("/api/clients/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const client = await storage.getClient(req.params.id);
+      const client = await storage.getClient(getPathParam(req, "id"));
       if (!client) {
         return res.status(404).json({ error: "Client not found" });
       }
@@ -920,10 +921,10 @@ export async function registerRoutes(
 
   app.patch("/api/clients/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      if (!canAccessClient(req, req.params.id)) {
+      if (!canAccessClient(req, getPathParam(req, "id"))) {
         return res.status(403).json({ error: "Access denied" });
       }
-      const existing = await storage.getClient(req.params.id);
+      const existing = await storage.getClient(getPathParam(req, "id"));
       if (!existing) {
         return res.status(404).json({ error: "Client not found" });
       }
@@ -931,7 +932,7 @@ export async function registerRoutes(
         return res.status(403).json({ error: "This site is locked and cannot be modified. Unlock it first." });
       }
       const data = insertClientSchema.partial().parse(req.body);
-      const client = await storage.updateClient(req.params.id, data);
+      const client = await storage.updateClient(getPathParam(req, "id"), data);
       logAudit(req, "update", "client", client!.id, { name: client!.name });
       res.json(client);
     } catch (error) {
@@ -946,7 +947,7 @@ export async function registerRoutes(
   app.post("/api/clients/:id/lock", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { locked } = req.body;
-      const client = await storage.updateClient(req.params.id, { locked: !!locked });
+      const client = await storage.updateClient(getPathParam(req, "id"), { locked: !!locked });
       if (!client) {
         return res.status(404).json({ error: "Client not found" });
       }
@@ -963,15 +964,15 @@ export async function registerRoutes(
       if (!isAdmin(req)) {
         return res.status(403).json({ error: "Admin access required to delete sites" });
       }
-      const clientToDelete = await storage.getClient(req.params.id);
+      const clientToDelete = await storage.getClient(getPathParam(req, "id"));
       if (!clientToDelete) {
         return res.status(404).json({ error: "Client not found" });
       }
       if (clientToDelete.locked) {
         return res.status(403).json({ error: "This site is locked and cannot be deleted. Unlock it first." });
       }
-      const deleted = await storage.deleteClient(req.params.id);
-      logAudit(req, "delete", "client", req.params.id, { name: clientToDelete?.name });
+      const deleted = await storage.deleteClient(getPathParam(req, "id"));
+      logAudit(req, "delete", "client", getPathParam(req, "id"), { name: clientToDelete?.name });
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting client:", error);
@@ -1001,7 +1002,7 @@ export async function registerRoutes(
 
   app.get("/api/events/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const event = await storage.getEvent(req.params.id);
+      const event = await storage.getEvent(getPathParam(req, "id"));
       if (!event) {
         return res.status(404).json({ error: "Event not found" });
       }
@@ -1040,7 +1041,7 @@ export async function registerRoutes(
 
   app.patch("/api/events/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const existing = await storage.getEvent(req.params.id);
+      const existing = await storage.getEvent(getPathParam(req, "id"));
       if (!existing) return res.status(404).json({ error: "Event not found" });
       if (!canAccessClient(req, existing.clientId)) return res.status(403).json({ error: "Access denied" });
       const body = {
@@ -1049,7 +1050,7 @@ export async function registerRoutes(
         endDate: req.body.endDate ? new Date(req.body.endDate) : undefined,
       };
       const data = insertEventSchema.partial().parse(body);
-      const event = await storage.updateEvent(req.params.id, data);
+      const event = await storage.updateEvent(getPathParam(req, "id"), data);
       if (!event) {
         return res.status(404).json({ error: "Event not found" });
       }
@@ -1066,14 +1067,14 @@ export async function registerRoutes(
 
   app.delete("/api/events/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const existing = await storage.getEvent(req.params.id);
+      const existing = await storage.getEvent(getPathParam(req, "id"));
       if (!existing) return res.status(404).json({ error: "Event not found" });
       if (!canAccessClient(req, existing.clientId)) return res.status(403).json({ error: "Access denied" });
-      const deleted = await storage.deleteEvent(req.params.id);
+      const deleted = await storage.deleteEvent(getPathParam(req, "id"));
       if (!deleted) {
         return res.status(404).json({ error: "Event not found" });
       }
-      logAudit(req, "delete", "event", req.params.id, { name: existing.name });
+      logAudit(req, "delete", "event", getPathParam(req, "id"), { name: existing.name });
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting event:", error);
@@ -1124,7 +1125,7 @@ export async function registerRoutes(
 
   app.patch("/api/display-profiles/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const existing = await storage.getDisplayProfile(req.params.id);
+      const existing = await storage.getDisplayProfile(getPathParam(req, "id"));
       if (!existing) {
         return res.status(404).json({ error: "Display profile not found" });
       }
@@ -1135,7 +1136,7 @@ export async function registerRoutes(
       if (data.clientId && data.clientId !== existing.clientId && !canAccessClient(req, data.clientId)) {
         return res.status(403).json({ error: "Access denied to target site" });
       }
-      const profile = await storage.updateDisplayProfile(req.params.id, data);
+      const profile = await storage.updateDisplayProfile(getPathParam(req, "id"), data);
       logAudit(req, "update", "display_profile", profile!.id, { name: profile!.name });
       res.json(profile);
     } catch (error) {
@@ -1149,15 +1150,15 @@ export async function registerRoutes(
 
   app.delete("/api/display-profiles/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const existing = await storage.getDisplayProfile(req.params.id);
+      const existing = await storage.getDisplayProfile(getPathParam(req, "id"));
       if (!existing) {
         return res.status(404).json({ error: "Display profile not found" });
       }
       if (existing.clientId && !canAccessClient(req, existing.clientId)) {
         return res.status(403).json({ error: "Access denied to this profile's site" });
       }
-      await storage.deleteDisplayProfile(req.params.id);
-      logAudit(req, "delete", "display_profile", req.params.id);
+      await storage.deleteDisplayProfile(getPathParam(req, "id"));
+      logAudit(req, "delete", "display_profile", getPathParam(req, "id"));
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting display profile:", error);
@@ -1209,7 +1210,7 @@ export async function registerRoutes(
   app.patch("/api/screen-groups/:id", requireAuth, async (req, res) => {
     try {
       const data = insertScreenGroupSchema.partial().parse(req.body);
-      const group = await storage.updateScreenGroup(req.params.id, data);
+      const group = await storage.updateScreenGroup(getPathParam(req, "id"), data);
       if (!group) {
         return res.status(404).json({ error: "Screen group not found" });
       }
@@ -1226,11 +1227,11 @@ export async function registerRoutes(
 
   app.delete("/api/screen-groups/:id", requireAuth, async (req, res) => {
     try {
-      const deleted = await storage.deleteScreenGroup(req.params.id);
+      const deleted = await storage.deleteScreenGroup(getPathParam(req, "id"));
       if (!deleted) {
         return res.status(404).json({ error: "Screen group not found" });
       }
-      logAudit(req, "delete", "screen_group", req.params.id);
+      logAudit(req, "delete", "screen_group", getPathParam(req, "id"));
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting screen group:", error);
@@ -1241,14 +1242,14 @@ export async function registerRoutes(
   // Screen Group Memberships
   app.get("/api/screen-groups/:id/members", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const group = await storage.getScreenGroup(req.params.id);
+      const group = await storage.getScreenGroup(getPathParam(req, "id"));
       if (!group) {
         return res.status(404).json({ error: "Screen group not found" });
       }
       if (group.clientId && !canAccessClient(req, group.clientId)) {
         return res.status(403).json({ error: "Access denied to this group's site" });
       }
-      const members = await storage.getGroupMembers(req.params.id);
+      const members = await storage.getGroupMembers(getPathParam(req, "id"));
       res.json(members);
     } catch (error) {
       console.error("Error fetching group members:", error);
@@ -1262,7 +1263,7 @@ export async function registerRoutes(
       if (!screenId) {
         return res.status(400).json({ error: "screenId is required" });
       }
-      const group = await storage.getScreenGroup(req.params.id);
+      const group = await storage.getScreenGroup(getPathParam(req, "id"));
       if (!group) {
         return res.status(404).json({ error: "Screen group not found" });
       }
@@ -1276,8 +1277,8 @@ export async function registerRoutes(
       if (group.clientId && screen.clientId && group.clientId !== screen.clientId) {
         return res.status(400).json({ error: "Screen must belong to the same site as the group" });
       }
-      await storage.addScreenToGroup(req.params.id, screenId);
-      logAudit(req, "create", "screen_group_membership", req.params.id, { screenId, screenName: screen.name, groupName: group.name });
+      await storage.addScreenToGroup(getPathParam(req, "id"), screenId);
+      logAudit(req, "create", "screen_group_membership", getPathParam(req, "id"), { screenId, screenName: screen.name, groupName: group.name });
       res.status(201).json({ success: true });
     } catch (error: any) {
       if (error.code === "23505") {
@@ -1316,18 +1317,18 @@ export async function registerRoutes(
 
   app.delete("/api/screen-groups/:id/members/:screenId", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const group = await storage.getScreenGroup(req.params.id);
+      const group = await storage.getScreenGroup(getPathParam(req, "id"));
       if (!group) {
         return res.status(404).json({ error: "Screen group not found" });
       }
       if (group.clientId && !canAccessClient(req, group.clientId)) {
         return res.status(403).json({ error: "Access denied to this group's site" });
       }
-      const removed = await storage.removeScreenFromGroup(req.params.id, req.params.screenId);
+      const removed = await storage.removeScreenFromGroup(getPathParam(req, "id"), getPathParam(req, "screenId"));
       if (!removed) {
         return res.status(404).json({ error: "Membership not found" });
       }
-      logAudit(req, "delete", "screen_group_membership", req.params.id, { screenId: req.params.screenId });
+      logAudit(req, "delete", "screen_group_membership", getPathParam(req, "id"), { screenId: getPathParam(req, "screenId") });
       res.status(204).send();
     } catch (error) {
       console.error("Error removing screen from group:", error);
@@ -1361,7 +1362,7 @@ export async function registerRoutes(
 
   app.get("/api/screens/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const screen = await storage.getScreen(req.params.id);
+      const screen = await storage.getScreen(getPathParam(req, "id"));
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
@@ -1444,7 +1445,7 @@ export async function registerRoutes(
 
   app.post("/api/screens/:id/duplicate", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const sourceId = req.params.id;
+      const sourceId = getPathParam(req, "id");
       const bodySchema = z.object({ name: z.string().trim().min(1).max(200) });
       const parsed = bodySchema.safeParse(req.body);
       if (!parsed.success) {
@@ -1483,7 +1484,7 @@ export async function registerRoutes(
   app.post("/api/screens/:id/regenerate-pairing", requireAuth, async (req, res) => {
     try {
       const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const screen = await storage.updateScreen(req.params.id, { pairingCode: newCode, isPaired: false });
+      const screen = await storage.updateScreen(getPathParam(req, "id"), { pairingCode: newCode, isPaired: false });
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
@@ -1497,7 +1498,7 @@ export async function registerRoutes(
 
   app.post("/api/screens/:id/refresh", requireAuth, async (req, res) => {
     try {
-      const screen = await storage.getScreen(req.params.id);
+      const screen = await storage.getScreen(getPathParam(req, "id"));
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
@@ -1512,7 +1513,7 @@ export async function registerRoutes(
 
   app.post("/api/screens/:id/request-screenshot", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const screen = await storage.getScreen(req.params.id);
+      const screen = await storage.getScreen(getPathParam(req, "id"));
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
@@ -1530,7 +1531,7 @@ export async function registerRoutes(
   app.post("/api/screens/:id/unpair", requireAuth, async (req, res) => {
     try {
       const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const screen = await storage.unpairScreen(req.params.id, newCode);
+      const screen = await storage.unpairScreen(getPathParam(req, "id"), newCode);
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
@@ -1546,7 +1547,7 @@ export async function registerRoutes(
   app.post("/api/screens/:id/lock", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { locked } = req.body;
-      const screen = await storage.updateScreen(req.params.id, { locked: !!locked });
+      const screen = await storage.updateScreen(getPathParam(req, "id"), { locked: !!locked });
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
@@ -1560,15 +1561,15 @@ export async function registerRoutes(
 
   app.delete("/api/screens/:id", requireAuth, async (req, res) => {
     try {
-      const existing = await storage.getScreen(req.params.id);
+      const existing = await storage.getScreen(getPathParam(req, "id"));
       if (!existing) {
         return res.status(404).json({ error: "Screen not found" });
       }
       if (existing.locked) {
         return res.status(403).json({ error: "This screen is locked and cannot be deleted. Unlock it first." });
       }
-      await storage.deleteScreen(req.params.id);
-      logAudit(req, "delete", "screen", req.params.id);
+      await storage.deleteScreen(getPathParam(req, "id"));
+      logAudit(req, "delete", "screen", getPathParam(req, "id"));
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting screen:", error);
@@ -1578,7 +1579,7 @@ export async function registerRoutes(
 
   app.get("/api/screens/:id/heartbeats", requireAuth, async (req, res) => {
     try {
-      const heartbeats = await storage.getPlayerHeartbeats(req.params.id);
+      const heartbeats = await storage.getPlayerHeartbeats(getPathParam(req, "id"));
       res.json(heartbeats);
     } catch (error) {
       console.error("Error fetching heartbeats:", error);
@@ -1668,18 +1669,18 @@ export async function registerRoutes(
 
   app.delete("/api/media/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const asset = await storage.getMediaAsset(req.params.id);
+      const asset = await storage.getMediaAsset(getPathParam(req, "id"));
       if (!asset) {
         return res.status(404).json({ error: "Media asset not found" });
       }
       if (asset.clientId && !canAccessClient(req, asset.clientId)) {
         return res.status(403).json({ error: "Access denied" });
       }
-      const deleted = await storage.deleteMediaAsset(req.params.id);
+      const deleted = await storage.deleteMediaAsset(getPathParam(req, "id"));
       if (!deleted) {
         return res.status(404).json({ error: "Media asset not found" });
       }
-      logAudit(req, "delete", "media", req.params.id);
+      logAudit(req, "delete", "media", getPathParam(req, "id"));
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting media asset:", error);
@@ -1690,11 +1691,11 @@ export async function registerRoutes(
   // Media sharing (admin only)
   app.get("/api/media/:id/shares", requireAuth, requireAdmin, async (req, res) => {
     try {
-      const asset = await storage.getMediaAsset(req.params.id);
+      const asset = await storage.getMediaAsset(getPathParam(req, "id"));
       if (!asset) {
         return res.status(404).json({ error: "Media asset not found" });
       }
-      const shares = await storage.getMediaSharesForAsset(req.params.id);
+      const shares = await storage.getMediaSharesForAsset(getPathParam(req, "id"));
       res.json(shares);
     } catch (error) {
       console.error("Error fetching media shares:", error);
@@ -1704,7 +1705,7 @@ export async function registerRoutes(
 
   app.post("/api/media/:id/share", requireAuth, requireAdmin, async (req, res) => {
     try {
-      const asset = await storage.getMediaAsset(req.params.id);
+      const asset = await storage.getMediaAsset(getPathParam(req, "id"));
       if (!asset) {
         return res.status(404).json({ error: "Media asset not found" });
       }
@@ -1719,12 +1720,12 @@ export async function registerRoutes(
       if (asset.clientId === clientId) {
         return res.status(400).json({ error: "Cannot share media to its owning site" });
       }
-      const existingShares = await storage.getMediaSharesForAsset(req.params.id);
+      const existingShares = await storage.getMediaSharesForAsset(getPathParam(req, "id"));
       if (existingShares.some(s => s.clientId === clientId)) {
         return res.status(400).json({ error: "Media is already shared to this site" });
       }
-      const share = await storage.createMediaShare({ mediaAssetId: req.params.id, clientId });
-      logAudit(req, "create", "media_share", share.id, { mediaAssetId: req.params.id, clientId });
+      const share = await storage.createMediaShare({ mediaAssetId: getPathParam(req, "id"), clientId });
+      logAudit(req, "create", "media_share", share.id, { mediaAssetId: getPathParam(req, "id"), clientId });
       res.status(201).json(share);
     } catch (error) {
       console.error("Error sharing media:", error);
@@ -1734,11 +1735,11 @@ export async function registerRoutes(
 
   app.delete("/api/media/:id/share/:clientId", requireAuth, requireAdmin, async (req, res) => {
     try {
-      const deleted = await storage.deleteMediaShare(req.params.id, req.params.clientId);
+      const deleted = await storage.deleteMediaShare(getPathParam(req, "id"), getPathParam(req, "clientId"));
       if (!deleted) {
         return res.status(404).json({ error: "Share not found" });
       }
-      logAudit(req, "delete", "media_share", req.params.id, { clientId: req.params.clientId });
+      logAudit(req, "delete", "media_share", getPathParam(req, "id"), { clientId: getPathParam(req, "clientId") });
       res.status(204).send();
     } catch (error) {
       console.error("Error unsharing media:", error);
@@ -1748,7 +1749,7 @@ export async function registerRoutes(
 
   app.patch("/api/media/:id", requireAuth, async (req, res) => {
     try {
-      const updated = await storage.updateMediaAsset(req.params.id, req.body);
+      const updated = await storage.updateMediaAsset(getPathParam(req, "id"), req.body);
       if (!updated) {
         return res.status(404).json({ error: "Media asset not found" });
       }
@@ -1763,7 +1764,7 @@ export async function registerRoutes(
   // Serve media files from object storage
   app.get("/api/media/:id/file", requireAuth, async (req, res) => {
     try {
-      const asset = await storage.getMediaAsset(req.params.id);
+      const asset = await storage.getMediaAsset(getPathParam(req, "id"));
       if (!asset) {
         return res.status(404).json({ error: "Media asset not found" });
       }
@@ -1781,7 +1782,7 @@ export async function registerRoutes(
 
   app.get("/api/media/:id/thumbnail", requireAuth, async (req, res) => {
     try {
-      const asset = await storage.getMediaAsset(req.params.id);
+      const asset = await storage.getMediaAsset(getPathParam(req, "id"));
       if (!asset || !asset.thumbnailPath) {
         return res.status(404).json({ error: "Thumbnail not found" });
       }
@@ -1799,7 +1800,7 @@ export async function registerRoutes(
 
   app.post("/api/media/:id/generate-thumbnail", requireAuth, loadUserContext, requireAdmin, async (req, res) => {
     try {
-      const asset = await storage.getMediaAsset(req.params.id);
+      const asset = await storage.getMediaAsset(getPathParam(req, "id"));
       if (!asset) {
         return res.status(404).json({ error: "Media asset not found" });
       }
@@ -1961,7 +1962,7 @@ export async function registerRoutes(
 
   app.patch("/api/layouts/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const existing = await storage.getLayoutTemplate(req.params.id);
+      const existing = await storage.getLayoutTemplate(getPathParam(req, "id"));
       if (!existing) {
         return res.status(404).json({ error: "Layout not found" });
       }
@@ -1972,7 +1973,7 @@ export async function registerRoutes(
         return res.status(403).json({ error: "This layout is locked and cannot be modified. Unlock it first." });
       }
       const data = insertLayoutTemplateSchema.partial().parse(req.body);
-      const layout = await storage.updateLayoutTemplate(req.params.id, data);
+      const layout = await storage.updateLayoutTemplate(getPathParam(req, "id"), data);
       logAudit(req, "update", "layout", layout!.id, { name: layout!.name });
       res.json(layout);
     } catch (error) {
@@ -1994,7 +1995,7 @@ export async function registerRoutes(
       if (!targetClient) {
         return res.status(400).json({ error: "Target site not found" });
       }
-      const source = await storage.getLayoutTemplate(req.params.id);
+      const source = await storage.getLayoutTemplate(getPathParam(req, "id"));
       if (!source) {
         return res.status(404).json({ error: "Layout not found" });
       }
@@ -2027,7 +2028,7 @@ export async function registerRoutes(
       if (!targetClient) {
         return res.status(400).json({ error: "Target site not found" });
       }
-      const source = await storage.getLayoutTemplate(req.params.id);
+      const source = await storage.getLayoutTemplate(getPathParam(req, "id"));
       if (!source) {
         return res.status(404).json({ error: "Layout not found" });
       }
@@ -2038,11 +2039,11 @@ export async function registerRoutes(
           clearEvent = true;
         }
       }
-      const updated = await storage.updateLayoutTemplate(req.params.id, {
+      const updated = await storage.updateLayoutTemplate(getPathParam(req, "id"), {
         clientId: targetClientId,
         ...(clearEvent ? { eventId: null } : {}),
       });
-      logAudit(req, "move", "layout", req.params.id, { targetClientId, name: source.name });
+      logAudit(req, "move", "layout", getPathParam(req, "id"), { targetClientId, name: source.name });
       res.json(updated);
     } catch (error) {
       console.error("Error moving layout:", error);
@@ -2053,7 +2054,7 @@ export async function registerRoutes(
   app.post("/api/layouts/:id/lock", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { locked } = req.body;
-      const layout = await storage.updateLayoutTemplate(req.params.id, { locked: !!locked });
+      const layout = await storage.updateLayoutTemplate(getPathParam(req, "id"), { locked: !!locked });
       if (!layout) {
         return res.status(404).json({ error: "Layout not found" });
       }
@@ -2067,7 +2068,7 @@ export async function registerRoutes(
 
   app.delete("/api/layouts/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const existing = await storage.getLayoutTemplate(req.params.id);
+      const existing = await storage.getLayoutTemplate(getPathParam(req, "id"));
       if (!existing) {
         return res.status(404).json({ error: "Layout not found" });
       }
@@ -2077,8 +2078,8 @@ export async function registerRoutes(
       if (existing.locked) {
         return res.status(403).json({ error: "This layout is locked and cannot be deleted. Unlock it first." });
       }
-      await storage.deleteLayoutTemplate(req.params.id);
-      logAudit(req, "delete", "layout", req.params.id);
+      await storage.deleteLayoutTemplate(getPathParam(req, "id"));
+      logAudit(req, "delete", "layout", getPathParam(req, "id"));
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting layout:", error);
@@ -2135,7 +2136,7 @@ export async function registerRoutes(
   app.patch("/api/programmes/:id", requireAuth, async (req, res) => {
     try {
       const data = insertProgrammeSchema.partial().parse(req.body);
-      const programme = await storage.updateProgramme(req.params.id, data);
+      const programme = await storage.updateProgramme(getPathParam(req, "id"), data);
       if (!programme) {
         return res.status(404).json({ error: "Programme not found" });
       }
@@ -2153,14 +2154,14 @@ export async function registerRoutes(
   app.post("/api/programmes/:id/publish", requireAuth, async (req, res) => {
     try {
       const versions = await storage.getProgrammeVersions();
-      const programmeVersions = versions.filter(v => v.programmeId === req.params.id);
+      const programmeVersions = versions.filter(v => v.programmeId === getPathParam(req, "id"));
       const draftVersion = programmeVersions.find(v => v.status === "draft");
       
       if (draftVersion) {
         await storage.updateProgrammeVersion(draftVersion.id, { status: "published", publishedAt: new Date() });
         refreshScreensForVersion(draftVersion.id);
       }
-      logAudit(req, "publish", "programme", req.params.id);
+      logAudit(req, "publish", "programme", getPathParam(req, "id"));
       res.json({ success: true });
     } catch (error) {
       console.error("Error publishing programme:", error);
@@ -2170,11 +2171,11 @@ export async function registerRoutes(
 
   app.delete("/api/programmes/:id", requireAuth, async (req, res) => {
     try {
-      const deleted = await storage.deleteProgramme(req.params.id);
+      const deleted = await storage.deleteProgramme(getPathParam(req, "id"));
       if (!deleted) {
         return res.status(404).json({ error: "Programme not found" });
       }
-      logAudit(req, "delete", "programme", req.params.id);
+      logAudit(req, "delete", "programme", getPathParam(req, "id"));
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting programme:", error);
@@ -2256,7 +2257,7 @@ export async function registerRoutes(
 
   app.patch("/api/playlists/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const existing = await storage.getPlaylist(req.params.id);
+      const existing = await storage.getPlaylist(getPathParam(req, "id"));
       if (!existing) {
         return res.status(404).json({ error: "Playlist not found" });
       }
@@ -2302,7 +2303,7 @@ export async function registerRoutes(
         }
       }
 
-      const playlist = await storage.updatePlaylist(req.params.id, data);
+      const playlist = await storage.updatePlaylist(getPathParam(req, "id"), data);
       if (!playlist) {
         return res.status(404).json({ error: "Playlist not found" });
       }
@@ -2319,7 +2320,7 @@ export async function registerRoutes(
 
   app.delete("/api/playlists/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const existing = await storage.getPlaylist(req.params.id);
+      const existing = await storage.getPlaylist(getPathParam(req, "id"));
       if (!existing) {
         return res.status(404).json({ error: "Playlist not found" });
       }
@@ -2330,11 +2331,11 @@ export async function registerRoutes(
       } else if (!isAdmin(req)) {
         return res.status(403).json({ error: "Access denied" });
       }
-      const deleted = await storage.deletePlaylist(req.params.id);
+      const deleted = await storage.deletePlaylist(getPathParam(req, "id"));
       if (!deleted) {
         return res.status(404).json({ error: "Playlist not found" });
       }
-      logAudit(req, "delete", "playlist", req.params.id);
+      logAudit(req, "delete", "playlist", getPathParam(req, "id"));
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting playlist:", error);
@@ -2392,10 +2393,10 @@ export async function registerRoutes(
   // ============ PLAYLIST ITEMS ============
   app.get("/api/playlists/:playlistId/items", requireAuth, loadUserContext, async (req, res) => {
     try {
-      if (!(await canAccessPlaylist(req, req.params.playlistId))) {
+      if (!(await canAccessPlaylist(req, getPathParam(req, "playlistId")))) {
         return res.status(403).json({ error: "Access denied" });
       }
-      const items = await storage.getPlaylistItems(req.params.playlistId);
+      const items = await storage.getPlaylistItems(getPathParam(req, "playlistId"));
       res.json(items);
     } catch (error) {
       console.error("Error fetching playlist items:", error);
@@ -2416,12 +2417,12 @@ export async function registerRoutes(
 
   app.post("/api/playlists/:playlistId/items", requireAuth, loadUserContext, async (req, res) => {
     try {
-      if (!(await canAccessPlaylist(req, req.params.playlistId))) {
+      if (!(await canAccessPlaylist(req, getPathParam(req, "playlistId")))) {
         return res.status(403).json({ error: "Access denied" });
       }
       const data = insertPlaylistItemSchema.parse({
         ...req.body,
-        playlistId: req.params.playlistId,
+        playlistId: getPathParam(req, "playlistId"),
       });
       if (!data.mediaAssetId && !data.layoutTemplateId) {
         return res.status(400).json({ error: "Either mediaAssetId or layoutTemplateId is required" });
@@ -2439,7 +2440,7 @@ export async function registerRoutes(
 
   app.patch("/api/playlist-items/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const existing = await storage.getPlaylistItem(req.params.id);
+      const existing = await storage.getPlaylistItem(getPathParam(req, "id"));
       if (!existing) return res.status(404).json({ error: "Playlist item not found" });
       if (!(await canAccessPlaylist(req, existing.playlistId))) {
         return res.status(403).json({ error: "Access denied" });
@@ -2453,7 +2454,7 @@ export async function registerRoutes(
       if (finalMediaAssetId && finalLayoutTemplateId) {
         return res.status(400).json({ error: "Cannot set both mediaAssetId and layoutTemplateId" });
       }
-      const item = await storage.updatePlaylistItem(req.params.id, data);
+      const item = await storage.updatePlaylistItem(getPathParam(req, "id"), data);
       res.json(item);
     } catch (error) {
       console.error("Error updating playlist item:", error);
@@ -2463,14 +2464,14 @@ export async function registerRoutes(
 
   app.post("/api/playlists/:playlistId/reorder", requireAuth, loadUserContext, async (req, res) => {
     try {
-      if (!(await canAccessPlaylist(req, req.params.playlistId))) {
+      if (!(await canAccessPlaylist(req, getPathParam(req, "playlistId")))) {
         return res.status(403).json({ error: "Access denied" });
       }
       const { itemIds } = req.body;
       if (!Array.isArray(itemIds)) {
         return res.status(400).json({ error: "itemIds must be an array" });
       }
-      const existingItems = await storage.getPlaylistItems(req.params.playlistId);
+      const existingItems = await storage.getPlaylistItems(getPathParam(req, "playlistId"));
       const existingIds = new Set(existingItems.map(i => i.id));
       for (const id of itemIds) {
         if (!existingIds.has(id)) {
@@ -2480,7 +2481,7 @@ export async function registerRoutes(
       for (let i = 0; i < itemIds.length; i++) {
         await storage.updatePlaylistItem(itemIds[i], { order: i });
       }
-      const items = await storage.getPlaylistItems(req.params.playlistId);
+      const items = await storage.getPlaylistItems(getPathParam(req, "playlistId"));
       res.json(items);
     } catch (error) {
       console.error("Error reordering playlist items:", error);
@@ -2490,12 +2491,12 @@ export async function registerRoutes(
 
   app.delete("/api/playlist-items/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const existing = await storage.getPlaylistItem(req.params.id);
+      const existing = await storage.getPlaylistItem(getPathParam(req, "id"));
       if (!existing) return res.status(404).json({ error: "Playlist item not found" });
       if (!(await canAccessPlaylist(req, existing.playlistId))) {
         return res.status(403).json({ error: "Access denied" });
       }
-      const deleted = await storage.deletePlaylistItem(req.params.id);
+      const deleted = await storage.deletePlaylistItem(getPathParam(req, "id"));
       if (!deleted) {
         return res.status(404).json({ error: "Playlist item not found" });
       }
@@ -2509,7 +2510,7 @@ export async function registerRoutes(
   // ============ SCHEDULE BLOCKS ============
   app.get("/api/programme-versions/:versionId/blocks", requireAuth, async (req, res) => {
     try {
-      const blocks = await storage.getScheduleBlocks(req.params.versionId);
+      const blocks = await storage.getScheduleBlocks(getPathParam(req, "versionId"));
       res.json(blocks);
     } catch (error) {
       console.error("Error fetching schedule blocks:", error);
@@ -2521,10 +2522,10 @@ export async function registerRoutes(
     try {
       const data = insertScheduleBlockSchema.parse({
         ...req.body,
-        programmeVersionId: req.params.versionId,
+        programmeVersionId: getPathParam(req, "versionId"),
       });
       const block = await storage.createScheduleBlock(data);
-      refreshScreensForVersion(req.params.versionId);
+      refreshScreensForVersion(getPathParam(req, "versionId"));
       res.status(201).json(block);
     } catch (error) {
       console.error("Error creating schedule block:", error);
@@ -2535,7 +2536,7 @@ export async function registerRoutes(
   app.patch("/api/schedule-blocks/:id", requireAuth, async (req, res) => {
     try {
       const data = insertScheduleBlockSchema.partial().parse(req.body);
-      const block = await storage.updateScheduleBlock(req.params.id, data);
+      const block = await storage.updateScheduleBlock(getPathParam(req, "id"), data);
       if (!block) {
         return res.status(404).json({ error: "Schedule block not found" });
       }
@@ -2549,8 +2550,8 @@ export async function registerRoutes(
 
   app.delete("/api/schedule-blocks/:id", requireAuth, async (req, res) => {
     try {
-      const existing = await storage.getScheduleBlock(req.params.id);
-      const deleted = await storage.deleteScheduleBlock(req.params.id);
+      const existing = await storage.getScheduleBlock(getPathParam(req, "id"));
+      const deleted = await storage.deleteScheduleBlock(getPathParam(req, "id"));
       if (!deleted) {
         return res.status(404).json({ error: "Schedule block not found" });
       }
@@ -2564,11 +2565,11 @@ export async function registerRoutes(
 
   app.delete("/api/schedule-blocks/series/:seriesId", requireAuth, async (req, res) => {
     try {
-      const seriesBlocks = await storage.getScheduleBlocksBySeries(req.params.seriesId);
+      const seriesBlocks = await storage.getScheduleBlocksBySeries(getPathParam(req, "seriesId"));
       if (seriesBlocks.length === 0) {
         return res.status(404).json({ error: "Series not found" });
       }
-      const count = await storage.deleteScheduleBlocksBySeries(req.params.seriesId);
+      const count = await storage.deleteScheduleBlocksBySeries(getPathParam(req, "seriesId"));
       const versionId = seriesBlocks[0].programmeVersionId;
       refreshScreensForVersion(versionId);
       res.json({ deleted: count });
@@ -2707,7 +2708,7 @@ export async function registerRoutes(
 
   app.get("/api/screens/:id/playback", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const screen = await storage.getScreen(req.params.id);
+      const screen = await storage.getScreen(getPathParam(req, "id"));
       if (!screen) return res.status(404).json({ error: "Screen not found" });
       if (screen.clientId && !canAccessClient(req, screen.clientId)) {
         return res.status(403).json({ error: "Access denied" });
@@ -2808,7 +2809,7 @@ export async function registerRoutes(
 
   app.get("/api/screens/:screenId/bookings", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const screen = await storage.getScreen(req.params.screenId);
+      const screen = await storage.getScreen(getPathParam(req, "screenId"));
       if (!screen) return res.status(404).json({ error: "Screen not found" });
       if (screen.clientId && !canAccessClient(req, screen.clientId)) {
         return res.status(403).json({ error: "Access denied" });
@@ -2839,7 +2840,7 @@ export async function registerRoutes(
   // List bookings for one event (used on the event detail page).
   app.get("/api/events/:eventId/bookings", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const event = await storage.getEvent(req.params.eventId);
+      const event = await storage.getEvent(getPathParam(req, "eventId"));
       if (!event) return res.status(404).json({ error: "Event not found" });
       if (event.clientId && !canAccessClient(req, event.clientId)) {
         return res.status(403).json({ error: "Access denied" });
@@ -2869,7 +2870,7 @@ export async function registerRoutes(
 
   app.post("/api/screens/:screenId/bookings", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const screen = await storage.getScreen(req.params.screenId);
+      const screen = await storage.getScreen(getPathParam(req, "screenId"));
       if (!screen) return res.status(404).json({ error: "Screen not found" });
       if (screen.clientId && !canAccessClient(req, screen.clientId)) {
         return res.status(403).json({ error: "Access denied" });
@@ -2907,7 +2908,7 @@ export async function registerRoutes(
 
   app.patch("/api/screen-bookings/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const existing = await storage.getScreenEventBooking(req.params.id);
+      const existing = await storage.getScreenEventBooking(getPathParam(req, "id"));
       if (!existing) return res.status(404).json({ error: "Booking not found" });
       const screen = await storage.getScreen(existing.screenId);
       const currentEvent = await storage.getEvent(existing.eventId);
@@ -2947,7 +2948,7 @@ export async function registerRoutes(
 
   app.delete("/api/screen-bookings/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const existing = await storage.getScreenEventBooking(req.params.id);
+      const existing = await storage.getScreenEventBooking(getPathParam(req, "id"));
       if (!existing) return res.status(404).json({ error: "Booking not found" });
       const screen = await storage.getScreen(existing.screenId);
       const ev = await storage.getEvent(existing.eventId);
@@ -3088,7 +3089,7 @@ export async function registerRoutes(
 
   app.get("/api/screen-presets/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const preset = await storage.getScreenPreset(req.params.id);
+      const preset = await storage.getScreenPreset(getPathParam(req, "id"));
       if (!preset) return res.status(404).json({ error: "Preset not found" });
       const clientId = await resolvePresetClientId(preset);
       if (clientId && !canAccessClient(req, clientId)) {
@@ -3123,14 +3124,14 @@ export async function registerRoutes(
 
   app.patch("/api/screen-presets/:id", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
-      const existing = await storage.getScreenPreset(req.params.id);
+      const existing = await storage.getScreenPreset(getPathParam(req, "id"));
       if (!existing) return res.status(404).json({ error: "Preset not found" });
       const clientId = await resolvePresetClientId(existing);
       if (clientId && !canAccessClient(req, clientId)) {
         return res.status(403).json({ error: "Access denied" });
       }
       const { screenId, groupId, ...allowedUpdates } = insertScreenPresetSchema.partial().parse(req.body);
-      const preset = await storage.updateScreenPreset(req.params.id, allowedUpdates);
+      const preset = await storage.updateScreenPreset(getPathParam(req, "id"), allowedUpdates);
       if (!preset) return res.status(404).json({ error: "Preset not found" });
       logAudit(req, "update", "screen_preset", preset.id, { name: preset.name });
       res.json(preset);
@@ -3143,16 +3144,16 @@ export async function registerRoutes(
 
   app.delete("/api/screen-presets/:id", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
-      const existing = await storage.getScreenPreset(req.params.id);
+      const existing = await storage.getScreenPreset(getPathParam(req, "id"));
       if (!existing) return res.status(404).json({ error: "Preset not found" });
       const clientId = await resolvePresetClientId(existing);
       if (clientId && !canAccessClient(req, clientId)) {
         return res.status(403).json({ error: "Access denied" });
       }
-      await deleteAllOverridesForPreset(req.params.id);
-      const deleted = await storage.deleteScreenPreset(req.params.id);
+      await deleteAllOverridesForPreset(getPathParam(req, "id"));
+      const deleted = await storage.deleteScreenPreset(getPathParam(req, "id"));
       if (!deleted) return res.status(404).json({ error: "Preset not found" });
-      logAudit(req, "delete", "screen_preset", req.params.id);
+      logAudit(req, "delete", "screen_preset", getPathParam(req, "id"));
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting screen preset:", error);
@@ -3195,7 +3196,7 @@ export async function registerRoutes(
 
   app.post("/api/screen-presets/:id/activate", requireAuthOrToken, loadUserContext, async (req, res) => {
     try {
-      const preset = await storage.getScreenPreset(req.params.id);
+      const preset = await storage.getScreenPreset(getPathParam(req, "id"));
       if (!preset) return res.status(404).json({ error: "Preset not found" });
       const clientId = await resolvePresetClientId(preset);
       if (clientId && !canAccessClient(req, clientId)) {
@@ -3254,7 +3255,7 @@ export async function registerRoutes(
 
   app.post("/api/screen-presets/:id/deactivate", requireAuthOrToken, loadUserContext, async (req, res) => {
     try {
-      const preset = await storage.getScreenPreset(req.params.id);
+      const preset = await storage.getScreenPreset(getPathParam(req, "id"));
       if (!preset) return res.status(404).json({ error: "Preset not found" });
       const clientId = await resolvePresetClientId(preset);
       if (clientId && !canAccessClient(req, clientId)) {
@@ -3332,7 +3333,7 @@ export async function registerRoutes(
         ...(req.body.endTime && { endTime: new Date(req.body.endTime) }),
       };
       const data = insertLiveOverrideSchema.partial().parse(body);
-      const override = await storage.updateLiveOverride(req.params.id, data);
+      const override = await storage.updateLiveOverride(getPathParam(req, "id"), data);
       if (!override) {
         return res.status(404).json({ error: "Live override not found" });
       }
@@ -3349,11 +3350,11 @@ export async function registerRoutes(
 
   app.delete("/api/live-overrides/:id", requireAuth, async (req, res) => {
     try {
-      const deleted = await storage.deleteLiveOverride(req.params.id);
+      const deleted = await storage.deleteLiveOverride(getPathParam(req, "id"));
       if (!deleted) {
         return res.status(404).json({ error: "Live override not found" });
       }
-      logAudit(req, "delete", "live_override", req.params.id);
+      logAudit(req, "delete", "live_override", getPathParam(req, "id"));
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting live override:", error);
@@ -3365,7 +3366,7 @@ export async function registerRoutes(
 
   app.get("/api/player/media/:id/file", validateDeviceToken, async (req, res) => {
     try {
-      const asset = await storage.getMediaAsset(req.params.id);
+      const asset = await storage.getMediaAsset(getPathParam(req, "id"));
       if (!asset) {
         return res.status(404).json({ error: "Media asset not found" });
       }
@@ -3472,7 +3473,7 @@ export async function registerRoutes(
 
   app.post("/api/player/:screenId/screenshot", validateDeviceToken, async (req, res) => {
     try {
-      const { screenId } = req.params;
+      const screenId = getPathParam(req, "screenId");
       const { image } = req.body;
       if (!image || typeof image !== "string") {
         return res.status(400).json({ error: "Missing image data" });
@@ -3494,7 +3495,7 @@ export async function registerRoutes(
 
   app.get("/api/screens/:id/screenshot", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const screen = await storage.getScreen(req.params.id);
+      const screen = await storage.getScreen(getPathParam(req, "id"));
       if (!screen) return res.status(404).json({ error: "Screen not found" });
       if (screen.clientId && !canAccessClient(req, screen.clientId)) {
         return res.status(403).json({ error: "Access denied" });
@@ -3511,7 +3512,7 @@ export async function registerRoutes(
 
   app.get("/api/player/:screenId/manifest", validateDeviceToken, async (req, res) => {
     try {
-      const screen = await storage.getScreen(req.params.screenId);
+      const screen = await storage.getScreen(getPathParam(req, "screenId"));
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
@@ -3537,7 +3538,7 @@ export async function registerRoutes(
 
   app.get("/api/player/:screenId/content", validateDeviceToken, async (req, res) => {
     try {
-      const screen = await storage.getScreen(req.params.screenId);
+      const screen = await storage.getScreen(getPathParam(req, "screenId"));
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
@@ -3706,7 +3707,7 @@ export async function registerRoutes(
   // ============ SIMULATOR CONTENT ============
   app.get("/api/simulator/:screenId/content", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const screen = await storage.getScreen(req.params.screenId);
+      const screen = await storage.getScreen(getPathParam(req, "screenId"));
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
@@ -3887,7 +3888,7 @@ export async function registerRoutes(
   // Lightweight playerVars-only lookup for the layout editor's variable preview.
   app.get("/api/simulator/:screenId/player-vars", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const screen = await storage.getScreen(req.params.screenId);
+      const screen = await storage.getScreen(getPathParam(req, "screenId"));
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
       }
@@ -4179,7 +4180,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/users/:id", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
-      if (!(await canManageUser(req, req.params.id))) {
+      if (!(await canManageUser(req, getPathParam(req, "id")))) {
         return res.status(403).json({ error: "You do not have permission to manage this user" });
       }
       const { role, firstName, lastName, email, isActive } = req.body;
@@ -4195,7 +4196,7 @@ export async function registerRoutes(
       if (lastName !== undefined) updateData.lastName = lastName;
       if (email !== undefined) {
         const existing = await storage.getUserByEmail(email.toLowerCase().trim());
-        if (existing && existing.id !== req.params.id) {
+        if (existing && existing.id !== getPathParam(req, "id")) {
           return res.status(409).json({ error: "Email already in use" });
         }
         updateData.email = email.toLowerCase().trim();
@@ -4204,7 +4205,7 @@ export async function registerRoutes(
       if (Object.keys(updateData).length === 0) {
         return res.status(400).json({ error: "No fields to update" });
       }
-      const user = await storage.updateUser(req.params.id, updateData);
+      const user = await storage.updateUser(getPathParam(req, "id"), updateData);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
@@ -4218,10 +4219,10 @@ export async function registerRoutes(
 
   app.post("/api/admin/users/:id/reset-password", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
-      if (!(await canManageUser(req, req.params.id))) {
+      if (!(await canManageUser(req, getPathParam(req, "id")))) {
         return res.status(403).json({ error: "You do not have permission to manage this user" });
       }
-      const user = await storage.getUser(req.params.id);
+      const user = await storage.getUser(getPathParam(req, "id"));
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
@@ -4242,10 +4243,10 @@ export async function registerRoutes(
 
   app.post("/api/admin/users/:id/force-change-password", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
-      if (!(await canManageUser(req, req.params.id))) {
+      if (!(await canManageUser(req, getPathParam(req, "id")))) {
         return res.status(403).json({ error: "You do not have permission to manage this user" });
       }
-      const user = await storage.updateUser(req.params.id, { mustChangePassword: true });
+      const user = await storage.updateUser(getPathParam(req, "id"), { mustChangePassword: true });
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
@@ -4266,15 +4267,15 @@ export async function registerRoutes(
       if (!canAccessClient(req, clientId)) {
         return res.status(403).json({ error: "You do not have access to this site" });
       }
-      if (!(await canManageUser(req, req.params.id))) {
+      if (!(await canManageUser(req, getPathParam(req, "id")))) {
         return res.status(403).json({ error: "You do not have permission to manage this user" });
       }
       const client = await storage.getClient(clientId);
       if (!client) {
         return res.status(404).json({ error: "Client/site not found" });
       }
-      const userSite = await storage.addUserToSite(req.params.id, clientId);
-      logAudit(req, "assign_site", "user", req.params.id, { clientId, clientName: client.name });
+      const userSite = await storage.addUserToSite(getPathParam(req, "id"), clientId);
+      logAudit(req, "assign_site", "user", getPathParam(req, "id"), { clientId, clientName: client.name });
       res.status(201).json(userSite);
     } catch (error) {
       console.error("Error assigning user to site:", error);
@@ -4285,18 +4286,18 @@ export async function registerRoutes(
   app.delete("/api/admin/users/:id", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
       const currentUser = (req as any).dbUser;
-      if (currentUser.id === req.params.id) {
+      if (currentUser.id === getPathParam(req, "id")) {
         return res.status(400).json({ error: "You cannot delete your own account" });
       }
-      if (!(await canManageUser(req, req.params.id))) {
+      if (!(await canManageUser(req, getPathParam(req, "id")))) {
         return res.status(403).json({ error: "You do not have permission to manage this user" });
       }
-      const userToDelete = await storage.getUser(req.params.id);
-      const deleted = await storage.deleteUser(req.params.id);
+      const userToDelete = await storage.getUser(getPathParam(req, "id"));
+      const deleted = await storage.deleteUser(getPathParam(req, "id"));
       if (!deleted) {
         return res.status(404).json({ error: "User not found" });
       }
-      logAudit(req, "delete", "user", req.params.id, { email: userToDelete?.email });
+      logAudit(req, "delete", "user", getPathParam(req, "id"), { email: userToDelete?.email });
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting user:", error);
@@ -4306,17 +4307,17 @@ export async function registerRoutes(
 
   app.delete("/api/admin/users/:id/sites/:clientId", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
-      if (!canAccessClient(req, req.params.clientId)) {
+      if (!canAccessClient(req, getPathParam(req, "clientId"))) {
         return res.status(403).json({ error: "You do not have access to this site" });
       }
-      if (!(await canManageUser(req, req.params.id))) {
+      if (!(await canManageUser(req, getPathParam(req, "id")))) {
         return res.status(403).json({ error: "You do not have permission to manage this user" });
       }
-      const removed = await storage.removeUserFromSite(req.params.id, req.params.clientId);
+      const removed = await storage.removeUserFromSite(getPathParam(req, "id"), getPathParam(req, "clientId"));
       if (!removed) {
         return res.status(404).json({ error: "Assignment not found" });
       }
-      logAudit(req, "remove_site", "user", req.params.id, { clientId: req.params.clientId });
+      logAudit(req, "remove_site", "user", getPathParam(req, "id"), { clientId: getPathParam(req, "clientId") });
       res.status(204).send();
     } catch (error) {
       console.error("Error removing user from site:", error);
@@ -4461,7 +4462,7 @@ export async function registerRoutes(
 
   app.get("/api/system-settings/:key", requireAuth, loadUserContext, requireAdmin, async (req, res) => {
     try {
-      const setting = await storage.getSystemSetting(req.params.key);
+      const setting = await storage.getSystemSetting(getPathParam(req, "key"));
       if (!setting) {
         return res.status(404).json({ error: "Setting not found" });
       }
@@ -4478,8 +4479,8 @@ export async function registerRoutes(
       if (typeof value !== "string" || !value.trim()) {
         return res.status(400).json({ error: "value is required and must be a non-empty string" });
       }
-      const setting = await storage.setSystemSetting(req.params.key, value.trim());
-      logAudit(req, "update", "system_setting", req.params.key, { value: value.trim() });
+      const setting = await storage.setSystemSetting(getPathParam(req, "key"), value.trim());
+      logAudit(req, "update", "system_setting", getPathParam(req, "key"), { value: value.trim() });
       res.json(setting);
     } catch (error) {
       console.error("Error updating system setting:", error);
@@ -4501,7 +4502,7 @@ export async function registerRoutes(
 
   app.put("/api/alert-settings/:alertType", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const { alertType } = req.params;
+      const alertType = getPathParam(req, "alertType");
       const { clientId, enabled, recipients, cooldownMinutes } = req.body;
 
       if (!clientId || typeof clientId !== "string") {
