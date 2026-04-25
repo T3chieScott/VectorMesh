@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   describeTzOffset,
   endOfDayInTz,
+  getTzAbbreviation,
   getTzOffsetMinutes,
   getWallPartsInTz,
   isValidTimezone,
@@ -201,4 +202,26 @@ test("describeTzOffset returns BST + UTC+1 for London summer", () => {
 
 test("describeTzOffset returns the raw zone for an invalid input", () => {
   assert.equal(describeTzOffset(new Date(), "Not/A_Zone"), "Not/A_Zone");
+});
+
+// ===== getTzAbbreviation ==================================================
+
+test("getTzAbbreviation returns just BST for London summer", () => {
+  const out = getTzAbbreviation(new Date("2026-07-15T12:00:00Z"), "Europe/London");
+  assert.equal(out, "BST");
+});
+
+test("getTzAbbreviation returns just GMT for London winter", () => {
+  const out = getTzAbbreviation(new Date("2026-01-15T12:00:00Z"), "Europe/London");
+  assert.equal(out, "GMT");
+});
+
+test("getTzAbbreviation falls back to UTC offset for fixed-offset zones", () => {
+  // Etc/GMT+12 has no regional abbreviation; we expect a UTC-12 fallback.
+  const out = getTzAbbreviation(new Date("2026-07-15T12:00:00Z"), "Etc/GMT+12");
+  assert.match(out, /^UTC-12/);
+});
+
+test("getTzAbbreviation returns the raw zone for an invalid input", () => {
+  assert.equal(getTzAbbreviation(new Date(), "Not/A_Zone"), "Not/A_Zone");
 });

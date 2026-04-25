@@ -292,6 +292,46 @@ export function endOfDayInTz(yyyymmdd: string, tz: string): Date | null {
   return new Date(nextStart.getTime() - 1);
 }
 
+/**
+ * Return just the short timezone abbreviation (e.g. "BST", "EST", "GMT") if
+ * one can be extracted, falling back to a "UTC±H[:MM]" offset string when
+ * the runtime only offers GMT-based names. Useful for compact in-place
+ * labels like "14:00 (BST)".
+ *
+ * Different ICU locales spell these abbreviations differently — `en-US`
+ * returns "GMT+1" for London summer, while `en-GB` returns "BST". Try
+ * `en-GB` first because that surfaces the canonical regional abbreviations
+ * operators expect.
+ */
+export function getTzAbbreviation(now: Date, tz: string): string {
+  if (!isValidTimezone(tz)) return tz;
+  // Accept any short name that isn't a synthetic offset placeholder like
+  // "GMT+1" or "UTC-5". Bare "GMT" / "UTC" *are* the canonical names for
+  // some zones (e.g. Europe/London in winter) so we keep them.
+  const isOffsetPlaceholder = (s: string) => /^(GMT|UTC)[+-]/.test(s);
+  for (const locale of ["en-GB", "en-US"]) {
+    try {
+      const parts = new Intl.DateTimeFormat(locale, {
+        timeZone: tz,
+        timeZoneName: "short",
+      }).formatToParts(now);
+      const candidate = parts.find((p) => p.type === "timeZoneName")?.value ?? "";
+      if (candidate && !isOffsetPlaceholder(candidate)) {
+        return candidate;
+      }
+    } catch {
+      // try the next locale
+    }
+  }
+  // Fall back to the numeric UTC offset.
+  const offsetMin = getTzOffsetMinutes(now, tz);
+  const sign = offsetMin >= 0 ? "+" : "-";
+  const abs = Math.abs(offsetMin);
+  const hh = Math.floor(abs / 60);
+  const mm = abs % 60;
+  return mm === 0 ? `UTC${sign}${hh}` : `UTC${sign}${hh}:${String(mm).padStart(2, "0")}`;
+}
+
 /** Format a tz like "BST, UTC+1" for human display. */
 export function describeTzOffset(now: Date, tz: string): string {
   if (!isValidTimezone(tz)) return tz;
@@ -301,27 +341,10 @@ export function describeTzOffset(now: Date, tz: string): string {
   const hh = Math.floor(abs / 60);
   const mm = abs % 60;
   const offsetStr = mm === 0 ? `UTC${sign}${hh}` : `UTC${sign}${hh}:${String(mm).padStart(2, "0")}`;
-  // Try to extract the short tz name (e.g. "BST", "GMT", "EST"). Different
-  // ICU locales spell these differently — `en-US` returns "GMT+1" for
-  // London summer, while `en-GB` returns "BST". Try `en-GB` first because
-  // that surfaces the canonical regional abbreviations operators expect.
-  let abbrev = "";
-  for (const locale of ["en-GB", "en-US"]) {
-    try {
-      const parts = new Intl.DateTimeFormat(locale, {
-        timeZone: tz,
-        timeZoneName: "short",
-      }).formatToParts(now);
-      const candidate = parts.find((p) => p.type === "timeZoneName")?.value ?? "";
-      if (candidate && !candidate.startsWith("GMT") && !candidate.startsWith("UTC")) {
-        abbrev = candidate;
-        break;
-      }
-    } catch {
-      // try the next locale
-    }
-  }
-  if (abbrev) {
+  const abbrev = getTzAbbreviation(now, tz);
+  // If the abbreviation is just the numeric fallback we already produced,
+  // don't double it up.
+  if (abbrev && !abbrev.startsWith("UTC")) {
     return `${abbrev}, ${offsetStr}`;
   }
   return offsetStr;

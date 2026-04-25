@@ -113,6 +113,7 @@ import {
 import {
   DEFAULT_SCHEDULE_TIMEZONE_FALLBACK,
   describeTzOffset,
+  getTzAbbreviation,
 } from "@shared/timezone-utils";
 
 type ViewMode = "day" | "week";
@@ -341,11 +342,14 @@ function getBlockIssues(
   }
 
   // Block whose entire firing window is in the past will never play again.
+  // Surface the tz alongside the reason so an operator editing a remote
+  // site doesn't second-guess whether "today" is being interpreted at
+  // their own browser clock.
   const effectiveEnd = getBlockEffectiveEndDate(block, ctx.tz);
   if (effectiveEnd && effectiveEnd < ctx.now) {
     issues.push({
       kind: "block-in-past",
-      message: "This block's date range has already ended — it won't play again.",
+      message: `This block's date range has already ended in ${ctx.tz} — it won't play again.`,
     });
   }
 
@@ -493,6 +497,8 @@ function TimeBlockRenderer({
   onDragInit,
   summary,
   issues,
+  tz,
+  tzAbbrev,
 }: {
   block: ScheduleBlockWithMeta;
   rule: TimeRule;
@@ -505,6 +511,8 @@ function TimeBlockRenderer({
   onDragInit: (blockId: string, mode: DragMode, e: React.PointerEvent, origStartMin: number, origEndMin: number, date: Date, color: string, blockName: string, seriesId: string | null) => void;
   summary: BlockSummary;
   issues: BlockIssue[];
+  tz: string;
+  tzAbbrev: string;
 }) {
   if (!rule?.startTime || !rule?.endTime) return null;
 
@@ -667,8 +675,11 @@ function TimeBlockRenderer({
         </div>
       )}
       {showTimeLine && (
-        <div className="text-white/60 text-[11px] truncate pointer-events-none">
-          {minutesToTimeStr(displayStartMin)} – {minutesToTimeStr(displayEndMin)}
+        <div
+          className="text-white/60 text-[11px] truncate pointer-events-none"
+          data-testid={`text-block-time-${block.id}`}
+        >
+          {minutesToTimeStr(displayStartMin)} – {minutesToTimeStr(displayEndMin)} ({tzAbbrev})
         </div>
       )}
       {hasConflict && (
@@ -714,8 +725,12 @@ function TimeBlockRenderer({
             <div className="space-y-3">
               <div>
                 <div className="font-semibold leading-tight">{block.name}</div>
-                <div className="text-xs text-muted-foreground">
-                  {minutesToTimeStr(origStartMinutes)} – {minutesToTimeStr(origEndMinutes)}
+                <div
+                  className="text-xs text-muted-foreground"
+                  data-testid={`hover-block-time-${block.id}`}
+                >
+                  {minutesToTimeStr(origStartMinutes)} – {minutesToTimeStr(origEndMinutes)}{" "}
+                  <span title={`Wall-clock time in ${tz}`}>({tzAbbrev})</span>
                   {(rule.daysOfWeek?.length || 0) > 0 && " • Repeats"}
                 </div>
               </div>
@@ -790,6 +805,7 @@ function DayColumn({
   blockSummaries,
   blockIssues,
   tz,
+  tzAbbrev,
 }: {
   date: Date;
   blocks: ScheduleBlockWithMeta[];
@@ -804,6 +820,7 @@ function DayColumn({
   blockSummaries: Map<string, BlockSummary>;
   blockIssues: Map<string, BlockIssue[]>;
   tz: string;
+  tzAbbrev: string;
 }) {
   const isToday = isSameDay(date, new Date());
   const dayOfWeek = date.getDay();
@@ -876,6 +893,8 @@ function DayColumn({
               onDragInit={onDragInit}
               summary={blockSummaries.get(block.id)!}
               issues={blockIssues.get(block.id) || []}
+              tz={tz}
+              tzAbbrev={tzAbbrev}
             />
           );
         })}
@@ -1952,9 +1971,9 @@ function PlaybackHealthBanner({
     "no-target-screens": "no targeted screens",
     "missing-layout": "missing layouts",
     "no-content": "no layout or playlist set",
-    "block-in-past": "date range already ended",
+    "block-in-past": `date range already ended in ${tz}`,
     "no-booking-covers-block": "no screen booking covers the next 7 days",
-    "no-firing-day": "schedule has no firing day this week",
+    "no-firing-day": `schedule has no firing day this week in ${tz}`,
   };
   const topReasons = Array.from(issueCounts.entries())
     .sort((a, b) => b[1] - a[1])
@@ -2003,6 +2022,18 @@ export default function SchedulePage() {
   // selected (e.g. admin "all sites" view).
   const scheduleTz =
     selectedClient?.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+  // Compact wall-clock label (e.g. "BST", "EST") to surface alongside raw
+  // HH:MM strings on each block row so an operator editing a remote site
+  // can tell at a glance which timezone the times are interpreted in.
+  // Re-evaluated on render so the label tracks DST transitions.
+  const scheduleTzAbbrev = useMemo(
+    () => getTzAbbreviation(new Date(), scheduleTz),
+    [scheduleTz],
+  );
+  const scheduleTzDescription = useMemo(
+    () => describeTzOffset(new Date(), scheduleTz),
+    [scheduleTz],
+  );
 
   const programmesQ = useSiteFilteredQuery<Programme[]>("/api/programmes");
   const layoutsQ = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
@@ -2614,6 +2645,13 @@ export default function SchedulePage() {
                       ? `${format(weekStart, "MMM d")} - ${format(addDays(weekStart, 6), "MMM d, yyyy")}`
                       : format(currentDate, "EEEE, MMMM d, yyyy")}
                   </h2>
+                  <span
+                    className="text-xs text-muted-foreground ml-2"
+                    title={`Block start/end times are interpreted in ${scheduleTz} (${scheduleTzDescription})`}
+                    data-testid="text-schedule-tz-footnote"
+                  >
+                    Times in {scheduleTz} ({scheduleTzAbbrev})
+                  </span>
                 </div>
                 
                 <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
@@ -2677,6 +2715,7 @@ export default function SchedulePage() {
                         blockSummaries={blockSummaries}
                         blockIssues={blockIssues}
                         tz={scheduleTz}
+                        tzAbbrev={scheduleTzAbbrev}
                       />
                     ))}
                   </div>
