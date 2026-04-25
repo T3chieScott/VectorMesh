@@ -680,6 +680,7 @@ export class DatabaseStorage implements IStorage {
       screenshotEnabled: source.screenshotEnabled,
       testPatternEnabled: source.testPatternEnabled,
       showLiveBanner: source.showLiveBanner,
+      hideNoContentMessage: source.hideNoContentMessage,
       roomCapacity: source.roomCapacity,
       weatherLat: source.weatherLat,
       weatherLng: source.weatherLng,

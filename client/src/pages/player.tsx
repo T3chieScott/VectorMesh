@@ -817,18 +817,74 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   }
 
   if (!layout && !isFallbackPlaylist) {
-    return (
-      <div className="fixed inset-0 bg-black flex items-center justify-center">
-        <div className="text-center text-white">
-          <svg className="w-16 h-16 mx-auto mb-4 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-          </svg>
-          <p className="text-xl font-semibold mb-2">No Content Assigned</p>
-          <p className="text-white/50 text-sm">{content.screen.name}</p>
-          <p className="text-white/30 text-xs mt-4">
-            Assign a layout or programme to this screen in VectorMesh
-          </p>
+    const hideMessage = !!content.screen?.hideNoContentMessage;
+    const liveBannerOverlay = content.liveOverride && content.screen?.showLiveBanner ? (
+      <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white px-3 py-1 flex items-center justify-center gap-2 text-sm font-medium">
+        LIVE: {content.liveOverride.name}
+      </div>
+    ) : null;
+    const placeholderCard = hideMessage ? null : (
+      <div className="text-center text-white" data-testid="text-no-content-placeholder">
+        <svg className="w-16 h-16 mx-auto mb-4 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+        </svg>
+        <p className="text-xl font-semibold mb-2">No Content Assigned</p>
+        <p className="text-white/50 text-sm">{content.screen.name}</p>
+        <p className="text-white/30 text-xs mt-4">
+          Assign a layout or programme to this screen in VectorMesh
+        </p>
+      </div>
+    );
+    const noContentSlot = (
+      <div className="absolute inset-0 bg-black flex items-center justify-center">
+        {liveBannerOverlay}
+        {placeholderCard}
+      </div>
+    );
+
+    if (canvasEnabled) {
+      const ncScaledWidth = captureW * scale;
+      const ncScaledHeight = captureH * scale;
+      return (
+        <div className="fixed inset-0 bg-black flex items-center justify-center overflow-hidden" style={{ cursor: "none" }}>
+          <div
+            className="relative overflow-hidden"
+            style={{ width: `${ncScaledWidth}px`, height: `${ncScaledHeight}px` }}
+          >
+            <div
+              className="bg-black relative overflow-hidden"
+              style={{
+                width: `${captureW}px`,
+                height: `${captureH}px`,
+                transform: `scale(${scale})`,
+                transformOrigin: "top left",
+              }}
+            >
+              <div
+                className="absolute overflow-hidden"
+                style={{
+                  left: `${playerCanvasX}px`,
+                  top: `${playerCanvasY}px`,
+                  width: `${playerScreenW}px`,
+                  height: `${playerScreenH}px`,
+                }}
+                data-testid="player-screen-slot"
+              >
+                {noContentSlot}
+              </div>
+            </div>
+          </div>
         </div>
+      );
+    }
+
+    return (
+      <div
+        className="fixed inset-0 bg-black flex items-center justify-center"
+        data-testid="player-screen-slot"
+      >
+        {liveBannerOverlay}
+        {placeholderCard}
       </div>
     );
   }

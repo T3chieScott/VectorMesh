@@ -85,6 +85,7 @@ import {
   TestTube,
   AlertTriangle,
   Radio,
+  MessageSquareOff,
   GripVertical,
   ArrowUpToLine,
   ArrowDownToLine,
@@ -1264,6 +1265,22 @@ function ScreenCard({
     },
   });
 
+  const toggleHideNoContentMutation = useMutation({
+    mutationFn: (enabled: boolean) =>
+      apiRequest("PATCH", `/api/screens/${screen.id}`, { hideNoContentMessage: enabled }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
+      toast({
+        title: screen.hideNoContentMessage
+          ? "'No Content' message will show"
+          : "'No Content' message hidden — screen will go black",
+      });
+    },
+    onError: () => {
+      toast({ title: "Failed to toggle 'No Content' message", variant: "destructive" });
+    },
+  });
+
   const requestScreenshotMutation = useMutation({
     mutationFn: () =>
       apiRequest("POST", `/api/screens/${screen.id}/request-screenshot`),
@@ -1784,6 +1801,18 @@ function ScreenCard({
             onCheckedChange={(checked) => toggleLiveBannerMutation.mutate(checked)}
             disabled={!!screen.locked}
             data-testid={`switch-live-banner-${screen.id}`}
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <MessageSquareOff className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Hide 'No Content' message</span>
+          </div>
+          <Switch
+            checked={screen.hideNoContentMessage || false}
+            onCheckedChange={(checked) => toggleHideNoContentMutation.mutate(checked)}
+            disabled={!!screen.locked}
+            data-testid={`switch-hide-no-content-${screen.id}`}
           />
         </div>
         {screen.isPaired && (
