@@ -288,6 +288,8 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         zoneSources: data.zoneSources,
         screenName: data.screen?.name,
         testPatternEnabled: data.screen?.testPatternEnabled,
+        showLiveBanner: data.screen?.showLiveBanner,
+        hideNoContentMessage: data.screen?.hideNoContentMessage,
         canvasEnabled: data.screen?.canvasEnabled,
         canvasWidth: data.screen?.canvasWidth,
         canvasHeight: data.screen?.canvasHeight,
