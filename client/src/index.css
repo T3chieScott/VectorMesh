@@ -283,6 +283,13 @@
     inset: -1px;
   }
 
+  /* Highlighted current search match on the Help / Operating Manual page */
+  .search-match-current {
+    outline: 2px solid hsl(var(--primary));
+    outline-offset: 2px;
+    border-radius: 0.25rem;
+  }
+
   /* Custom scrollbar for the signage system */
   .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
