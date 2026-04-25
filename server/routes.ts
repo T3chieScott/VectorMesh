@@ -315,7 +315,10 @@ function canAccessClient(req: Request, clientId: string): boolean {
 }
 
 async function validateDeviceToken(req: Request, res: Response, next: NextFunction) {
-  const token = (req.headers["x-device-token"] as string) || (req.query.token as string);
+  const headerToken = req.headers["x-device-token"];
+  const queryToken = getQueryString(req, "token", res);
+  if (queryToken === null) return; // helper sent 400 for repeated/non-string
+  const token = (typeof headerToken === "string" && headerToken) || queryToken || "";
   if (!token) {
     return res.status(401).json({ error: "Device token required" });
   }
@@ -2730,7 +2733,9 @@ export async function registerRoutes(
       if (screen.clientId && !canAccessClient(req, screen.clientId)) {
         return res.status(403).json({ error: "Access denied" });
       }
-      const now = req.query.now ? new Date(String(req.query.now)) : new Date();
+      const nowStr = getQueryString(req, "now", res);
+      if (nowStr === null) return;
+      const now = nowStr ? new Date(nowStr) : new Date();
       const rawActiveEvent = await storage.getCurrentEventForScreen(screen.id, now);
 
       const allowed = getAllowedClientIds(req);
