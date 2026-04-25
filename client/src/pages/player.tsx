@@ -1,46 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem, Client, Event } from "@shared/schema";
+import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem, Client, Event, PlayerContentResponse } from "@shared/schema";
+
+type PlayerContentData = PlayerContentResponse;
 import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
 import { TestPattern } from "@/components/test-pattern";
 import html2canvas from "html2canvas";
-
-interface PlayerVarsData {
-  screenName?: string | null;
-  roomName?: string | null;
-  eventName?: string | null;
-  clientName?: string | null;
-  roomCapacity?: number | null;
-  eventStartDate?: string | null;
-  eventEndDate?: string | null;
-  nextSessionTitle?: string | null;
-  nextSessionTime?: string | null;
-  nextSessionCountdown?: string | null;
-  weatherSummary?: string | null;
-}
-
-interface PlayerContentData {
-  screen: Screen;
-  profile: DisplayProfile | null;
-  layout: LayoutTemplate | null;
-  media: MediaAsset[];
-  playlists: Playlist[];
-  playlistItems: Record<string, PlaylistItem[]>;
-  layoutTemplates?: Record<string, LayoutTemplate>;
-  zoneSources?: Array<{ zoneId: string; type: string; playlistId?: string }>;
-  liveOverride: LiveOverride | null;
-  event: Event | null;
-  client?: Client | null;
-  playerVars?: PlayerVarsData;
-  timestamp: string;
-  screenshotEnabled?: boolean;
-  screenshotRequested?: boolean;
-  // Server-driven full-page reload signal. Set to true by the player
-  // content endpoint (server/routes.ts) when the operator has bumped
-  // the screen's `refreshRequestedAt` after this client last fetched;
-  // the player listens for this on the next poll and triggers a full
-  // window reload so layout/code changes take effect immediately.
-  refreshRequested?: boolean;
-}
 
 const TOKEN_KEY = "signage_device_token";
 const SCREEN_KEY = "signage_screen_id";

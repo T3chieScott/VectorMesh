@@ -905,3 +905,48 @@ export const apiTokenKnownIps = pgTable(
 
 export type ApiTokenKnownIp = typeof apiTokenKnownIps.$inferSelect;
 export type InsertApiTokenKnownIp = typeof apiTokenKnownIps.$inferInsert;
+
+// ============ PLAYER CONTENT API CONTRACT ============
+// Shape of the JSON payload returned by GET /api/player/:screenId/content
+// (see server/routes.ts ~3493-3713). Declared here so the player client
+// (client/src/pages/player.tsx) and the server response builder share a
+// single source of truth — adding/removing a field on either side will
+// surface as a TS error on the other.
+
+export interface PlayerVarsData {
+  screenName?: string | null;
+  roomName?: string | null;
+  eventName?: string | null;
+  clientName?: string | null;
+  roomCapacity?: number | null;
+  eventStartDate?: string | null;
+  eventEndDate?: string | null;
+  nextSessionTitle?: string | null;
+  nextSessionTime?: string | null;
+  nextSessionCountdown?: string | null;
+  weatherSummary?: string | null;
+}
+
+export interface PlayerContentResponse {
+  screen: Screen;
+  profile: DisplayProfile | null;
+  layout: LayoutTemplate | null;
+  media: MediaAsset[];
+  playlists: Playlist[];
+  playlistItems: Record<string, PlaylistItem[]>;
+  layoutTemplates?: Record<string, LayoutTemplate>;
+  zoneSources?: Array<{ zoneId: string; type: string; playlistId?: string }>;
+  liveOverride: LiveOverride | null;
+  event: Event | null;
+  client?: Client | null;
+  playerVars?: PlayerVarsData;
+  timestamp: string;
+  screenshotEnabled?: boolean;
+  screenshotRequested?: boolean;
+  // Server-driven full-page reload signal. Set to true by the player
+  // content endpoint when the operator has bumped the screen's
+  // `refreshRequestedAt` after this client last fetched; the player
+  // listens for this on the next poll and triggers a full window
+  // reload so layout/code changes take effect immediately.
+  refreshRequested?: boolean;
+}
