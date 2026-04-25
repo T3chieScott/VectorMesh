@@ -141,7 +141,14 @@ export interface IStorage {
   getScreenByPairingCode(code: string): Promise<Screen | undefined>;
   getScreenByDeviceToken(token: string): Promise<Screen | undefined>;
   unpairScreen(id: string, newPairingCode: string): Promise<Screen | undefined>;
-  markStaleScreensOffline(staleThresholdMs: number): Promise<Screen[]>;
+  /**
+   * Mark every currently-online screen whose `lastSeen` is older than
+   * `now - staleThresholdMs` as offline. `now` defaults to the wall clock
+   * but can be overridden — this keeps the time-cutoff math purely in UTC
+   * milliseconds so DST transitions never affect detection, and allows
+   * deterministic testing across DST boundaries.
+   */
+  markStaleScreensOffline(staleThresholdMs: number, now?: Date): Promise<Screen[]>;
   createScreen(data: InsertScreen): Promise<Screen>;
   updateScreen(id: string, data: Partial<InsertScreen>): Promise<Screen | undefined>;
   deleteScreen(id: string): Promise<boolean>;
@@ -630,8 +637,13 @@ export class DatabaseStorage implements IStorage {
     return screen;
   }
 
-  async markStaleScreensOffline(staleThresholdMs: number): Promise<Screen[]> {
-    const cutoff = new Date(Date.now() - staleThresholdMs);
+  async markStaleScreensOffline(
+    staleThresholdMs: number,
+    now: Date = new Date(),
+  ): Promise<Screen[]> {
+    // Pure UTC-ms math — never wall-clock — so the cutoff is unaffected by
+    // DST transitions in any client/site timezone.
+    const cutoff = new Date(now.getTime() - staleThresholdMs);
     const result = await db
       .update(screens)
       .set({ isOnline: false } as any)
