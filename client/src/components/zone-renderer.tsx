@@ -5949,10 +5949,14 @@ export function ZoneRenderer({
             deviceToken={deviceToken}
           />
         );
-      case "earthquakes":
+      case "earthquakes": {
+        const validFeeds = ["all_hour", "all_day", "significant_hour", "significant_day"] as const;
+        const earthquakeFeed = validFeeds.includes(zone.earthquakeFeed as typeof validFeeds[number])
+          ? (zone.earthquakeFeed as typeof validFeeds[number])
+          : undefined;
         return (
           <EarthquakesWidget
-            feed={zone.earthquakeFeed}
+            feed={earthquakeFeed}
             minMagnitude={zone.earthquakeMinMagnitude}
             limit={zone.earthquakeLimit}
             refreshInterval={zone.earthquakeRefreshInterval}
@@ -5967,6 +5971,7 @@ export function ZoneRenderer({
             deviceToken={deviceToken}
           />
         );
+      }
       case "aircraft_radar":
         return (
           <AircraftRadarWidget

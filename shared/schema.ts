@@ -473,6 +473,10 @@ export interface LayoutZone {
   shapeIconTextSize?: number;          // Font size of icon text in px (default 14)
   shapeIconTextColor?: string;         // Color of icon text (hex, default matches stroke)
   // Media Player zone configuration
+  // Authored in the layout editor and also synthesised at runtime by the
+  // player/simulator when expanding a playlist/zone source into the items
+  // the renderer should cycle through. `duration` omitted/undefined means
+  // "use the asset's own duration".
   mediaPlayerItems?: Array<{ id: string; mediaAssetId: string; duration?: number }>;
   mediaPlayerTransition?: "fade" | "slide-left" | "slide-right" | "none";
   mediaPlayerTransitionDuration?: number;
@@ -576,14 +580,6 @@ export interface LayoutZone {
   scheduleHeaderText?: string;
   // Heathrow flights widget configuration
   heathrowPageInterval?: number; // seconds between page rotations (default 10)
-  // Media player runtime payload — set by the player when it expands a
-  // playlist/zone source into the items the renderer should cycle through.
-  // Not persisted on the layout; the layout editor doesn't write this.
-  mediaPlayerItems?: Array<{
-    id: string;
-    mediaAssetId: string;
-    duration: number | null;
-  }>;
 }
 
 // ============ PROGRAMMES ============

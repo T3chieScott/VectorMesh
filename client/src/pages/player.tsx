@@ -517,7 +517,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
             .map(pi => ({
               id: pi.id,
               mediaAssetId: pi.mediaAssetId!,
-              duration: pi.duration ?? null,
+              duration: pi.duration ?? undefined,
             }));
           return [{
             id: "__fallback__",
@@ -565,7 +565,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         .map(pi => ({
           id: pi.id,
           mediaAssetId: pi.mediaAssetId!,
-          duration: pi.duration ?? null,
+          duration: pi.duration ?? undefined,
         }));
       return { ...zone, mediaPlayerItems };
     });
