@@ -580,6 +580,54 @@ export default function SimulatorPage() {
       new Date(o.startTime) <= new Date()
   );
 
+  // Warn when the chosen layout's effective dimensions don't match the
+  // canvas (for canvas-enabled screens) or the screen profile dimensions.
+  const layoutSizeWarning = useMemo(() => {
+    if (isPlaylistPreview) return null;
+    if (!selectedLayout || !selectedScreen) return null;
+
+    let layoutW: number;
+    let layoutH: number;
+    if (
+      selectedLayout.aspectRatio === "custom" &&
+      selectedLayout.customWidth &&
+      selectedLayout.customHeight
+    ) {
+      layoutW = selectedLayout.customWidth;
+      layoutH = selectedLayout.customHeight;
+    } else {
+      const a = getAspectRatioDimensions(
+        selectedLayout.aspectRatio || "16:9",
+        selectedLayout.customWidth,
+        selectedLayout.customHeight,
+      );
+      layoutH = 1080;
+      layoutW = Math.round(1080 * (a.width / a.height));
+    }
+
+    let targetW: number | null = null;
+    let targetH: number | null = null;
+    let targetLabel: "canvas" | "screen" | null = null;
+    if (
+      selectedScreen.canvasEnabled &&
+      selectedScreen.canvasWidth &&
+      selectedScreen.canvasHeight
+    ) {
+      targetW = selectedScreen.canvasWidth;
+      targetH = selectedScreen.canvasHeight;
+      targetLabel = "canvas";
+    } else if (selectedProfile) {
+      targetW = selectedProfile.width;
+      targetH = selectedProfile.height;
+      targetLabel = "screen";
+    }
+
+    if (!targetW || !targetH || !targetLabel) return null;
+    if (layoutW === targetW && layoutH === targetH) return null;
+
+    return { layoutW, layoutH, targetW, targetH, targetLabel };
+  }, [isPlaylistPreview, selectedLayout, selectedScreen, selectedProfile]);
+
   const getZoneMedia = (zoneId: string): MediaAsset[] => {
     const playlistId = zonePlaylistAssignments[zoneId];
     if (!playlistId || playlistId === "none") {
@@ -951,6 +999,22 @@ export default function SimulatorPage() {
                     </span>
                   </p>
                 )}
+              </div>
+            )}
+
+            {/* Layout-vs-target size warning */}
+            {layoutSizeWarning && (
+              <div
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 flex items-start gap-2"
+                data-testid="warning-layout-size-mismatch"
+              >
+                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+                <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+                  Layout {layoutSizeWarning.layoutW}×{layoutSizeWarning.layoutH}{" "}
+                  doesn't match {layoutSizeWarning.targetLabel}{" "}
+                  {layoutSizeWarning.targetW}×{layoutSizeWarning.targetH} —
+                  content will be scaled or cropped.
+                </p>
               </div>
             )}
 
