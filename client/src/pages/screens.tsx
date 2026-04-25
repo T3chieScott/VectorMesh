@@ -88,6 +88,9 @@ import {
   GripVertical,
   ArrowUpToLine,
   ArrowDownToLine,
+  HelpCircle,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { useSiteContext } from "@/hooks/use-site-context";
 import { useAuth } from "@/hooks/use-auth";
@@ -767,6 +770,246 @@ function BookingsPanel({
   );
 }
 
+interface ContentTraceStep {
+  kind: string;
+  [key: string]: any;
+}
+
+interface ContentTraceResponse {
+  screen: { id: string; name: string };
+  serverNow: string;
+  serverTz: string;
+  trace: ContentTraceStep[];
+  outcome: ContentTraceStep | null;
+  layout: { id: string; name: string } | null;
+  activeZoneSources: any[];
+  activeEvent: { id: string; name: string } | null;
+  liveOverride: { id: string; name: string } | null;
+}
+
+function badStep(decision: string): boolean {
+  return [
+    "target-mismatch",
+    "outside-date-range",
+    "wrong-day-of-week",
+    "outside-time-of-day",
+    "layout-deleted",
+    "no-layout-no-fallback",
+  ].includes(decision);
+}
+
+function WhyBlankDialog({
+  screen,
+  open,
+  onOpenChange,
+}: {
+  screen: Screen;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { data, isLoading, isError, error, refetch } = useQuery<ContentTraceResponse>({
+    queryKey: ["/api/admin/screens", screen.id, "content-trace"],
+    enabled: open,
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Why is "{screen.name}" blank?</DialogTitle>
+          <DialogDescription>
+            This re-runs the same content resolver the player uses, and shows
+            you each gate's pass/fail decision.
+          </DialogDescription>
+        </DialogHeader>
+        {isLoading && (
+          <div className="space-y-2 py-4">
+            <Skeleton className="h-6 w-3/4" />
+            <Skeleton className="h-6 w-2/3" />
+            <Skeleton className="h-6 w-1/2" />
+          </div>
+        )}
+        {isError && (
+          <div className="rounded-md border border-destructive p-3 text-sm text-destructive">
+            Could not load diagnostic: {(error as Error).message}
+          </div>
+        )}
+        {data && (
+          <div className="space-y-3 py-2">
+            <div className="text-xs text-muted-foreground" data-testid="text-trace-server-clock">
+              Server time {data.serverNow} ({data.serverTz})
+            </div>
+            <ol className="space-y-2">
+              {data.trace.map((step, idx) => (
+                <li
+                  key={idx}
+                  className="rounded-md border p-3 text-sm"
+                  data-testid={`trace-step-${idx}`}
+                >
+                  <TraceStepRow step={step} />
+                </li>
+              ))}
+            </ol>
+            {data.outcome && (
+              <div
+                className="rounded-md border-2 border-primary/40 bg-primary/5 p-3 text-sm font-medium"
+                data-testid="text-trace-outcome"
+              >
+                Outcome: {(data.outcome as any).source}
+                {(data.outcome as any).layoutName
+                  ? ` → layout "${(data.outcome as any).layoutName}"`
+                  : ""}
+                {(data.outcome as any).blockName
+                  ? ` (from block "${(data.outcome as any).blockName}")`
+                  : ""}
+              </div>
+            )}
+          </div>
+        )}
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => refetch()}
+            disabled={isLoading}
+            data-testid="button-trace-rerun"
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Re-run
+          </Button>
+          <Button onClick={() => onOpenChange(false)} data-testid="button-trace-close">
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function TraceStepRow({ step }: { step: ContentTraceStep }) {
+  switch (step.kind) {
+    case "screen-info":
+      return (
+        <div>
+          <div className="font-medium">Screen</div>
+          <div className="text-muted-foreground text-xs">
+            Fallback layout: {step.fallbackLayoutId ?? "—"}; Fallback playlist:{" "}
+            {step.fallbackPlaylistId ?? "—"}
+          </div>
+        </div>
+      );
+    case "live-override-check":
+      return (
+        <div className="flex items-start gap-2">
+          {step.matched ? (
+            <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />
+          ) : (
+            <XCircle className="mt-0.5 h-4 w-4 text-muted-foreground" />
+          )}
+          <div>
+            <div className="font-medium">Live override</div>
+            <div className="text-muted-foreground text-xs">{step.reason}</div>
+          </div>
+        </div>
+      );
+    case "active-event":
+      return (
+        <div className="flex items-start gap-2">
+          {step.matched ? (
+            <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />
+          ) : (
+            <XCircle className="mt-0.5 h-4 w-4 text-amber-600" />
+          )}
+          <div>
+            <div className="font-medium">
+              Active event {step.matched ? "✓" : "—"}
+            </div>
+            <div className="text-muted-foreground text-xs">{step.reason}</div>
+          </div>
+        </div>
+      );
+    case "version-considered":
+      return (
+        <div className="flex items-start gap-2">
+          {step.included ? (
+            <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />
+          ) : (
+            <XCircle className="mt-0.5 h-4 w-4 text-muted-foreground" />
+          )}
+          <div>
+            <div className="font-medium">
+              Programme "{step.programmeName}" v{step.versionNumber} ({step.status})
+            </div>
+            <div className="text-muted-foreground text-xs">{step.reason}</div>
+          </div>
+        </div>
+      );
+    case "block-evaluated": {
+      const isMatch =
+        step.decision === "matched" ||
+        step.decision === "matched-block-fallback-playlist";
+      const isBad = badStep(step.decision);
+      return (
+        <div
+          className={
+            isMatch
+              ? "flex items-start gap-2"
+              : isBad
+                ? "flex items-start gap-2"
+                : "flex items-start gap-2 opacity-70"
+          }
+        >
+          {isMatch ? (
+            <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />
+          ) : isBad ? (
+            <XCircle className="mt-0.5 h-4 w-4 text-amber-600" />
+          ) : (
+            <span className="mt-0.5 inline-block h-4 w-4" />
+          )}
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <div className="font-medium">
+                Block "{step.blockName}" (priority {step.priority})
+              </div>
+              <Badge
+                variant={isMatch ? "default" : isBad ? "destructive" : "secondary"}
+                className="text-[10px]"
+              >
+                {step.decision}
+              </Badge>
+            </div>
+            <div className="text-muted-foreground text-xs">{step.detail}</div>
+          </div>
+        </div>
+      );
+    }
+    case "fallback-layout":
+    case "fallback-playlist":
+      return (
+        <div className="flex items-start gap-2">
+          {step.pass ? (
+            <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />
+          ) : (
+            <XCircle className="mt-0.5 h-4 w-4 text-muted-foreground" />
+          )}
+          <div>
+            <div className="font-medium">
+              {step.kind === "fallback-layout"
+                ? "Screen fallback layout"
+                : "Screen fallback playlist"}
+            </div>
+            <div className="text-muted-foreground text-xs">{step.reason}</div>
+          </div>
+        </div>
+      );
+    case "outcome":
+      return null;
+    default:
+      return (
+        <pre className="text-xs">{JSON.stringify(step, null, 2)}</pre>
+      );
+  }
+}
+
 function ScreenCard({
   screen,
   profiles,
@@ -820,6 +1063,8 @@ function ScreenCard({
   const { toast } = useToast();
   const { user } = useAuth();
   const isUserAdmin = user?.role === "admin";
+  const canDiagnose = user?.role === "admin" || user?.role === "account_manager";
+  const [diagnoseOpen, setDiagnoseOpen] = useState(false);
 
   const profile = profiles.find((p) => p.id === screen.displayProfileId);
   const siteProfiles = profiles.filter((p) => !p.clientId || p.clientId === screen.clientId);
@@ -1339,6 +1584,18 @@ function ScreenCard({
                 </Form>
               </DialogContent>
             </Dialog>
+            {canDiagnose && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setDiagnoseOpen(true);
+                }}
+                data-testid={`button-why-blank-${screen.id}`}
+              >
+                <HelpCircle className="mr-2 h-4 w-4" />
+                Why is this blank?
+              </DropdownMenuItem>
+            )}
             {!screen.isPaired && (
               <DropdownMenuItem
                 onSelect={() => regeneratePairingCodeMutation.mutate()}
@@ -1449,6 +1706,13 @@ function ScreenCard({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        {canDiagnose && (
+          <WhyBlankDialog
+            screen={screen}
+            open={diagnoseOpen}
+            onOpenChange={setDiagnoseOpen}
+          />
+        )}
       </CardHeader>
       <CardContent className="pt-0 space-y-3">
         {profile && (

@@ -18,6 +18,7 @@ import fs from "fs";
 import * as fileStorage from "./fileStorage";
 import { find as findTimezone } from "geo-tz";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert } from "./email";
+import { resolveScreenContent, type ResolverDeps } from "./contentResolver";
 import { createPremierLeagueTableHandler } from "./premierLeague";
 import { createPremierLeagueFixturesHandler } from "./premierLeagueFixtures";
 import { createHeathrowArrivalsHandler, createHeathrowDeparturesHandler } from "./heathrowFlights";
@@ -3498,136 +3499,44 @@ export async function registerRoutes(
       }
 
       const now = new Date();
-      let layout: any = null;
-      let liveOverride: any = null;
-      let activeZoneSources: any[] = [];
 
-      const overrides = await storage.getLiveOverrides();
-      const activeOverride = overrides.find(o => {
-        if (!o.isActive || new Date(o.startTime) > now || new Date(o.endTime) < now) return false;
-        if (!o.targets || (o.targets as any[]).length === 0) return true;
-        return (o.targets as any[]).some((t: any) => 
-          (t.type === "screen" && t.id === screen.id)
+      // The block / target / time-rule / fallback resolution lives in
+      // `server/contentResolver.ts` so the admin "why is this blank?"
+      // diagnostic and the player share a single, traceable code path.
+      const resolved = await resolveScreenContent(screen, now, storage as ResolverDeps);
+      const layout = resolved.layout;
+      const liveOverride = resolved.liveOverride;
+      const activeZoneSources = resolved.activeZoneSources;
+      const activeEvent = resolved.activeEvent;
+      // Reused by computeNextSession further down (Task #93) — keeping this
+      // alias avoids re-fetching all blocks for the active event.
+      const eventBlocks = resolved.eventBlocks;
+
+      const matchedBlockStep = resolved.trace.find(
+        (s) => s.kind === "block-evaluated" && s.decision === "matched",
+      );
+      const matchedFallbackStep = resolved.trace.find(
+        (s) =>
+          s.kind === "block-evaluated" &&
+          s.decision === "matched-block-fallback-playlist",
+      );
+      if (matchedBlockStep && matchedBlockStep.kind === "block-evaluated") {
+        console.log(
+          `[player-content] screen=${screen.id} matched block=${matchedBlockStep.blockId} (${matchedBlockStep.blockName}) layout=${matchedBlockStep.layoutTemplateId} zoneSources=${activeZoneSources.length}`,
         );
-      });
-
-      if (activeOverride && activeOverride.layoutTemplateId) {
-        layout = await storage.getLayoutTemplate(activeOverride.layoutTemplateId);
-        liveOverride = activeOverride;
-        activeZoneSources = (activeOverride.zoneSources as any[]) || [];
+      } else if (
+        matchedFallbackStep &&
+        matchedFallbackStep.kind === "block-evaluated"
+      ) {
+        console.log(
+          `[player-content] screen=${screen.id} matched block=${matchedFallbackStep.blockId} (${matchedFallbackStep.blockName}) layout=null fallbackPlaylist`,
+        );
       }
-
-      const activeEvent = await getActiveEventForScreen(screen.id, now);
-
-      // Programme/version/block lookup is shared between layout selection and
-      // the next-session computation (Task #93) so we only hit storage once.
-      let eventBlocks: Awaited<ReturnType<typeof storage.getScheduleBlocks>> = [];
-      if (activeEvent) {
-        const [programmes, allVersions] = await Promise.all([
-          storage.getProgrammes(),
-          storage.getProgrammeVersions(),
-        ]);
-        const eventProgrammes = programmes.filter(p => p.eventId === activeEvent.id);
-        const publishedVersions = allVersions.filter(v =>
-          v.status === "published" && eventProgrammes.some(p => p.id === v.programmeId)
-        );
-        const allBlocks = await Promise.all(
-          publishedVersions.map(v => storage.getScheduleBlocks(v.id))
-        );
-        eventBlocks = allBlocks.flat();
-      }
-
-      // Pre-fetch this screen's group memberships once so target matching can
-      // honour {type:"group", id} entries — without this, group-targeted blocks
-      // were silently skipped and screens never received their content.
-      const screenGroupIds = await storage.getScreenGroupIds(screen.id);
-      const screenGroupSet = new Set(screenGroupIds);
-
-      if (!layout && activeEvent) {
-        const flatBlocks = [...eventBlocks].sort((a, b) => (b.priority || 0) - (a.priority || 0));
-
-        for (const block of flatBlocks) {
-          const targets = block.targets as any[] || [];
-          const targetMatch = targets.length === 0 || targets.some((t: any) =>
-            (t.type === "screen" && t.id === screen.id) ||
-            (t.type === "group" && screenGroupSet.has(t.id))
+      for (const step of resolved.trace) {
+        if (step.kind === "block-evaluated" && step.decision === "layout-deleted") {
+          console.warn(
+            `[player-content] screen=${screen.id} block=${step.blockId} (${step.blockName}) references missing layoutTemplate=${step.layoutTemplateId}; skipping`,
           );
-          if (!targetMatch) continue;
-
-          const rule = ((block.timeRules as any[]) || [])[0] as { startDate?: string; endDate?: string; startTime?: string; endTime?: string; daysOfWeek?: number[] } | undefined;
-          let timeMatch = true;
-          if (rule) {
-            if (rule.startDate) {
-              const sd = new Date(rule.startDate + "T00:00:00");
-              if (now < sd) timeMatch = false;
-            }
-            if (rule.endDate) {
-              const ed = new Date(rule.endDate + "T23:59:59");
-              if (now > ed) timeMatch = false;
-            }
-            if (timeMatch && rule.daysOfWeek && rule.daysOfWeek.length > 0) {
-              if (!rule.daysOfWeek.includes(now.getDay())) timeMatch = false;
-            }
-            if (timeMatch && rule.startTime && rule.endTime) {
-              const [sh, sm] = rule.startTime.split(":").map(Number);
-              const [eh, em] = rule.endTime.split(":").map(Number);
-              const startMins = sh * 60 + sm;
-              const endMins = eh * 60 + em;
-              const nowMins = now.getHours() * 60 + now.getMinutes();
-              if (endMins <= startMins) {
-                if (nowMins < startMins && nowMins > endMins) timeMatch = false;
-              } else {
-                if (nowMins < startMins || nowMins > endMins) timeMatch = false;
-              }
-            } else if (timeMatch) {
-              if (rule.startTime) {
-                const [h, m] = rule.startTime.split(":").map(Number);
-                if (now.getHours() < h || (now.getHours() === h && now.getMinutes() < m)) timeMatch = false;
-              }
-              if (rule.endTime) {
-                const [h, m] = rule.endTime.split(":").map(Number);
-                if (now.getHours() > h || (now.getHours() === h && now.getMinutes() > m)) timeMatch = false;
-              }
-            }
-          }
-
-          if (timeMatch) {
-            if (block.layoutTemplateId) {
-              const fetchedLayout = await storage.getLayoutTemplate(block.layoutTemplateId);
-              if (!fetchedLayout) {
-                // Layout was deleted out from under the block. Don't break with
-                // stale state — keep looking for another matching block instead.
-                console.warn(`[player-content] screen=${screen.id} block=${block.id} (${block.name}) references missing layoutTemplate=${block.layoutTemplateId}; skipping`);
-                continue;
-              }
-              layout = fetchedLayout;
-              activeZoneSources = (block.zoneSources as any[]) || [];
-              console.log(`[player-content] screen=${screen.id} matched block=${block.id} (${block.name}) layout=${layout.id} zoneSources=${activeZoneSources.length}`);
-              break;
-            }
-            const blockZoneSources = (block.zoneSources as any[]) || [];
-            const hasFallback = blockZoneSources.some((zs: any) => zs.zoneId === "__fallback__" && zs.type === "playlist" && zs.playlistId);
-            if (hasFallback) {
-              activeZoneSources = blockZoneSources;
-              console.log(`[player-content] screen=${screen.id} matched block=${block.id} (${block.name}) layout=null fallbackPlaylist`);
-              break;
-            }
-          }
-        }
-      }
-
-      if (!layout && activeZoneSources.length === 0 && screen.fallbackLayoutId) {
-        layout = await storage.getLayoutTemplate(screen.fallbackLayoutId);
-      }
-
-      if (!layout && activeZoneSources.length === 0 && screen.fallbackPlaylistId) {
-        const fbPlaylist = await storage.getPlaylist(screen.fallbackPlaylistId);
-        if (fbPlaylist) {
-          activeZoneSources = [{
-            zoneId: "__fallback__",
-            type: "playlist",
-            playlistId: screen.fallbackPlaylistId,
-          }];
         }
       }
 
@@ -3729,6 +3638,75 @@ export async function registerRoutes(
       res.status(500).json({ error: "Failed to fetch player content" });
     }
   });
+
+  // ============ ADMIN: WHY IS THIS BLANK? (read-only diagnostic) ============
+  // Re-runs the real player content resolver against a screen, but instead of
+  // returning the player payload it returns the structured trace so admins can
+  // see exactly which gate (target / date range / day-of-week / time-of-day /
+  // missing layout / fallback) caused a screen to show nothing.
+  app.get(
+    "/api/admin/screens/:id/content-trace",
+    requireAuth,
+    loadUserContext,
+    requireAdminOrAccountManager,
+    async (req, res) => {
+      try {
+        const screen = await storage.getScreen(req.params.id);
+        if (!screen) {
+          return res.status(404).json({ error: "Screen not found" });
+        }
+
+        // Account managers must be scoped to clients they can access. Admins
+        // (clientIds === null on req) bypass this. Screens with no clientId
+        // are treated as admin-only since there's no client to scope on.
+        if (!isAdmin(req)) {
+          if (!screen.clientId || !canAccessClient(req, screen.clientId)) {
+            return res
+              .status(403)
+              .json({ error: "Forbidden: screen is outside your client scope" });
+          }
+        }
+
+        const now = new Date();
+        const resolved = await resolveScreenContent(
+          screen,
+          now,
+          storage as ResolverDeps,
+        );
+
+        const outcomeStep = resolved.trace.find((s) => s.kind === "outcome");
+        return res.json({
+          screen: {
+            id: screen.id,
+            name: screen.name,
+            clientId: screen.clientId,
+            fallbackLayoutId: screen.fallbackLayoutId ?? null,
+            fallbackPlaylistId: screen.fallbackPlaylistId ?? null,
+          },
+          serverNow: now.toISOString(),
+          serverTz: Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown",
+          trace: resolved.trace,
+          outcome: outcomeStep ?? null,
+          layout: resolved.layout
+            ? { id: resolved.layout.id, name: resolved.layout.name }
+            : null,
+          activeZoneSources: resolved.activeZoneSources,
+          activeEvent: resolved.activeEvent
+            ? { id: resolved.activeEvent.id, name: resolved.activeEvent.name }
+            : null,
+          liveOverride: resolved.liveOverride
+            ? {
+                id: resolved.liveOverride.id,
+                name: resolved.liveOverride.name,
+              }
+            : null,
+        });
+      } catch (error) {
+        console.error("Error building content trace:", error);
+        res.status(500).json({ error: "Failed to build content trace" });
+      }
+    },
+  );
 
   // ============ SIMULATOR CONTENT ============
   app.get("/api/simulator/:screenId/content", requireAuth, loadUserContext, async (req, res) => {
