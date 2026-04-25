@@ -55,3 +55,15 @@ if [ "${DEFAULT_SCHEDULE_TZ}" != "Europe/London" ]; then
 else
   echo "[post-merge] DEFAULT_SCHEDULE_TIMEZONE matches the seed default; nothing to backfill."
 fi
+
+# Informational tz-shift audit (Task #138). Reports schedule blocks
+# authored before the Task #137 fix on non-UTC clients whose stored
+# HH:MM may need to be re-checked. Read-only — never mutates rows; the
+# operator decides what to do with each suspect block via the schedule
+# editor or the admin UI. Non-fatal: audit failures must not block
+# deploys, since a missing report is far less harmful than a halted
+# rollout.
+echo "[post-merge] Running schedule-block tz-shift audit (informational, read-only)..."
+if ! npx --no-install tsx scripts/audit-schedule-blocks-tz-shift.ts; then
+  echo "[post-merge] WARNING: tz-shift audit failed; continuing. See above for details."
+fi

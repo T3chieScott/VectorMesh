@@ -4514,6 +4514,51 @@ export async function registerRoutes(
     }
   });
 
+  // ============ SCHEDULE TZ-SHIFT AUDIT (Task #138) ============
+  // Read-only. Lists schedule blocks authored before the Task #137 fix
+  // ("schedule HH:MM is now interpreted in client timezone instead of
+  // UTC") on non-UTC clients, with the operator's likely intended HH:MM
+  // computed from the client's current UTC offset. Operators decide
+  // whether to shift each block via the schedule editor — this endpoint
+  // never mutates anything. Account-manager scoped: only suspect blocks
+  // for clients the caller can already see are returned.
+  // Query params:
+  //   ?cutoff=ISO  (optional) override the default merge instant.
+  app.get(
+    "/api/admin/schedule-blocks/tz-shift-audit",
+    requireAuth,
+    loadUserContext,
+    requireAdminOrAccountManager,
+    async (req, res) => {
+      try {
+        const cutoffParam = typeof req.query.cutoff === "string" ? req.query.cutoff : undefined;
+        const cutoffIso = cutoffParam || TZ_AUDIT_DEFAULT_CUTOFF;
+        if (cutoffParam && Number.isNaN(new Date(cutoffParam).getTime())) {
+          return res.status(400).json({ error: "cutoff is not a valid ISO timestamp" });
+        }
+        const allowed = getAllowedClientIds(req);
+        const evaluatedAt = new Date();
+        const suspects = await findScheduleTzSuspectBlocks({
+          cutoffIso,
+          // Authoring-time offset is computed per-row from createdAt;
+          // this is just the defensive fallback if a row has no
+          // createdAt at all.
+          fallbackInstant: evaluatedAt,
+          allowedClientIds: allowed ?? null,
+        });
+        res.json({
+          cutoff: cutoffIso,
+          evaluatedAt: evaluatedAt.toISOString(),
+          count: suspects.length,
+          suspects,
+        });
+      } catch (error) {
+        console.error("Error running tz-shift audit:", error);
+        res.status(500).json({ error: "Failed to run tz-shift audit" });
+      }
+    },
+  );
+
   // ============ SYSTEM SETTINGS ============
   app.get("/api/system-settings", requireAuth, loadUserContext, requireAdmin, async (req, res) => {
     try {
