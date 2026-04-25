@@ -20,6 +20,24 @@ export function getPathParam(req: Request, key: string): string {
 }
 
 /**
+ * Same as `getPathParam`, but returns `undefined` when the key is missing
+ * (e.g. middleware mounted on routes that may or may not declare the
+ * param, like `validateDeviceToken` which runs on both `/api/player/:id/...`
+ * and `/api/player/heartbeat`). Still asserts on the impossible array case.
+ */
+export function getOptionalPathParam(
+  req: Request,
+  key: string,
+): string | undefined {
+  const v = (req.params as Record<string, string | string[] | undefined>)[key];
+  if (v === undefined) return undefined;
+  if (typeof v !== "string") {
+    throw new Error(`Path param "${key}" was unexpectedly multi-valued`);
+  }
+  return v;
+}
+
+/**
  * Coerce a query param (`req.query.X`) to a single trimmed string.
  *
  * Query strings can legitimately be repeated by clients (`?id=a&id=b`),

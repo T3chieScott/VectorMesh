@@ -38,7 +38,7 @@ import { createNextSpaceXLaunchHandler } from "./spacexLaunch";
 import { createEarthquakesHandler } from "./usgsEarthquakes";
 import { createAircraftOverheadHandler } from "./openSkyAircraft";
 import { buildScreenPatchHandler } from "./screenPatchHandler";
-import { getPathParam, getQueryString } from "./requestParams";
+import { getPathParam, getOptionalPathParam, getQueryString } from "./requestParams";
 
 const playerWeatherSummaryCache = new Map<string, { summary: string; timestamp: number }>();
 const PLAYER_WEATHER_SUMMARY_TTL = 10 * 60 * 1000;
@@ -320,7 +320,11 @@ async function validateDeviceToken(req: Request, res: Response, next: NextFuncti
     return res.status(401).json({ error: "Device token required" });
   }
 
-  const screenId = getPathParam(req, "screenId");
+  // This middleware is mounted on routes both with `:screenId` (e.g.
+  // /api/player/:screenId/content) and without (e.g. /api/player/heartbeat,
+  // /api/player/widgets/...). Use the optional accessor so the missing-key
+  // path falls through to lookup-by-token below.
+  const screenId = getOptionalPathParam(req, "screenId");
   if (screenId) {
     const screen = await storage.getScreen(screenId);
     if (!screen || screen.deviceToken !== token) {
@@ -986,7 +990,7 @@ export async function registerRoutes(
       const allEvents = await storage.getEvents();
       const allowed = getAllowedClientIds(req);
       let filtered = allowed ? allEvents.filter(e => allowed.includes(e.clientId)) : allEvents;
-      const clientId = req.query.clientId as string | undefined;
+      const clientId = getQueryString(req, "clientId", res); if (clientId === null) return;
       if (clientId) {
         if (!canAccessClient(req, clientId)) {
           return res.status(403).json({ error: "Access denied to requested site" });
@@ -1091,7 +1095,7 @@ export async function registerRoutes(
       if (allowed) {
         filtered = profiles.filter(p => !p.clientId || allowed.includes(p.clientId));
       }
-      const clientId = req.query.clientId as string | undefined;
+      const clientId = getQueryString(req, "clientId", res); if (clientId === null) return;
       if (clientId) {
         if (!canAccessClient(req, clientId)) {
           return res.status(403).json({ error: "Access denied to requested site" });
@@ -1175,7 +1179,7 @@ export async function registerRoutes(
       if (allowed) {
         filtered = groups.filter(g => !g.clientId || allowed.includes(g.clientId));
       }
-      const clientId = req.query.clientId as string | undefined;
+      const clientId = getQueryString(req, "clientId", res); if (clientId === null) return;
       if (clientId) {
         if (!canAccessClient(req, clientId)) {
           return res.status(403).json({ error: "Access denied to requested site" });
@@ -1297,7 +1301,7 @@ export async function registerRoutes(
       const memberships = await storage.getAllScreenGroupMemberships();
       const allScreens = await storage.getScreens();
       const allowed = getAllowedClientIds(req);
-      const clientId = req.query.clientId as string | undefined;
+      const clientId = getQueryString(req, "clientId", res); if (clientId === null) return;
       if (clientId && !canAccessClient(req, clientId)) {
         return res.status(403).json({ error: "Access denied to requested site" });
       }
@@ -1346,7 +1350,7 @@ export async function registerRoutes(
       if (allowed) {
         filtered = screens.filter(s => !s.clientId || allowed.includes(s.clientId));
       }
-      const clientId = req.query.clientId as string | undefined;
+      const clientId = getQueryString(req, "clientId", res); if (clientId === null) return;
       if (clientId) {
         if (!canAccessClient(req, clientId)) {
           return res.status(403).json({ error: "Access denied to requested site" });
@@ -1592,7 +1596,7 @@ export async function registerRoutes(
     try {
       const assets = await storage.getMediaAssets();
       const allowed = getAllowedClientIds(req);
-      const clientId = req.query.clientId as string | undefined;
+      const clientId = getQueryString(req, "clientId", res); if (clientId === null) return;
 
       if (clientId) {
         if (!canAccessClient(req, clientId)) {
@@ -1913,7 +1917,7 @@ export async function registerRoutes(
       if (allowed) {
         filtered = layouts.filter(l => !l.clientId || allowed.includes(l.clientId));
       }
-      const clientId = req.query.clientId as string | undefined;
+      const clientId = getQueryString(req, "clientId", res); if (clientId === null) return;
       if (clientId) {
         if (!canAccessClient(req, clientId)) {
           return res.status(403).json({ error: "Access denied to requested site" });
@@ -2098,7 +2102,7 @@ export async function registerRoutes(
         const allowedEventIds = new Set(allEventsForProgrammes.filter(e => allowed.includes(e.clientId)).map(e => e.id));
         filtered = programmes.filter(p => allowedEventIds.has(p.eventId));
       }
-      const clientId = req.query.clientId as string | undefined;
+      const clientId = getQueryString(req, "clientId", res); if (clientId === null) return;
       if (clientId) {
         if (!canAccessClient(req, clientId)) {
           return res.status(403).json({ error: "Access denied to requested site" });
@@ -2199,7 +2203,7 @@ export async function registerRoutes(
     try {
       const playlists = await storage.getPlaylists();
       const allowed = getAllowedClientIds(req);
-      const clientId = req.query.clientId as string | undefined;
+      const clientId = getQueryString(req, "clientId", res); if (clientId === null) return;
 
       let filtered = playlists;
 
@@ -2991,8 +2995,8 @@ export async function registerRoutes(
 
   app.get("/api/screen-presets", requireAuthOrToken, loadUserContext, async (req, res) => {
     try {
-      const screenId = req.query.screenId as string | undefined;
-      const groupId = req.query.groupId as string | undefined;
+      const screenId = getQueryString(req, "screenId", res); if (screenId === null) return;
+      const groupId = getQueryString(req, "groupId", res); if (groupId === null) return;
       if (screenId) {
         const screen = await storage.getScreen(screenId);
         if (!screen) return res.status(404).json({ error: "Screen not found" });
@@ -3284,7 +3288,7 @@ export async function registerRoutes(
         const allowedEventIds = new Set(allEventsForOverrides.filter(e => allowed.includes(e.clientId)).map(e => e.id));
         filtered = overrides.filter(o => !o.eventId || allowedEventIds.has(o.eventId));
       }
-      const clientId = req.query.clientId as string | undefined;
+      const clientId = getQueryString(req, "clientId", res); if (clientId === null) return;
       if (clientId) {
         if (!canAccessClient(req, clientId)) {
           return res.status(403).json({ error: "Access denied to requested site" });
@@ -3912,9 +3916,15 @@ export async function registerRoutes(
 
   const handleWeatherRequest = async (req: Request, res: Response) => {
     try {
-      const lat = parseFloat(req.query.lat as string);
-      const lng = parseFloat(req.query.lng as string);
-      const unit = (req.query.unit as string) || "celsius";
+      const latStr = getQueryString(req, "lat", res);
+      if (latStr === null) return;
+      const lngStr = getQueryString(req, "lng", res);
+      if (lngStr === null) return;
+      const unitRaw = getQueryString(req, "unit", res);
+      if (unitRaw === null) return;
+      const lat = parseFloat(latStr ?? "");
+      const lng = parseFloat(lngStr ?? "");
+      const unit = unitRaw || "celsius";
 
       if (isNaN(lat) || isNaN(lng)) {
         return res.status(400).json({ error: "Invalid latitude or longitude" });
@@ -3996,8 +4006,11 @@ export async function registerRoutes(
 
   const handleNewsRequest = async (req: Request, res: Response) => {
     try {
-      const rssUrl = req.query.url as string;
-      const itemCount = Math.min(parseInt(req.query.count as string) || 10, 50);
+      const rssUrl = getQueryString(req, "url", res);
+      if (rssUrl === null) return;
+      const countRaw = getQueryString(req, "count", res);
+      if (countRaw === null) return;
+      const itemCount = Math.min(parseInt(countRaw ?? "") || 10, 50);
 
       if (!rssUrl) {
         return res.status(400).json({ error: "RSS URL is required" });
@@ -4044,7 +4057,8 @@ export async function registerRoutes(
   // Geocoding endpoint to convert location names to coordinates
   app.get("/api/widgets/geocode", requireAuth, async (req, res) => {
     try {
-      const query = req.query.q as string;
+      const query = getQueryString(req, "q", res);
+      if (query === null) return;
       if (!query) {
         return res.status(400).json({ error: "Location query is required" });
       }
@@ -4328,15 +4342,32 @@ export async function registerRoutes(
   // ============ ADMIN: AUDIT LOGS & STATS ============
   app.get("/api/admin/audit-logs", requireAuth, requireAdminOrAccountManager, loadUserContext, async (req, res) => {
     try {
+      const userId = getQueryString(req, "userId", res);
+      if (userId === null) return;
+      const entityType = getQueryString(req, "entityType", res);
+      if (entityType === null) return;
+      const entityId = getQueryString(req, "entityId", res);
+      if (entityId === null) return;
+      const action = getQueryString(req, "action", res);
+      if (action === null) return;
+      const dateFromStr = getQueryString(req, "dateFrom", res);
+      if (dateFromStr === null) return;
+      const dateToStr = getQueryString(req, "dateTo", res);
+      if (dateToStr === null) return;
+      const limitStr = getQueryString(req, "limit", res);
+      if (limitStr === null) return;
+      const offsetStr = getQueryString(req, "offset", res);
+      if (offsetStr === null) return;
+
       const options: any = {};
-      if (req.query.userId) options.userId = req.query.userId as string;
-      if (req.query.entityType) options.entityType = req.query.entityType as string;
-      if (req.query.entityId) options.entityId = req.query.entityId as string;
-      if (req.query.action) options.action = req.query.action as string;
-      if (req.query.dateFrom) options.dateFrom = new Date(req.query.dateFrom as string);
-      if (req.query.dateTo) options.dateTo = new Date(req.query.dateTo as string);
-      if (req.query.limit) options.limit = parseInt(req.query.limit as string);
-      if (req.query.offset) options.offset = parseInt(req.query.offset as string);
+      if (userId) options.userId = userId;
+      if (entityType) options.entityType = entityType;
+      if (entityId) options.entityId = entityId;
+      if (action) options.action = action;
+      if (dateFromStr) options.dateFrom = new Date(dateFromStr);
+      if (dateToStr) options.dateTo = new Date(dateToStr);
+      if (limitStr) options.limit = parseInt(limitStr);
+      if (offsetStr) options.offset = parseInt(offsetStr);
 
       const result = await storage.getAuditLogs(options);
 
