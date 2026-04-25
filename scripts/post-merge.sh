@@ -44,7 +44,14 @@ if ! node -e "try { new Intl.DateTimeFormat('en-US', { timeZone: process.argv[1]
   DEFAULT_SCHEDULE_TZ="Europe/London"
 fi
 echo "[post-merge] Backfilling clients.timezone to '${DEFAULT_SCHEDULE_TZ}' (only rows still on the seed default)..."
-psql "$DATABASE_URL" -v "tz=${DEFAULT_SCHEDULE_TZ}" -c "
-  UPDATE clients SET timezone = :'tz'
-  WHERE timezone = 'Europe/London' AND :'tz' <> 'Europe/London';
-"
+# psql's :'var' substitution only runs in file / REPL mode, not via -c, so we
+# inline the validated tz directly. The Node Intl check above guarantees this
+# is a real IANA identifier (no quotes / no escapes), making it safe to inline.
+if [ "${DEFAULT_SCHEDULE_TZ}" != "Europe/London" ]; then
+  psql "$DATABASE_URL" -c "
+    UPDATE clients SET timezone = '${DEFAULT_SCHEDULE_TZ}'
+    WHERE timezone = 'Europe/London';
+  "
+else
+  echo "[post-merge] DEFAULT_SCHEDULE_TIMEZONE matches the seed default; nothing to backfill."
+fi
