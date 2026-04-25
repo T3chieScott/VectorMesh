@@ -109,12 +109,15 @@ For each suspect block the script / endpoint reports:
 
 - **stored** — the HH:MM currently in the database. Post-fix, this is
   what the player will use (interpreted in the client's tz).
-- **likely meant** — the stored HH:MM **plus** the client's current
-  UTC offset. This is the operator's probable original intent: the
-  wall-clock time they were typing in to overcome the old UTC
-  comparison.
+- **likely meant** — the stored HH:MM **plus** the UTC offset that was
+  in effect on the client's timezone at the moment the block was
+  authored (`createdAt`). This is the operator's probable original
+  intent: the wall-clock time they were typing in to overcome the old
+  UTC comparison. Using the authoring-time offset (rather than the
+  current offset) keeps the suggestion correct year-round, even when
+  the audit is re-run during the off-DST half of the year.
 
-Examples (London, summer, +60 min offset):
+Examples (London block authored in summer, BST = +60):
 
 | stored | likely meant | Interpretation |
 | ------ | ------------ | -------------- |
@@ -133,13 +136,17 @@ business-critical windows (open / close, peak hours).
 
 ## Caveats
 
-- The "likely meant" suggestion uses the **current** UTC offset for the
-  client's timezone. For zones with DST (most of Europe / North
-  America), the offset that was in effect when the block was authored
-  may differ. The suggestion is a starting point, not gospel.
-- Blocks whose owning client is on UTC, or whose tz currently has a
-  zero offset (e.g. London in winter), are not flagged because the old
-  and new behaviour produce the same result for them.
+- The "likely meant" suggestion uses the **authoring-time** UTC offset
+  for the client's timezone (looked up from `clients.timezone` at the
+  block's `createdAt`). The usual case is that the operator typed the
+  HH:MM during the same DST period they wanted the block to play in;
+  if they instead wrote a block far in advance for a different season,
+  or edited an existing block without changing its `createdAt`, the
+  suggestion may be off by one hour. Always confirm with the site
+  owner before changing a stored time.
+- Blocks whose owning client is on UTC, or whose authoring-time offset
+  was zero (e.g. London in winter), are not flagged because the old and
+  new behaviour produce the same result for them.
 - The audit only inspects `time_rules` entries that have a `startTime`
   or `endTime`. Rules that were date-only or day-of-week only are
   unaffected by the fix and are not reported.

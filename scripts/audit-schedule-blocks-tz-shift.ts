@@ -27,7 +27,12 @@ async function main() {
   console.log(
     `[tz-shift-audit] Cutoff: ${cutoff}  | Evaluation instant: ${now.toISOString()}`,
   );
-  const suspects = await findSuspectBlocks({ cutoffIso: cutoff, now });
+  // Authoring-time offset is computed per-row from the block's
+  // createdAt; `fallbackInstant` is only used if a row has no createdAt.
+  const suspects = await findSuspectBlocks({
+    cutoffIso: cutoff,
+    fallbackInstant: now,
+  });
   if (suspects.length === 0) {
     console.log(
       "[tz-shift-audit] No suspect schedule blocks found. (Either no pre-cutoff blocks exist, or all owning clients are currently on UTC offset 0.)",

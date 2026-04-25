@@ -4518,7 +4518,10 @@ export async function registerRoutes(
   // Read-only. Lists schedule blocks authored before the Task #137 fix
   // ("schedule HH:MM is now interpreted in client timezone instead of
   // UTC") on non-UTC clients, with the operator's likely intended HH:MM
-  // computed from the client's current UTC offset. Operators decide
+  // computed from the client timezone's UTC offset AT THE BLOCK'S
+  // createdAt (the offset the operator was compensating for under the
+  // old behaviour). Using authoring-time offset rather than the current
+  // offset makes the audit DST-correct year-round. Operators decide
   // whether to shift each block via the schedule editor — this endpoint
   // never mutates anything. Account-manager scoped: only suspect blocks
   // for clients the caller can already see are returned.
