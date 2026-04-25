@@ -315,10 +315,16 @@ function canAccessClient(req: Request, clientId: string): boolean {
 }
 
 async function validateDeviceToken(req: Request, res: Response, next: NextFunction) {
+  // Header takes precedence; only consult `?token=` (and validate it for
+  // repeated/non-string values) when no valid header token is present.
   const headerToken = req.headers["x-device-token"];
-  const queryToken = getQueryString(req, "token", res);
-  if (queryToken === null) return; // helper sent 400 for repeated/non-string
-  const token = (typeof headerToken === "string" && headerToken) || queryToken || "";
+  let token: string | undefined =
+    typeof headerToken === "string" && headerToken ? headerToken : undefined;
+  if (!token) {
+    const queryToken = getQueryString(req, "token", res);
+    if (queryToken === null) return; // helper sent 400 for repeated/non-string
+    token = queryToken || undefined;
+  }
   if (!token) {
     return res.status(401).json({ error: "Device token required" });
   }
