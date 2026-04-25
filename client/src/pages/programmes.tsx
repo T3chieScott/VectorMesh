@@ -854,7 +854,7 @@ function ScheduleBlocksSection({
 
       <BlockEditorDialog
         versionId={version.id}
-        versionStatus={version.status}
+        versionStatus={version.status ?? undefined}
         programmeId={version.programmeId}
         block={editingBlock}
         layouts={layouts}

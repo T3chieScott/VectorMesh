@@ -34,6 +34,12 @@ interface PlayerContentData {
   timestamp: string;
   screenshotEnabled?: boolean;
   screenshotRequested?: boolean;
+  // Server-driven full-page reload signal. Set to true by the player
+  // content endpoint (server/routes.ts) when the operator has bumped
+  // the screen's `refreshRequestedAt` after this client last fetched;
+  // the player listens for this on the next poll and triggers a full
+  // window reload so layout/code changes take effect immediately.
+  refreshRequested?: boolean;
 }
 
 const TOKEN_KEY = "signage_device_token";

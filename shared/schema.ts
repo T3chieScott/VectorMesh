@@ -522,7 +522,7 @@ export interface LayoutZone {
   spacexShowLinks?: boolean;
   spacexShowLaunchpad?: boolean;
   // Global Earthquakes configuration
-  earthquakeFeed?: string;
+  earthquakeFeed?: "all_hour" | "all_day" | "significant_hour" | "significant_day";
   earthquakeMinMagnitude?: number;
   earthquakeLimit?: number;
   earthquakeRefreshInterval?: number;
@@ -574,6 +574,16 @@ export interface LayoutZone {
   scheduleStartHour?: number;
   scheduleEndHour?: number;
   scheduleHeaderText?: string;
+  // Heathrow flights widget configuration
+  heathrowPageInterval?: number; // seconds between page rotations (default 10)
+  // Media player runtime payload — set by the player when it expands a
+  // playlist/zone source into the items the renderer should cycle through.
+  // Not persisted on the layout; the layout editor doesn't write this.
+  mediaPlayerItems?: Array<{
+    id: string;
+    mediaAssetId: string;
+    duration: number | null;
+  }>;
 }
 
 // ============ PROGRAMMES ============
