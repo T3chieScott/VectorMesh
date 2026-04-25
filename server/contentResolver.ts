@@ -48,11 +48,8 @@ export type ContentResolveStep =
   | {
       kind: "active-event";
       matched: boolean;
-      bookingId: string | null;
       eventId: string | null;
       eventName: string | null;
-      bookingStartsAt: string | null;
-      bookingEndsAt: string | null;
       reason: string;
     }
   | {
@@ -325,11 +322,8 @@ export async function resolveScreenContent(
     trace.push({
       kind: "active-event",
       matched: false,
-      bookingId: null,
       eventId: null,
       eventName: null,
-      bookingStartsAt: null,
-      bookingEndsAt: null,
       reason:
         "No screen-event booking covers the current time for this screen.",
     });
@@ -337,11 +331,8 @@ export async function resolveScreenContent(
     trace.push({
       kind: "active-event",
       matched: true,
-      bookingId: null,
       eventId: activeEvent.id,
       eventName: activeEvent.name,
-      bookingStartsAt: null,
-      bookingEndsAt: null,
       reason: `Active event "${activeEvent.name}" resolved for this screen at ${now.toISOString()}.`,
     });
   }

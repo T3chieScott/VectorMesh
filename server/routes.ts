@@ -19,6 +19,7 @@ import * as fileStorage from "./fileStorage";
 import { find as findTimezone } from "geo-tz";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert } from "./email";
 import { resolveScreenContent, type ResolverDeps } from "./contentResolver";
+import { buildContentTraceHandler } from "./contentTraceHandler";
 import { createPremierLeagueTableHandler } from "./premierLeague";
 import { createPremierLeagueFixturesHandler } from "./premierLeagueFixtures";
 import { createHeathrowArrivalsHandler, createHeathrowDeparturesHandler } from "./heathrowFlights";
@@ -3649,63 +3650,7 @@ export async function registerRoutes(
     requireAuth,
     loadUserContext,
     requireAdminOrAccountManager,
-    async (req, res) => {
-      try {
-        const screen = await storage.getScreen(req.params.id);
-        if (!screen) {
-          return res.status(404).json({ error: "Screen not found" });
-        }
-
-        // Account managers must be scoped to clients they can access. Admins
-        // (clientIds === null on req) bypass this. Screens with no clientId
-        // are treated as admin-only since there's no client to scope on.
-        if (!isAdmin(req)) {
-          if (!screen.clientId || !canAccessClient(req, screen.clientId)) {
-            return res
-              .status(403)
-              .json({ error: "Forbidden: screen is outside your client scope" });
-          }
-        }
-
-        const now = new Date();
-        const resolved = await resolveScreenContent(
-          screen,
-          now,
-          storage as ResolverDeps,
-        );
-
-        const outcomeStep = resolved.trace.find((s) => s.kind === "outcome");
-        return res.json({
-          screen: {
-            id: screen.id,
-            name: screen.name,
-            clientId: screen.clientId,
-            fallbackLayoutId: screen.fallbackLayoutId ?? null,
-            fallbackPlaylistId: screen.fallbackPlaylistId ?? null,
-          },
-          serverNow: now.toISOString(),
-          serverTz: Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown",
-          trace: resolved.trace,
-          outcome: outcomeStep ?? null,
-          layout: resolved.layout
-            ? { id: resolved.layout.id, name: resolved.layout.name }
-            : null,
-          activeZoneSources: resolved.activeZoneSources,
-          activeEvent: resolved.activeEvent
-            ? { id: resolved.activeEvent.id, name: resolved.activeEvent.name }
-            : null,
-          liveOverride: resolved.liveOverride
-            ? {
-                id: resolved.liveOverride.id,
-                name: resolved.liveOverride.name,
-              }
-            : null,
-        });
-      } catch (error) {
-        console.error("Error building content trace:", error);
-        res.status(500).json({ error: "Failed to build content trace" });
-      }
-    },
+    buildContentTraceHandler(storage as any, { isAdmin, canAccessClient }),
   );
 
   // ============ SIMULATOR CONTENT ============

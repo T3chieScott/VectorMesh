@@ -891,9 +891,21 @@ function TraceStepRow({ step }: { step: ContentTraceStep }) {
       return (
         <div>
           <div className="font-medium">Screen</div>
-          <div className="text-muted-foreground text-xs">
-            Fallback layout: {step.fallbackLayoutId ?? "—"}; Fallback playlist:{" "}
-            {step.fallbackPlaylistId ?? "—"}
+          <div className="text-muted-foreground text-xs space-y-0.5">
+            <div>
+              <span className="font-mono">{step.screenId}</span> — "
+              {step.screenName}"
+            </div>
+            <div>
+              Last seen:{" "}
+              {step.lastSeen
+                ? new Date(step.lastSeen).toLocaleString()
+                : "never"}
+            </div>
+            <div>
+              Fallback layout: {step.fallbackLayoutId ?? "—"}; Fallback playlist:{" "}
+              {step.fallbackPlaylistId ?? "—"}
+            </div>
           </div>
         </div>
       );
