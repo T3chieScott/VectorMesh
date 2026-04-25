@@ -1142,6 +1142,7 @@ function CreateProgrammeDialog({ events }: { events: Event[] }) {
       apiRequest("POST", "/api/programmes", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/programmes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/programme-versions"] });
       setOpen(false);
       form.reset();
       toast({ title: "Programme created successfully" });
