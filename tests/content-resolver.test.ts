@@ -319,7 +319,7 @@ test("outside time-of-day window → outside-time-of-day decision (real POS02 ca
   });
 
   const now = new Date();
-  now.setHours(0, 36, 0, 0);
+  now.setUTCHours(0, 36, 0, 0);
 
   const result = await resolveScreenContent(
     makeScreen(),
@@ -331,6 +331,7 @@ test("outside time-of-day window → outside-time-of-day decision (real POS02 ca
       blocksByVersion: { [version.id]: [block] },
       layouts: { [layout.id]: layout },
     }),
+    "UTC",
   );
 
   const step = result.trace.find((s) => s.kind === "block-evaluated");
@@ -357,7 +358,7 @@ test("overnight wrap window matches when 'now' is before midnight inside the win
   });
 
   const now = new Date();
-  now.setHours(23, 30, 0, 0);
+  now.setUTCHours(23, 30, 0, 0);
 
   const result = await resolveScreenContent(
     makeScreen(),
@@ -369,6 +370,7 @@ test("overnight wrap window matches when 'now' is before midnight inside the win
       blocksByVersion: { [version.id]: [block] },
       layouts: { [layout.id]: layout },
     }),
+    "UTC",
   );
 
   assert.equal(result.layout?.id, layout.id);

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -33,14 +33,127 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, MoreHorizontal, Pencil, Trash2, Users, Calendar, Building2, Lock, Unlock } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil, Trash2, Users, Calendar, Building2, Lock, Unlock, Check, ChevronsUpDown } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import type { Client, Event } from "@shared/schema";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  DEFAULT_SCHEDULE_TIMEZONE_FALLBACK,
+  describeTzOffset,
+  isValidTimezone,
+} from "@shared/timezone-utils";
+import { cn } from "@/lib/utils";
+
+// Get the list of IANA zones once at module load. Older browsers (and a
+// handful of older Node runtimes used during dev SSR) don't expose
+// `Intl.supportedValuesOf`; in that case we fall back to a small popular
+// list so the combobox still works.
+function listTimezones(): string[] {
+  const intlAny = Intl as unknown as {
+    supportedValuesOf?: (key: string) => string[];
+  };
+  if (typeof intlAny.supportedValuesOf === "function") {
+    return intlAny.supportedValuesOf("timeZone");
+  }
+  return [
+    "UTC",
+    "Europe/London",
+    "Europe/Paris",
+    "America/New_York",
+    "America/Los_Angeles",
+    "Asia/Tokyo",
+    "Asia/Singapore",
+    "Australia/Sydney",
+  ];
+}
+const TIMEZONE_OPTIONS = listTimezones();
+
+function TimezoneCombobox({
+  value,
+  onChange,
+  testId,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  testId?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const offset = isValidTimezone(value)
+    ? describeTzOffset(new Date(), value)
+    : "";
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between font-normal"
+          data-testid={testId ?? "button-timezone"}
+        >
+          <span className="truncate">
+            {value || "Select timezone"}
+            {offset ? ` — ${offset}` : ""}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
+        <Command>
+          <CommandInput placeholder="Search timezone…" data-testid="input-timezone-search" />
+          <CommandList>
+            <CommandEmpty>No timezone found.</CommandEmpty>
+            <CommandGroup>
+              {TIMEZONE_OPTIONS.map((tz) => (
+                <CommandItem
+                  key={tz}
+                  value={tz}
+                  onSelect={(selected) => {
+                    onChange(selected);
+                    setOpen(false);
+                  }}
+                  data-testid={`option-timezone-${tz}`}
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      value === tz ? "opacity-100" : "opacity-0",
+                    )}
+                  />
+                  {tz}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 const clientFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().optional(),
   maxUploadSizeMb: z.coerce.number().min(1).max(2048).optional(),
+  timezone: z
+    .string()
+    .min(1, "Timezone is required")
+    .refine((v) => isValidTimezone(v), {
+      message: "Invalid IANA timezone",
+    }),
 });
 
 type ClientFormValues = z.infer<typeof clientFormSchema>;
@@ -60,6 +173,7 @@ function ClientCard({ client, events }: { client: Client; events: Event[] }) {
       name: client.name,
       description: client.description || "",
       maxUploadSizeMb: client.maxUploadSizeMb ?? 100,
+      timezone: client.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK,
     },
   });
 
@@ -183,6 +297,27 @@ function ClientCard({ client, events }: { client: Client; events: Event[] }) {
                         </FormItem>
                       )}
                     />
+                    <FormField
+                      control={form.control}
+                      name="timezone"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Timezone</FormLabel>
+                          <FormControl>
+                            <TimezoneCombobox
+                              value={field.value}
+                              onChange={field.onChange}
+                              testId="button-edit-client-timezone"
+                            />
+                          </FormControl>
+                          <p className="text-xs text-muted-foreground">
+                            Schedule blocks are evaluated against this site's
+                            wall-clock time.
+                          </p>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
                     <div className="flex justify-end gap-2">
                       <Button
                         type="button"
@@ -243,14 +378,38 @@ function CreateClientDialog() {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
 
+  // The install-wide tz default is driven by env DEFAULT_SCHEDULE_TIMEZONE
+  // on the server. We surface it here so multi-region operators don't have
+  // to re-pick a tz for every new site. We seed the form with the
+  // hardcoded fallback and re-seed it once when the dialog opens (or when
+  // the env-driven default first arrives), so we never clobber edits the
+  // operator made while typing.
+  const { data: tzDefaultData } = useQuery<{ timezone: string }>({
+    queryKey: ["/api/config/schedule-timezone-default"],
+  });
+  const defaultTz = tzDefaultData?.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+
   const form = useForm<ClientFormValues>({
     resolver: zodResolver(clientFormSchema),
     defaultValues: {
       name: "",
       description: "",
       maxUploadSizeMb: 100,
+      timezone: defaultTz,
     },
   });
+
+  // Re-seed the form's tz field if (a) the dialog has just opened, or
+  // (b) the env-driven default arrived after the dialog mounted. We only
+  // touch the tz field — never the name/description the user might be
+  // typing — and only when the field is still untouched.
+  useEffect(() => {
+    if (!open) return;
+    const tzField = form.getFieldState("timezone");
+    if (!tzField.isDirty) {
+      form.setValue("timezone", defaultTz, { shouldDirty: false });
+    }
+  }, [open, defaultTz, form]);
 
   const createMutation = useMutation({
     mutationFn: (data: ClientFormValues) => apiRequest("POST", "/api/clients", data),
@@ -322,6 +481,27 @@ function CreateClientDialog() {
                     <Input type="number" min={1} max={2048} {...field} data-testid="input-client-max-upload" />
                   </FormControl>
                   <p className="text-xs text-muted-foreground">Maximum file size allowed for uploads (1–2048 MB)</p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="timezone"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Timezone</FormLabel>
+                  <FormControl>
+                    <TimezoneCombobox
+                      value={field.value}
+                      onChange={field.onChange}
+                      testId="button-create-client-timezone"
+                    />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">
+                    Schedule blocks are evaluated against this site's
+                    wall-clock time.
+                  </p>
                   <FormMessage />
                 </FormItem>
               )}

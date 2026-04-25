@@ -25,6 +25,12 @@ export const clients = pgTable("clients", {
   logoUrl: text("logo_url"),
   locked: boolean("locked").default(false),
   maxUploadSizeMb: integer("max_upload_size_mb").default(100),
+  // IANA timezone (e.g. "Europe/London"). Used to interpret schedule
+  // block start/end times and day-of-week rules at this client/site.
+  // See shared/timezone-utils.ts for the helpers that consume it. The
+  // env var `DEFAULT_SCHEDULE_TIMEZONE` controls the migration backfill
+  // value (see scripts/post-merge.sh).
+  timezone: text("timezone").notNull().default("Europe/London"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -33,7 +39,29 @@ export const clientsRelations = relations(clients, ({ many }) => ({
   events: many(events),
 }));
 
-export const insertClientSchema = createInsertSchema(clients).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertClientSchema = createInsertSchema(clients)
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .extend({
+    // Validate the timezone against the runtime's IANA database. We can't
+    // import shared/timezone-utils here (it would create a circular import
+    // back through createInsertSchema's transform), so the refinement uses
+    // Intl.DateTimeFormat directly.
+    timezone: z
+      .string()
+      .min(1, "Timezone is required")
+      .refine(
+        (tz) => {
+          try {
+            new Intl.DateTimeFormat("en-US", { timeZone: tz }).format(new Date(0));
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        { message: "Unknown IANA timezone" },
+      )
+      .optional(),
+  });
 export type InsertClient = z.infer<typeof insertClientSchema>;
 export type Client = typeof clients.$inferSelect;
 

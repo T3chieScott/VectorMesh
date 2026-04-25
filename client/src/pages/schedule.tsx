@@ -110,6 +110,10 @@ import {
   hasBookingCoveringWindow,
   normaliseRuleDates,
 } from "@shared/schedule-diagnostics";
+import {
+  DEFAULT_SCHEDULE_TIMEZONE_FALLBACK,
+  describeTzOffset,
+} from "@shared/timezone-utils";
 
 type ViewMode = "day" | "week";
 
@@ -318,6 +322,7 @@ function getBlockIssues(
     eventId?: string | null;
     bookingsByScreen: Map<string, ScreenEventBooking[]>;
     now: Date;
+    tz: string;
   }
 ): BlockIssue[] {
   const issues: BlockIssue[] = [];
@@ -336,7 +341,7 @@ function getBlockIssues(
   }
 
   // Block whose entire firing window is in the past will never play again.
-  const effectiveEnd = getBlockEffectiveEndDate(block);
+  const effectiveEnd = getBlockEffectiveEndDate(block, ctx.tz);
   if (effectiveEnd && effectiveEnd < ctx.now) {
     issues.push({
       kind: "block-in-past",
@@ -378,6 +383,7 @@ function getBlockIssues(
         ctx.bookingsByScreen,
         ctx.eventId,
         ctx.now,
+        ctx.tz,
       );
       if (!covered) {
         issues.push({
@@ -783,6 +789,7 @@ function DayColumn({
   columnRef,
   blockSummaries,
   blockIssues,
+  tz,
 }: {
   date: Date;
   blocks: ScheduleBlockWithMeta[];
@@ -796,6 +803,7 @@ function DayColumn({
   columnRef?: (el: HTMLDivElement | null) => void;
   blockSummaries: Map<string, BlockSummary>;
   blockIssues: Map<string, BlockIssue[]>;
+  tz: string;
 }) {
   const isToday = isSameDay(date, new Date());
   const dayOfWeek = date.getDay();
@@ -807,7 +815,7 @@ function DayColumn({
   const dayBlockEntries: Array<{ block: ScheduleBlockWithMeta; rule: TimeRule }> = [];
   for (const block of blocks) {
     const timeRules = (block.timeRules as TimeRule[]) || [];
-    const bestRule = getRuleForDay(timeRules, date);
+    const bestRule = getRuleForDay(timeRules, date, tz);
     if (bestRule) {
       dayBlockEntries.push({ block, rule: bestRule });
     }
@@ -930,6 +938,7 @@ function ScheduleBlockEditor({
   media,
   blocks,
   bookingsByScreen,
+  editorTz,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -949,6 +958,7 @@ function ScheduleBlockEditor({
   media: MediaAsset[];
   blocks: ScheduleBlock[];
   bookingsByScreen: Map<string, ScreenEventBooking[]>;
+  editorTz: string;
 }) {
   const { toast } = useToast();
   const isEditing = !!block;
@@ -1419,6 +1429,12 @@ function ScheduleBlockEditor({
                 )}
               />
             </div>
+            <p
+              className="text-xs text-muted-foreground -mt-2"
+              data-testid="text-editor-tz-label"
+            >
+              Times shown in {editorTz} ({describeTzOffset(new Date(), editorTz)}).
+            </p>
             
             <div className="grid grid-cols-2 gap-4">
               <FormField
@@ -1828,6 +1844,7 @@ function PlaybackHealthBanner({
   membershipsByGroup,
   bookingsByScreen,
   eventId,
+  tz,
 }: {
   blocks: ScheduleBlock[];
   blockSummaries: Map<string, BlockSummary>;
@@ -1836,6 +1853,7 @@ function PlaybackHealthBanner({
   membershipsByGroup: Map<string, string[]>;
   bookingsByScreen: Map<string, ScreenEventBooking[]>;
   eventId: string | null;
+  tz: string;
 }) {
   // Don't surface the banner until the user has selected a programme that has
   // an event — otherwise the empty state from no-event noise overwhelms.
@@ -1910,6 +1928,7 @@ function PlaybackHealthBanner({
       eventId,
       windowStart,
       windowEnd,
+      tz,
     );
     if (result.kind === "no-firing-day") {
       issueCounts.set("no-firing-day", (issueCounts.get("no-firing-day") || 0) + 1);
@@ -1977,7 +1996,13 @@ export default function SchedulePage() {
     if (el) el.scrollTop = 8 * HOUR_HEIGHT;
   }, []);
   const { toast } = useToast();
-  const { selectedClientId } = useSiteContext();
+  const { selectedClientId, selectedClient } = useSiteContext();
+  // Site-level evaluation timezone (Task #136). All schedule diagnostics —
+  // firing-window math, "next session", playability checks — must agree
+  // with the player's tz-aware resolver. Falls back when there's no site
+  // selected (e.g. admin "all sites" view).
+  const scheduleTz =
+    selectedClient?.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
 
   const programmesQ = useSiteFilteredQuery<Programme[]>("/api/programmes");
   const layoutsQ = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
@@ -2088,11 +2113,12 @@ export default function SchedulePage() {
           eventId,
           bookingsByScreen,
           now,
+          tz: scheduleTz,
         })
       );
     }
     return map;
-  }, [blocks, blockSummaries, screens, layouts, membershipsByGroup, selectedVersion?.status, selectedProgramme?.eventId, bookingsByScreen]);
+  }, [blocks, blockSummaries, screens, layouts, membershipsByGroup, selectedVersion?.status, selectedProgramme?.eventId, bookingsByScreen, scheduleTz]);
 
   const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
   const weekDays = viewMode === "week"
@@ -2124,8 +2150,8 @@ export default function SchedulePage() {
           const a = blocksWithRules[i];
           const b = blocksWithRules[j];
 
-          const aRule = getRuleForDay((a.timeRules as TimeRule[]) || [], day);
-          const bRule = getRuleForDay((b.timeRules as TimeRule[]) || [], day);
+          const aRule = getRuleForDay((a.timeRules as TimeRule[]) || [], day, scheduleTz);
+          const bRule = getRuleForDay((b.timeRules as TimeRule[]) || [], day, scheduleTz);
 
           if (!aRule?.startTime || !aRule?.endTime || !bRule?.startTime || !bRule?.endTime) continue;
 
@@ -2178,7 +2204,7 @@ export default function SchedulePage() {
     }
 
     return result;
-  }, [blocks, weekDays, screens, membershipsByGroup]);
+  }, [blocks, weekDays, screens, membershipsByGroup, scheduleTz]);
   
   const handlePrevious = () => {
     setCurrentDate((prev) => (viewMode === "week" ? subWeeks(prev, 1) : addDays(prev, -1)));
@@ -2564,6 +2590,7 @@ export default function SchedulePage() {
         membershipsByGroup={membershipsByGroup}
         bookingsByScreen={bookingsByScreen}
         eventId={selectedProgramme?.eventId ?? null}
+        tz={scheduleTz}
       />
 
       <div className="grid gap-6 lg:grid-cols-4">
@@ -2649,6 +2676,7 @@ export default function SchedulePage() {
                         }}
                         blockSummaries={blockSummaries}
                         blockIssues={blockIssues}
+                        tz={scheduleTz}
                       />
                     ))}
                   </div>
@@ -2742,6 +2770,7 @@ export default function SchedulePage() {
         media={media}
         blocks={blocks}
         bookingsByScreen={bookingsByScreen}
+        editorTz={scheduleTz}
       />
     </div>
   );

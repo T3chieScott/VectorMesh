@@ -8,6 +8,14 @@ import type {
   ScheduleBlock,
   Screen,
 } from "@shared/schema";
+import {
+  DEFAULT_SCHEDULE_TIMEZONE_FALLBACK,
+  describeTzOffset,
+  getWallPartsInTz,
+  parseHHMMString,
+  startOfDayInTz,
+  endOfDayInTz,
+} from "@shared/timezone-utils";
 
 export type ContentResolveOutcomeSource =
   | "live-override"
@@ -138,86 +146,100 @@ type TimeMatch =
   | { ok: true }
   | { ok: false; decision: BlockDecision; detail: string };
 
-function evaluateTimeRule(rule: BlockTimeRule | undefined, now: Date): TimeMatch {
+function evaluateTimeRule(
+  rule: BlockTimeRule | undefined,
+  now: Date,
+  tz: string,
+): TimeMatch {
   if (!rule) return { ok: true };
 
+  const wall = getWallPartsInTz(now, tz);
+
   if (rule.startDate) {
-    const sd = new Date(rule.startDate + "T00:00:00");
-    if (now < sd) {
+    const sd = startOfDayInTz(rule.startDate, tz);
+    if (sd && now < sd) {
       return {
         ok: false,
         decision: "outside-date-range",
-        detail: `Block starts on ${rule.startDate}, which is in the future.`,
+        detail: `Block starts on ${rule.startDate}, which is in the future (${tz}).`,
       };
     }
   }
   if (rule.endDate) {
-    const ed = new Date(rule.endDate + "T23:59:59");
-    if (now > ed) {
+    const ed = endOfDayInTz(rule.endDate, tz);
+    if (ed && now > ed) {
       return {
         ok: false,
         decision: "outside-date-range",
-        detail: `Block ended on ${rule.endDate}.`,
+        detail: `Block ended on ${rule.endDate} (${tz}).`,
       };
     }
   }
   if (rule.daysOfWeek && rule.daysOfWeek.length > 0) {
-    if (!rule.daysOfWeek.includes(now.getDay())) {
+    if (!rule.daysOfWeek.includes(wall.dayOfWeek)) {
       return {
         ok: false,
         decision: "wrong-day-of-week",
-        detail: `Block only plays on days ${rule.daysOfWeek.join(", ")} (0=Sun); today is ${now.getDay()}.`,
+        detail: `Block only plays on days ${rule.daysOfWeek.join(", ")} (0=Sun); today in ${tz} is ${wall.dayOfWeek}.`,
       };
     }
   }
   if (rule.startTime && rule.endTime) {
-    const [sh, sm] = rule.startTime.split(":").map(Number);
-    const [eh, em] = rule.endTime.split(":").map(Number);
-    const startMins = sh * 60 + sm;
-    const endMins = eh * 60 + em;
-    const nowMins = now.getHours() * 60 + now.getMinutes();
-    let inside = true;
-    if (endMins <= startMins) {
-      // Overnight wrap: window is [startMins, 24:00) ∪ [00:00, endMins].
-      if (nowMins < startMins && nowMins > endMins) inside = false;
-    } else {
-      if (nowMins < startMins || nowMins > endMins) inside = false;
-    }
-    if (!inside) {
-      return {
-        ok: false,
-        decision: "outside-time-of-day",
-        detail: `Block plays ${rule.startTime}-${rule.endTime}; server time is ${formatHHMM(now)}.`,
-      };
-    }
-  } else {
-    if (rule.startTime) {
-      const [h, m] = rule.startTime.split(":").map(Number);
-      if (now.getHours() < h || (now.getHours() === h && now.getMinutes() < m)) {
+    const startHM = parseHHMMString(rule.startTime);
+    const endHM = parseHHMMString(rule.endTime);
+    if (startHM && endHM) {
+      const startMins = startHM.hours * 60 + startHM.minutes;
+      const endMins = endHM.hours * 60 + endHM.minutes;
+      const nowMins = wall.minuteOfDay;
+      let inside = true;
+      if (endMins <= startMins) {
+        // Overnight wrap: window is [startMins, 24:00) ∪ [00:00, endMins].
+        if (nowMins < startMins && nowMins > endMins) inside = false;
+      } else {
+        if (nowMins < startMins || nowMins > endMins) inside = false;
+      }
+      if (!inside) {
         return {
           ok: false,
           decision: "outside-time-of-day",
-          detail: `Block starts at ${rule.startTime}; server time is ${formatHHMM(now)}.`,
+          detail: `Block plays ${rule.startTime}-${rule.endTime} (${tz}); current wall time is ${formatWallHHMM(wall)}.`,
         };
       }
     }
+  } else {
+    if (rule.startTime) {
+      const hm = parseHHMMString(rule.startTime);
+      if (hm) {
+        const startMins = hm.hours * 60 + hm.minutes;
+        if (wall.minuteOfDay < startMins) {
+          return {
+            ok: false,
+            decision: "outside-time-of-day",
+            detail: `Block starts at ${rule.startTime} (${tz}); current wall time is ${formatWallHHMM(wall)}.`,
+          };
+        }
+      }
+    }
     if (rule.endTime) {
-      const [h, m] = rule.endTime.split(":").map(Number);
-      if (now.getHours() > h || (now.getHours() === h && now.getMinutes() > m)) {
-        return {
-          ok: false,
-          decision: "outside-time-of-day",
-          detail: `Block ended at ${rule.endTime}; server time is ${formatHHMM(now)}.`,
-        };
+      const hm = parseHHMMString(rule.endTime);
+      if (hm) {
+        const endMins = hm.hours * 60 + hm.minutes;
+        if (wall.minuteOfDay > endMins) {
+          return {
+            ok: false,
+            decision: "outside-time-of-day",
+            detail: `Block ended at ${rule.endTime} (${tz}); current wall time is ${formatWallHHMM(wall)}.`,
+          };
+        }
       }
     }
   }
   return { ok: true };
 }
 
-function formatHHMM(d: Date): string {
-  const h = String(d.getHours()).padStart(2, "0");
-  const m = String(d.getMinutes()).padStart(2, "0");
+function formatWallHHMM(wall: { hour: number; minute: number }): string {
+  const h = String(wall.hour).padStart(2, "0");
+  const m = String(wall.minute).padStart(2, "0");
   return `${h}:${m}`;
 }
 
@@ -232,6 +254,7 @@ export async function resolveScreenContent(
   screen: Screen,
   now: Date,
   deps: ResolverDeps,
+  tz: string = DEFAULT_SCHEDULE_TIMEZONE_FALLBACK,
 ): Promise<ResolveResult> {
   const trace: ContentResolveStep[] = [];
   let layout: LayoutTemplate | null = null;
@@ -248,7 +271,10 @@ export async function resolveScreenContent(
     fallbackLayoutId: screen.fallbackLayoutId ?? null,
     fallbackPlaylistId: screen.fallbackPlaylistId ?? null,
     serverNow: now.toISOString(),
-    serverTz: Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown",
+    // `serverTz` is the *evaluation* timezone (the screen's client/site
+    // timezone) — NOT the server runtime's timezone. Naming kept for
+    // backwards compatibility of the trace shape.
+    serverTz: `${tz} (${describeTzOffset(now, tz)})`,
   });
 
   // ===== Live override =====
@@ -429,7 +455,7 @@ export async function resolveScreenContent(
       }
 
       const rule = ((block.timeRules as BlockTimeRule[]) || [])[0];
-      const timeMatch = evaluateTimeRule(rule, now);
+      const timeMatch = evaluateTimeRule(rule, now, tz);
       if (!timeMatch.ok) {
         trace.push({
           kind: "block-evaluated",

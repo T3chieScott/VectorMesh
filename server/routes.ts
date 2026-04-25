@@ -9,6 +9,16 @@ import QRCode from "qrcode";
 import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema, type InsertScreenEventBooking, type TimeRule, type ScheduleTarget } from "@shared/schema";
 import { derivePlaybackStatus } from "@shared/playback-derivation";
 import { canAccessBooking } from "@shared/booking-utils";
+import {
+  DEFAULT_SCHEDULE_TIMEZONE_FALLBACK,
+  describeTzOffset,
+  getWallPartsInTz,
+  parseHHMMString,
+  startOfDayInTz,
+  endOfDayInTz,
+  wallTimeOnDateInTz,
+} from "@shared/timezone-utils";
+import { getDefaultScheduleTimezone } from "./scheduleTimezone";
 import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
 import { setupAuth, isAuthenticated, isAuthenticatedOrToken, hashApiToken } from "./auth";
 import multer from "multer";
@@ -65,7 +75,7 @@ async function fetchWeatherSummary(lat: number, lng: number, unit: string): Prom
   }
 }
 
-function computeNextSession(blocks: Array<{ name: string; targets?: any; timeRules?: any }>, screenId: string, now: Date): { title: string; time: string; countdown: string } | null {
+export function computeNextSession(blocks: Array<{ name: string; targets?: any; timeRules?: any }>, screenId: string, now: Date, tz: string): { title: string; time: string; countdown: string } | null {
   let best: { startMs: number; name: string; timeStr: string } | null = null;
   for (const block of blocks) {
     const targets = (block.targets as any[]) || [];
@@ -73,25 +83,41 @@ function computeNextSession(blocks: Array<{ name: string; targets?: any; timeRul
     if (!targetMatch) continue;
     const rules = (block.timeRules as any[]) || [];
     for (const rule of rules) {
-      if (!rule?.startTime) continue;
-      const [sh, sm] = String(rule.startTime).split(":").map(Number);
-      if (Number.isNaN(sh) || Number.isNaN(sm)) continue;
+      const startHM = parseHHMMString(rule?.startTime);
+      if (!startHM) continue;
+      const sh = startHM.hours;
+      const sm = startHM.minutes;
+      const startDateLimit = rule.startDate ? startOfDayInTz(String(rule.startDate), tz) : null;
+      const endDateLimit = rule.endDate ? endOfDayInTz(String(rule.endDate), tz) : null;
       // Look up to 7 days ahead for the next occurrence respecting daysOfWeek/startDate/endDate.
+      // Day arithmetic is performed against the wall-clock day in `tz` so DST
+      // transitions and non-UTC sites work correctly. We advance by anchoring
+      // each successive lookup at noon LOCAL TIME on the next calendar day
+      // (computed via startOfDayInTz + 12h) instead of adding 24h of UTC,
+      // because a 24h-of-UTC delta can skip a calendar day when crossing a
+      // spring-forward boundary near midnight.
+      const nowParts = getWallPartsInTz(now, tz);
+      let cursorDateString = `${nowParts.year.toString().padStart(4, "0")}-${
+        nowParts.month.toString().padStart(2, "0")
+      }-${nowParts.day.toString().padStart(2, "0")}`;
       for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
-        const candidate = new Date(now);
-        candidate.setDate(candidate.getDate() + dayOffset);
-        candidate.setHours(sh, sm, 0, 0);
+        const dayStart = startOfDayInTz(cursorDateString, tz);
+        if (!dayStart) break;
+        // Anchor at local noon on this calendar day so wallTimeOnDateInTz
+        // pins to the right Y/M/D regardless of zone offset.
+        const dayAnchor = new Date(dayStart.getTime() + 12 * 60 * 60 * 1000);
+        const candidate = wallTimeOnDateInTz(dayAnchor, tz, sh, sm);
+        // Advance the cursor to the next local calendar day for the next iteration.
+        const nextParts = getWallPartsInTz(new Date(dayStart.getTime() + 26 * 60 * 60 * 1000), tz);
+        cursorDateString = `${nextParts.year.toString().padStart(4, "0")}-${
+          nextParts.month.toString().padStart(2, "0")
+        }-${nextParts.day.toString().padStart(2, "0")}`;
         if (candidate.getTime() <= now.getTime()) continue;
-        if (rule.startDate) {
-          const sd = new Date(String(rule.startDate) + "T00:00:00");
-          if (candidate < sd) continue;
-        }
-        if (rule.endDate) {
-          const ed = new Date(String(rule.endDate) + "T23:59:59");
-          if (candidate > ed) continue;
-        }
+        if (startDateLimit && candidate < startDateLimit) continue;
+        if (endDateLimit && candidate > endDateLimit) continue;
         if (rule.daysOfWeek && Array.isArray(rule.daysOfWeek) && rule.daysOfWeek.length > 0) {
-          if (!rule.daysOfWeek.includes(candidate.getDay())) continue;
+          const wall = getWallPartsInTz(candidate, tz);
+          if (!rule.daysOfWeek.includes(wall.dayOfWeek)) continue;
         }
         const timeStr = `${String(sh).padStart(2, "0")}:${String(sm).padStart(2, "0")}`;
         if (!best || candidate.getTime() < best.startMs) {
@@ -173,7 +199,8 @@ async function buildPlayerVarsForScreen(
   let nextSession: { title: string; time: string; countdown: string } | null = null;
   if (eventBlocks.length > 0) {
     try {
-      nextSession = computeNextSession(eventBlocks, screen.id, now);
+      const tz = client?.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+      nextSession = computeNextSession(eventBlocks, screen.id, now, tz);
     } catch (e) {
       console.warn("next session computation failed:", e);
     }
@@ -615,6 +642,13 @@ export async function registerRoutes(
     res.json({ needsSetup: !hasUsersWithPasswords, userCount: allUsers.length });
   });
 
+  // Expose the install-wide schedule timezone default so the create-site
+  // form starts pre-populated with the right zone for this deployment
+  // instead of the hard-coded fallback.
+  app.get("/api/config/schedule-timezone-default", requireAuth, (_req, res) => {
+    res.json({ timezone: getDefaultScheduleTimezone() });
+  });
+
   app.post("/api/auth/2fa/setup", requireAuth, async (req, res) => {
     try {
       const user = (req as any).dbUser;
@@ -866,6 +900,12 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Admin access required to create sites" });
       }
       const data = insertClientSchema.parse(req.body);
+      // If the operator didn't explicitly pick a tz, honour the install
+      // default (env DEFAULT_SCHEDULE_TIMEZONE) instead of the schema
+      // fallback so multi-region operators get sensible defaults.
+      if (!data.timezone || !data.timezone.trim()) {
+        data.timezone = getDefaultScheduleTimezone();
+      }
       const client = await storage.createClient(data);
       logAudit(req, "create", "client", client.id, { name: client.name });
       res.status(201).json(client);
@@ -2725,7 +2765,10 @@ export async function registerRoutes(
         }
       }
 
-      const status = derivePlaybackStatus(blocks, !!visibleActiveEvent, now);
+      const tz = screenClientId
+        ? (await storage.getClient(screenClientId))?.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK
+        : DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+      const status = derivePlaybackStatus(blocks, !!visibleActiveEvent, now, tz);
 
       const allForScreen = await storage.getScreenEventBookings({ screenId: screen.id });
       const futureBookings = allForScreen
@@ -3504,7 +3547,16 @@ export async function registerRoutes(
       // The block / target / time-rule / fallback resolution lives in
       // `server/contentResolver.ts` so the admin "why is this blank?"
       // diagnostic and the player share a single, traceable code path.
-      const resolved = await resolveScreenContent(screen, now, storage as ResolverDeps);
+      const screenClient = screen.clientId
+        ? await storage.getClient(screen.clientId)
+        : null;
+      const screenTz = screenClient?.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+      const resolved = await resolveScreenContent(
+        screen,
+        now,
+        storage as ResolverDeps,
+        screenTz,
+      );
       const layout = resolved.layout;
       const liveOverride = resolved.liveOverride;
       const activeZoneSources = resolved.activeZoneSources;
@@ -3561,17 +3613,15 @@ export async function registerRoutes(
 
       const event = activeEvent;
 
-      let client = null;
-      if (screen.clientId) {
-        client = await storage.getClient(screen.clientId);
-      }
+      // Reuse the client we fetched earlier for tz resolution.
+      const client = screenClient;
 
       // ===== Extra player template variables (Task #93) =====
       // Reuse cached event/client/eventBlocks already fetched above to avoid double-fetching.
       let nextSession: { title: string; time: string; countdown: string } | null = null;
       if (eventBlocks.length > 0) {
         try {
-          nextSession = computeNextSession(eventBlocks, screen.id, now);
+          nextSession = computeNextSession(eventBlocks, screen.id, now, screenTz);
         } catch (e) {
           console.warn("next session computation failed:", e);
         }
@@ -3697,6 +3747,12 @@ export async function registerRoutes(
           ? rawSimActiveEvent
           : null;
 
+      // Resolve the simulator's evaluation timezone from the screen's client.
+      const simClient = screen.clientId
+        ? await storage.getClient(screen.clientId)
+        : null;
+      const simTz = simClient?.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+
       if (!layout && simActiveEvent) {
         const [programmes, allVersions] = await Promise.all([
           storage.getProgrammes(),
@@ -3715,6 +3771,10 @@ export async function registerRoutes(
         const simScreenGroupIds = await storage.getScreenGroupIds(screen.id);
         const simScreenGroupSet = new Set(simScreenGroupIds);
 
+        // Pre-compute the wall-clock parts in the simulator's evaluation tz so
+        // every per-block check uses the same tz-aware view of "now".
+        const simWall = getWallPartsInTz(now, simTz);
+
         for (const block of flatBlocks) {
           const targets = block.targets as any[] || [];
           const targetMatch = targets.length === 0 || targets.some((t: any) =>
@@ -3727,35 +3787,43 @@ export async function registerRoutes(
           let timeMatch = true;
           if (rule2) {
             if (rule2.startDate) {
-              const sd = new Date(rule2.startDate + "T00:00:00");
-              if (now < sd) timeMatch = false;
+              const sd = startOfDayInTz(rule2.startDate, simTz);
+              if (sd && now < sd) timeMatch = false;
             }
             if (rule2.endDate) {
-              const ed = new Date(rule2.endDate + "T23:59:59");
-              if (now > ed) timeMatch = false;
+              const ed = endOfDayInTz(rule2.endDate, simTz);
+              if (ed && now > ed) timeMatch = false;
             }
             if (timeMatch && rule2.daysOfWeek && rule2.daysOfWeek.length > 0) {
-              if (!rule2.daysOfWeek.includes(now.getDay())) timeMatch = false;
+              if (!rule2.daysOfWeek.includes(simWall.dayOfWeek)) timeMatch = false;
             }
             if (timeMatch && rule2.startTime && rule2.endTime) {
-              const [sh, sm] = rule2.startTime.split(":").map(Number);
-              const [eh, em] = rule2.endTime.split(":").map(Number);
-              const startMins = sh * 60 + sm;
-              const endMins = eh * 60 + em;
-              const nowMins = now.getHours() * 60 + now.getMinutes();
-              if (endMins <= startMins) {
-                if (nowMins < startMins && nowMins > endMins) timeMatch = false;
-              } else {
-                if (nowMins < startMins || nowMins > endMins) timeMatch = false;
+              const startHM = parseHHMMString(rule2.startTime);
+              const endHM = parseHHMMString(rule2.endTime);
+              if (startHM && endHM) {
+                const startMins = startHM.hours * 60 + startHM.minutes;
+                const endMins = endHM.hours * 60 + endHM.minutes;
+                const nowMins = simWall.minuteOfDay;
+                if (endMins <= startMins) {
+                  if (nowMins < startMins && nowMins > endMins) timeMatch = false;
+                } else {
+                  if (nowMins < startMins || nowMins > endMins) timeMatch = false;
+                }
               }
             } else if (timeMatch) {
               if (rule2.startTime) {
-                const [h, m] = rule2.startTime.split(":").map(Number);
-                if (now.getHours() < h || (now.getHours() === h && now.getMinutes() < m)) timeMatch = false;
+                const hm = parseHHMMString(rule2.startTime);
+                if (hm) {
+                  const startMins = hm.hours * 60 + hm.minutes;
+                  if (simWall.minuteOfDay < startMins) timeMatch = false;
+                }
               }
               if (rule2.endTime) {
-                const [h, m] = rule2.endTime.split(":").map(Number);
-                if (now.getHours() > h || (now.getHours() === h && now.getMinutes() > m)) timeMatch = false;
+                const hm = parseHHMMString(rule2.endTime);
+                if (hm) {
+                  const endMins = hm.hours * 60 + hm.minutes;
+                  if (simWall.minuteOfDay > endMins) timeMatch = false;
+                }
               }
             }
           }

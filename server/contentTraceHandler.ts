@@ -3,10 +3,15 @@ import {
   resolveScreenContent,
   type ResolverDeps,
 } from "./contentResolver";
-import type { Screen } from "@shared/schema";
+import type { Client, Screen } from "@shared/schema";
+import {
+  DEFAULT_SCHEDULE_TIMEZONE_FALLBACK,
+  describeTzOffset,
+} from "@shared/timezone-utils";
 
 export interface TraceHandlerDeps extends ResolverDeps {
   getScreen(id: string): Promise<Screen | undefined>;
+  getClient(id: string): Promise<Client | undefined>;
 }
 
 export interface AuthGate {
@@ -44,7 +49,8 @@ export function buildContentTraceHandler(
       }
 
       const now = new Date();
-      const resolved = await resolveScreenContent(screen, now, deps);
+      const tz = await resolveScreenTimezone(deps, screen);
+      const resolved = await resolveScreenContent(screen, now, deps, tz);
 
       const outcomeStep = resolved.trace.find((s) => s.kind === "outcome");
       return res.json({
@@ -56,8 +62,9 @@ export function buildContentTraceHandler(
           fallbackPlaylistId: screen.fallbackPlaylistId ?? null,
         },
         serverNow: now.toISOString(),
-        serverTz:
-          Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown",
+        // Reports the *evaluation* timezone (the screen's client/site
+        // timezone) — not the runtime's timezone.
+        serverTz: `${tz} (${describeTzOffset(now, tz)})`,
         trace: resolved.trace,
         outcome: outcomeStep ?? null,
         layout: resolved.layout
@@ -79,4 +86,17 @@ export function buildContentTraceHandler(
       return res.status(500).json({ error: "Failed to build content trace" });
     }
   };
+}
+
+async function resolveScreenTimezone(
+  deps: TraceHandlerDeps,
+  screen: Screen,
+): Promise<string> {
+  if (!screen.clientId) return DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+  try {
+    const client = await deps.getClient(screen.clientId);
+    return client?.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+  } catch {
+    return DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+  }
 }

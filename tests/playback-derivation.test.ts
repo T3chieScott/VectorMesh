@@ -8,6 +8,10 @@ import {
 } from "../shared/playback-derivation";
 import type { TimeRule } from "../shared/schema";
 
+// All tests run in UTC so day arithmetic is deterministic regardless of
+// where node is executed.
+const TZ = "UTC";
+
 // Helper: build a block with one TimeRule covering daysOfWeek between
 // startTime/endTime, optionally bounded by start/end dates.
 function block(
@@ -25,16 +29,16 @@ function block(
   return { id, name, timeRules: [filled] };
 }
 
-const FRIDAY_2PM = new Date("2026-04-24T14:00:00"); // local time, getDay=5
+const FRIDAY_2PM = new Date("2026-04-24T14:00:00Z"); // UTC, getDay=5 in UTC
 
 test("ruleAdmitsDay matches when day-of-week is in the list", () => {
   const r: TimeRule = { daysOfWeek: [5], startTime: "09:00", endTime: "17:00" } as TimeRule;
-  assert.equal(ruleAdmitsDay(r, FRIDAY_2PM), true);
+  assert.equal(ruleAdmitsDay(r, FRIDAY_2PM, TZ), true);
 });
 
 test("ruleAdmitsDay rejects when day-of-week is not in the list", () => {
   const r: TimeRule = { daysOfWeek: [0, 6], startTime: "09:00", endTime: "17:00" } as TimeRule;
-  assert.equal(ruleAdmitsDay(r, FRIDAY_2PM), false);
+  assert.equal(ruleAdmitsDay(r, FRIDAY_2PM, TZ), false);
 });
 
 test("ruleAdmitsDay rejects when date is before startDate", () => {
@@ -44,7 +48,7 @@ test("ruleAdmitsDay rejects when date is before startDate", () => {
     endTime: "17:00",
     startDate: "2026-05-01",
   } as TimeRule;
-  assert.equal(ruleAdmitsDay(r, FRIDAY_2PM), false);
+  assert.equal(ruleAdmitsDay(r, FRIDAY_2PM, TZ), false);
 });
 
 test("ruleAdmitsDay rejects when date is after endDate", () => {
@@ -54,54 +58,54 @@ test("ruleAdmitsDay rejects when date is after endDate", () => {
     endTime: "17:00",
     endDate: "2026-04-23",
   } as TimeRule;
-  assert.equal(ruleAdmitsDay(r, FRIDAY_2PM), false);
+  assert.equal(ruleAdmitsDay(r, FRIDAY_2PM, TZ), false);
 });
 
 test("blockFiringWindowForDay returns null for a block with no time rules", () => {
   const b: PlaybackBlock = { id: "x", name: "x", timeRules: [] };
-  assert.equal(blockFiringWindowForDay(b, FRIDAY_2PM), null);
+  assert.equal(blockFiringWindowForDay(b, FRIDAY_2PM, TZ), null);
 });
 
 test("blockFiringWindowForDay returns null when end <= start (invalid)", () => {
   const b = block("a", { startTime: "17:00", endTime: "09:00" });
-  assert.equal(blockFiringWindowForDay(b, FRIDAY_2PM), null);
+  assert.equal(blockFiringWindowForDay(b, FRIDAY_2PM, TZ), null);
 });
 
 test("blockFiringWindowForDay returns the parsed [start,end) window on a matching day", () => {
   const b = block("a", { daysOfWeek: [5], startTime: "09:00", endTime: "17:00" });
-  const w = blockFiringWindowForDay(b, FRIDAY_2PM);
+  const w = blockFiringWindowForDay(b, FRIDAY_2PM, TZ);
   assert.ok(w);
-  assert.equal(w!.start.getHours(), 9);
-  assert.equal(w!.start.getMinutes(), 0);
-  assert.equal(w!.end.getHours(), 17);
+  assert.equal(w!.start.getUTCHours(), 9);
+  assert.equal(w!.start.getUTCMinutes(), 0);
+  assert.equal(w!.end.getUTCHours(), 17);
 });
 
 test("derivePlaybackStatus returns noEvent when there's no booking and no blocks", () => {
-  const status = derivePlaybackStatus([], false, FRIDAY_2PM);
+  const status = derivePlaybackStatus([], false, FRIDAY_2PM, TZ);
   assert.equal(status.kind, "noEvent");
 });
 
 test("derivePlaybackStatus returns noBlockToday when an event is booked but no block fires", () => {
   // Block fires only on Sunday (day 0); today is Friday.
   const b = block("a", { daysOfWeek: [0], startTime: "09:00", endTime: "17:00" });
-  const status = derivePlaybackStatus([b], true, FRIDAY_2PM);
+  const status = derivePlaybackStatus([b], true, FRIDAY_2PM, TZ);
   assert.equal(status.kind, "noBlockToday");
 });
 
 test("derivePlaybackStatus reports the currently-playing block", () => {
   const b = block("a", { daysOfWeek: [5], startTime: "09:00", endTime: "17:00" });
-  const status = derivePlaybackStatus([b], true, FRIDAY_2PM);
+  const status = derivePlaybackStatus([b], true, FRIDAY_2PM, TZ);
   assert.equal(status.kind, "playing");
   if (status.kind === "playing") {
     assert.equal(status.blockId, "a");
-    assert.equal(status.endsAt.getHours(), 17);
+    assert.equal(status.endsAt.getUTCHours(), 17);
   }
 });
 
 test("derivePlaybackStatus prefers the block that ends latest when two are concurrent at equal priority", () => {
   const shorter = block("short", { daysOfWeek: [5], startTime: "09:00", endTime: "15:00" });
   const longer = block("long", { daysOfWeek: [5], startTime: "10:00", endTime: "18:00" });
-  const status = derivePlaybackStatus([shorter, longer], true, FRIDAY_2PM);
+  const status = derivePlaybackStatus([shorter, longer], true, FRIDAY_2PM, TZ);
   assert.equal(status.kind, "playing");
   if (status.kind === "playing") {
     assert.equal(status.blockId, "long");
@@ -128,7 +132,7 @@ test("derivePlaybackStatus picks the higher-priority block even if its window is
     ],
     priority: 100,
   };
-  const status = derivePlaybackStatus([lowPrioLong, highPrioShort], true, FRIDAY_2PM);
+  const status = derivePlaybackStatus([lowPrioLong, highPrioShort], true, FRIDAY_2PM, TZ);
   assert.equal(status.kind, "playing");
   if (status.kind === "playing") {
     assert.equal(status.blockId, "short");
@@ -153,7 +157,7 @@ test("derivePlaybackStatus treats missing priority as zero", () => {
     ],
     priority: 5,
   };
-  const status = derivePlaybackStatus([noPrio, withPrio], true, FRIDAY_2PM);
+  const status = derivePlaybackStatus([noPrio, withPrio], true, FRIDAY_2PM, TZ);
   assert.equal(status.kind, "playing");
   if (status.kind === "playing") {
     assert.equal(status.blockId, "prio");
@@ -162,11 +166,11 @@ test("derivePlaybackStatus treats missing priority as zero", () => {
 
 test("derivePlaybackStatus returns playsNext when a block fires later today", () => {
   const later = block("evening", { daysOfWeek: [5], startTime: "18:00", endTime: "20:00" });
-  const status = derivePlaybackStatus([later], true, FRIDAY_2PM);
+  const status = derivePlaybackStatus([later], true, FRIDAY_2PM, TZ);
   assert.equal(status.kind, "playsNext");
   if (status.kind === "playsNext") {
     assert.equal(status.blockId, "evening");
-    assert.equal(status.startsAt.getHours(), 18);
+    assert.equal(status.startsAt.getUTCHours(), 18);
   }
 });
 
@@ -174,7 +178,7 @@ test("derivePlaybackStatus picks the earliest upcoming block among many", () => 
   const a = block("a", { daysOfWeek: [5], startTime: "20:00", endTime: "21:00" });
   const b = block("b", { daysOfWeek: [5], startTime: "16:00", endTime: "17:00" });
   const c = block("c", { daysOfWeek: [5], startTime: "18:00", endTime: "19:00" });
-  const status = derivePlaybackStatus([a, b, c], true, FRIDAY_2PM);
+  const status = derivePlaybackStatus([a, b, c], true, FRIDAY_2PM, TZ);
   assert.equal(status.kind, "playsNext");
   if (status.kind === "playsNext") {
     assert.equal(status.blockId, "b");
@@ -184,7 +188,7 @@ test("derivePlaybackStatus picks the earliest upcoming block among many", () => 
 test("derivePlaybackStatus prefers playing over playsNext when both apply", () => {
   const now = block("now", { daysOfWeek: [5], startTime: "13:00", endTime: "15:00" });
   const later = block("later", { daysOfWeek: [5], startTime: "18:00", endTime: "20:00" });
-  const status = derivePlaybackStatus([now, later], true, FRIDAY_2PM);
+  const status = derivePlaybackStatus([now, later], true, FRIDAY_2PM, TZ);
   assert.equal(status.kind, "playing");
 });
 
@@ -195,7 +199,7 @@ test("derivePlaybackStatus ignores blocks whose startDate hasn't been reached ye
     endTime: "17:00",
     startDate: "2026-05-01",
   });
-  const status = derivePlaybackStatus([future], true, FRIDAY_2PM);
+  const status = derivePlaybackStatus([future], true, FRIDAY_2PM, TZ);
   assert.equal(status.kind, "noBlockToday");
 });
 
@@ -206,6 +210,6 @@ test("derivePlaybackStatus ignores blocks whose endDate has already passed", () 
     endTime: "17:00",
     endDate: "2026-04-23",
   });
-  const status = derivePlaybackStatus([past], true, FRIDAY_2PM);
+  const status = derivePlaybackStatus([past], true, FRIDAY_2PM, TZ);
   assert.equal(status.kind, "noBlockToday");
 });
