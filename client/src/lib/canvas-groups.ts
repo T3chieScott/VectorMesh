@@ -159,50 +159,6 @@ export function rectIntersection(a: Rect, b: Rect): Rect | null {
   return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
 }
 
-// Find the next free X offset along the wall, given an existing
-// canvas size and the siblings already placed on it. We scan the
-// candidate X positions formed by sibling right-edges (plus 0) and
-// pick the smallest one where placing a `screenWidth × screenHeight`
-// box at (X, 0) doesn't overlap any sibling. Falls back to the
-// rightmost sibling's right edge if every gap is too small. Y is
-// always 0 for this naive layout.
-export function nextFreeOffsetX(
-  siblings: Pick<Screen, "canvasX" | "canvasY">[],
-  screenWidth: number,
-  screenHeight: number,
-): { x: number; y: number } {
-  // Candidate X positions: 0, then the right edge of every sibling.
-  const candidates = new Set<number>([0]);
-  for (const s of siblings) {
-    const sx = s.canvasX ?? 0;
-    candidates.add(sx);
-  }
-  for (const s of siblings) {
-    const sx = s.canvasX ?? 0;
-    candidates.add(sx + 1);
-  }
-  // Plus the right edges so we can land flush after the rightmost.
-  let rightEdge = 0;
-  for (const s of siblings) {
-    const sx = s.canvasX ?? 0;
-    // We don't have width info per sibling here without their profile,
-    // so callers should pass a richer list when they want overlap-aware
-    // placement. For the common "place to the right of everyone" case
-    // we just track the max canvasX and ask the caller to pad.
-    rightEdge = Math.max(rightEdge, sx);
-  }
-  // Without per-sibling widths we can't perfectly avoid overlap; the
-  // caller is expected to pass a `nextFreeOffsetXWithRects` for that.
-  // Default behaviour: drop new screen `screenWidth` pixels to the
-  // right of the rightmost sibling's left edge.
-  const sortedCandidates = [...candidates].sort((a, b) => a - b);
-  for (const x of sortedCandidates) {
-    if (x === 0 && siblings.length > 0) continue;
-    return { x, y: 0 };
-  }
-  return { x: rightEdge + screenWidth, y: 0 };
-}
-
 // Overlap-aware placement: caller supplies rectangles for every
 // sibling (since the sibling's physical width comes from its display
 // profile, which the helper module doesn't know about). Picks the

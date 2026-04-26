@@ -27,6 +27,8 @@ import { cn } from "@/lib/utils";
 import {
   groupScreensByCanvas,
   siblingsOnCanvas,
+  siblingsForCanvasParams,
+  type CanvasGroup,
   nextFreeOffsetForRects,
 } from "@/lib/canvas-groups";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -273,22 +275,80 @@ function CanvasFields({
   form,
   profiles,
   prefix,
-  siblings = [],
+  canvasGroups,
+  excludeScreenId,
+  allProfiles,
 }: {
   form: any;
   profiles: DisplayProfile[];
   prefix: string;
-  siblings?: CanvasSiblingRect[];
+  // Optional implicit-canvas context. When provided, sibling ghosts +
+  // overlap/gap warnings are derived from the LIVE form values
+  // (clientId, canvasWidth, canvasHeight) so editing the canvas keys
+  // re-targets the wall in real time. Pass undefined to disable
+  // sibling rendering entirely (e.g. for a brand-new screen with no
+  // wall context yet).
+  canvasGroups?: Map<string, CanvasGroup>;
+  excludeScreenId?: string;
+  // Full unfiltered profile list, needed to look up profile sizes for
+  // siblings whose displayProfileId may belong to a different site
+  // than the one currently selected in `profiles`.
+  allProfiles?: DisplayProfile[];
 }) {
   const canvasEnabled = form.watch("canvasEnabled");
   const canvasWidth = form.watch("canvasWidth") || 1920;
   const canvasHeight = form.watch("canvasHeight") || 1080;
   const canvasX = form.watch("canvasX") || 0;
   const canvasY = form.watch("canvasY") || 0;
+  const watchedClientId = form.watch("clientId");
   const profileId = form.watch("displayProfileId");
   const profile = profiles.find((p: DisplayProfile) => p.id === profileId);
   const screenWidth = profile?.width || 1920;
   const screenHeight = profile?.height || 1080;
+
+  // Derive siblings live from the form values + the implicit-canvas
+  // group map. This matters during editing: changing clientId or
+  // width/height should immediately retarget which wall this screen
+  // belongs to (and therefore which ghost rectangles + warnings to
+  // show), not wait for save.
+  const siblings: CanvasSiblingRect[] = useMemo(() => {
+    if (!canvasGroups) return [];
+    const liveSiblings = siblingsForCanvasParams(
+      {
+        excludeScreenId,
+        clientId: watchedClientId || null,
+        canvasWidth: form.watch("canvasWidth"),
+        canvasHeight: form.watch("canvasHeight"),
+      },
+      canvasGroups,
+    );
+    const profileSource = allProfiles ?? profiles;
+    return liveSiblings
+      .map((s): CanvasSiblingRect | null => {
+        const sp = profileSource.find((p) => p.id === s.displayProfileId);
+        if (!sp || !sp.width || !sp.height) return null;
+        return {
+          id: s.id,
+          name: s.name,
+          x: s.canvasX ?? 0,
+          y: s.canvasY ?? 0,
+          width: sp.width,
+          height: sp.height,
+        };
+      })
+      .filter((r): r is CanvasSiblingRect => r !== null);
+    // form.watch values are read inside the memo body, so we list the
+    // top-level watched values as deps to recompute on change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    canvasGroups,
+    excludeScreenId,
+    watchedClientId,
+    canvasWidth,
+    canvasHeight,
+    allProfiles,
+    profiles,
+  ]);
 
   // Compute non-blocking warnings for the current placement.
   const warnings: string[] = [];
@@ -1163,7 +1223,7 @@ function ScreenCard({
   layouts,
   playlists,
   clients,
-  allScreens,
+  canvasGroups,
   activeOverride,
   editOpen: editOpenProp,
   onEditOpenChange,
@@ -1180,7 +1240,10 @@ function ScreenCard({
   layouts: LayoutTemplate[];
   playlists: Playlist[];
   clients: Client[];
-  allScreens: Screen[];
+  // Implicit-canvas grouping computed once at the page level and
+  // passed down so each card doesn't re-group the entire screens
+  // list on every render.
+  canvasGroups: Map<string, CanvasGroup>;
   activeOverride: LiveOverride | null;
   editOpen?: boolean;
   onEditOpenChange?: (open: boolean) => void;
@@ -1217,15 +1280,12 @@ function ScreenCard({
   const profile = profiles.find((p) => p.id === screen.displayProfileId);
   const siteProfiles = profiles.filter((p) => !p.clientId || p.clientId === screen.clientId);
 
-  // Implicit canvas grouping — find every other screen on the same
-  // canvas so the preview, the screenshot AOI overlay, and the
-  // "Add screen to this canvas" dialog all see the same set of
-  // siblings. Memoised because the screens list is large enough that
-  // re-grouping on every render adds up across cards.
-  const canvasGroups = useMemo(
-    () => groupScreensByCanvas(allScreens),
-    [allScreens],
-  );
+  // Implicit canvas siblings for the SAVED screen. Used by the
+  // screenshot AOI overlay and by the "Add screen to this canvas"
+  // pre-fill — both of which want the persisted set, not whatever
+  // the user is currently typing into the edit form. Live-edit
+  // sibling rendering inside CanvasFields uses canvasGroups +
+  // form values directly.
   const siblingScreens = useMemo(
     () => siblingsOnCanvas(screen, canvasGroups),
     [screen, canvasGroups],
@@ -1810,7 +1870,9 @@ function ScreenCard({
                       form={form}
                       profiles={siteProfiles}
                       prefix="edit"
-                      siblings={siblingRects}
+                      canvasGroups={canvasGroups}
+                      excludeScreenId={screen.id}
+                      allProfiles={profiles}
                     />
                     <RoomAndWeatherFields form={form} prefix="edit" />
                     <div className="flex justify-end gap-2">
@@ -1979,6 +2041,7 @@ function ScreenCard({
             profiles={profiles}
             events={events}
             clients={clients}
+            canvasGroups={canvasGroups}
             controlledOpen={addSiblingOpen}
             onControlledOpenChange={setAddSiblingOpen}
             initialValues={addSiblingDefaults}
@@ -2308,6 +2371,7 @@ function CreateScreenDialog({
   profiles,
   events,
   clients,
+  canvasGroups,
   controlledOpen,
   onControlledOpenChange,
   initialValues,
@@ -2318,6 +2382,11 @@ function CreateScreenDialog({
   profiles: DisplayProfile[];
   events: Event[];
   clients: Client[];
+  // When provided, CanvasFields inside this dialog will render
+  // sibling ghosts + overlap warnings live as the user types
+  // canvas dimensions / picks a site. Not having groups means the
+  // dialog still works, just without that wall context.
+  canvasGroups?: Map<string, CanvasGroup>;
   controlledOpen?: boolean;
   onControlledOpenChange?: (open: boolean) => void;
   initialValues?: Partial<ScreenFormValues>;
@@ -2523,7 +2592,13 @@ function CreateScreenDialog({
             >
               You can book this screen for one or more events after it's created — open the screen and use the Event bookings panel.
             </div>
-            <CanvasFields form={form} profiles={siteProfiles} prefix="create" />
+            <CanvasFields
+              form={form}
+              profiles={siteProfiles}
+              prefix="create"
+              canvasGroups={canvasGroups}
+              allProfiles={profiles}
+            />
             <RoomAndWeatherFields form={form} prefix="create" />
             <div className="flex justify-end gap-2">
               <Button
@@ -2660,7 +2735,7 @@ function SortableScreenCard(props: {
   layouts: LayoutTemplate[];
   playlists: Playlist[];
   clients: Client[];
-  allScreens: Screen[];
+  canvasGroups: Map<string, CanvasGroup>;
   activeOverride: LiveOverride | null;
   dragEnabled: boolean;
   dragDisabledReason?: string;
@@ -2713,7 +2788,7 @@ function SortableScreenCard(props: {
         layouts={props.layouts}
         playlists={props.playlists}
         clients={props.clients}
-        allScreens={props.allScreens}
+        canvasGroups={props.canvasGroups}
         activeOverride={props.activeOverride}
         dragHandle={handle}
         onMoveToStart={props.onMoveToStart}
@@ -2748,6 +2823,13 @@ export default function ScreensPage() {
 
   const liveOverridesQueryConfig = useSiteFilteredQuery<LiveOverride[]>("/api/live-overrides");
   const { data: liveOverrides = [] } = useQuery({ ...liveOverridesQueryConfig, refetchInterval: 10000 });
+
+  // Compute the implicit-canvas grouping ONCE per screens array and
+  // pass the resulting Map down to every card / dialog. Doing the
+  // grouping per-card was O(N²) — every card re-grouped the entire
+  // list — and it also meant the controlled "Add screen to this
+  // canvas" CreateScreenDialog couldn't see siblings live.
+  const canvasGroups = useMemo(() => groupScreensByCanvas(screens), [screens]);
 
   const getActiveOverrideForScreen = (screenId: string): LiveOverride | null => {
     const now = new Date();
@@ -2930,7 +3012,12 @@ export default function ScreensPage() {
               Table
             </Button>
           </div>
-          <CreateScreenDialog profiles={profiles} events={events} clients={clients} />
+          <CreateScreenDialog
+            profiles={profiles}
+            events={events}
+            clients={clients}
+            canvasGroups={canvasGroups}
+          />
         </div>
       </div>
 
@@ -3043,7 +3130,12 @@ export default function ScreensPage() {
               Get started by adding your first screen. You'll receive a pairing
               code to connect the physical display.
             </p>
-            <CreateScreenDialog profiles={profiles} events={events} clients={clients} />
+            <CreateScreenDialog
+              profiles={profiles}
+              events={events}
+              clients={clients}
+              canvasGroups={canvasGroups}
+            />
           </CardContent>
         </Card>
       ) : view === "cards" ? (
@@ -3066,7 +3158,7 @@ export default function ScreensPage() {
                     layouts={layouts}
                     playlists={playlists}
                     clients={clients}
-                    allScreens={screens}
+                    canvasGroups={canvasGroups}
                     activeOverride={getActiveOverrideForScreen(screen.id)}
                     dragEnabled={dragEnabled}
                     dragDisabledReason={dragDisabledReason}
@@ -3111,7 +3203,7 @@ export default function ScreensPage() {
                   layouts={layouts}
                   playlists={playlists}
                   clients={clients}
-                  allScreens={screens}
+                  canvasGroups={canvasGroups}
                   activeOverride={getActiveOverrideForScreen(editingScreen.id)}
                   editOpen={true}
                   onEditOpenChange={(open) => {
