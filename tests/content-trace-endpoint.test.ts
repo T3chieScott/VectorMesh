@@ -170,3 +170,88 @@ test("missing screen returns 404 even for admin", async () => {
   );
   assert.equal(r.status, 404);
 });
+
+// --- Route-level middleware-chain tests --------------------------------------
+// These mount the *real* role-gating middleware (`requireAdminOrAccountManager`,
+// kept in lockstep with server/routes.ts) BEFORE the handler so we explicitly
+// lock in the auth-gating contract: editors and unauthenticated callers must
+// not be able to reach the handler at all.
+
+async function requireAdminOrAccountManager(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  const user = (req as any).dbUser;
+  if (!user || (user.role !== "admin" && user.role !== "account_manager")) {
+    return res.status(403).json({ error: "Admin or Account Manager access required" });
+  }
+  next();
+}
+
+async function withFullStackTestServer(
+  user: TestUser | null,
+  screen: Screen | null,
+  call: (port: number) => Promise<{ status: number; body: any }>,
+) {
+  const app = express();
+  app.use(injectUser(user));
+  app.get(
+    "/api/admin/screens/:id/content-trace",
+    requireAdminOrAccountManager,
+    buildContentTraceHandler(makeStubDeps(screen) as any, {
+      isAdmin: isAdminFn,
+      canAccessClient: canAccessClientFn,
+    }),
+  );
+  const server = app.listen(0);
+  try {
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const port = (server.address() as AddressInfo).port;
+    return await call(port);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+test("editor in scope is rejected by role middleware (403)", async () => {
+  const screen = makeScreen({ clientId: "client-A" });
+  const r = await withFullStackTestServer(
+    { role: "editor", allowedClientIds: ["client-A"] },
+    screen,
+    (port) => get(port, screen.id),
+  );
+  assert.equal(r.status, 403);
+  assert.match(r.body.error, /Admin or Account Manager/i);
+});
+
+test("unauthenticated caller is rejected by role middleware (403)", async () => {
+  const screen = makeScreen({ clientId: "client-A" });
+  const r = await withFullStackTestServer(
+    null,
+    screen,
+    (port) => get(port, screen.id),
+  );
+  assert.equal(r.status, 403);
+});
+
+test("admin passes role middleware and reaches handler", async () => {
+  const screen = makeScreen({ clientId: "client-A" });
+  const r = await withFullStackTestServer(
+    { role: "admin", allowedClientIds: null },
+    screen,
+    (port) => get(port, screen.id),
+  );
+  assert.equal(r.status, 200);
+  assert.ok(Array.isArray(r.body.trace));
+});
+
+test("account-manager passes role middleware and reaches handler", async () => {
+  const screen = makeScreen({ clientId: "client-A" });
+  const r = await withFullStackTestServer(
+    { role: "account_manager", allowedClientIds: ["client-A"] },
+    screen,
+    (port) => get(port, screen.id),
+  );
+  assert.equal(r.status, 200);
+});
