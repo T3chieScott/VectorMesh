@@ -360,16 +360,25 @@ function CanvasFields({
         `Screen extends past the canvas (canvas is ${canvasWidth}×${canvasHeight}, screen ends at ${rightEdge}×${bottomEdge}).`,
       );
     }
-    const overlapping = siblings.filter((sib) => {
-      const ix1 = Math.max(canvasX, sib.x);
-      const iy1 = Math.max(canvasY, sib.y);
-      const ix2 = Math.min(rightEdge, sib.x + sib.width);
-      const iy2 = Math.min(bottomEdge, sib.y + sib.height);
-      return ix2 > ix1 && iy2 > iy1;
-    });
+    const overlapping = siblings
+      .map((sib) => {
+        const ix1 = Math.max(canvasX, sib.x);
+        const iy1 = Math.max(canvasY, sib.y);
+        const ix2 = Math.min(rightEdge, sib.x + sib.width);
+        const iy2 = Math.min(bottomEdge, sib.y + sib.height);
+        const ow = ix2 - ix1;
+        const oh = iy2 - iy1;
+        return ow > 0 && oh > 0 ? { sib, ow, oh } : null;
+      })
+      .filter((x): x is { sib: typeof siblings[number]; ow: number; oh: number } => x !== null);
     if (overlapping.length > 0) {
+      // Include the overlap area (e.g. 640×360) so the operator can tell at
+      // a glance whether they're off-by-a-few-pixels or genuinely double-
+      // booking a region of the wall.
       warnings.push(
-        `Overlaps with ${overlapping.map((s) => `'${s.name}'`).join(", ")}.`,
+        `Overlaps with ${overlapping
+          .map((o) => `'${o.sib.name}' (${o.ow}×${o.oh}px)`)
+          .join(", ")}.`,
       );
     }
     // Gap check: only show when there are 2+ siblings AND no overlap, so
@@ -1340,7 +1349,12 @@ function ScreenCard({
     // first click of "Add screen" lands flush to the right.
     const newWidth = profile?.width ?? screen.canvasWidth!;
     const newHeight = profile?.height ?? screen.canvasHeight!;
-    const next = nextFreeOffsetForRects(allRects, newWidth, newHeight);
+    const next = nextFreeOffsetForRects(
+      allRects,
+      newWidth,
+      newHeight,
+      screen.canvasWidth ?? undefined,
+    );
     return {
       clientId: screen.clientId ?? "",
       canvasEnabled: true,

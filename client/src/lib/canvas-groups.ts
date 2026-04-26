@@ -161,30 +161,49 @@ export function rectIntersection(a: Rect, b: Rect): Rect | null {
 
 // Overlap-aware placement: caller supplies rectangles for every
 // sibling (since the sibling's physical width comes from its display
-// profile, which the helper module doesn't know about). Picks the
-// smallest non-negative X where a new `screenWidth × screenHeight`
-// box at (X, 0) fits without overlapping any sibling rect. Y stays 0
-// for this naive single-row layout — multi-row support is a future
-// follow-up.
+// profile, which the helper module doesn't know about). Tries to
+// place a new `screenWidth × screenHeight` box on the existing top
+// row first (smallest non-overlapping X at the topmost row's Y), and
+// if no slot fits within `canvasWidth`, drops to the next row flush
+// against the existing bottom edge. The returned offset may still
+// extend past the canvas — the UI surfaces that as a non-blocking
+// warning rather than refusing the placement.
 export function nextFreeOffsetForRects(
   siblingRects: Rect[],
   screenWidth: number,
   screenHeight: number,
+  canvasWidth?: number,
 ): { x: number; y: number } {
   if (siblingRects.length === 0) return { x: 0, y: 0 };
-  // Candidate X positions: 0 and every sibling right edge.
-  const candidates = new Set<number>([0]);
-  for (const r of siblingRects) {
-    candidates.add(r.x + r.width);
-  }
-  const sorted = [...candidates].sort((a, b) => a - b);
-  for (const x of sorted) {
-    const candidate: Rect = { x, y: 0, width: screenWidth, height: screenHeight };
-    const overlaps = siblingRects.some((r) => rectIntersection(candidate, r) !== null);
-    if (!overlaps) return { x, y: 0 };
-  }
-  // Every candidate overlaps — fall back to placing flush after the
-  // rightmost sibling. Caller may then warn about exceeding canvas.
+
+  // Group siblings by Y so "rows" survive operators who eyeball the
+  // layout and don't perfectly grid-align tiles.
+  const tryRowAt = (rowY: number): number | null => {
+    const rowRects = siblingRects.filter((r) => r.y < rowY + screenHeight && r.y + r.height > rowY);
+    const candidates = new Set<number>([0]);
+    for (const r of rowRects) candidates.add(r.x + r.width);
+    const sorted = [...candidates].sort((a, b) => a - b);
+    for (const x of sorted) {
+      if (canvasWidth !== undefined && x + screenWidth > canvasWidth) continue;
+      const candidate: Rect = { x, y: rowY, width: screenWidth, height: screenHeight };
+      const overlaps = siblingRects.some((r) => rectIntersection(candidate, r) !== null);
+      if (!overlaps) return x;
+    }
+    return null;
+  };
+
+  // Top row first.
+  const topY = siblingRects.reduce((acc, r) => Math.min(acc, r.y), Infinity);
+  const xOnTop = tryRowAt(topY === Infinity ? 0 : topY);
+  if (xOnTop !== null) return { x: xOnTop, y: topY === Infinity ? 0 : topY };
+
+  // Drop to a new row below the existing bottom edge.
+  const bottom = siblingRects.reduce((acc, r) => Math.max(acc, r.y + r.height), 0);
+  const xNextRow = tryRowAt(bottom);
+  if (xNextRow !== null) return { x: xNextRow, y: bottom };
+
+  // Last resort: flush against the rightmost sibling on the top row.
+  // Caller may then warn about exceeding canvas.
   const rightmost = siblingRects.reduce((acc, r) => Math.max(acc, r.x + r.width), 0);
-  return { x: rightmost, y: 0 };
+  return { x: rightmost, y: topY === Infinity ? 0 : topY };
 }
