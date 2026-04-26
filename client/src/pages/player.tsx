@@ -613,7 +613,10 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         const next = { ...prev };
         allRotatingZones.forEach(zone => {
           if (zone.type === "media") {
-            const zoneMedia = getZoneMedia(zone.id);
+            // resolveZoneMedia takes the zone object directly so a
+            // canvas-sibling zone (Task #173) advances over its own
+            // media set, not the seed's.
+            const zoneMedia = resolveZoneMedia(zone);
             if (zoneMedia.length > 1) {
               next[zone.id] = ((prev[zone.id] || 0) + 1) % zoneMedia.length;
             }
@@ -705,14 +708,28 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     return () => window.removeEventListener("resize", updateScale);
   }, [captureW, captureH]);
 
-  const getZoneMedia = (zoneId: string): MediaAsset[] => {
+  // Per-zone media resolver. Operates on a zone OBJECT (not an id)
+  // so canvas-composite siblings (Task #173) can resolve their own
+  // tile-local zones — looking up by zone.id against the seed's
+  // `zones` array would silently fall back to the entire media
+  // library for any sibling zone whose id doesn't appear on the seed
+  // (different layout / different per-tile authoring).
+  const resolveZoneMedia = (
+    zone: Pick<LayoutZone, "id" | "mediaId"> | undefined,
+  ): MediaAsset[] => {
     if (!content) return [];
-    const zone = zones.find(z => z.id === zoneId);
     if (zone?.mediaId) {
       const specific = content.media.filter(m => m.id === zone.mediaId);
       if (specific.length > 0) return specific;
     }
     return content.media;
+  };
+
+  // Convenience overload kept for the seed-screen render path so the
+  // diff is small. ALWAYS prefer resolveZoneMedia(zone) for any path
+  // that walks tile-local zones.
+  const getZoneMedia = (zoneId: string): MediaAsset[] => {
+    return resolveZoneMedia(zones.find(z => z.id === zoneId));
   };
 
   const getZoneMediaIndex = (zoneId: string): number => {
@@ -1014,7 +1031,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                 >
                   <ZoneRenderer
                     zone={zone}
-                    media={getZoneMedia(zone.id)}
+                    media={resolveZoneMedia(zone)}
                     mediaIndex={getZoneMediaIndex(zone.id)}
                     isPlaying={true}
                     showBorder={false}
