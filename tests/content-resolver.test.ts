@@ -218,6 +218,39 @@ test("target mismatch (different screen) → trace records target-mismatch", asy
   );
 });
 
+test("group target mismatch → target-mismatch (screen not in group)", async () => {
+  const event = makeEvent("evt-1");
+  const programme = makeProgramme("prog-1", event.id);
+  const version = makeVersion("v-1", programme.id);
+  const layout = makeLayout("layout-1", "L1");
+  const block = makeBlock({
+    layoutTemplateId: layout.id,
+    programmeVersionId: version.id,
+    targets: [{ type: "group", id: "grp-A" }],
+  });
+
+  const result = await resolveScreenContent(
+    makeScreen(),
+    new Date("2026-04-25T12:00:00Z"),
+    makeDeps({
+      event,
+      programmes: [programme],
+      versions: [version],
+      blocksByVersion: { [version.id]: [block] },
+      layouts: { [layout.id]: layout },
+      // Screen is in a different group than the block targets.
+      screenGroupIds: ["grp-OTHER"],
+    }),
+  );
+
+  assert.equal(result.layout, null);
+  const step = result.trace.find((s) => s.kind === "block-evaluated");
+  assert.equal(
+    step?.kind === "block-evaluated" && step.decision,
+    "target-mismatch",
+  );
+});
+
 test("group target match wins via screen group membership", async () => {
   const event = makeEvent("evt-1");
   const programme = makeProgramme("prog-1", event.id);
@@ -632,6 +665,66 @@ test("live override with deleted layout still applies zone sources (parity with 
   assert.equal(result.liveOverride?.id, "ov-deleted");
   assert.equal(result.activeZoneSources.length, 1);
   assert.equal(result.activeZoneSources[0].playlistId, "pl-7");
+});
+
+test("live override with deleted layout + matching active block: parity allows block to take over layout/zoneSources but liveOverride still reported", async () => {
+  // Locks in the byte-for-byte parity with the legacy inline player code:
+  // when an active live override references a deleted layout, the override's
+  // liveOverride field is still reported (so admins can see it was active)
+  // but a matching scheduled block can replace `layout` and
+  // `activeZoneSources`. If we ever change that precedence, this test fails
+  // and forces us to update T002's "player payload identical" claim.
+  const event = makeEvent("evt-1");
+  const programme = makeProgramme("prog-1", event.id);
+  const version = makeVersion("v-1", programme.id);
+  const blockLayout = makeLayout("layout-block", "Block Layout");
+  const block = makeBlock({
+    layoutTemplateId: blockLayout.id,
+    programmeVersionId: version.id,
+    zoneSources: [{ zoneId: "z1", type: "playlist", playlistId: "pl-block" }],
+  });
+
+  const now = new Date("2026-04-25T12:00:00Z");
+  const override: LiveOverride = {
+    id: "ov-deleted-layout",
+    eventId: event.id,
+    name: "Emergency",
+    priority: 100,
+    targets: [],
+    layoutTemplateId: "layout-gone",
+    zoneSources: [
+      { zoneId: "__fallback__", type: "playlist", playlistId: "pl-override" },
+    ],
+    startTime: new Date(now.getTime() - 60_000),
+    endTime: new Date(now.getTime() + 60_000),
+    isActive: true,
+    presetId: null,
+    createdById: null,
+    createdAt: new Date(),
+  } as LiveOverride;
+
+  const result = await resolveScreenContent(
+    makeScreen(),
+    now,
+    makeDeps({
+      overrides: [override],
+      event,
+      programmes: [programme],
+      versions: [version],
+      blocksByVersion: { [version.id]: [block] },
+      layouts: { [blockLayout.id]: blockLayout },
+      // "layout-gone" intentionally omitted to simulate deletion.
+    }),
+  );
+
+  // Override is still reported on the response.
+  assert.equal(result.liveOverride?.id, "ov-deleted-layout");
+  // Block wins layout + zoneSources because the legacy code falls through.
+  assert.equal(result.layout?.id, blockLayout.id);
+  assert.equal(result.activeZoneSources[0].playlistId, "pl-block");
+  // Outcome trace ends with the block, not the override.
+  const outcome = result.trace.find((s) => s.kind === "outcome");
+  assert.equal(outcome?.kind === "outcome" && outcome.source, "block");
 });
 
 test("block with no layout but a __fallback__ playlist zone source matches", async () => {

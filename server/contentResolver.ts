@@ -313,15 +313,19 @@ export async function resolveScreenContent(
         reason: `Active override "${activeOverride.name}" supplied layout "${layout.name}".`,
       });
     } else {
-      // Override applied (zone sources active) but the chosen layout is gone.
-      // Outcome source stays as the override since it's still controlling output.
+      // Override applied (liveOverride + zone sources reported) but the chosen
+      // layout has been deleted. Parity with the legacy inline player code:
+      // we set `liveOverride`/`activeZoneSources` here AND still fall through
+      // to block resolution below — a matching scheduled block can therefore
+      // replace `layout`/`activeZoneSources`/`outcomeSource`. The outcome
+      // source remains "live-override" only when nothing else matches.
       outcomeSource = "live-override";
       trace.push({
         kind: "live-override-check",
         matched: true,
         overrideId: activeOverride.id,
         overrideName: activeOverride.name,
-        reason: `Active override "${activeOverride.name}" matched, but its layout has been deleted; zone sources still apply.`,
+        reason: `Active override "${activeOverride.name}" matched, but its layout has been deleted; zone sources still apply (and any matching block may further override layout/zone sources).`,
       });
     }
   } else if (activeOverride) {

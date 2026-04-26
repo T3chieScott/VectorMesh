@@ -2121,6 +2121,39 @@ export async function registerRoutes(
   });
 
   // ============ PROGRAMMES ============
+  // Reorder must be defined before /:id routes so the literal path wins.
+  app.patch("/api/programmes/reorder", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const { orderedIds } = req.body as { orderedIds: string[] };
+      if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+        return res.status(400).json({ error: "orderedIds array is required" });
+      }
+      if (!orderedIds.every(id => typeof id === "string" && id.length > 0)) {
+        return res.status(400).json({ error: "orderedIds must be non-empty strings" });
+      }
+      if (new Set(orderedIds).size !== orderedIds.length) {
+        return res.status(400).json({ error: "orderedIds must not contain duplicates" });
+      }
+      // Authorise: every programme must be visible to this user (via its event's client).
+      const allEventsForReorder = await storage.getEvents();
+      const eventById = new Map(allEventsForReorder.map(e => [e.id, e] as const));
+      for (const id of orderedIds) {
+        const programme = await storage.getProgramme(id);
+        if (!programme) return res.status(404).json({ error: `Programme ${id} not found` });
+        const event = eventById.get(programme.eventId);
+        if (event && !canAccessClient(req, event.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
+      await storage.reorderProgrammes(orderedIds);
+      logAudit(req, "reorder", "programme", orderedIds[0], { count: orderedIds.length });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error reordering programmes:", error);
+      res.status(500).json({ error: "Failed to reorder programmes" });
+    }
+  });
+
   app.get("/api/programmes", requireAuth, loadUserContext, async (req, res) => {
     try {
       const programmes = await storage.getProgrammes();

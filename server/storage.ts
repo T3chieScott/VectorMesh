@@ -190,6 +190,7 @@ export interface IStorage {
   createProgramme(data: InsertProgramme): Promise<Programme>;
   updateProgramme(id: string, data: Partial<InsertProgramme>): Promise<Programme | undefined>;
   deleteProgramme(id: string): Promise<boolean>;
+  reorderProgrammes(orderedIds: string[]): Promise<void>;
 
   // Programme Versions
   getProgrammeVersions(): Promise<ProgrammeVersion[]>;
@@ -933,7 +934,10 @@ export class DatabaseStorage implements IStorage {
 
   // Programmes
   async getProgrammes(): Promise<Programme[]> {
-    return db.select().from(programmes).orderBy(desc(programmes.createdAt));
+    return db
+      .select()
+      .from(programmes)
+      .orderBy(sql`${programmes.displayOrder} ASC NULLS LAST`, desc(programmes.createdAt));
   }
 
   async getProgramme(id: string): Promise<Programme | undefined> {
@@ -942,7 +946,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createProgramme(data: InsertProgramme): Promise<Programme> {
-    const [programme] = await db.insert(programmes).values(data).returning();
+    const [programme] = await db
+      .insert(programmes)
+      .values({
+        ...data,
+        // Atomically assign the next displayOrder so newly created programmes
+        // appear at the end of the user-defined order.
+        displayOrder: sql<number>`coalesce((select max(${programmes.displayOrder}) from ${programmes}), -1) + 1` as unknown as number,
+      })
+      .returning();
     return programme;
   }
 
@@ -958,6 +970,16 @@ export class DatabaseStorage implements IStorage {
   async deleteProgramme(id: string): Promise<boolean> {
     const result = await db.delete(programmes).where(eq(programmes.id, id));
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async reorderProgrammes(orderedIds: string[]): Promise<void> {
+    await db.transaction(async (tx) => {
+      for (let i = 0; i < orderedIds.length; i++) {
+        await tx.update(programmes)
+          .set({ displayOrder: i })
+          .where(eq(programmes.id, orderedIds[i]));
+      }
+    });
   }
 
   // Programme Versions

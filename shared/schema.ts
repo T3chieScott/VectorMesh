@@ -590,6 +590,7 @@ export const programmes = pgTable("programmes", {
   eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description"),
+  displayOrder: integer("display_order"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
