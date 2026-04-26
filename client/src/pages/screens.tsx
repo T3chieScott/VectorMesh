@@ -28,7 +28,7 @@ import {
   groupScreensByCanvas,
   siblingsOnCanvas,
   siblingsForCanvasParams,
-  pickCanvasOwner,
+  getCanvasPairingGating,
   type CanvasGroup,
   nextFreeOffsetForRects,
 } from "@shared/canvas-groups";
@@ -109,6 +109,11 @@ import { ScreensTable } from "@/components/screens-table";
 import { ScreenBookingStatus } from "@/components/screen-booking-status";
 import { ScreenBookingsContextMenu } from "@/components/screen-bookings-context-menu";
 import { Table as TableIcon, LayoutGrid as LayoutGridIcon } from "lucide-react";
+import {
+  CanvasPairingPanel,
+  CanvasPairingInheritsMessage,
+  CanvasPairingMenuItems,
+} from "@/pages/canvas-pairing-elements";
 
 type ScreensView = "cards" | "table";
 
@@ -1328,14 +1333,15 @@ function ScreenCard({
   // pairing code; siblings inherit it. The owner is the
   // earliest-created member (with id as a deterministic tiebreaker).
   // Single-tile / non-canvas screens are always their own "owner",
-  // which means non-canvas behaviour is unchanged.
-  const canvasOwner = useMemo(() => {
-    if (siblingScreens.length === 0) return screen;
-    return pickCanvasOwner([screen, ...siblingScreens]) ?? screen;
-  }, [screen, siblingScreens]);
-  const isCanvasOwner = canvasOwner.id === screen.id;
-  const inheritsPairingFromOwner =
-    !isCanvasOwner && siblingScreens.length > 0;
+  // which means non-canvas behaviour is unchanged. The element-level
+  // visibility booleans (panel / regenerate / unpair / inherits
+  // message) are computed by getCanvasPairingGating in
+  // shared/canvas-groups.ts so they're locked by
+  // tests/canvas-pairing-ui-gating.test.ts (Task #175).
+  const pairingGating = useMemo(
+    () => getCanvasPairingGating(screen, siblingScreens),
+    [screen, siblingScreens],
+  );
 
   // "Add screen to this canvas" — controlled CreateScreenDialog
   // instance that pre-fills the new screen with this canvas's clientId
@@ -1947,15 +1953,17 @@ function ScreenCard({
                 Add screen to this canvas
               </DropdownMenuItem>
             )}
-            {!screen.isPaired && isCanvasOwner && (
-              <DropdownMenuItem
-                onSelect={() => regeneratePairingCodeMutation.mutate()}
-                data-testid={`button-regenerate-pairing-${screen.id}`}
-              >
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Regenerate Code
-              </DropdownMenuItem>
-            )}
+            {/* Owner-only Regenerate Code / Unpair Device — shared
+                with tests/canvas-pairing-render.test.tsx via
+                CanvasPairingMenuItems so the JSX wiring of the
+                gating predicates is locked. */}
+            <CanvasPairingMenuItems
+              screen={screen}
+              gating={pairingGating}
+              onRegenerate={() => regeneratePairingCodeMutation.mutate()}
+              onUnpair={() => unpairMutation.mutate()}
+              ItemComponent={DropdownMenuItem}
+            />
             {screen.isOnline && (
               <DropdownMenuItem
                 onSelect={() => refreshPlayerMutation.mutate()}
@@ -1963,15 +1971,6 @@ function ScreenCard({
               >
                 <RefreshCw className="mr-2 h-4 w-4" />
                 Refresh Player
-              </DropdownMenuItem>
-            )}
-            {screen.isPaired && isCanvasOwner && (
-              <DropdownMenuItem
-                onSelect={() => unpairMutation.mutate()}
-                data-testid={`button-unpair-${screen.id}`}
-              >
-                <Unlink className="mr-2 h-4 w-4" />
-                Unpair Device
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
@@ -2092,47 +2091,20 @@ function ScreenCard({
           </div>
         )}
         <ScreenBookingStatus screenId={screen.id} />
-        {!screen.isPaired && screen.pairingCode && isCanvasOwner && (
-          <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">
-                Pairing Code
-                {siblingScreens.length > 0 && (
-                  <span className="ml-1 text-[10px] uppercase tracking-wide opacity-70">
-                    · pairs entire {screen.canvasWidth}×{screen.canvasHeight} canvas ({siblingScreens.length + 1} tiles)
-                  </span>
-                )}
-              </p>
-              <p
-                className="text-lg font-mono font-bold tracking-wider"
-                data-testid={`text-pairing-code-${screen.id}`}
-              >
-                {screen.pairingCode}
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={copyPairingCode}
-              data-testid={`button-copy-pairing-${screen.id}`}
-            >
-              <Copy className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
-        {inheritsPairingFromOwner && (
-          <div
-            className="p-3 rounded-lg bg-muted/30 text-xs text-muted-foreground flex items-center gap-2"
-            data-testid={`text-inherits-pairing-${screen.id}`}
-          >
-            <Grid3X3 className="h-3 w-3 shrink-0" />
-            <span>
-              Inherits pairing from{" "}
-              <span className="font-medium text-foreground">{canvasOwner.name}</span>.
-              Pair / regenerate / unpair on that tile to act on the entire canvas.
-            </span>
-          </div>
-        )}
+        {/* Owner-only pairing-code panel + sibling inherits message —
+            shared with tests/canvas-pairing-render.test.tsx via the
+            CanvasPairing* helpers so the JSX wiring of the gating
+            predicates is locked. */}
+        <CanvasPairingPanel
+          screen={screen}
+          gating={pairingGating}
+          siblingCount={siblingScreens.length}
+          onCopy={copyPairingCode}
+        />
+        <CanvasPairingInheritsMessage
+          screen={screen}
+          gating={pairingGating}
+        />
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <TestTube className="h-3.5 w-3.5 text-muted-foreground" />

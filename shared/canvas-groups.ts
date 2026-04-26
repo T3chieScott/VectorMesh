@@ -96,6 +96,55 @@ export function pickCanvasOwner<T extends Pick<Screen, "id" | "createdAt">>(
   return sorted[0];
 }
 
+// Owner-only pairing display gating (Task #173 / Task #175).
+// Returns the booleans the screens.tsx ScreenCard uses to decide
+// whether the pairing-code panel, "Regenerate Code" menu item,
+// "Unpair Device" menu item, and the sibling "Inherits pairing
+// from <owner>" message should render. We extract this into a pure
+// helper so the regression test in tests/canvas-pairing-ui-gating.test.ts
+// pins the same predicates the JSX evaluates — refactors that change
+// either side will fail the test instead of silently re-exposing
+// per-tile pairing controls on canvas siblings.
+//
+// Inputs the JSX would otherwise compute inline:
+//   - `screen` is the tile being rendered.
+//   - `siblingScreens` is the siblingsOnCanvas(screen, canvasGroups)
+//     output (excludes `screen` itself).
+//
+// The screen's own `isPaired` / `pairingCode` are already on the row
+// so they're read here too — that way the JSX has a single source of
+// truth for "should this element render".
+export interface CanvasPairingGating<S extends Pick<Screen, "id" | "createdAt" | "name" | "isPaired" | "pairingCode">> {
+  owner: S;
+  isCanvasOwner: boolean;
+  inheritsPairingFromOwner: boolean;
+  showsPairingCodePanel: boolean;
+  showsRegenerateCodeMenuItem: boolean;
+  showsUnpairDeviceMenuItem: boolean;
+  showsInheritsMessage: boolean;
+}
+
+export function getCanvasPairingGating<
+  S extends Pick<Screen, "id" | "createdAt" | "name" | "isPaired" | "pairingCode">,
+>(screen: S, siblingScreens: S[]): CanvasPairingGating<S> {
+  const owner =
+    siblingScreens.length === 0
+      ? screen
+      : pickCanvasOwner([screen, ...siblingScreens]) ?? screen;
+  const isCanvasOwner = owner.id === screen.id;
+  const inheritsPairingFromOwner = !isCanvasOwner && siblingScreens.length > 0;
+  return {
+    owner,
+    isCanvasOwner,
+    inheritsPairingFromOwner,
+    showsPairingCodePanel:
+      !screen.isPaired && !!screen.pairingCode && isCanvasOwner,
+    showsRegenerateCodeMenuItem: !screen.isPaired && isCanvasOwner,
+    showsUnpairDeviceMenuItem: !!screen.isPaired && isCanvasOwner,
+    showsInheritsMessage: inheritsPairingFromOwner,
+  };
+}
+
 // Look up the screens that share `screen`'s canvas, EXCLUDING
 // `screen` itself. Returns [] when the screen isn't canvas-enabled
 // or when it's the only one on its canvas. The caller passes the
