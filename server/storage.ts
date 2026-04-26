@@ -235,17 +235,27 @@ export interface IStorage {
    * pairing code, surprising operators who paired it in good faith.
    *
    * Behaviour:
-   *  - If the marker exists: returns `{ repaired: 0, skipped: true }`
-   *    without touching any rows.
-   *  - If the marker is absent: invokes `repairFalseCanvasPairings`
-   *    and, on success, writes the marker (a JSON blob with the
-   *    repaired count and an ISO timestamp). Returns
-   *    `{ repaired, skipped: false }`.
+   *  - If the marker exists (any value, any status): returns
+   *    `{ repaired: 0, skipped: true }` without touching any rows.
+   *  - If the marker is absent: atomically claims the marker (insert
+   *    with `ON CONFLICT DO NOTHING`) so concurrently-booting workers
+   *    can't both run the repair, then invokes
+   *    `repairFalseCanvasPairings` and stamps the final status onto
+   *    the same marker. Returns `{ repaired, skipped: false }`.
    *
-   * Idempotent across calls: any subsequent invocation hits the marker
-   * branch and no-ops. Safe to call from any process / any number of
-   * boot paths — the marker write is the last side effect, so a crash
-   * mid-repair leaves the marker absent and the next boot retries.
+   * Concurrent boots: exactly one worker wins the claim and runs the
+   * repair; every other worker observes the marker as present and
+   * skips. Strict at-most-once semantics across the whole DB.
+   *
+   * Crash safety: the claim is written *before* the repair runs, with
+   * `status: "running"`. If the process crashes mid-repair, the marker
+   * stays at `running` and the next boot still skips — the documented
+   * operator escape hatch is to delete the marker row by hand (and
+   * the test suite pins this contract). We accept "stuck-running
+   * marker after a crash" as preferable to "every concurrent boot
+   * re-runs the repair", because the underlying Task #176 damage is a
+   * one-time data shape and there's nothing for the repair to do on a
+   * clean DB.
    */
   repairFalseCanvasPairingsOnce(): Promise<{
     repaired: number;
@@ -929,18 +939,48 @@ export class DatabaseStorage implements IStorage {
     // solo canvas screens that operators paired in good faith after the
     // fix landed. The marker is a single row in `system_settings`; once
     // present, this wrapper short-circuits and does nothing.
-    const existing = await this.getSystemSetting(
-      CANVAS_PAIRING_REPAIR_176_MARKER_KEY,
-    );
-    if (existing) {
+    //
+    // The claim is *atomic*: we INSERT the marker with `ON CONFLICT DO
+    // NOTHING` and check whether a row was actually returned. If two
+    // app instances boot concurrently against the same DB, exactly one
+    // of them sees its insert succeed (the "winner") and runs the
+    // repair; the other gets zero returned rows and skips. This gives
+    // strict at-most-once semantics under concurrent startup, which a
+    // naive read-then-insert pattern (where both observers see the
+    // marker absent and both run the repair) would not.
+    //
+    // Crash safety: the claim is recorded with a `running` status. If
+    // the process crashes mid-repair, the marker stays at `running`
+    // and the next boot sees the marker as present and skips — the
+    // operator's escape hatch is to delete the marker row by hand,
+    // which is documented in the storage interface docblock and
+    // exercised by the tests. We deliberately accept "stuck-running
+    // marker after a crash" as preferable to "every concurrent boot
+    // re-runs the repair", because the underlying Task #176 damage is
+    // a one-time data shape — there's nothing for the repair to do on
+    // a clean DB, so a missed retry is a no-op for the common case.
+    const claim = await db
+      .insert(systemSettings)
+      .values({
+        key: CANVAS_PAIRING_REPAIR_176_MARKER_KEY,
+        value: JSON.stringify({
+          status: "running",
+          claimedAt: new Date().toISOString(),
+        }),
+        updatedAt: new Date(),
+      })
+      .onConflictDoNothing({ target: systemSettings.key })
+      .returning({ key: systemSettings.key });
+    if (claim.length === 0) {
       return { repaired: 0, skipped: true };
     }
     const repaired = await this.repairFalseCanvasPairings();
-    // Marker is the LAST side effect: a crash mid-repair leaves it
-    // absent and the next boot retries cleanly.
+    // Stamp the final "completed" outcome onto our claim row so the
+    // marker carries forensic info (`ranAt`, `repaired`) for ops.
     await this.setSystemSetting(
       CANVAS_PAIRING_REPAIR_176_MARKER_KEY,
       JSON.stringify({
+        status: "completed",
         ranAt: new Date().toISOString(),
         repaired,
       }),
