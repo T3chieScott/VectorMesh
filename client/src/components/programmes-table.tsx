@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import {
   ArrowUp,
@@ -6,8 +6,6 @@ import {
   ArrowUpDown,
   CheckCircle2,
   FileEdit,
-  GripVertical,
-  Layers,
   MoreHorizontal,
   Pencil,
   Trash2,
@@ -77,7 +75,6 @@ interface ProgrammesTableProps {
   events: Event[];
   versions: ProgrammeVersion[];
   onEdit: (programme: Programme) => void;
-  onManageBlocks: (programme: Programme) => void;
   onPublish: (programme: Programme) => void;
   onDelete: (programme: Programme) => void;
 }
@@ -87,7 +84,6 @@ export function ProgrammesTable({
   events,
   versions,
   onEdit,
-  onManageBlocks,
   onPublish,
   onDelete,
 }: ProgrammesTableProps) {
@@ -273,13 +269,6 @@ export function ProgrammesTable({
                       >
                         <Pencil className="mr-2 h-4 w-4" />
                         Edit
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onSelect={() => onManageBlocks(programme)}
-                        data-testid={`menu-manage-blocks-row-${programme.id}`}
-                      >
-                        <Layers className="mr-2 h-4 w-4" />
-                        Manage Blocks
                       </DropdownMenuItem>
                       {v.draftAvailable && (
                         <DropdownMenuItem

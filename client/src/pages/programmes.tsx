@@ -64,6 +64,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -88,6 +89,11 @@ import {
   History,
   ChevronDown,
   ChevronUp,
+  ChevronsUp,
+  ChevronsDown,
+  GripVertical,
+  LayoutGrid,
+  Table as TableIcon,
   Layers,
   Clock,
   Monitor,
@@ -900,6 +906,13 @@ function ProgrammeCard({
   playlists,
   screens,
   screenGroups,
+  editOpen: editOpenProp,
+  onEditOpenChange,
+  dragHandle,
+  onMoveToStart,
+  onMoveToEnd,
+  canMove,
+  moveDisabledReason,
 }: {
   programme: Programme;
   event?: Event;
@@ -908,8 +921,23 @@ function ProgrammeCard({
   playlists: Playlist[];
   screens: Screen[];
   screenGroups: ScreenGroup[];
+  editOpen?: boolean;
+  onEditOpenChange?: (open: boolean) => void;
+  dragHandle?: React.ReactNode;
+  onMoveToStart?: () => void;
+  onMoveToEnd?: () => void;
+  canMove?: boolean;
+  moveDisabledReason?: string;
 }) {
-  const [editOpen, setEditOpen] = useState(false);
+  // Controlled-or-uncontrolled edit dialog: when the parent passes editOpen
+  // we honour it (used by the table view's hidden host card); otherwise we
+  // own local state for the standalone card.
+  const [editOpenLocal, setEditOpenLocal] = useState(false);
+  const editOpen = editOpenProp ?? editOpenLocal;
+  const setEditOpen = (next: boolean) => {
+    if (onEditOpenChange) onEditOpenChange(next);
+    else setEditOpenLocal(next);
+  };
   const { toast } = useToast();
 
   const eventsQ = useSiteFilteredQuery<Event[]>("/api/events");
@@ -966,7 +994,8 @@ function ProgrammeCard({
   });
 
   return (
-    <Card className="hover-elevate transition-all">
+    <Card className="hover-elevate transition-all relative">
+      {dragHandle}
       <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
@@ -1103,6 +1132,30 @@ function ProgrammeCard({
                 Publish
               </DropdownMenuItem>
             )}
+            {(onMoveToStart || onMoveToEnd) && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={!canMove}
+                  onSelect={() => onMoveToStart?.()}
+                  title={!canMove ? moveDisabledReason : undefined}
+                  data-testid={`menu-move-to-start-${programme.id}`}
+                >
+                  <ChevronsUp className="mr-2 h-4 w-4" />
+                  Move to start
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!canMove}
+                  onSelect={() => onMoveToEnd?.()}
+                  title={!canMove ? moveDisabledReason : undefined}
+                  data-testid={`menu-move-to-end-${programme.id}`}
+                >
+                  <ChevronsDown className="mr-2 h-4 w-4" />
+                  Move to end
+                </DropdownMenuItem>
+              </>
+            )}
+            <DropdownMenuSeparator />
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onSelect={() => deleteMutation.mutate()}
@@ -1142,6 +1195,75 @@ function ProgrammeCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function SortableProgrammeCard(props: {
+  programme: Programme;
+  event?: Event;
+  versions: ProgrammeVersion[];
+  layouts: LayoutTemplate[];
+  playlists: Playlist[];
+  screens: Screen[];
+  screenGroups: ScreenGroup[];
+  dragEnabled: boolean;
+  dragDisabledReason?: string;
+  onMoveToStart: () => void;
+  onMoveToEnd: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: props.programme.id, disabled: !props.dragEnabled });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : undefined,
+    opacity: isDragging ? 0.85 : undefined,
+  };
+
+  const handle = (
+    <button
+      type="button"
+      ref={setActivatorNodeRef}
+      {...(props.dragEnabled ? attributes : {})}
+      {...(props.dragEnabled ? listeners : {})}
+      disabled={!props.dragEnabled}
+      title={props.dragEnabled ? "Drag to reorder" : props.dragDisabledReason}
+      aria-label="Drag to reorder"
+      data-testid={`drag-handle-${props.programme.id}`}
+      className={cn(
+        "absolute left-1.5 top-1.5 z-10 inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground/50 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100",
+        props.dragEnabled ? "cursor-grab active:cursor-grabbing" : "cursor-not-allowed",
+      )}
+    >
+      <GripVertical className="h-4 w-4" />
+    </button>
+  );
+
+  return (
+    <div ref={setNodeRef} style={style} className="group">
+      <ProgrammeCard
+        programme={props.programme}
+        event={props.event}
+        versions={props.versions}
+        layouts={props.layouts}
+        playlists={props.playlists}
+        screens={props.screens}
+        screenGroups={props.screenGroups}
+        dragHandle={handle}
+        onMoveToStart={props.onMoveToStart}
+        onMoveToEnd={props.onMoveToEnd}
+        canMove={props.dragEnabled}
+        moveDisabledReason={props.dragDisabledReason}
+      />
+    </div>
   );
 }
 
@@ -1271,6 +1393,33 @@ function CreateProgrammeDialog({ events }: { events: Event[] }) {
   );
 }
 
+type ProgrammesView = "cards" | "table";
+
+const PROGRAMMES_LEGACY_VIEW_KEY = "vectormesh:programmes-view";
+
+function programmesViewStorageKey(userId: string | null | undefined): string {
+  return userId ? `vectormesh:${userId}:programmes-view` : PROGRAMMES_LEGACY_VIEW_KEY;
+}
+
+function loadProgrammesViewPreference(userId: string | null | undefined): ProgrammesView {
+  try {
+    const key = programmesViewStorageKey(userId);
+    let v = localStorage.getItem(key);
+    if (!v && userId) {
+      // One-time migration from the legacy unscoped key
+      const legacy = localStorage.getItem(PROGRAMMES_LEGACY_VIEW_KEY);
+      if (legacy === "table" || legacy === "cards") {
+        v = legacy;
+        localStorage.setItem(key, legacy);
+      }
+    }
+    if (v === "table" || v === "cards") return v;
+  } catch {
+    // ignore
+  }
+  return "cards";
+}
+
 export default function ProgrammesPage() {
   const programmesQ = useSiteFilteredQuery<Programme[]>("/api/programmes");
   const { data: programmes = [], isLoading: programmesLoading } = useQuery({ ...programmesQ });
@@ -1296,7 +1445,139 @@ export default function ProgrammesPage() {
 
   const isLoading = programmesLoading || eventsLoading;
 
-  const eventMap = new Map(events.map((e) => [e.id, e]));
+  const eventMap = useMemo(() => new Map(events.map((e) => [e.id, e])), [events]);
+
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+  const { toast: pageToast } = useToast();
+  const [view, setView] = useState<ProgrammesView>(() => loadProgrammesViewPreference(userId));
+  // Hosts the edit dialog when the user clicks Edit in the table view. The
+  // card view owns its own per-card dialog state; the table doesn't mount
+  // per-row cards, so we mount a single hidden ProgrammeCard here as the
+  // edit-form host, keyed by the programme id.
+  const [editingProgrammeId, setEditingProgrammeId] = useState<string | null>(null);
+
+  // Local optimistic order, synced from server data when not actively dragging.
+  const [orderedIds, setOrderedIds] = useState<string[]>([]);
+  useEffect(() => {
+    setOrderedIds(programmes.map((p) => p.id));
+  }, [programmes]);
+
+  const orderedProgrammes = useMemo(() => {
+    const map = new Map(programmes.map((p) => [p.id, p]));
+    const arr: Programme[] = [];
+    for (const id of orderedIds) {
+      const p = map.get(id);
+      if (p) arr.push(p);
+    }
+    // Append any programmes not yet in orderedIds (e.g. just created)
+    for (const p of programmes) {
+      if (!orderedIds.includes(p.id)) arr.push(p);
+    }
+    return arr;
+  }, [programmes, orderedIds]);
+
+  const reorderMutation = useMutation({
+    mutationFn: (newOrderedIds: string[]) =>
+      apiRequest("PATCH", "/api/programmes/reorder", { orderedIds: newOrderedIds }),
+    onMutate: async (newOrderedIds: string[]) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/programmes"] });
+      const previous = queryClient.getQueryData<Programme[]>(["/api/programmes"]);
+      if (previous) {
+        const byId = new Map(previous.map((p) => [p.id, p]));
+        const reordered: Programme[] = [];
+        newOrderedIds.forEach((id) => {
+          const p = byId.get(id);
+          if (p) reordered.push(p);
+        });
+        previous.forEach((p) => {
+          if (!newOrderedIds.includes(p.id)) reordered.push(p);
+        });
+        queryClient.setQueryData(["/api/programmes"], reordered);
+      }
+      return { previous };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/programmes"] });
+    },
+    onError: (_err, _vars, context) => {
+      pageToast({ title: "Failed to save order", variant: "destructive" });
+      if (context?.previous) {
+        queryClient.setQueryData(["/api/programmes"], context.previous);
+        setOrderedIds(context.previous.map((p) => p.id));
+      } else {
+        setOrderedIds(programmes.map((p) => p.id));
+      }
+    },
+  });
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const dragEnabled = view === "cards";
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = orderedIds.indexOf(String(active.id));
+    const newIndex = orderedIds.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    const next = arrayMove(orderedIds, oldIndex, newIndex);
+    setOrderedIds(next);
+    reorderMutation.mutate(next);
+  };
+
+  const moveProgrammeTo = (programmeId: string, position: "start" | "end") => {
+    const idx = orderedIds.indexOf(programmeId);
+    if (idx < 0) return;
+    const without = orderedIds.filter((id) => id !== programmeId);
+    const next = position === "start" ? [programmeId, ...without] : [...without, programmeId];
+    setOrderedIds(next);
+    reorderMutation.mutate(next);
+  };
+
+  // If the user identity becomes available after first render, re-load the
+  // user-scoped preference (handles the case where useAuth resolves async).
+  useEffect(() => {
+    setView(loadProgrammesViewPreference(userId));
+  }, [userId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(programmesViewStorageKey(userId), view);
+    } catch {
+      // ignore
+    }
+  }, [view, userId]);
+
+  // Mutations for table-row actions (publish, delete) — mirror the per-card
+  // mutations so the table can act without mounting a card per row.
+  const publishFromTable = useMutation({
+    mutationFn: (programme: Programme) =>
+      apiRequest("POST", `/api/programmes/${programme.id}/publish`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/programmes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/programme-versions"] });
+      pageToast({ title: "Programme published successfully" });
+    },
+    onError: () => {
+      pageToast({ title: "Failed to publish programme", variant: "destructive" });
+    },
+  });
+
+  const deleteFromTable = useMutation({
+    mutationFn: (programme: Programme) =>
+      apiRequest("DELETE", `/api/programmes/${programme.id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/programmes"] });
+      pageToast({ title: "Programme deleted successfully" });
+    },
+    onError: () => {
+      pageToast({ title: "Failed to delete programme", variant: "destructive" });
+    },
+  });
 
   return (
     <div className="space-y-6">
@@ -1308,29 +1589,66 @@ export default function ProgrammesPage() {
             Build and publish content schedules for events
           </p>
         </div>
-        <CreateProgrammeDialog events={events} />
+        <div className="flex items-center gap-2">
+          <div className="inline-flex items-center rounded-md border bg-card p-0.5" role="group" aria-label="View mode">
+            <Button
+              type="button"
+              size="sm"
+              variant={view === "cards" ? "secondary" : "ghost"}
+              className="h-8 gap-1.5"
+              onClick={() => setView("cards")}
+              data-testid="button-view-cards"
+              aria-pressed={view === "cards"}
+            >
+              <LayoutGrid className="h-4 w-4" />
+              Cards
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={view === "table" ? "secondary" : "ghost"}
+              className="h-8 gap-1.5"
+              onClick={() => setView("table")}
+              data-testid="button-view-table"
+              aria-pressed={view === "table"}
+            >
+              <TableIcon className="h-4 w-4" />
+              Table
+            </Button>
+          </div>
+          <CreateProgrammeDialog events={events} />
+        </div>
       </div>
 
       {/* Content */}
       {isLoading ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {[...Array(6)].map((_, i) => (
-            <Card key={i}>
-              <CardHeader className="pb-3">
-                <div className="flex items-center gap-3">
-                  <Skeleton className="h-10 w-10 rounded-lg" />
-                  <div className="space-y-1.5">
-                    <Skeleton className="h-4 w-32" />
-                    <Skeleton className="h-3 w-24" />
+        view === "table" ? (
+          <div className="rounded-md border bg-card p-4 space-y-3" data-testid="skeleton-programmes-table">
+            <Skeleton className="h-8 w-full" />
+            {[...Array(6)].map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[...Array(6)].map((_, i) => (
+              <Card key={i}>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-3">
+                    <Skeleton className="h-10 w-10 rounded-lg" />
+                    <div className="space-y-1.5">
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="h-3 w-24" />
+                    </div>
                   </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <Skeleton className="h-4 w-40" />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                </CardHeader>
+                <CardContent>
+                  <Skeleton className="h-4 w-40" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )
       ) : programmes.length === 0 ? (
         <Card className="py-12">
           <CardContent className="flex flex-col items-center justify-center text-center">
@@ -1344,21 +1662,68 @@ export default function ProgrammesPage() {
             <CreateProgrammeDialog events={events} />
           </CardContent>
         </Card>
+      ) : view === "cards" ? (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={orderedProgrammes.map((p) => p.id)} strategy={rectSortingStrategy}>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="grid-programme-cards">
+              {orderedProgrammes.map((programme) => (
+                <SortableProgrammeCard
+                  key={programme.id}
+                  programme={programme}
+                  event={eventMap.get(programme.eventId)}
+                  versions={versions}
+                  layouts={layouts}
+                  playlists={playlists}
+                  screens={screens}
+                  screenGroups={screenGroups}
+                  dragEnabled={dragEnabled}
+                  onMoveToStart={() => moveProgrammeTo(programme.id, "start")}
+                  onMoveToEnd={() => moveProgrammeTo(programme.id, "end")}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {programmes.map((programme) => (
-            <ProgrammeCard
-              key={programme.id}
-              programme={programme}
-              event={eventMap.get(programme.eventId)}
-              versions={versions}
-              layouts={layouts}
-              playlists={playlists}
-              screens={screens}
-              screenGroups={screenGroups}
-            />
-          ))}
-        </div>
+        <>
+          <ProgrammesTable
+            programmes={orderedProgrammes}
+            events={events}
+            versions={versions}
+            onEdit={(p) => setEditingProgrammeId(p.id)}
+            onPublish={(p) => publishFromTable.mutate(p)}
+            onDelete={(p) => deleteFromTable.mutate(p)}
+          />
+          {/*
+            Edit dialog host: mount a single ProgrammeCard for the programme
+            the user clicked in the table. The card itself is visually hidden;
+            its Dialog is rendered into a portal so the user only sees the
+            edit modal. This avoids mounting the entire card grid in table
+            mode while reusing the existing edit form.
+          */}
+          {editingProgrammeId && (() => {
+            const editingProgramme = programmes.find((p) => p.id === editingProgrammeId);
+            if (!editingProgramme) return null;
+            return (
+              <div className="hidden" aria-hidden="true">
+                <ProgrammeCard
+                  key={`edit-${editingProgramme.id}`}
+                  programme={editingProgramme}
+                  event={eventMap.get(editingProgramme.eventId)}
+                  versions={versions}
+                  layouts={layouts}
+                  playlists={playlists}
+                  screens={screens}
+                  screenGroups={screenGroups}
+                  editOpen={true}
+                  onEditOpenChange={(open) => {
+                    if (!open) setEditingProgrammeId(null);
+                  }}
+                />
+              </div>
+            );
+          })()}
+        </>
       )}
     </div>
   );
