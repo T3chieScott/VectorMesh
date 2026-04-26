@@ -245,12 +245,14 @@ export function ProgrammeBlocksContextMenu({
               Copy all blocks
             </ContextMenuItem>
           )}
-          {clipboard && clipboard.blocks.length > 0 && (
-            // The paste item only appears when something has actually
-            // been copied — keeping the menu short when the clipboard
-            // is empty matches the bookings copy/paste flow. It's
-            // still rendered-but-disabled when the target is the same
-            // as the source so the user gets a clear reason rather
+          {!isBlockMenu && clipboard && clipboard.blocks.length > 0 && (
+            // Paste lives on the SECTION-level menu only — the spec
+            // is explicit that the paste affordance belongs to the
+            // block-list area, not individual rows. The clipboard
+            // also has to be non-empty for it to appear at all
+            // (matches the bookings copy/paste flow). It's
+            // rendered-but-disabled when the target is the same as
+            // the source so the user gets a clear reason rather
             // than a silently missing option.
             <ContextMenuItem
               disabled={!canPaste}
@@ -258,9 +260,7 @@ export function ProgrammeBlocksContextMenu({
                 e.preventDefault();
                 setPasteOpen(true);
               }}
-              data-testid={isBlockMenu
-                ? `context-paste-blocks-from-block-${block!.id}`
-                : `context-paste-blocks-${programme.id}`}
+              data-testid={`context-paste-blocks-${programme.id}`}
             >
               <ClipboardPaste className="mr-2 h-4 w-4" />
               {`Paste ${clipboard.blocks.length} ${clipboard.blocks.length === 1 ? "block" : "blocks"}`}
