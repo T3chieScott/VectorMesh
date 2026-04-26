@@ -376,6 +376,51 @@ test("overnight wrap window matches when 'now' is before midnight inside the win
   assert.equal(result.layout?.id, layout.id);
 });
 
+test("overnight wrap window REJECTS when 'now' falls in the gap between end and start", async () => {
+  // Negative twin of the test above: the same wrap window 22:00 → 02:00
+  // must explicitly reject 'now' values that sit in the gap between the
+  // end of one cycle and the start of the next (e.g. 12:00 mid-day).
+  // Locks the wrap-aware comparison branch so a future refactor that
+  // accidentally treats startTime>endTime as an empty interval would
+  // surface here.
+  const event = makeEvent("evt-1");
+  const programme = makeProgramme("prog-1", event.id);
+  const version = makeVersion("v-1", programme.id);
+  const layout = makeLayout("layout-1", "L1");
+  const block = makeBlock({
+    layoutTemplateId: layout.id,
+    programmeVersionId: version.id,
+    timeRules: [{ startTime: "22:00", endTime: "02:00" }],
+  });
+
+  const now = new Date();
+  now.setUTCHours(12, 0, 0, 0);
+
+  const result = await resolveScreenContent(
+    makeScreen(),
+    now,
+    makeDeps({
+      event,
+      programmes: [programme],
+      versions: [version],
+      blocksByVersion: { [version.id]: [block] },
+      layouts: { [layout.id]: layout },
+    }),
+    "UTC",
+  );
+
+  assert.equal(result.layout, null);
+  const step = result.trace.find((s) => s.kind === "block-evaluated");
+  assert.equal(
+    step?.kind === "block-evaluated" && step.decision,
+    "outside-time-of-day",
+  );
+  assert.match(
+    (step?.kind === "block-evaluated" && step.detail) || "",
+    /22:00.*02:00/,
+  );
+});
+
 test("missing layout (deleted) → layout-deleted, keep scanning", async () => {
   const event = makeEvent("evt-1");
   const programme = makeProgramme("prog-1", event.id);

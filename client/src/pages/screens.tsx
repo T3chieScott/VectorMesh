@@ -2471,9 +2471,14 @@ export default function ScreensPage() {
 
   const { user } = useAuth();
   const userId = user?.id ?? null;
+  const canDiagnose = user?.role === "admin" || user?.role === "account_manager";
   const [view, setView] = useState<ScreensView>(() => loadViewPreference(userId));
   const [editingScreenId, setEditingScreenId] = useState<string | null>(null);
   const [duplicatingScreen, setDuplicatingScreen] = useState<Screen | null>(null);
+  // Hosts the "Why is this blank?" dialog when triggered from the table view.
+  // The card view has its own per-card dialog state (`diagnoseOpen`); the
+  // table doesn't mount per-row cards, so we own the state here.
+  const [diagnosingScreen, setDiagnosingScreen] = useState<Screen | null>(null);
   const [filter, setFilter] = useState<"all" | "online" | "offline" | "unpaired">("all");
   const { toast: pageToast } = useToast();
 
@@ -2782,6 +2787,7 @@ export default function ScreensPage() {
             getActiveOverrideForScreen={getActiveOverrideForScreen}
             onOpenScreen={(s) => setEditingScreenId(s.id)}
             onDuplicateScreen={(s) => setDuplicatingScreen(s)}
+            onDiagnoseScreen={canDiagnose ? (s) => setDiagnosingScreen(s) : undefined}
             userId={userId}
           />
           {/*
@@ -2819,6 +2825,15 @@ export default function ScreensPage() {
         screen={duplicatingScreen}
         onClose={() => setDuplicatingScreen(null)}
       />
+      {diagnosingScreen && (
+        <WhyBlankDialog
+          screen={diagnosingScreen}
+          open={!!diagnosingScreen}
+          onOpenChange={(open) => {
+            if (!open) setDiagnosingScreen(null);
+          }}
+        />
+      )}
     </div>
   );
 }

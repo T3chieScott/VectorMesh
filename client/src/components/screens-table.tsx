@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowUpDown,
   Copy,
+  HelpCircle,
   MoreHorizontal,
   Settings2,
   GripVertical,
@@ -172,6 +173,11 @@ interface ScreensTableProps {
   getActiveOverrideForScreen: (screenId: string) => LiveOverride | null;
   onOpenScreen: (screen: Screen) => void;
   onDuplicateScreen?: (screen: Screen) => void;
+  // Optional "Why is this blank?" diagnostic. When provided, a row action
+  // surfaces the same admin-only content-trace dialog that the card view
+  // exposes. Parent is responsible for role-gating (only pass this in for
+  // admin / account-manager users).
+  onDiagnoseScreen?: (screen: Screen) => void;
   userId?: string | null;
 }
 
@@ -181,6 +187,7 @@ export function ScreensTable({
   getActiveOverrideForScreen,
   onOpenScreen,
   onDuplicateScreen,
+  onDiagnoseScreen,
   userId = null,
 }: ScreensTableProps) {
   const { toast } = useToast();
@@ -371,7 +378,7 @@ export function ScreensTable({
                   </TableCell>
                 ))}
                 <TableCell className="text-right">
-                  {onDuplicateScreen && (
+                  {(onDuplicateScreen || onDiagnoseScreen) && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
@@ -385,14 +392,25 @@ export function ScreensTable({
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onSelect={() => onDuplicateScreen(screen)}
-                          disabled={!!screen.locked}
-                          data-testid={`menu-duplicate-row-${screen.id}`}
-                        >
-                          <Copy className="mr-2 h-4 w-4" />
-                          Duplicate
-                        </DropdownMenuItem>
+                        {onDiagnoseScreen && (
+                          <DropdownMenuItem
+                            onSelect={() => onDiagnoseScreen(screen)}
+                            data-testid={`menu-why-blank-row-${screen.id}`}
+                          >
+                            <HelpCircle className="mr-2 h-4 w-4" />
+                            Why is this blank?
+                          </DropdownMenuItem>
+                        )}
+                        {onDuplicateScreen && (
+                          <DropdownMenuItem
+                            onSelect={() => onDuplicateScreen(screen)}
+                            disabled={!!screen.locked}
+                            data-testid={`menu-duplicate-row-${screen.id}`}
+                          >
+                            <Copy className="mr-2 h-4 w-4" />
+                            Duplicate
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   )}
