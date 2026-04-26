@@ -30,9 +30,19 @@ export interface CanvasGroupKey {
 
 export interface CanvasGroup {
   key: CanvasGroupKey;
-  // String form used as the Map key. Format: `${clientId ?? ""}|${w}x${h}`.
+  // String form used as the Map key. Format for real walls:
+  // `${clientId ?? ""}|${w}x${h}`. Format for split single-member
+  // groups (Task #176 — same dims at the same `(canvasX, canvasY)`):
+  // `${clientId ?? ""}|${w}x${h}#${screenId}` so each falsely-grouped
+  // tile lives in its own entry and consumers iterating
+  // `groups.values()` see correctly-shaped groups.
   keyString: string;
   screens: Screen[];
+  // True iff this group represents an actual video wall — its
+  // members occupy ≥2 distinct `(canvasX, canvasY)`. Single-position
+  // buckets are split into one-member non-wall groups, so this is
+  // also `false` for every split singleton.
+  isWall: boolean;
 }
 
 function isCanvasEnabledScreen(s: Screen): boolean {
@@ -54,13 +64,17 @@ export function canvasGroupKeyString(
 }
 
 // Group every canvas-enabled screen by (clientId, canvasWidth,
-// canvasHeight). Single-screen groups are still returned — the form
-// preview wants to know "is this screen alone on its canvas?" rather
-// than guessing.
+// canvasHeight). Buckets that don't form a real wall (every member at
+// the same `(canvasX, canvasY)` — Task #176) are SPLIT into one
+// single-member group per screen, each with key
+// `${dimKey}#${screenId}`. Real walls keep the dim-only key. Single-
+// screen groups are still returned — the form preview wants to know
+// "is this screen alone on its canvas?" rather than guessing.
 export function groupScreensByCanvas(
   screens: Screen[],
 ): Map<string, CanvasGroup> {
-  const groups = new Map<string, CanvasGroup>();
+  // First pass: bucket by (clientId, w, h).
+  const buckets = new Map<string, { key: CanvasGroupKey; screens: Screen[] }>();
   for (const s of screens) {
     if (!isCanvasEnabledScreen(s)) continue;
     const key: CanvasGroupKey = {
@@ -73,14 +87,41 @@ export function groupScreensByCanvas(
       key.canvasWidth,
       key.canvasHeight,
     );
-    const existing = groups.get(keyString);
-    if (existing) {
-      existing.screens.push(s);
+    const existing = buckets.get(keyString);
+    if (existing) existing.screens.push(s);
+    else buckets.set(keyString, { key, screens: [s] });
+  }
+
+  // Second pass: emit either a wall (multi-member, dim-keyed) or N
+  // single-member non-wall groups (`${dimKey}#${screenId}`-keyed).
+  const out = new Map<string, CanvasGroup>();
+  for (const [dimKey, bucket] of buckets) {
+    const positions = new Set<string>();
+    for (const s of bucket.screens) {
+      positions.add(`${s.canvasX ?? 0}|${s.canvasY ?? 0}`);
+      if (positions.size >= 2) break;
+    }
+    const isWall = bucket.screens.length >= 2 && positions.size >= 2;
+    if (isWall) {
+      out.set(dimKey, {
+        key: bucket.key,
+        keyString: dimKey,
+        screens: bucket.screens,
+        isWall: true,
+      });
     } else {
-      groups.set(keyString, { key, keyString, screens: [s] });
+      for (const s of bucket.screens) {
+        const soloKey = `${dimKey}#${s.id}`;
+        out.set(soloKey, {
+          key: bucket.key,
+          keyString: soloKey,
+          screens: [s],
+          isWall: false,
+        });
+      }
     }
   }
-  return groups;
+  return out;
 }
 
 // Pick the implicit canvas "owner" — the single tile that owns the
@@ -178,9 +219,10 @@ export function isCanvasWallGroup(group: CanvasGroup): boolean {
 // Look up the screens that share `screen`'s canvas, EXCLUDING
 // `screen` itself. Returns [] when the screen isn't canvas-enabled,
 // when it's the only one on its canvas, or when the bucket isn't a
-// real wall (`isCanvasWallGroup` is false — every member sits at the
-// same `(canvasX, canvasY)`). The caller passes the already-built Map
-// so we don't re-group on every render.
+// real wall (`groupScreensByCanvas` will have split it into single-
+// member non-wall groups under `${dimKey}#${screenId}` keys). The
+// caller passes the already-built Map so we don't re-group on every
+// render.
 export function siblingsOnCanvas(
   screen: Pick<
     Screen,
@@ -197,21 +239,34 @@ export function siblingsOnCanvas(
   ) {
     return [];
   }
-  const keyString = canvasGroupKeyString(
+  const dimKey = canvasGroupKeyString(
     screen.clientId ?? null,
     screen.canvasWidth,
     screen.canvasHeight,
   );
-  const group = groups.get(keyString);
-  if (!group) return [];
-  if (!isCanvasWallGroup(group)) return [];
-  return group.screens.filter((s) => s.id !== screen.id);
+  // Real wall — group lives at the dim-only key.
+  const wallGroup = groups.get(dimKey);
+  if (wallGroup && wallGroup.isWall) {
+    return wallGroup.screens.filter((s) => s.id !== screen.id);
+  }
+  // Otherwise the screen lives in its own split single-member group;
+  // there are by definition no siblings on the wall.
+  return [];
 }
 
 // Same as siblingsOnCanvas but for a hypothetical screen that isn't
 // in `screens` yet (e.g. while being created in a form). Use when
 // you need siblings keyed by (clientId, w, h) but don't have a real
 // Screen row.
+//
+// Intentionally returns ALL screens that match the dim/client params
+// regardless of whether they currently form a wall — the form preview
+// uses these to draw ghost rectangles so the operator can see what
+// would become a wall sibling if they move their tile to a distinct
+// (canvasX, canvasY). Because `groupScreensByCanvas` splits non-wall
+// buckets into per-screen groups, this iterates `groups.values()` and
+// filters by the underlying dim/client key rather than relying on a
+// single dim-keyed lookup.
 export function siblingsForCanvasParams(
   params: {
     excludeScreenId?: string;
@@ -230,16 +285,18 @@ export function siblingsForCanvasParams(
   ) {
     return [];
   }
-  const keyString = canvasGroupKeyString(
-    clientId ?? null,
-    canvasWidth,
-    canvasHeight,
-  );
-  const group = groups.get(keyString);
-  if (!group) return [];
-  return excludeScreenId
-    ? group.screens.filter((s) => s.id !== excludeScreenId)
-    : group.screens;
+  const wantClientId = clientId ?? null;
+  const matches: Screen[] = [];
+  for (const group of groups.values()) {
+    if (group.key.canvasWidth !== canvasWidth) continue;
+    if (group.key.canvasHeight !== canvasHeight) continue;
+    if ((group.key.clientId ?? null) !== wantClientId) continue;
+    for (const s of group.screens) {
+      if (excludeScreenId && s.id === excludeScreenId) continue;
+      matches.push(s);
+    }
+  }
+  return matches;
 }
 
 // Geometry helpers used by the form preview and the validation

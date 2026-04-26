@@ -62,16 +62,26 @@ test("canvasGroupKeyString stable shape for same inputs", () => {
   assert.equal(canvasGroupKeyString(null, 800, 600), "|800x600");
 });
 
+// Helper: collect every Screen across the Map's groups (works for both
+// dim-keyed wall groups and split per-screen non-wall groups). Used
+// by tests that just want to assert "which screens survived the
+// filter" without caring about wall/non-wall keying.
+function collectScreens(groups: Map<string, { screens: Screen[] }>): Screen[] {
+  const out: Screen[] = [];
+  for (const g of groups.values()) out.push(...g.screens);
+  return out;
+}
+
 test("groupScreensByCanvas excludes screens with canvas disabled", () => {
   const screens = [
     makeScreen({ id: "a", clientId: "c1", canvasEnabled: false, canvasWidth: 1920, canvasHeight: 1080 }),
     makeScreen({ id: "b", clientId: "c1", canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080, canvasX: 0 }),
   ];
   const groups = groupScreensByCanvas(screens);
+  // Single canvas-enabled solo at (0,0) → one split single-member group.
   assert.equal(groups.size, 1);
-  const only = groups.get("c1|1920x1080")!;
-  assert.equal(only.screens.length, 1);
-  assert.equal(only.screens[0]!.id, "b");
+  const survived = collectScreens(groups);
+  assert.deepEqual(survived.map((s) => s.id), ["b"]);
 });
 
 test("groupScreensByCanvas excludes screens with null/zero canvas dims", () => {
@@ -82,7 +92,7 @@ test("groupScreensByCanvas excludes screens with null/zero canvas dims", () => {
   ];
   const groups = groupScreensByCanvas(screens);
   assert.equal(groups.size, 1);
-  assert.deepEqual(groups.get("c1|1920x1080")!.screens.map((s) => s.id), ["c"]);
+  assert.deepEqual(collectScreens(groups).map((s) => s.id), ["c"]);
 });
 
 test("groupScreensByCanvas keeps same canvas in different clients separate", () => {
@@ -91,9 +101,14 @@ test("groupScreensByCanvas keeps same canvas in different clients separate", () 
     makeScreen({ id: "b", clientId: "c2", canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080 }),
   ];
   const groups = groupScreensByCanvas(screens);
+  // Two different clients, each a single-member non-wall group.
   assert.equal(groups.size, 2);
-  assert.equal(groups.get("c1|1920x1080")!.screens.length, 1);
-  assert.equal(groups.get("c2|1920x1080")!.screens.length, 1);
+  for (const g of groups.values()) assert.equal(g.screens.length, 1);
+  // Each of a and b is in its own group, with distinct keys.
+  assert.deepEqual(
+    collectScreens(groups).map((s) => s.id).sort(),
+    ["a", "b"],
+  );
 });
 
 test("groupScreensByCanvas groups matching canvas in the same client", () => {
@@ -103,11 +118,13 @@ test("groupScreensByCanvas groups matching canvas in the same client", () => {
     makeScreen({ id: "c", clientId: "c1", canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080 }),
   ];
   const groups = groupScreensByCanvas(screens);
+  // a + b form a real wall under "c1|3840x1080"; c is a solo split group.
   assert.equal(groups.size, 2);
-  assert.deepEqual(
-    groups.get("c1|3840x1080")!.screens.map((s) => s.id).sort(),
-    ["a", "b"],
-  );
+  const wall = groups.get("c1|3840x1080");
+  assert.ok(wall, "real wall lives at dim-only key");
+  assert.deepEqual(wall!.screens.map((s) => s.id).sort(), ["a", "b"]);
+  // c is split — not at the dim-only key.
+  assert.equal(groups.get("c1|1920x1080"), undefined);
 });
 
 test("groupScreensByCanvas keeps single-screen groups", () => {
@@ -116,7 +133,10 @@ test("groupScreensByCanvas keeps single-screen groups", () => {
   ];
   const groups = groupScreensByCanvas(screens);
   assert.equal(groups.size, 1);
-  assert.equal(groups.get("c1|1920x1080")!.screens.length, 1);
+  // Solo screens live under a position+id-suffixed key, not the dim
+  // key, so iterate values rather than looking up by dim key.
+  const survived = collectScreens(groups);
+  assert.deepEqual(survived.map((s) => s.id), ["lonely"]);
 });
 
 test("siblingsOnCanvas excludes the screen itself", () => {

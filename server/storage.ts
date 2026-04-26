@@ -922,16 +922,19 @@ export class DatabaseStorage implements IStorage {
       // Real wall — leave alone.
       if (positions.size >= 2) continue;
       // Solo bucket (every member at the same offset). Each paired
-      // row whose deviceToken is shared with anyone else is the
-      // victim of the old inheritance bug; reset it.
+      // row whose deviceToken is shared with another row is a victim
+      // of the old inheritance bug; reset every such victim. We do
+      // NOT decrement the shared-token count after the first reset
+      // because both rows are equally suspect — neither is the
+      // legitimate owner; we don't know which one the operator
+      // originally paired (the older sibling that stamped the token
+      // may have been deleted). Resetting both forces the operator
+      // to re-pair each tile explicitly, which is the safe behavior.
       for (const m of members) {
         if (!m.isPaired) continue;
         if (!m.deviceToken) continue;
         if ((tokenCounts.get(m.deviceToken) ?? 0) <= 1) continue;
-        const newPairingCode = Math.random()
-          .toString(36)
-          .substring(2, 8)
-          .toUpperCase();
+        const newPairingCode = await this.generateUniquePairingCode();
         await db
           .update(screens)
           .set({
@@ -946,15 +949,46 @@ export class DatabaseStorage implements IStorage {
             updatedAt: new Date(),
           } as any)
           .where(eq(screens.id, m.id));
-        // Decrement the count so two siblings sharing the same token
-        // don't both get reset on the same pass — the first reset
-        // already broke the inheritance, the second sibling is now
-        // the legitimate owner of that token.
-        tokenCounts.set(m.deviceToken, (tokenCounts.get(m.deviceToken) ?? 1) - 1);
         repaired++;
       }
     }
     return repaired;
+  }
+
+  // Generate a 6-character pairing code that's guaranteed not to
+  // collide with any existing screen's `pairingCode`. Used by the
+  // repair path so re-pairing flows can find each reset tile by its
+  // fresh code without ambiguity. Loops until a free code is found
+  // (≈36^6 ≈ 2 billion possibilities — collisions on a small fleet
+  // are vanishingly rare so this normally exits on the first try).
+  private async generateUniquePairingCode(): Promise<string> {
+    // pairingCode is varchar(6) — a 6-char base36 code yields ~2.1B
+    // possibilities, so even with millions of active codes the
+    // probability of N consecutive collisions is vanishingly small.
+    // We use a generous retry budget and refuse to return any code
+    // that would violate the column length, rather than degrading
+    // silently into a longer code that fails on insert.
+    const MAX_ATTEMPTS = 64;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      // Math.random().toString(36) sometimes yields fewer than 8 chars
+      // ("0.xx"), so generate enough entropy to slice 6 reliably.
+      const raw = (
+        Math.random().toString(36).slice(2) +
+        Math.random().toString(36).slice(2)
+      ).toUpperCase();
+      const candidate = raw.slice(0, 6);
+      if (candidate.length !== 6) continue;
+      const existing = await db
+        .select({ id: screens.id })
+        .from(screens)
+        .where(eq(screens.pairingCode, candidate))
+        .limit(1);
+      if (existing.length === 0) return candidate;
+    }
+    throw new Error(
+      `generateUniquePairingCode: exhausted ${MAX_ATTEMPTS} attempts ` +
+        `without finding a free 6-char code; pairing-code namespace may be saturated`,
+    );
   }
 
   async markStaleScreensOffline(

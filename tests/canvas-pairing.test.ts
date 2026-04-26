@@ -24,6 +24,7 @@ import { clients, screens, type Screen } from "../shared/schema";
 import {
   groupScreensByCanvas,
   siblingsOnCanvas,
+  siblingsForCanvasParams,
   isCanvasWallGroup,
 } from "../shared/canvas-groups";
 
@@ -528,33 +529,38 @@ test("repairFalseCanvasPairings: resets paired-by-inheritance tile and assigns f
   });
 
   const repaired = await storage.repairFalseCanvasPairings();
-  assert.ok(repaired >= 1, `expected ≥1 repaired row, got ${repaired}`);
+  assert.ok(repaired >= 2, `expected ≥2 repaired rows, got ${repaired}`);
 
-  // The two false-pair tiles: exactly ONE should be reset (the second
-  // sibling becomes the legitimate token owner), but in our fixture
-  // both share the token with the *other* inheritance victim, so the
-  // first reset is enough — the second sibling is then the lone owner
-  // of `tok-shared`. We assert: at least one tile was reset, and no
-  // two tiles still share `tok-shared`.
+  // BOTH false-pair tiles must be reset (we don't know which one was
+  // the "real" pair; both are equally suspect under the inheritance
+  // bug, so the safe behavior is to force re-pairing on both).
   const aAfter = (await db.select().from(screens).where(like(screens.name, `${PREFIX}repairA`)))[0];
   const bAfter = (await db.select().from(screens).where(like(screens.name, `${PREFIX}repairB`)))[0];
-  const tokensStillShared =
-    [aAfter, bAfter].filter((m) => m.deviceToken === "tok-shared").length;
-  assert.ok(
-    tokensStillShared <= 1,
-    `expected ≤1 tile to keep tok-shared after repair, got ${tokensStillShared}`,
+  for (const resetTile of [aAfter, bAfter]) {
+    assert.equal(resetTile.deviceToken, null, `${resetTile.name} deviceToken cleared`);
+    assert.equal(resetTile.isPaired, false);
+    assert.equal(resetTile.isOnline, false);
+    assert.equal(resetTile.lastSeen, null);
+    assert.equal(resetTile.ipAddress, null);
+    assert.equal(resetTile.hostname, null);
+    assert.equal(resetTile.hardwareClass, null);
+    assert.notEqual(resetTile.pairingCode, "SHARED");
+    // Exactly 6 chars — the screens.pairing_code column is varchar(6)
+    // so a longer fallback would silently truncate or fail to insert.
+    assert.equal(
+      resetTile.pairingCode?.length,
+      6,
+      `${resetTile.name} got fresh 6-char pairingCode (was ${resetTile.pairingCode})`,
+    );
+  }
+  // Each tile got its OWN unique pairing code — repair must not
+  // hand out the same code to both reset tiles, otherwise re-pairing
+  // would be ambiguous.
+  assert.notEqual(
+    aAfter.pairingCode,
+    bAfter.pairingCode,
+    "reset tiles got distinct pairing codes",
   );
-  // The reset tile (whichever it is) has presence cleared and a new code.
-  const resetTile = [aAfter, bAfter].find((m) => m.deviceToken === null);
-  assert.ok(resetTile, "expected one tile to be reset");
-  assert.equal(resetTile!.isPaired, false);
-  assert.equal(resetTile!.isOnline, false);
-  assert.equal(resetTile!.lastSeen, null);
-  assert.equal(resetTile!.ipAddress, null);
-  assert.equal(resetTile!.hostname, null);
-  assert.equal(resetTile!.hardwareClass, null);
-  assert.notEqual(resetTile!.pairingCode, "SHARED");
-  assert.ok(resetTile!.pairingCode && resetTile!.pairingCode.length === 6);
 
   // The real wall is left alone — both members still share token,
   // pairingCode, isPaired, and presence.
@@ -582,6 +588,67 @@ test("repairFalseCanvasPairings: resets paired-by-inheritance tile and assigns f
   void wallA; void wallB;
 });
 
+test("repairFalseCanvasPairings: every assigned pairingCode is exactly 6 chars and globally unique (Task #176)", async () => {
+  // Stress the unique-code generator: stage many independent
+  // false-pair groups so the repair loop has to mint many fresh
+  // codes back-to-back. A length>6 result would silently violate
+  // the varchar(6) column; a duplicate would re-introduce the
+  // ambiguity the repair is meant to fix.
+  const clientId = await makeClient("ucode");
+  const t0 = new Date("2026-09-01T00:00:00Z");
+  const groups = 6;
+  for (let i = 0; i < groups; i++) {
+    // Distinct dims per pair so each pair forms its OWN bucket
+    // (same dim across pairs would collapse them into one big bucket
+    // with multiple positions, which the repair correctly treats as
+    // a real wall and skips).
+    const w = 1280 + i;
+    const h = 720 + i;
+    const sharedToken = `tok-ucode-${i}`;
+    const sharedCode = `UCD${(i + 100).toString(36).toUpperCase()}`.slice(0, 6);
+    await makeScreen({
+      name: `ucodeA${i}`, clientId, createdAt: t0,
+      canvasEnabled: true, canvasWidth: w, canvasHeight: h, canvasX: 0,
+      isPaired: true, pairingCode: sharedCode, deviceToken: sharedToken,
+      isOnline: true, lastSeen: new Date("2026-09-01T01:00:00Z"),
+    });
+    await makeScreen({
+      name: `ucodeB${i}`, clientId, createdAt: new Date(t0.getTime() + i * 1000 + 1),
+      canvasEnabled: true, canvasWidth: w, canvasHeight: h, canvasX: 0,
+      isPaired: true, pairingCode: sharedCode, deviceToken: sharedToken,
+      isOnline: true, lastSeen: new Date("2026-09-01T01:00:00Z"),
+    });
+  }
+
+  const repaired = await storage.repairFalseCanvasPairings();
+  assert.ok(repaired >= groups * 2, `expected ≥${groups * 2} repaired, got ${repaired}`);
+
+  const after = await db
+    .select()
+    .from(screens)
+    .where(like(screens.name, `${PREFIX}ucode%`));
+  assert.equal(after.length, groups * 2);
+
+  const codes: string[] = [];
+  for (const row of after) {
+    assert.ok(row.pairingCode, `${row.name} should have a pairingCode after repair`);
+    assert.equal(
+      row.pairingCode!.length,
+      6,
+      `${row.name} pairingCode must be exactly 6 chars (got ${JSON.stringify(row.pairingCode)})`,
+    );
+    assert.equal(row.deviceToken, null);
+    assert.equal(row.isPaired, false);
+    codes.push(row.pairingCode!);
+  }
+  // Globally unique across the freshly-repaired set.
+  assert.equal(
+    new Set(codes).size,
+    codes.length,
+    `all ${codes.length} repaired codes must be unique; got ${JSON.stringify(codes)}`,
+  );
+});
+
 // ─── shared/canvas-groups: position-distinctness gate ──────────────
 
 test("siblingsOnCanvas: same dims at same (canvasX, canvasY) → no siblings (Task #176)", () => {
@@ -596,10 +663,13 @@ test("siblingsOnCanvas: same dims at same (canvasX, canvasY) → no siblings (Ta
     canvasX: 0, canvasY: 0,
   } as unknown as Screen;
   const groups = groupScreensByCanvas([a, b]);
-  // Bucket exists but isn't a wall.
-  const group = [...groups.values()][0];
-  assert.equal(group.screens.length, 2);
-  assert.equal(isCanvasWallGroup(group), false);
+  // Bucket is split into two single-member non-wall groups.
+  assert.equal(groups.size, 2);
+  for (const g of groups.values()) {
+    assert.equal(g.screens.length, 1);
+    assert.equal(g.isWall, false);
+    assert.equal(isCanvasWallGroup(g), false);
+  }
   // Sibling lookup returns [] for both.
   assert.deepEqual(siblingsOnCanvas(a, groups).map((s) => s.id), []);
   assert.deepEqual(siblingsOnCanvas(b, groups).map((s) => s.id), []);
@@ -621,4 +691,81 @@ test("siblingsOnCanvas: distinct positions → siblings returned (Task #176 pin)
   assert.equal(isCanvasWallGroup(group), true);
   assert.deepEqual(siblingsOnCanvas(a, groups).map((s) => s.id), ["b"]);
   assert.deepEqual(siblingsOnCanvas(b, groups).map((s) => s.id), ["a"]);
+});
+
+test("groupScreensByCanvas: same dims at same position → buckets are SPLIT into per-screen groups (Task #176)", () => {
+  // Two screens with identical dims and both at (0, 0) — historically
+  // bucketed under one dim key. After Task #176 the bucket must be
+  // split into two single-member non-wall groups.
+  const a = {
+    id: "a", clientId: "c1",
+    canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080,
+    canvasX: 0, canvasY: 0,
+  } as unknown as Screen;
+  const b = {
+    id: "b", clientId: "c1",
+    canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080,
+    canvasX: 0, canvasY: 0,
+  } as unknown as Screen;
+  const groups = groupScreensByCanvas([a, b]);
+  // Two distinct entries, each a single-member non-wall group.
+  assert.equal(groups.size, 2);
+  for (const g of groups.values()) {
+    assert.equal(g.screens.length, 1);
+    assert.equal(g.isWall, false);
+    assert.ok(
+      g.keyString.includes("#"),
+      `non-wall group key should be position-suffixed, got ${g.keyString}`,
+    );
+  }
+  // Wall lookup at the dim-only key returns nothing — no consumer
+  // iterating values can mistake these for wall siblings.
+  assert.equal(groups.get("c1|1920x1080"), undefined);
+});
+
+test("groupScreensByCanvas: real wall stays under single dim key with isWall: true (Task #176)", () => {
+  const a = {
+    id: "a", clientId: "c1",
+    canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080,
+    canvasX: 0, canvasY: 0,
+  } as unknown as Screen;
+  const b = {
+    id: "b", clientId: "c1",
+    canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080,
+    canvasX: 1920, canvasY: 0,
+  } as unknown as Screen;
+  const groups = groupScreensByCanvas([a, b]);
+  assert.equal(groups.size, 1);
+  const wall = groups.get("c1|3840x1080");
+  assert.ok(wall, "wall stays at dim-only key");
+  assert.equal(wall!.isWall, true);
+  assert.equal(wall!.screens.length, 2);
+});
+
+test("siblingsForCanvasParams: still returns ALL same-dim screens across split buckets (form-preview ghosts) (Task #176)", () => {
+  // Form preview wants ghost rectangles for every dim-matching tile,
+  // even when those tiles are currently at the same position. After
+  // splitting, the dim-only Map lookup misses — the helper must walk
+  // group values and filter.
+  const a = {
+    id: "a", clientId: "c1",
+    canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080,
+    canvasX: 0, canvasY: 0,
+  } as unknown as Screen;
+  const b = {
+    id: "b", clientId: "c1",
+    canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080,
+    canvasX: 0, canvasY: 0,
+  } as unknown as Screen;
+  const groups = groupScreensByCanvas([a, b]);
+  const matches = siblingsForCanvasParams(
+    {
+      excludeScreenId: "a",
+      clientId: "c1",
+      canvasWidth: 1920,
+      canvasHeight: 1080,
+    },
+    groups,
+  );
+  assert.deepEqual(matches.map((s) => s.id), ["b"]);
 });
