@@ -6,6 +6,7 @@ import { createServer } from "http";
 import { initStorage } from "./fileStorage";
 import { convertBadges } from "../scripts/convert-badges";
 import { ensureBookingMigration } from "./db";
+import { storage } from "./storage";
 
 const app = express();
 const httpServer = createServer(app);
@@ -68,6 +69,22 @@ app.use((req, res, next) => {
   await initStorage();
   await convertBadges();
   await ensureBookingMigration();
+  // Implicit-canvas pairing (Task #173): pre-#173 walls may carry
+  // mismatched per-tile pairing rows (different deviceTokens, codes,
+  // or staleness). One-shot reconciliation at boot picks the most-
+  // recently-seen paired tile per group and forces every member to
+  // share its state, so the first /api/player/pair or heartbeat from
+  // a video wall sees a coherent picture. Idempotent.
+  try {
+    const normalised = await storage.backfillCanvasPairingState();
+    if (normalised > 0) {
+      log(
+        `[canvas-pairing] backfill normalised ${normalised} canvas group(s)`,
+      );
+    }
+  } catch (err) {
+    console.error("[canvas-pairing] backfill failed:", err);
+  }
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

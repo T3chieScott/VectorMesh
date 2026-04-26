@@ -261,6 +261,27 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       }
     }
 
+    // Canvas composite (Task #173): the seed screen's `data.layout`
+    // is just one of N tiles. Walk every tile's resolved layout so the
+    // service worker pre-caches media for the entire wall, not just
+    // the owner tile.
+    if (data.canvas?.tiles) {
+      for (const tile of data.canvas.tiles) {
+        const tileZones = (tile.layout?.zones as LayoutZone[]) || [];
+        for (const zone of tileZones) {
+          if (zone.mediaId) addMediaUrl(zone.mediaId);
+          if (zone.montageMediaIds) {
+            for (const id of zone.montageMediaIds) addMediaUrl(id);
+          }
+          if (zone.mediaPlayerItems) {
+            for (const item of zone.mediaPlayerItems) {
+              if (item.mediaAssetId) addMediaUrl(item.mediaAssetId);
+            }
+          }
+        }
+      }
+    }
+
     return [...new Set(urls)];
   }, [token]);
 
@@ -297,6 +318,22 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         canvasY: data.screen?.canvasY,
         profileWidth: data.profile?.width,
         profileHeight: data.profile?.height,
+        // Canvas composite (Task #173): include per-tile resolved
+        // pieces so a layout/zoneSource/override change on ANY tile
+        // (not just the seed) triggers a content refresh on this Pi.
+        canvasTiles: data.canvas?.tiles?.map(t => ({
+          id: t.screenId,
+          layoutId: t.layout?.id,
+          layoutUpdatedAt: t.layout?.updatedAt,
+          layoutZones: t.layout?.zones,
+          zoneSources: t.zoneSources,
+          liveOverrideId: t.liveOverride?.id,
+          liveOverrideActive: t.liveOverride?.isActive,
+          x: t.x,
+          y: t.y,
+          width: t.width,
+          height: t.height,
+        })),
       });
 
       if (data.refreshRequested) {
@@ -549,12 +586,32 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     }
   }, [zones.length, layout?.id, token]);
 
+  // Canvas composite (Task #173): when polled as the canvas owner the
+  // payload also contains every sibling tile's resolved layout. Roll
+  // those zones into the same rotation tick so a media-zone on tile #3
+  // advances on the same 8-second cadence as the seed's zones.
+  const allRotatingZones = useMemo<LayoutZone[]>(() => {
+    const merged: LayoutZone[] = [...zones];
+    if (content?.canvas?.tiles) {
+      for (const tile of content.canvas.tiles) {
+        const tileLayoutId = tile.layout?.id;
+        if (tileLayoutId && tileLayoutId === content.layout?.id) {
+          // Already represented by the seed's `zones` (same layout).
+          continue;
+        }
+        const tileZones = (tile.layout?.zones as LayoutZone[]) || [];
+        for (const z of tileZones) merged.push(z);
+      }
+    }
+    return merged;
+  }, [zones, content?.canvas, content?.layout?.id]);
+
   useEffect(() => {
-    if (zones.length === 0) return;
+    if (allRotatingZones.length === 0) return;
     const interval = setInterval(() => {
       setZoneMediaIndices(prev => {
         const next = { ...prev };
-        zones.forEach(zone => {
+        allRotatingZones.forEach(zone => {
           if (zone.type === "media") {
             const zoneMedia = getZoneMedia(zone.id);
             if (zoneMedia.length > 1) {
@@ -566,7 +623,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       });
     }, 8000);
     return () => clearInterval(interval);
-  }, [zones.length, content?.media.length]);
+  }, [allRotatingZones.length, content?.media.length]);
 
   const REFERENCE_HEIGHT = 720;
   const layoutAspect = layout
@@ -814,6 +871,230 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
             )}
           </div>
         </div>
+      </div>
+    );
+  }
+
+  // ============ CANVAS COMPOSITE PATH (Task #173) ============
+  // When this Pi is paired against a multi-tile canvas it polls the
+  // owner's content endpoint and gets every member tile's resolved
+  // layout in one payload. Render each tile at its AOI inside the
+  // full-canvas viewport. Single-tile / non-canvas screens (and the
+  // legacy N-Pi-per-wall install where canvasMembers.length === 1)
+  // skip this branch and fall through to the existing per-screen
+  // render paths below.
+  const canvasComposite =
+    content?.canvas && content.canvas.tiles.length > 1
+      ? content.canvas
+      : null;
+
+  if (canvasComposite) {
+    const cwW = canvasComposite.width;
+    const cwH = canvasComposite.height;
+    const cwScaledWidth = cwW * scale;
+    const cwScaledHeight = cwH * scale;
+
+    const renderTileSlot = (
+      tile: NonNullable<typeof canvasComposite>["tiles"][number],
+    ) => {
+      const tileLayout = tile.layout;
+      const tileLiveBanner =
+        tile.liveOverride && content!.screen?.showLiveBanner ? (
+          <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white px-3 py-1 flex items-center justify-center gap-2 text-sm font-medium">
+            LIVE: {tile.liveOverride.name}
+          </div>
+        ) : null;
+
+      if (!tileLayout) {
+        const hideMessage = !!content!.screen?.hideNoContentMessage;
+        return (
+          <div className="absolute inset-0 bg-black flex items-center justify-center">
+            {tileLiveBanner}
+            {!hideMessage && (
+              <div
+                className="text-center text-white"
+                data-testid={`text-no-content-tile-${tile.screenId}`}
+              >
+                <p className="text-lg font-semibold mb-1">No Content</p>
+                <p className="text-white/50 text-xs">{tile.name}</p>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      // Per-tile zone source rewrite (mirrors the single-tile `zones`
+      // useMemo so a playlist-driven zone gets its mediaPlayerItems
+      // hydrated from content.playlistItems[playlistId]).
+      const rawTileZones = (tileLayout.zones as LayoutZone[]) || [];
+      const tileZones: LayoutZone[] = rawTileZones.map((zone) => {
+        const source = tile.zoneSources?.find((zs) => zs.zoneId === zone.id);
+        if (!source || source.type !== "playlist" || !source.playlistId) return zone;
+        const playlistItemsList = content!.playlistItems?.[source.playlistId] || [];
+        if (playlistItemsList.length === 0) return zone;
+        const mediaOnlyItems = playlistItemsList.filter(
+          (pi) => pi.mediaAssetId && !pi.layoutTemplateId,
+        );
+        if (mediaOnlyItems.length === 0) return zone;
+        const mediaPlayerItems = mediaOnlyItems
+          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+          .map((pi) => ({
+            id: pi.id,
+            mediaAssetId: pi.mediaAssetId!,
+            duration: pi.duration ?? undefined,
+          }));
+        return { ...zone, mediaPlayerItems };
+      });
+
+      // When the layout was authored at the FULL canvas size, render
+      // it at canvas dims and translate by -tile.x/-tile.y so this
+      // tile shows its slice (legacy canvas-spanning layout). Else
+      // fill the slot directly (per-tile authored layout).
+      const tileLayoutAspect = getAspectRatioDimensions(
+        tileLayout.aspectRatio || "16:9",
+        tileLayout.customWidth,
+        tileLayout.customHeight,
+      );
+      const tileAuthored: { width: number; height: number } | null = (() => {
+        if (tileLayout.aspectRatio === "custom") {
+          const w = tileLayout.customWidth ?? 0;
+          const h = tileLayout.customHeight ?? 0;
+          return w > 0 && h > 0 ? { width: w, height: h } : null;
+        }
+        if (
+          !tileLayoutAspect ||
+          tileLayoutAspect.width <= 0 ||
+          tileLayoutAspect.height <= 0
+        )
+          return null;
+        const baseWidth = 1920;
+        return {
+          width: baseWidth,
+          height: Math.round(
+            (baseWidth * tileLayoutAspect.height) / tileLayoutAspect.width,
+          ),
+        };
+      })();
+      const tileUseCanvasMode =
+        tileAuthored !== null &&
+        Math.abs(tileAuthored.width - cwW) <= 1 &&
+        Math.abs(tileAuthored.height - cwH) <= 1;
+
+      return (
+        <>
+          {tileLiveBanner}
+          <div
+            className="absolute"
+            style={
+              tileUseCanvasMode
+                ? {
+                    left: `${-tile.x}px`,
+                    top: `${-tile.y}px`,
+                    width: `${cwW}px`,
+                    height: `${cwH}px`,
+                  }
+                : { left: 0, top: 0, width: "100%", height: "100%" }
+            }
+            data-testid={`player-zone-frame-tile-${tile.screenId}`}
+          >
+            {tileZones.map((zone) => (
+              <div
+                key={zone.id}
+                className="absolute"
+                style={{
+                  left: `${zone.x}%`,
+                  top: `${zone.y}%`,
+                  width: `${zone.width}%`,
+                  height: `${zone.height}%`,
+                  zIndex: zone.zIndex || 1,
+                }}
+              >
+                <div
+                  className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}
+                >
+                  <ZoneRenderer
+                    zone={zone}
+                    media={getZoneMedia(zone.id)}
+                    mediaIndex={getZoneMediaIndex(zone.id)}
+                    isPlaying={true}
+                    showBorder={false}
+                    timezone={weatherTimezone}
+                    fillContainer={true}
+                    mediaBaseUrl="/api/player/media"
+                    deviceToken={token}
+                    playerContext={{
+                      screenName: tile.name,
+                      roomName:
+                        content!.playerVars?.roomName ?? content!.screen?.location,
+                      eventName:
+                        content!.playerVars?.eventName ?? content!.event?.name,
+                      clientName:
+                        content!.playerVars?.clientName ?? content!.client?.name,
+                      roomCapacity: content!.playerVars?.roomCapacity,
+                      eventStartDate: content!.playerVars?.eventStartDate,
+                      eventEndDate: content!.playerVars?.eventEndDate,
+                      nextSessionTitle: content!.playerVars?.nextSessionTitle,
+                      nextSessionTime: content!.playerVars?.nextSessionTime,
+                      nextSessionCountdown:
+                        content!.playerVars?.nextSessionCountdown,
+                      weatherSummary: content!.playerVars?.weatherSummary,
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      );
+    };
+
+    return (
+      <div
+        className="fixed inset-0 bg-black flex items-center justify-center overflow-hidden"
+        style={{ cursor: "none" }}
+      >
+        <div
+          className="relative overflow-hidden"
+          style={{ width: `${cwScaledWidth}px`, height: `${cwScaledHeight}px` }}
+        >
+          <div
+            ref={containerRef}
+            className="relative overflow-hidden bg-black"
+            style={{
+              width: `${cwW}px`,
+              height: `${cwH}px`,
+              transform: `scale(${scale})`,
+              transformOrigin: "top left",
+            }}
+            data-testid="player-capture-target"
+          >
+            {canvasComposite.tiles.map((tile) => (
+              <div
+                key={tile.screenId}
+                className="absolute overflow-hidden"
+                style={{
+                  left: `${tile.x}px`,
+                  top: `${tile.y}px`,
+                  width: `${tile.width}px`,
+                  height: `${tile.height}px`,
+                }}
+                data-testid={`player-canvas-tile-${tile.screenId}`}
+              >
+                {renderTileSlot(tile)}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {!isConnected && content && (
+          <div
+            className="fixed bottom-4 right-4 bg-yellow-600/90 text-white px-3 py-1.5 rounded-full text-xs flex items-center gap-2 z-50"
+            data-testid="badge-offline"
+          >
+            <div className="w-2 h-2 rounded-full bg-yellow-300 animate-pulse" />
+            {isOffline ? "Offline — using cached content" : "Reconnecting..."}
+          </div>
+        )}
       </div>
     );
   }

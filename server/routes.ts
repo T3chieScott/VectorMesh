@@ -1,6 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { storage, pickCanvasPairingWinner } from "./storage";
 import { z } from "zod";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
@@ -1435,8 +1435,47 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Access denied to requested site" });
       }
       const screen = await storage.createScreen(data);
-      logAudit(req, "create", "screen", screen.id, { name: screen.name, clientId: screen.clientId });
-      res.status(201).json(screen);
+      // Implicit-canvas pairing (Task #173): a brand-new tile that
+      // joins an already-paired wall must inherit the wall's
+      // pairingCode + deviceToken on creation, otherwise the player
+      // would skip the new tile until the operator re-pairs the
+      // entire wall. We re-fetch the freshly created row before the
+      // canvas membership query so the new tile is itself in the
+      // group, then propagate the canonical state to every member
+      // (which is a no-op for the existing siblings and a sync for
+      // the new one).
+      let finalScreen = screen;
+      if (
+        screen.canvasEnabled &&
+        typeof screen.canvasWidth === "number" &&
+        typeof screen.canvasHeight === "number"
+      ) {
+        const members = await storage.getCanvasMembers(screen);
+        if (members.length > 1) {
+          const existingSiblings = members.filter((m) => m.id !== screen.id);
+          const winner = pickCanvasPairingWinner(existingSiblings);
+          await storage.setCanvasPairingState(
+            members.map((m) => m.id),
+            {
+              pairingCode: winner.pairingCode,
+              deviceToken: winner.deviceToken,
+              isPaired: !!winner.isPaired,
+              isOnline: !!winner.isOnline,
+              lastSeen: winner.lastSeen,
+              ipAddress: winner.ipAddress,
+              hostname: winner.hostname,
+              hardwareClass: winner.hardwareClass,
+            },
+          );
+          const refreshed = await storage.getScreen(screen.id);
+          if (refreshed) finalScreen = refreshed;
+        }
+      }
+      logAudit(req, "create", "screen", finalScreen.id, {
+        name: finalScreen.name,
+        clientId: finalScreen.clientId,
+      });
+      res.status(201).json(finalScreen);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
@@ -1514,12 +1553,29 @@ export async function registerRoutes(
 
   app.post("/api/screens/:id/regenerate-pairing", requireAuth, async (req, res) => {
     try {
-      const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const screen = await storage.updateScreen(getPathParam(req, "id"), { pairingCode: newCode, isPaired: false });
-      if (!screen) {
+      const seed = await storage.getScreen(getPathParam(req, "id"));
+      if (!seed) {
         return res.status(404).json({ error: "Screen not found" });
       }
-      logAudit(req, "regenerate_pairing", "screen", screen.id, { name: screen.name });
+      const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+      // Implicit-canvas pairing (Task #173): one code claims the whole
+      // wall, so regenerating from any tile resets every member's
+      // deviceToken/isPaired and gives them all the same fresh code.
+      const members = await storage.getCanvasMembers(seed);
+      await storage.setCanvasPairingState(
+        members.map((m) => m.id),
+        {
+          pairingCode: newCode,
+          deviceToken: null,
+          isPaired: false,
+          isOnline: false,
+        },
+      );
+      const screen = await storage.getScreen(seed.id);
+      logAudit(req, "regenerate_pairing", "screen", seed.id, {
+        name: seed.name,
+        canvasMembers: members.length,
+      });
       res.json(screen);
     } catch (error) {
       console.error("Error regenerating pairing code:", error);
@@ -1561,14 +1617,34 @@ export async function registerRoutes(
 
   app.post("/api/screens/:id/unpair", requireAuth, async (req, res) => {
     try {
-      const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const screen = await storage.unpairScreen(getPathParam(req, "id"), newCode);
-      if (!screen) {
+      const seed = await storage.getScreen(getPathParam(req, "id"));
+      if (!seed) {
         return res.status(404).json({ error: "Screen not found" });
       }
-      logAudit(req, "unpair", "screen", screen.id, { name: screen.name });
-      const { deviceToken, ...safeScreen } = screen;
-      res.json(safeScreen);
+      const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+      // Implicit-canvas pairing (Task #173): unpairing any tile clears
+      // the whole wall so the next pairing flow re-claims every member.
+      const members = await storage.getCanvasMembers(seed);
+      await storage.setCanvasPairingState(
+        members.map((m) => m.id),
+        {
+          pairingCode: newCode,
+          deviceToken: null,
+          isPaired: false,
+          isOnline: false,
+        },
+      );
+      const refreshed = await storage.getScreen(seed.id);
+      logAudit(req, "unpair", "screen", seed.id, {
+        name: seed.name,
+        canvasMembers: members.length,
+      });
+      if (refreshed) {
+        const { deviceToken, ...safeScreen } = refreshed;
+        res.json(safeScreen);
+      } else {
+        res.json({ id: seed.id, pairingCode: newCode, isPaired: false });
+      }
     } catch (error) {
       console.error("Error unpairing screen:", error);
       res.status(500).json({ error: "Failed to unpair screen" });
@@ -3597,18 +3673,41 @@ export async function registerRoutes(
         } catch {}
         return null;
       })();
-      
-      await storage.updateScreen(screen.id, {
-        isPaired: true,
-        isOnline: true,
-        lastSeen: new Date(),
-        hardwareClass: hardwareInfo?.class || "raspberry_pi",
-        hostname: hardwareInfo?.hostname || reverseDns || null,
-        ipAddress: clientIp,
+
+      // Implicit-canvas pairing (Task #173): one Pi drives the whole
+      // wall, so a single pairing code claims every member tile under
+      // one shared deviceToken. The player is told which tile it
+      // landed on (screenId/name = canvas owner = first-created tile)
+      // plus the full member list so the UI can render the composite.
+      const members = await storage.getCanvasMembers(screen);
+      const owner = members[0];
+      await storage.setCanvasPairingState(
+        members.map((m) => m.id),
+        {
+          isPaired: true,
+          isOnline: true,
+          lastSeen: new Date(),
+          hardwareClass: hardwareInfo?.class || "raspberry_pi",
+          hostname: hardwareInfo?.hostname || reverseDns || null,
+          ipAddress: clientIp,
+          deviceToken,
+        },
+      );
+
+      const isCanvasGroup = members.length > 1;
+      res.json({
+        screenId: owner.id,
+        name: owner.name,
         deviceToken,
+        canvas: isCanvasGroup
+          ? {
+              ownerScreenId: owner.id,
+              width: owner.canvasWidth,
+              height: owner.canvasHeight,
+              tiles: members.map((m) => ({ id: m.id, name: m.name })),
+            }
+          : null,
       });
-      
-      res.json({ screenId: screen.id, name: screen.name, deviceToken });
     } catch (error) {
       console.error("Error pairing screen:", error);
       res.status(500).json({ error: "Failed to pair screen" });
@@ -3628,7 +3727,19 @@ export async function registerRoutes(
       if (heartbeatClientIp) {
         heartbeatUpdate.ipAddress = heartbeatClientIp;
       }
-      await storage.updateScreen(data.screenId, heartbeatUpdate);
+      // Implicit-canvas pairing (Task #173): one Pi drives every tile,
+      // so a single heartbeat from any member tile keeps the whole wall
+      // marked online. Avoids "siblings show stale offline" in admin UI
+      // when only the owner emits heartbeats.
+      if (screen) {
+        const members = await storage.getCanvasMembers(screen);
+        await storage.setCanvasPairingState(
+          members.map((m) => m.id),
+          heartbeatUpdate,
+        );
+      } else {
+        await storage.updateScreen(data.screenId, heartbeatUpdate);
+      }
 
       if (wasOffline && screen) {
         storage.deleteAlertHistory("screen_offline", screen.id).catch((err) =>
@@ -3871,6 +3982,84 @@ export async function registerRoutes(
       const globalHide = parseGlobalHideValue(globalHideSetting?.value);
       const screenForResponse = applyGlobalHideOverride(screen, globalHide);
 
+      // Implicit-canvas pairing (Task #173): when the polled screen is
+      // a canvas member with siblings, also return a per-tile resolved
+      // payload so the single Pi paired against the wall can composite
+      // every tile in one frame. Single-tile / non-canvas responses are
+      // unchanged so legacy N-Pi-per-wall installs, and screens that
+      // aren't canvas-enabled at all, keep their existing behaviour.
+      let canvasPayload: {
+        ownerScreenId: string;
+        width: number;
+        height: number;
+        tiles: Array<{
+          screenId: string;
+          name: string;
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+          layout: any;
+          zoneSources: any[];
+          liveOverride: any;
+          profile: any;
+        }>;
+      } | null = null;
+      const canvasMembers = await storage.getCanvasMembers(screen);
+      if (
+        canvasMembers.length > 1 &&
+        typeof screen.canvasWidth === "number" &&
+        typeof screen.canvasHeight === "number"
+      ) {
+        const owner = canvasMembers[0];
+        const tiles: NonNullable<typeof canvasPayload>["tiles"] = [];
+        for (const member of canvasMembers) {
+          // Reuse the seed's already-resolved content when a tile id
+          // matches — saves a redundant resolveScreenContent for the
+          // most common case of polling the owner.
+          const isSeed = member.id === screen.id;
+          const memberResolved = isSeed
+            ? resolved
+            : await resolveScreenContent(
+                member,
+                now,
+                storage as ResolverDeps,
+                screenTz,
+              );
+          const memberProfile = member.displayProfileId
+            ? await storage.getDisplayProfile(member.displayProfileId)
+            : null;
+          tiles.push({
+            screenId: member.id,
+            name: member.name,
+            x: member.canvasX ?? 0,
+            y: member.canvasY ?? 0,
+            // Tile pixel dimensions come from the display profile (the
+            // physical screen's resolution); fall back to 0 when no
+            // profile is set so the player can still render an outline
+            // rather than a NaN-sized box.
+            width: memberProfile?.width ?? 0,
+            height: memberProfile?.height ?? 0,
+            layout: memberResolved.layout,
+            zoneSources: memberResolved.activeZoneSources,
+            liveOverride: memberResolved.liveOverride,
+            profile: memberProfile,
+          });
+        }
+        canvasPayload = {
+          ownerScreenId: owner.id,
+          // Source canvas dimensions from the canonical owner row
+          // (Task #173 hardening) so a sibling with stale or
+          // mismatched canvas dims can never alter the composite
+          // viewport size for the rest of the wall. `getCanvasMembers`
+          // already filters by exact width/height match so this is
+          // belt-and-braces — but it documents the intent.
+          width: owner.canvasWidth ?? screen.canvasWidth,
+          height: owner.canvasHeight ?? screen.canvasHeight,
+          tiles,
+        };
+      }
+
       res.json({
         screen: screenForResponse,
         profile,
@@ -3888,6 +4077,7 @@ export async function registerRoutes(
         refreshRequested,
         screenshotEnabled: screen.screenshotEnabled || false,
         screenshotRequested,
+        canvas: canvasPayload,
       });
     } catch (error) {
       console.error("Error fetching player content:", error);

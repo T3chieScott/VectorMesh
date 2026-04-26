@@ -142,6 +142,48 @@ export interface IStorage {
   getScreenByDeviceToken(token: string): Promise<Screen | undefined>;
   unpairScreen(id: string, newPairingCode: string): Promise<Screen | undefined>;
   /**
+   * Implicit-canvas grouping: returns every screen that shares a video
+   * wall with `screen` (same clientId + canvasWidth + canvasHeight, all
+   * canvasEnabled), ordered by createdAt asc. The first element is the
+   * implicit "owner" — the earliest-created tile. For non-canvas /
+   * single-tile screens this returns `[screen]`. NOTE: callers must
+   * pass a freshly fetched Screen row — this method does NOT re-fetch
+   * the seed.
+   */
+  getCanvasMembers(screen: Screen): Promise<Screen[]>;
+  /**
+   * Bulk-update pairing-related fields across every member of an
+   * implicit canvas group, atomically. Used so the pair / unpair /
+   * regenerate / heartbeat flows treat the whole wall as one unit.
+   * Returns the number of rows affected.
+   */
+  setCanvasPairingState(
+    screenIds: string[],
+    fields: Partial<
+      Pick<
+        Screen,
+        | "pairingCode"
+        | "deviceToken"
+        | "isPaired"
+        | "isOnline"
+        | "lastSeen"
+        | "ipAddress"
+        | "hostname"
+        | "hardwareClass"
+      >
+    >,
+  ): Promise<number>;
+  /**
+   * One-shot reconciliation: walks every implicit canvas group and
+   * forces all members to share one pairing state. The "winner" inside
+   * a group is the most-recently-seen paired tile if any tile is
+   * paired, otherwise the earliest-created tile (whose pairingCode
+   * becomes the canonical one). Run at server boot so pre-#173 walls
+   * with mismatched per-screen pairing rows converge before the first
+   * player request arrives. Returns the number of groups normalised.
+   */
+  backfillCanvasPairingState(): Promise<number>;
+  /**
    * Mark every currently-online screen whose `lastSeen` is older than
    * `now - staleThresholdMs` as offline. `now` defaults to the wall clock
    * but can be overridden — this keeps the time-cutoff math purely in UTC
@@ -277,6 +319,33 @@ export interface IStorage {
   getRecentNewIpEventsForTokens(tokenIds: string[]): Promise<Map<string, { lastIp: string | null; lastAt: Date | null; count: number }>>;
   getLatestAckActorsForTokens(tokenIds: string[]): Promise<Map<string, { at: Date; userId: string | null; firstName: string | null; lastName: string | null; email: string | null }>>;
   acknowledgeApiTokenNewIp(tokenId: string, at: Date): Promise<void>;
+}
+
+/**
+ * Pick the "source of truth" tile for a canvas group's pairing state.
+ * - Prefer a paired tile (isPaired=true with a non-null deviceToken).
+ *   When several are paired we prefer the most-recently-seen one so a
+ *   live wall always wins over a stale one.
+ * - Otherwise fall back to the earliest-created tile so the canonical
+ *   pairingCode is stable across boots.
+ *
+ * `members` MUST already be ordered by createdAt asc (which is what
+ * `getCanvasMembers` and `backfillCanvasPairingState` produce) so the
+ * fallback branch is deterministic.
+ */
+export function pickCanvasPairingWinner(members: Screen[]): Screen {
+  if (members.length === 0) {
+    throw new Error("pickCanvasPairingWinner requires at least one member");
+  }
+  const paired = members.filter((m) => !!m.isPaired && m.deviceToken !== null);
+  if (paired.length > 0) {
+    return paired.reduce((best, cur) => {
+      const bestTs = best.lastSeen?.getTime() ?? 0;
+      const curTs = cur.lastSeen?.getTime() ?? 0;
+      return curTs > bestTs ? cur : best;
+    });
+  }
+  return members[0];
 }
 
 export class DatabaseStorage implements IStorage {
@@ -636,6 +705,130 @@ export class DatabaseStorage implements IStorage {
       .where(eq(screens.id, id))
       .returning();
     return screen;
+  }
+
+  async getCanvasMembers(screen: Screen): Promise<Screen[]> {
+    if (
+      !screen.canvasEnabled ||
+      typeof screen.canvasWidth !== "number" ||
+      screen.canvasWidth <= 0 ||
+      typeof screen.canvasHeight !== "number" ||
+      screen.canvasHeight <= 0
+    ) {
+      return [screen];
+    }
+    // clientId may be NULL — and `eq(col, null)` does NOT do `IS NULL`
+    // in SQL, so we have to branch. Without this branch the query would
+    // silently return no members for orphaned (clientless) screens and
+    // pairing would degenerate to per-tile semantics.
+    const clientCondition =
+      screen.clientId === null
+        ? sql`${screens.clientId} IS NULL`
+        : eq(screens.clientId, screen.clientId);
+    const members = await db
+      .select()
+      .from(screens)
+      .where(
+        and(
+          eq(screens.canvasEnabled, true),
+          eq(screens.canvasWidth, screen.canvasWidth),
+          eq(screens.canvasHeight, screen.canvasHeight),
+          clientCondition,
+        ),
+      )
+      .orderBy(asc(screens.createdAt), asc(screens.id));
+    // Defensive: if the seed got deleted between the caller's fetch
+    // and our query, fall back to it so the caller still sees ≥1 row.
+    return members.length > 0 ? members : [screen];
+  }
+
+  async setCanvasPairingState(
+    screenIds: string[],
+    fields: Partial<
+      Pick<
+        Screen,
+        | "pairingCode"
+        | "deviceToken"
+        | "isPaired"
+        | "isOnline"
+        | "lastSeen"
+        | "ipAddress"
+        | "hostname"
+        | "hardwareClass"
+      >
+    >,
+  ): Promise<number> {
+    if (screenIds.length === 0) return 0;
+    if (Object.keys(fields).length === 0) return 0;
+    const result = await db
+      .update(screens)
+      .set({ ...fields, updatedAt: new Date() } as any)
+      .where(inArray(screens.id, screenIds));
+    return result.rowCount ?? 0;
+  }
+
+  async backfillCanvasPairingState(): Promise<number> {
+    // Walks every canvas-enabled screen, regroups by
+    // (clientId, canvasWidth, canvasHeight), and forces all members
+    // to share one pairing snapshot. Idempotent — groups that already
+    // agree are skipped. Designed to be run once at boot before the
+    // first /api/player/pair or heartbeat hits the canvas-aware paths.
+    const allCanvas = await db
+      .select()
+      .from(screens)
+      .where(eq(screens.canvasEnabled, true))
+      .orderBy(asc(screens.createdAt), asc(screens.id));
+
+    const groups = new Map<string, Screen[]>();
+    for (const s of allCanvas) {
+      if (
+        typeof s.canvasWidth !== "number" ||
+        s.canvasWidth <= 0 ||
+        typeof s.canvasHeight !== "number" ||
+        s.canvasHeight <= 0
+      ) {
+        continue;
+      }
+      const key = `${s.clientId ?? ""}|${s.canvasWidth}x${s.canvasHeight}`;
+      const arr = groups.get(key);
+      if (arr) arr.push(s);
+      else groups.set(key, [s]);
+    }
+
+    let normalised = 0;
+    for (const [, members] of groups) {
+      if (members.length < 2) continue;
+      const winner = pickCanvasPairingWinner(members);
+      const fields = {
+        pairingCode: winner.pairingCode,
+        deviceToken: winner.deviceToken,
+        isPaired: !!winner.isPaired,
+        isOnline: !!winner.isOnline,
+        lastSeen: winner.lastSeen,
+        ipAddress: winner.ipAddress,
+        hostname: winner.hostname,
+        hardwareClass: winner.hardwareClass,
+      };
+      const needsUpdate = members.some(
+        (m) =>
+          m.pairingCode !== fields.pairingCode ||
+          m.deviceToken !== fields.deviceToken ||
+          !!m.isPaired !== fields.isPaired ||
+          !!m.isOnline !== fields.isOnline ||
+          (m.lastSeen?.getTime() ?? null) !==
+            (fields.lastSeen?.getTime() ?? null) ||
+          m.ipAddress !== fields.ipAddress ||
+          m.hostname !== fields.hostname ||
+          m.hardwareClass !== fields.hardwareClass,
+      );
+      if (!needsUpdate) continue;
+      await this.setCanvasPairingState(
+        members.map((m) => m.id),
+        fields,
+      );
+      normalised++;
+    }
+    return normalised;
   }
 
   async markStaleScreensOffline(

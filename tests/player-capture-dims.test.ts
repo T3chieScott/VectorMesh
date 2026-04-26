@@ -73,11 +73,13 @@ function captureTargetBlocks(src: string): string[] {
 
 const blocks = captureTargetBlocks(playerSource);
 
-test("player.tsx contains exactly two [data-testid=player-capture-target] elements", () => {
-  // One for the test pattern path, one for the layout (live content) path.
-  // If this changes, the captureScreenshot onclone selector that resets
+test("player.tsx contains exactly three [data-testid=player-capture-target] elements", () => {
+  // One for the test pattern path, one for the layout (live content) path,
+  // and one for the canvas-composite path (Task #173: a single Pi paired
+  // against a multi-tile canvas renders every tile in one viewport). If
+  // this changes, the captureScreenshot onclone selector that resets
   // `transform: none` on the cloned target may need to be revisited.
-  assert.equal(blocks.length, 2);
+  assert.equal(blocks.length, 3);
 });
 
 test("each capture target has inline style.width / style.height bound to a captureW/H variable", () => {
@@ -93,22 +95,25 @@ test("each capture target has inline style.width / style.height bound to a captu
       `capture target missing inline style.height: ${block}`,
     );
     // The width/height variable must be one of the recognized capture-dim
-    // names — captureW/captureH (layout path) or tpCaptureW/tpCaptureH
-    // (test pattern path). This catches accidental swaps to slot/scaled
-    // dimensions, which were the symptom of the cropping bug.
+    // names — captureW/captureH (layout path), tpCaptureW/tpCaptureH (test
+    // pattern path), or cwW/cwH (canvas-composite path; bound to the
+    // server-provided canvas.width / canvas.height — see Task #173). This
+    // catches accidental swaps to slot/scaled dimensions, which were the
+    // symptom of the cropping bug.
     const wVar = widthMatch[1];
     const hVar = heightMatch[1];
     assert.ok(
-      ["captureW", "tpCaptureW"].includes(wVar),
+      ["captureW", "tpCaptureW", "cwW"].includes(wVar),
       `unexpected width variable ${wVar} on capture target`,
     );
     assert.ok(
-      ["captureH", "tpCaptureH"].includes(hVar),
+      ["captureH", "tpCaptureH", "cwH"].includes(hVar),
       `unexpected height variable ${hVar} on capture target`,
     );
     // Width and height must come from the same path's pair.
     if (wVar === "captureW") assert.equal(hVar, "captureH");
     if (wVar === "tpCaptureW") assert.equal(hVar, "tpCaptureH");
+    if (wVar === "cwW") assert.equal(hVar, "cwH");
   }
 });
 

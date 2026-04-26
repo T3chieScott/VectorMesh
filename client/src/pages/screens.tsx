@@ -28,9 +28,10 @@ import {
   groupScreensByCanvas,
   siblingsOnCanvas,
   siblingsForCanvasParams,
+  pickCanvasOwner,
   type CanvasGroup,
   nextFreeOffsetForRects,
-} from "@/lib/canvas-groups";
+} from "@shared/canvas-groups";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1323,6 +1324,19 @@ function ScreenCard({
     [siblingScreens, profiles],
   );
 
+  // Canvas pairing model (Task #173): one tile per canvas owns the
+  // pairing code; siblings inherit it. The owner is the
+  // earliest-created member (with id as a deterministic tiebreaker).
+  // Single-tile / non-canvas screens are always their own "owner",
+  // which means non-canvas behaviour is unchanged.
+  const canvasOwner = useMemo(() => {
+    if (siblingScreens.length === 0) return screen;
+    return pickCanvasOwner([screen, ...siblingScreens]) ?? screen;
+  }, [screen, siblingScreens]);
+  const isCanvasOwner = canvasOwner.id === screen.id;
+  const inheritsPairingFromOwner =
+    !isCanvasOwner && siblingScreens.length > 0;
+
   // "Add screen to this canvas" — controlled CreateScreenDialog
   // instance that pre-fills the new screen with this canvas's clientId
   // + width + height + the next free X offset along the wall.
@@ -1933,9 +1947,10 @@ function ScreenCard({
                 Add screen to this canvas
               </DropdownMenuItem>
             )}
-            {!screen.isPaired && (
+            {!screen.isPaired && isCanvasOwner && (
               <DropdownMenuItem
                 onSelect={() => regeneratePairingCodeMutation.mutate()}
+                data-testid={`button-regenerate-pairing-${screen.id}`}
               >
                 <RefreshCw className="mr-2 h-4 w-4" />
                 Regenerate Code
@@ -1950,7 +1965,7 @@ function ScreenCard({
                 Refresh Player
               </DropdownMenuItem>
             )}
-            {screen.isPaired && (
+            {screen.isPaired && isCanvasOwner && (
               <DropdownMenuItem
                 onSelect={() => unpairMutation.mutate()}
                 data-testid={`button-unpair-${screen.id}`}
@@ -2077,11 +2092,21 @@ function ScreenCard({
           </div>
         )}
         <ScreenBookingStatus screenId={screen.id} />
-        {!screen.isPaired && screen.pairingCode && (
+        {!screen.isPaired && screen.pairingCode && isCanvasOwner && (
           <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
             <div>
-              <p className="text-xs text-muted-foreground mb-1">Pairing Code</p>
-              <p className="text-lg font-mono font-bold tracking-wider">
+              <p className="text-xs text-muted-foreground mb-1">
+                Pairing Code
+                {siblingScreens.length > 0 && (
+                  <span className="ml-1 text-[10px] uppercase tracking-wide opacity-70">
+                    · pairs entire {screen.canvasWidth}×{screen.canvasHeight} canvas ({siblingScreens.length + 1} tiles)
+                  </span>
+                )}
+              </p>
+              <p
+                className="text-lg font-mono font-bold tracking-wider"
+                data-testid={`text-pairing-code-${screen.id}`}
+              >
                 {screen.pairingCode}
               </p>
             </div>
@@ -2093,6 +2118,19 @@ function ScreenCard({
             >
               <Copy className="h-4 w-4" />
             </Button>
+          </div>
+        )}
+        {inheritsPairingFromOwner && (
+          <div
+            className="p-3 rounded-lg bg-muted/30 text-xs text-muted-foreground flex items-center gap-2"
+            data-testid={`text-inherits-pairing-${screen.id}`}
+          >
+            <Grid3X3 className="h-3 w-3 shrink-0" />
+            <span>
+              Inherits pairing from{" "}
+              <span className="font-medium text-foreground">{canvasOwner.name}</span>.
+              Pair / regenerate / unpair on that tile to act on the entire canvas.
+            </span>
           </div>
         )}
         <div className="flex items-center justify-between">

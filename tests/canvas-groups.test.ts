@@ -7,7 +7,7 @@ import {
   siblingsForCanvasParams,
   rectIntersection,
   nextFreeOffsetForRects,
-} from "../client/src/lib/canvas-groups";
+} from "../shared/canvas-groups";
 import type { Screen } from "../shared/schema";
 
 // Minimal Screen factory — only the fields the helper reads matter.

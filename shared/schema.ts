@@ -951,4 +951,28 @@ export interface PlayerContentResponse {
   // listens for this on the next poll and triggers a full window
   // reload so layout/code changes take effect immediately.
   refreshRequested?: boolean;
+  // Implicit-canvas pairing (Task #173). Present when the polled
+  // screen belongs to a multi-tile canvas group; the single Pi paired
+  // against the wall composites every tile in one frame. Each tile
+  // carries its own resolved layout / zoneSources / liveOverride /
+  // profile so a tile can render different content from its siblings
+  // when bookings target tiles individually. Null for non-canvas
+  // screens and for canvas-enabled screens with only one member.
+  canvas?: {
+    ownerScreenId: string;
+    width: number;
+    height: number;
+    tiles: Array<{
+      screenId: string;
+      name: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      layout: LayoutTemplate | null;
+      zoneSources: Array<{ zoneId: string; type: string; playlistId?: string }>;
+      liveOverride: LiveOverride | null;
+      profile: DisplayProfile | null;
+    }>;
+  } | null;
 }

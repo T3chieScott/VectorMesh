@@ -76,6 +76,26 @@ export function groupScreensByCanvas(
   return groups;
 }
 
+// Pick the implicit canvas "owner" — the single tile that owns the
+// pairing code for the entire wall (Task #173). Order is
+// (createdAt asc, id asc) so it's stable across reloads even when
+// timestamps tie. Use `pickCanvasPairingWinner` in server/storage.ts
+// when you also want to bias toward the most-recently-paired member;
+// this helper is the dumb sort-only version meant for read-only UI
+// labels ("Inherits pairing from <owner>").
+export function pickCanvasOwner<T extends Pick<Screen, "id" | "createdAt">>(
+  members: T[],
+): T | null {
+  if (members.length === 0) return null;
+  const sorted = [...members].sort((a, b) => {
+    const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    if (at !== bt) return at - bt;
+    return a.id.localeCompare(b.id);
+  });
+  return sorted[0];
+}
+
 // Look up the screens that share `screen`'s canvas, EXCLUDING
 // `screen` itself. Returns [] when the screen isn't canvas-enabled
 // or when it's the only one on its canvas. The caller passes the
