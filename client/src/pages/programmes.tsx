@@ -878,37 +878,61 @@ function ScheduleBlocksSection({
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="mt-3 space-y-2 p-3 bg-muted/30 rounded-md">
-            {blocks.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-2">
-                No schedule blocks. Add blocks to define content timing.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {blocks.map((block) => (
-                  <ScheduleBlockRow
-                    key={block.id}
-                    block={block}
-                    layout={block.layoutTemplateId ? layoutMap.get(block.layoutTemplateId) : undefined}
-                    screens={screens}
-                    screenGroups={screenGroups}
-                    onEdit={() => handleEditBlock(block)}
-                    onDelete={() => deleteMutation.mutate(block.id)}
-                  />
-                ))}
-              </div>
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full"
-              onClick={handleAddBlock}
-              data-testid={`button-add-block-${version.id}`}
-            >
-              <Plus className="mr-2 h-3 w-3" />
-              Add Block
-            </Button>
-          </div>
+          {/*
+            Section-level right-click target: lets the user copy every
+            block at once or paste from the clipboard onto this
+            programme. The same menu wraps each individual row below
+            (in block mode) for the per-row Copy block / Copy series
+            actions.
+          */}
+          <ProgrammeBlocksContextMenu
+            programme={programme}
+            targetVersion={version}
+            destinationClientId={destinationClientId}
+            layouts={layouts}
+            playlists={playlists}
+            screens={screens}
+            screenGroups={screenGroups}
+            sourceVersion={version}
+            allBlocks={blocks}
+          >
+            <div className="mt-3 space-y-2 p-3 bg-muted/30 rounded-md">
+              {blocks.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-2">
+                  No schedule blocks. Add blocks to define content timing.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {blocks.map((block) => (
+                    <ScheduleBlockRow
+                      key={block.id}
+                      block={block}
+                      layout={block.layoutTemplateId ? layoutMap.get(block.layoutTemplateId) : undefined}
+                      screens={screens}
+                      screenGroups={screenGroups}
+                      onEdit={() => handleEditBlock(block)}
+                      onDelete={() => deleteMutation.mutate(block.id)}
+                      programme={programme}
+                      sourceVersion={version}
+                      destinationClientId={destinationClientId}
+                      layouts={layouts}
+                      playlists={playlists}
+                    />
+                  ))}
+                </div>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={handleAddBlock}
+                data-testid={`button-add-block-${version.id}`}
+              >
+                <Plus className="mr-2 h-3 w-3" />
+                Add Block
+              </Button>
+            </div>
+          </ProgrammeBlocksContextMenu>
         </CollapsibleContent>
       </Collapsible>
 
@@ -1218,6 +1242,8 @@ function ProgrammeCard({
             playlists={playlists}
             screens={screens}
             screenGroups={screenGroups}
+            programme={programme}
+            destinationClientId={event?.clientId ?? null}
           />
         )}
         {!publishedVersion && draftVersion && (
@@ -1233,6 +1259,7 @@ function ProgrammeCard({
 
 function ManageBlocksDialog({
   programme,
+  event,
   versions,
   layouts,
   playlists,
@@ -1242,6 +1269,11 @@ function ManageBlocksDialog({
   onOpenChange,
 }: {
   programme: Programme;
+  // Optional because the table-view host (line ~1883) may not have
+  // the event handy in every code path; the context menu falls back
+  // to a null destinationClientId in that case and the server still
+  // performs its own access checks.
+  event?: Event;
   versions: ProgrammeVersion[];
   layouts: LayoutTemplate[];
   playlists: Playlist[];
@@ -1277,6 +1309,8 @@ function ManageBlocksDialog({
               playlists={playlists}
               screens={screens}
               screenGroups={screenGroups}
+              programme={programme}
+              destinationClientId={event?.clientId ?? null}
             />
           </div>
         ) : (
@@ -1883,6 +1917,7 @@ export default function ProgrammesPage() {
               <ManageBlocksDialog
                 key={`blocks-${managingProgramme.id}`}
                 programme={managingProgramme}
+                event={eventMap.get(managingProgramme.eventId)}
                 versions={versions}
                 layouts={layouts}
                 playlists={playlists}
