@@ -1031,6 +1031,10 @@ function ScheduleBlockEditor({
   const targetType = form.watch("targetType");
   const selectedLayoutId = form.watch("layoutTemplateId");
   const selectedLayout = layouts.find((l) => l.id === selectedLayoutId);
+  const editorTzAbbrev = useMemo(
+    () => getTzAbbreviation(new Date(), editorTz),
+    [editorTz],
+  );
   
   const [zoneMappings, setZoneMappings] = useState<Record<string, string>>(() => {
     const mappings: Record<string, string> = {};
@@ -1425,7 +1429,16 @@ function ScheduleBlockEditor({
                 name="startTime"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Start Time</FormLabel>
+                    <FormLabel>
+                      Start Time{" "}
+                      <span
+                        className="text-muted-foreground font-normal"
+                        title={`Wall-clock time in ${editorTz}`}
+                        data-testid="text-start-time-tz-abbrev"
+                      >
+                        ({editorTzAbbrev})
+                      </span>
+                    </FormLabel>
                     <FormControl>
                       <Input type="time" {...field} data-testid="input-start-time" />
                     </FormControl>
@@ -1439,7 +1452,16 @@ function ScheduleBlockEditor({
                 name="endTime"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>End Time</FormLabel>
+                    <FormLabel>
+                      End Time{" "}
+                      <span
+                        className="text-muted-foreground font-normal"
+                        title={`Wall-clock time in ${editorTz}`}
+                        data-testid="text-end-time-tz-abbrev"
+                      >
+                        ({editorTzAbbrev})
+                      </span>
+                    </FormLabel>
                     <FormControl>
                       <Input type="time" {...field} data-testid="input-end-time" />
                     </FormControl>
