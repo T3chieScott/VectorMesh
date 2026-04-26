@@ -1198,6 +1198,64 @@ function ProgrammeCard({
   );
 }
 
+function ManageBlocksDialog({
+  programme,
+  versions,
+  layouts,
+  playlists,
+  screens,
+  screenGroups,
+  open,
+  onOpenChange,
+}: {
+  programme: Programme;
+  versions: ProgrammeVersion[];
+  layouts: LayoutTemplate[];
+  playlists: Playlist[];
+  screens: Screen[];
+  screenGroups: ScreenGroup[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const programmeVersions = versions.filter((v) => v.programmeId === programme.id);
+  const publishedVersion = programmeVersions.find((v) => v.status === "published");
+  const draftVersion = programmeVersions.find((v) => v.status === "draft");
+  const targetVersion = publishedVersion || draftVersion;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle data-testid={`text-manage-blocks-title-${programme.id}`}>
+            Manage Blocks — {programme.name}
+          </DialogTitle>
+        </DialogHeader>
+        {targetVersion ? (
+          <div className="space-y-3">
+            {!publishedVersion && draftVersion && (
+              <div className="flex items-center gap-2 p-2 rounded-md bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 text-xs">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                <span>This programme is unpublished. Schedule blocks won't appear on screens until you publish.</span>
+              </div>
+            )}
+            <ScheduleBlocksSection
+              version={targetVersion}
+              layouts={layouts}
+              playlists={playlists}
+              screens={screens}
+              screenGroups={screenGroups}
+            />
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            This programme has no versions yet. Edit the programme first to create one.
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function SortableProgrammeCard(props: {
   programme: Programme;
   event?: Event;
@@ -1451,11 +1509,18 @@ export default function ProgrammesPage() {
   const userId = user?.id ?? null;
   const { toast: pageToast } = useToast();
   const [view, setView] = useState<ProgrammesView>(() => loadProgrammesViewPreference(userId));
+  // Filter by event id ("all" means no filter). Mirrors the Screens page
+  // pattern so reorder can be gated correctly: drag-to-reorder rewrites the
+  // global displayOrder, so it must only be allowed when every programme
+  // is visible (i.e. filter === "all").
+  const [filter, setFilter] = useState<string>("all");
   // Hosts the edit dialog when the user clicks Edit in the table view. The
   // card view owns its own per-card dialog state; the table doesn't mount
   // per-row cards, so we mount a single hidden ProgrammeCard here as the
   // edit-form host, keyed by the programme id.
   const [editingProgrammeId, setEditingProgrammeId] = useState<string | null>(null);
+  // Hosts the Manage Blocks dialog when triggered from a table row.
+  const [managingBlocksProgrammeId, setManagingBlocksProgrammeId] = useState<string | null>(null);
 
   // Local optimistic order, synced from server data when not actively dragging.
   const [orderedIds, setOrderedIds] = useState<string[]>([]);
@@ -1476,6 +1541,11 @@ export default function ProgrammesPage() {
     }
     return arr;
   }, [programmes, orderedIds]);
+
+  const filteredProgrammes = useMemo(() => {
+    if (filter === "all") return orderedProgrammes;
+    return orderedProgrammes.filter((p) => p.eventId === filter);
+  }, [orderedProgrammes, filter]);
 
   const reorderMutation = useMutation({
     mutationFn: (newOrderedIds: string[]) =>
@@ -1516,7 +1586,10 @@ export default function ProgrammesPage() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const dragEnabled = view === "cards";
+  const dragEnabled = filter === "all" && view === "cards";
+  const dragDisabledReason = filter !== "all"
+    ? "Clear the event filter to reorder programmes."
+    : undefined;
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -1620,6 +1693,43 @@ export default function ProgrammesPage() {
         </div>
       </div>
 
+      {/* Filter + drag-disabled note */}
+      {!isLoading && programmes.length > 0 && events.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Event:</span>
+            <Select value={filter} onValueChange={setFilter}>
+              <SelectTrigger className="h-8 w-[200px]" data-testid="select-filter-event">
+                <SelectValue placeholder="All events" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All events</SelectItem>
+                {events.map((e) => (
+                  <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {filter !== "all" && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs"
+                onClick={() => setFilter("all")}
+                data-testid="button-clear-filter"
+              >
+                Clear filter
+              </Button>
+            )}
+          </div>
+          {view === "cards" && filter !== "all" && (
+            <span className="text-xs text-muted-foreground" data-testid="text-drag-disabled-note">
+              Drag-to-reorder is paused while a filter is active.
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Content */}
       {isLoading ? (
         view === "table" ? (
@@ -1663,34 +1773,44 @@ export default function ProgrammesPage() {
           </CardContent>
         </Card>
       ) : view === "cards" ? (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={orderedProgrammes.map((p) => p.id)} strategy={rectSortingStrategy}>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="grid-programme-cards">
-              {orderedProgrammes.map((programme) => (
-                <SortableProgrammeCard
-                  key={programme.id}
-                  programme={programme}
-                  event={eventMap.get(programme.eventId)}
-                  versions={versions}
-                  layouts={layouts}
-                  playlists={playlists}
-                  screens={screens}
-                  screenGroups={screenGroups}
-                  dragEnabled={dragEnabled}
-                  onMoveToStart={() => moveProgrammeTo(programme.id, "start")}
-                  onMoveToEnd={() => moveProgrammeTo(programme.id, "end")}
-                />
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
+        filteredProgrammes.length === 0 ? (
+          <Card className="py-8">
+            <CardContent className="flex flex-col items-center justify-center text-center text-sm text-muted-foreground">
+              No programmes match the current filter.
+            </CardContent>
+          </Card>
+        ) : (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={filteredProgrammes.map((p) => p.id)} strategy={rectSortingStrategy}>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="grid-programme-cards">
+                {filteredProgrammes.map((programme) => (
+                  <SortableProgrammeCard
+                    key={programme.id}
+                    programme={programme}
+                    event={eventMap.get(programme.eventId)}
+                    versions={versions}
+                    layouts={layouts}
+                    playlists={playlists}
+                    screens={screens}
+                    screenGroups={screenGroups}
+                    dragEnabled={dragEnabled}
+                    dragDisabledReason={dragDisabledReason}
+                    onMoveToStart={() => moveProgrammeTo(programme.id, "start")}
+                    onMoveToEnd={() => moveProgrammeTo(programme.id, "end")}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+        )
       ) : (
         <>
           <ProgrammesTable
-            programmes={orderedProgrammes}
+            programmes={filteredProgrammes}
             events={events}
             versions={versions}
             onEdit={(p) => setEditingProgrammeId(p.id)}
+            onManageBlocks={(p) => setManagingBlocksProgrammeId(p.id)}
             onPublish={(p) => publishFromTable.mutate(p)}
             onDelete={(p) => deleteFromTable.mutate(p)}
           />
@@ -1721,6 +1841,25 @@ export default function ProgrammesPage() {
                   }}
                 />
               </div>
+            );
+          })()}
+          {managingBlocksProgrammeId && (() => {
+            const managingProgramme = programmes.find((p) => p.id === managingBlocksProgrammeId);
+            if (!managingProgramme) return null;
+            return (
+              <ManageBlocksDialog
+                key={`blocks-${managingProgramme.id}`}
+                programme={managingProgramme}
+                versions={versions}
+                layouts={layouts}
+                playlists={playlists}
+                screens={screens}
+                screenGroups={screenGroups}
+                open={true}
+                onOpenChange={(open) => {
+                  if (!open) setManagingBlocksProgrammeId(null);
+                }}
+              />
             );
           })()}
         </>

@@ -2179,9 +2179,15 @@ export async function registerRoutes(
     }
   });
 
+  // Programmes are write-protected via the per-route checks below. We strip
+  // `displayOrder` from any incoming write payload so reorder can only
+  // happen via PATCH /api/programmes/reorder (which is the single chokepoint
+  // that holds the necessary cross-row authz + transactional rewrite).
+  const programmeWriteSchema = insertProgrammeSchema.omit({ displayOrder: true });
+
   app.post("/api/programmes", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const data = insertProgrammeSchema.parse(req.body);
+      const data = programmeWriteSchema.parse(req.body);
       const event = await storage.getEvent(data.eventId);
       if (event && !canAccessClient(req, event.clientId)) {
         return res.status(403).json({ error: "Access denied" });
@@ -2199,10 +2205,36 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/programmes/:id", requireAuth, async (req, res) => {
+  // Helper: load a programme + its event to enforce client-scoped authz
+  // on the per-id mutation routes below (PATCH / publish / DELETE).
+  async function authorizeProgrammeMutation(req: any, res: any, programmeId: string) {
+    const existing = await storage.getProgramme(programmeId);
+    if (!existing) {
+      res.status(404).json({ error: "Programme not found" });
+      return null;
+    }
+    const event = await storage.getEvent(existing.eventId);
+    if (event && !canAccessClient(req, event.clientId)) {
+      res.status(403).json({ error: "Access denied" });
+      return null;
+    }
+    return existing;
+  }
+
+  app.patch("/api/programmes/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const data = insertProgrammeSchema.partial().parse(req.body);
-      const programme = await storage.updateProgramme(getPathParam(req, "id"), data);
+      const programmeId = getPathParam(req, "id");
+      const existing = await authorizeProgrammeMutation(req, res, programmeId);
+      if (!existing) return;
+      const data = programmeWriteSchema.partial().parse(req.body);
+      // If the eventId is being changed, also enforce access to the target client
+      if (data.eventId && data.eventId !== existing.eventId) {
+        const targetEvent = await storage.getEvent(data.eventId);
+        if (targetEvent && !canAccessClient(req, targetEvent.clientId)) {
+          return res.status(403).json({ error: "Access denied to target event" });
+        }
+      }
+      const programme = await storage.updateProgramme(programmeId, data);
       if (!programme) {
         return res.status(404).json({ error: "Programme not found" });
       }
@@ -2217,17 +2249,20 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/programmes/:id/publish", requireAuth, async (req, res) => {
+  app.post("/api/programmes/:id/publish", requireAuth, loadUserContext, async (req, res) => {
     try {
+      const programmeId = getPathParam(req, "id");
+      const existing = await authorizeProgrammeMutation(req, res, programmeId);
+      if (!existing) return;
       const versions = await storage.getProgrammeVersions();
-      const programmeVersions = versions.filter(v => v.programmeId === getPathParam(req, "id"));
+      const programmeVersions = versions.filter(v => v.programmeId === programmeId);
       const draftVersion = programmeVersions.find(v => v.status === "draft");
-      
+
       if (draftVersion) {
         await storage.updateProgrammeVersion(draftVersion.id, { status: "published", publishedAt: new Date() });
         refreshScreensForVersion(draftVersion.id);
       }
-      logAudit(req, "publish", "programme", getPathParam(req, "id"));
+      logAudit(req, "publish", "programme", programmeId);
       res.json({ success: true });
     } catch (error) {
       console.error("Error publishing programme:", error);
@@ -2235,13 +2270,16 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/programmes/:id", requireAuth, async (req, res) => {
+  app.delete("/api/programmes/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const deleted = await storage.deleteProgramme(getPathParam(req, "id"));
+      const programmeId = getPathParam(req, "id");
+      const existing = await authorizeProgrammeMutation(req, res, programmeId);
+      if (!existing) return;
+      const deleted = await storage.deleteProgramme(programmeId);
       if (!deleted) {
         return res.status(404).json({ error: "Programme not found" });
       }
-      logAudit(req, "delete", "programme", getPathParam(req, "id"));
+      logAudit(req, "delete", "programme", programmeId);
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting programme:", error);
