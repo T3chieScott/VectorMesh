@@ -41,6 +41,34 @@ The system uses custom email/password authentication with bcryptjs for hashing a
 - **Offline Player Capability**: A Service Worker caches layout data and media assets, enabling display nodes to function offline. Layout JSON is also stored in localStorage.
 - **Per-Client Schedule Timezones**: Each client (site) carries an IANA timezone (`clients.timezone`, default `Europe/London`, env override `DEFAULT_SCHEDULE_TIMEZONE`). All schedule HH:MM comparisons run through `shared/timezone-utils.ts`, which handles DST transitions (spring-forward gaps snap forward, fall-back duplicates pick the earlier instant) so blocks fire at the wall-clock time operators configure. The schedule editor surfaces the active tz and the client edit form exposes a tz picker; unit and integration tests cover Europe/London BST/GMT and US DST boundaries.
 
+## Operations Runbook
+
+### Canvas pairing — one-shot repair marker (Task #179)
+
+The boot path runs `repairFalseCanvasPairingsOnce()` which gates the
+Task #176 false-canvas-pairing repair behind a `system_settings` marker
+keyed `canvas_pairing_repair_176_completed`. The marker is claimed
+*atomically* (insert with `ON CONFLICT DO NOTHING`) **before** the
+repair runs, then stamped with the final outcome on success.
+
+Boot log lines:
+- `[canvas-pairing] one-shot repair already completed for this DB; skipping` — marker present, no work done.
+- `[canvas-pairing] one-shot repair ran with nothing to fix` — marker absent, repair ran, found no damaged rows, marker now written.
+- `[canvas-pairing] one-shot repair fixed N false-canvas-pairing row(s)` — marker absent, repair fixed N rows, marker now written.
+
+**Recovery — marker stuck in `running` state**: if the server crashes
+between the marker claim and the completion stamp, the marker stays at
+`status: "running"` and every subsequent boot will skip the repair.
+To force a re-run, delete the row by hand:
+
+```sql
+DELETE FROM system_settings WHERE key = 'canvas_pairing_repair_176_completed';
+```
+
+The next boot will re-claim the marker and run the repair. The
+underlying repair is idempotent against clean data, so re-running on a
+healthy DB is a safe no-op.
+
 ## External Dependencies
 
 ### Database
