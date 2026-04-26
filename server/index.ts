@@ -85,6 +85,20 @@ app.use((req, res, next) => {
   } catch (err) {
     console.error("[canvas-pairing] backfill failed:", err);
   }
+  // Task #176 — undo inheritance damage from earlier boots that grouped
+  // unrelated canvas-enabled screens sharing dims but sitting at the
+  // same (canvasX, canvasY). Resets each falsely-paired tile so the
+  // operator can re-pair it independently. Idempotent.
+  try {
+    const repaired = await storage.repairFalseCanvasPairings();
+    if (repaired > 0) {
+      log(
+        `[canvas-pairing] repaired ${repaired} falsely-paired canvas tile(s)`,
+      );
+    }
+  } catch (err) {
+    console.error("[canvas-pairing] repair failed:", err);
+  }
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

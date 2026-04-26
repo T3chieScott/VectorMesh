@@ -11,6 +11,13 @@ import type { Screen } from "@shared/schema";
 //     enters canvas mode when the layout's authored size matches the
 //     screen's canvas size, so screens with different canvas sizes
 //     can never display the same source content)
+//   - AND the bucket as a whole contains at least two distinct
+//     `(canvasX, canvasY)` positions. This positional check (Task #176)
+//     prevents two unrelated authoring screens that happen to share
+//     dims and both sit at (0, 0) from being treated as siblings of
+//     one wall — historically that false grouping made one player's
+//     heartbeat mark the other screen online and made createScreen
+//     auto-inherit a `deviceToken` the operator never assigned.
 //
 // Screens with canvasEnabled = false, or with null/zero
 // canvasWidth/Height, are excluded entirely.
@@ -145,10 +152,35 @@ export function getCanvasPairingGating<
   };
 }
 
+// Returns true when `group` represents an actual video wall — i.e. its
+// members occupy at least two distinct `(canvasX, canvasY)` positions.
+// Single-position buckets (every member at the same offset, typically
+// (0, 0)) are NOT walls: they're independent authoring screens that
+// happen to share dims. Used by `siblingsOnCanvas` to stop the false
+// group from bleeding pairing/online state across unrelated tiles.
+//
+// NOTE — `siblingsForCanvasParams` deliberately does NOT use this gate.
+// That helper feeds the form-edit preview's ghost rectangles, where
+// showing every dim-matching screen (even ones currently sitting at
+// the same position) is useful context: the operator can see what
+// would become a wall sibling if they move their tile to a distinct
+// (canvasX, canvasY).
+export function isCanvasWallGroup(group: CanvasGroup): boolean {
+  if (group.screens.length < 2) return false;
+  const positions = new Set<string>();
+  for (const s of group.screens) {
+    positions.add(`${s.canvasX ?? 0}|${s.canvasY ?? 0}`);
+    if (positions.size >= 2) return true;
+  }
+  return false;
+}
+
 // Look up the screens that share `screen`'s canvas, EXCLUDING
-// `screen` itself. Returns [] when the screen isn't canvas-enabled
-// or when it's the only one on its canvas. The caller passes the
-// already-built Map so we don't re-group on every render.
+// `screen` itself. Returns [] when the screen isn't canvas-enabled,
+// when it's the only one on its canvas, or when the bucket isn't a
+// real wall (`isCanvasWallGroup` is false — every member sits at the
+// same `(canvasX, canvasY)`). The caller passes the already-built Map
+// so we don't re-group on every render.
 export function siblingsOnCanvas(
   screen: Pick<
     Screen,
@@ -172,6 +204,7 @@ export function siblingsOnCanvas(
   );
   const group = groups.get(keyString);
   if (!group) return [];
+  if (!isCanvasWallGroup(group)) return [];
   return group.screens.filter((s) => s.id !== screen.id);
 }
 

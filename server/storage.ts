@@ -175,14 +175,35 @@ export interface IStorage {
   ): Promise<number>;
   /**
    * One-shot reconciliation: walks every implicit canvas group and
-   * forces all members to share one pairing state. The "winner" inside
-   * a group is the most-recently-seen paired tile if any tile is
-   * paired, otherwise the earliest-created tile (whose pairingCode
-   * becomes the canonical one). Run at server boot so pre-#173 walls
-   * with mismatched per-screen pairing rows converge before the first
+   * forces all members to share the canonical PAIRING IDENTITY
+   * (`pairingCode`, `deviceToken`, `isPaired`). Per-tile presence
+   * fields (`isOnline`, `lastSeen`, `ipAddress`, `hostname`,
+   * `hardwareClass`) are intentionally NOT copied — they belong to
+   * the individual physical player and would otherwise bleed across
+   * the wall on every boot (Task #176).
+   *
+   * The "winner" inside a group is the most-recently-seen paired tile
+   * if any tile is paired, otherwise the earliest-created tile (whose
+   * pairingCode becomes the canonical one). Buckets that don't form a
+   * real wall (every member at the same `(canvasX, canvasY)`) are
+   * skipped — those screens are independent and must keep their own
+   * pairing state. Run at server boot so pre-#173 walls with
+   * mismatched per-screen pairing rows converge before the first
    * player request arrives. Returns the number of groups normalised.
    */
   backfillCanvasPairingState(): Promise<number>;
+  /**
+   * One-shot repair (Task #176): undoes the inheritance damage caused
+   * by previous boots that grouped unrelated screens sharing
+   * `(clientId, canvasWidth, canvasHeight)` but sitting at the same
+   * `(canvasX, canvasY)`. Walks every canvas-enabled `isPaired=true`
+   * screen whose group is now solo under the tightened position rule
+   * AND whose `deviceToken` is shared with another row (the telltale
+   * sign of inheritance). For each such row it resets pairing &
+   * presence fields and assigns a fresh `pairingCode`. Returns the
+   * number of rows repaired.
+   */
+  repairFalseCanvasPairings(): Promise<number>;
   /**
    * Mark every currently-online screen whose `lastSeen` is older than
    * `now - staleThresholdMs` as offline. `now` defaults to the wall clock
@@ -739,7 +760,26 @@ export class DatabaseStorage implements IStorage {
       .orderBy(asc(screens.createdAt), asc(screens.id));
     // Defensive: if the seed got deleted between the caller's fetch
     // and our query, fall back to it so the caller still sees ≥1 row.
-    return members.length > 0 ? members : [screen];
+    if (members.length === 0) return [screen];
+    // Task #176 — position-distinctness gate. A bucket is only a real
+    // wall when its members occupy ≥2 distinct (canvasX, canvasY)
+    // positions. Otherwise these screens are independent authoring
+    // tiles that happen to share dims and accidentally collide on the
+    // same offset (typically the (0, 0) default), and treating them as
+    // siblings would let heartbeats / pairing fan out across unrelated
+    // screens. Return the seed's freshly-fetched row alone in that case
+    // (NOT the stale input object — callers like setCanvasPairingState
+    // followed by getCanvasMembers expect the latest state).
+    const positions = new Set<string>();
+    for (const m of members) {
+      positions.add(`${m.canvasX ?? 0}|${m.canvasY ?? 0}`);
+      if (positions.size >= 2) break;
+    }
+    if (positions.size < 2) {
+      const fresh = members.find((m) => m.id === screen.id);
+      return [fresh ?? screen];
+    }
+    return members;
   }
 
   async setCanvasPairingState(
@@ -798,28 +838,27 @@ export class DatabaseStorage implements IStorage {
     let normalised = 0;
     for (const [, members] of groups) {
       if (members.length < 2) continue;
+      // Task #176 — only backfill real walls. Buckets that collapse to
+      // a single (canvasX, canvasY) are unrelated authoring screens
+      // and must not have their pairing identity merged.
+      const positions = new Set<string>();
+      for (const m of members) positions.add(`${m.canvasX ?? 0}|${m.canvasY ?? 0}`);
+      if (positions.size < 2) continue;
       const winner = pickCanvasPairingWinner(members);
+      // Narrowed (Task #176): only PAIRING IDENTITY is shared across
+      // the wall. Per-tile presence (`isOnline`, `lastSeen`,
+      // `ipAddress`, `hostname`, `hardwareClass`) is owned by each
+      // physical player and stays per-row.
       const fields = {
         pairingCode: winner.pairingCode,
         deviceToken: winner.deviceToken,
         isPaired: !!winner.isPaired,
-        isOnline: !!winner.isOnline,
-        lastSeen: winner.lastSeen,
-        ipAddress: winner.ipAddress,
-        hostname: winner.hostname,
-        hardwareClass: winner.hardwareClass,
       };
       const needsUpdate = members.some(
         (m) =>
           m.pairingCode !== fields.pairingCode ||
           m.deviceToken !== fields.deviceToken ||
-          !!m.isPaired !== fields.isPaired ||
-          !!m.isOnline !== fields.isOnline ||
-          (m.lastSeen?.getTime() ?? null) !==
-            (fields.lastSeen?.getTime() ?? null) ||
-          m.ipAddress !== fields.ipAddress ||
-          m.hostname !== fields.hostname ||
-          m.hardwareClass !== fields.hardwareClass,
+          !!m.isPaired !== fields.isPaired,
       );
       if (!needsUpdate) continue;
       await this.setCanvasPairingState(
@@ -829,6 +868,93 @@ export class DatabaseStorage implements IStorage {
       normalised++;
     }
     return normalised;
+  }
+
+  async repairFalseCanvasPairings(): Promise<number> {
+    // Walks every canvas-enabled paired screen, regroups by
+    // (clientId, canvasWidth, canvasHeight), and for any bucket whose
+    // members all sit at the same (canvasX, canvasY) — i.e. the false
+    // grouping pre-Task #176 — resets the pairing+presence state on
+    // every paired tile whose `deviceToken` is also held by another
+    // row (the inheritance fingerprint). A fresh `pairingCode` is
+    // assigned per repaired row so operators can re-pair each screen
+    // independently. Idempotent: a second run finds nothing to repair.
+    const allCanvas = await db
+      .select()
+      .from(screens)
+      .where(eq(screens.canvasEnabled, true))
+      .orderBy(asc(screens.createdAt), asc(screens.id));
+
+    // Count deviceToken occurrences across the WHOLE screens table —
+    // a token shared by 2+ rows (canvas or not) is the smoking gun
+    // that one row inherited it from another.
+    const tokenRows = await db
+      .select({ deviceToken: screens.deviceToken })
+      .from(screens);
+    const tokenCounts = new Map<string, number>();
+    for (const r of tokenRows) {
+      if (!r.deviceToken) continue;
+      tokenCounts.set(r.deviceToken, (tokenCounts.get(r.deviceToken) ?? 0) + 1);
+    }
+
+    const buckets = new Map<string, Screen[]>();
+    for (const s of allCanvas) {
+      if (
+        typeof s.canvasWidth !== "number" ||
+        s.canvasWidth <= 0 ||
+        typeof s.canvasHeight !== "number" ||
+        s.canvasHeight <= 0
+      ) {
+        continue;
+      }
+      const key = `${s.clientId ?? ""}|${s.canvasWidth}x${s.canvasHeight}`;
+      const arr = buckets.get(key);
+      if (arr) arr.push(s);
+      else buckets.set(key, [s]);
+    }
+
+    let repaired = 0;
+    for (const [, members] of buckets) {
+      const positions = new Set<string>();
+      for (const m of members) {
+        positions.add(`${m.canvasX ?? 0}|${m.canvasY ?? 0}`);
+      }
+      // Real wall — leave alone.
+      if (positions.size >= 2) continue;
+      // Solo bucket (every member at the same offset). Each paired
+      // row whose deviceToken is shared with anyone else is the
+      // victim of the old inheritance bug; reset it.
+      for (const m of members) {
+        if (!m.isPaired) continue;
+        if (!m.deviceToken) continue;
+        if ((tokenCounts.get(m.deviceToken) ?? 0) <= 1) continue;
+        const newPairingCode = Math.random()
+          .toString(36)
+          .substring(2, 8)
+          .toUpperCase();
+        await db
+          .update(screens)
+          .set({
+            pairingCode: newPairingCode,
+            deviceToken: null,
+            isPaired: false,
+            isOnline: false,
+            lastSeen: null,
+            ipAddress: null,
+            hostname: null,
+            hardwareClass: null,
+            updatedAt: new Date(),
+          } as any)
+          .where(eq(screens.id, m.id));
+        // Decrement the count so two siblings sharing the same token
+        // don't both get reset on the same pass — the first reset
+        // already broke the inheritance, the second sibling is now
+        // the legitimate owner of that token.
+        tokenCounts.set(m.deviceToken, (tokenCounts.get(m.deviceToken) ?? 1) - 1);
+        repaired++;
+      }
+    }
+    return repaired;
   }
 
   async markStaleScreensOffline(
