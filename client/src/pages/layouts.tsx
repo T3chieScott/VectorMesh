@@ -67,6 +67,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { LocationPicker } from "@/components/location-picker";
+import { TimezoneCombobox } from "@/components/timezone-combobox";
 import { useToast } from "@/hooks/use-toast";
 import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import {
@@ -2761,44 +2762,14 @@ function ZoneEditorDialog({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Timezone</FormLabel>
-                      <Select 
-                        onValueChange={(val) => field.onChange(val === "local" ? "" : val)} 
-                        value={field.value || "local"}
-                      >
-                        <FormControl>
-                          <SelectTrigger data-testid="select-clock-timezone">
-                            <SelectValue placeholder="Local time (device timezone)" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="local">Local time (device timezone)</SelectItem>
-                          <SelectItem value="UTC">UTC</SelectItem>
-                          <SelectItem value="Europe/London">London (GMT/BST)</SelectItem>
-                          <SelectItem value="Europe/Paris">Paris (CET/CEST)</SelectItem>
-                          <SelectItem value="Europe/Berlin">Berlin (CET/CEST)</SelectItem>
-                          <SelectItem value="Europe/Amsterdam">Amsterdam (CET/CEST)</SelectItem>
-                          <SelectItem value="Europe/Madrid">Madrid (CET/CEST)</SelectItem>
-                          <SelectItem value="Europe/Rome">Rome (CET/CEST)</SelectItem>
-                          <SelectItem value="Europe/Moscow">Moscow (MSK)</SelectItem>
-                          <SelectItem value="Asia/Dubai">Dubai (GST)</SelectItem>
-                          <SelectItem value="Asia/Kolkata">India (IST)</SelectItem>
-                          <SelectItem value="Asia/Singapore">Singapore (SGT)</SelectItem>
-                          <SelectItem value="Asia/Hong_Kong">Hong Kong (HKT)</SelectItem>
-                          <SelectItem value="Asia/Shanghai">Shanghai (CST)</SelectItem>
-                          <SelectItem value="Asia/Tokyo">Tokyo (JST)</SelectItem>
-                          <SelectItem value="Australia/Sydney">Sydney (AEST/AEDT)</SelectItem>
-                          <SelectItem value="Australia/Perth">Perth (AWST)</SelectItem>
-                          <SelectItem value="Pacific/Auckland">Auckland (NZST/NZDT)</SelectItem>
-                          <SelectItem value="America/New_York">New York (EST/EDT)</SelectItem>
-                          <SelectItem value="America/Chicago">Chicago (CST/CDT)</SelectItem>
-                          <SelectItem value="America/Denver">Denver (MST/MDT)</SelectItem>
-                          <SelectItem value="America/Los_Angeles">Los Angeles (PST/PDT)</SelectItem>
-                          <SelectItem value="America/Toronto">Toronto (EST/EDT)</SelectItem>
-                          <SelectItem value="America/Vancouver">Vancouver (PST/PDT)</SelectItem>
-                          <SelectItem value="America/Mexico_City">Mexico City (CST)</SelectItem>
-                          <SelectItem value="America/Sao_Paulo">São Paulo (BRT)</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <FormControl>
+                        <TimezoneCombobox
+                          value={field.value || ""}
+                          onChange={field.onChange}
+                          testId="select-clock-timezone"
+                          emptyOption={{ label: "Local time (device timezone)" }}
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -4847,29 +4818,14 @@ function ZoneEditorDialog({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Target Timezone</FormLabel>
-                      <Select onValueChange={(val) => field.onChange(val === "local" ? "" : val)} value={field.value || "local"}>
-                        <FormControl>
-                          <SelectTrigger data-testid="select-countdown-timezone">
-                            <SelectValue placeholder="Local time (browser)" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="local">Local Time (Browser)</SelectItem>
-                          <SelectItem value="UTC">UTC</SelectItem>
-                          <SelectItem value="Europe/London">Europe/London (GMT/BST)</SelectItem>
-                          <SelectItem value="Europe/Paris">Europe/Paris (CET/CEST)</SelectItem>
-                          <SelectItem value="Europe/Berlin">Europe/Berlin (CET/CEST)</SelectItem>
-                          <SelectItem value="America/New_York">America/New York (EST/EDT)</SelectItem>
-                          <SelectItem value="America/Chicago">America/Chicago (CST/CDT)</SelectItem>
-                          <SelectItem value="America/Denver">America/Denver (MST/MDT)</SelectItem>
-                          <SelectItem value="America/Los_Angeles">America/Los Angeles (PST/PDT)</SelectItem>
-                          <SelectItem value="Asia/Dubai">Asia/Dubai (GST)</SelectItem>
-                          <SelectItem value="Asia/Singapore">Asia/Singapore (SGT)</SelectItem>
-                          <SelectItem value="Asia/Tokyo">Asia/Tokyo (JST)</SelectItem>
-                          <SelectItem value="Asia/Shanghai">Asia/Shanghai (CST)</SelectItem>
-                          <SelectItem value="Australia/Sydney">Australia/Sydney (AEST/AEDT)</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <FormControl>
+                        <TimezoneCombobox
+                          value={field.value || ""}
+                          onChange={field.onChange}
+                          testId="select-countdown-timezone"
+                          emptyOption={{ label: "Local time (browser)" }}
+                        />
+                      </FormControl>
                       <FormDescription>Interpret the target date/time in this timezone</FormDescription>
                       <FormMessage />
                     </FormItem>

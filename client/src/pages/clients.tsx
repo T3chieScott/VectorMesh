@@ -33,116 +33,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, MoreHorizontal, Pencil, Trash2, Users, Calendar, Building2, Lock, Unlock, Check, ChevronsUpDown } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil, Trash2, Users, Calendar, Building2, Lock, Unlock } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import type { Client, Event } from "@shared/schema";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
+import { TimezoneCombobox } from "@/components/timezone-combobox";
 import {
   DEFAULT_SCHEDULE_TIMEZONE_FALLBACK,
-  describeTzOffset,
   isValidTimezone,
 } from "@shared/timezone-utils";
-import { cn } from "@/lib/utils";
-
-// Get the list of IANA zones once at module load. Older browsers (and a
-// handful of older Node runtimes used during dev SSR) don't expose
-// `Intl.supportedValuesOf`; in that case we fall back to a small popular
-// list so the combobox still works.
-function listTimezones(): string[] {
-  const intlAny = Intl as unknown as {
-    supportedValuesOf?: (key: string) => string[];
-  };
-  if (typeof intlAny.supportedValuesOf === "function") {
-    return intlAny.supportedValuesOf("timeZone");
-  }
-  return [
-    "UTC",
-    "Europe/London",
-    "Europe/Paris",
-    "America/New_York",
-    "America/Los_Angeles",
-    "Asia/Tokyo",
-    "Asia/Singapore",
-    "Australia/Sydney",
-  ];
-}
-const TIMEZONE_OPTIONS = listTimezones();
-
-function TimezoneCombobox({
-  value,
-  onChange,
-  testId,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  testId?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const offset = isValidTimezone(value)
-    ? describeTzOffset(new Date(), value)
-    : "";
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          className="w-full justify-between font-normal"
-          data-testid={testId ?? "button-timezone"}
-        >
-          <span className="truncate">
-            {value || "Select timezone"}
-            {offset ? ` — ${offset}` : ""}
-          </span>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
-        <Command>
-          <CommandInput placeholder="Search timezone…" data-testid="input-timezone-search" />
-          <CommandList>
-            <CommandEmpty>No timezone found.</CommandEmpty>
-            <CommandGroup>
-              {TIMEZONE_OPTIONS.map((tz) => (
-                <CommandItem
-                  key={tz}
-                  value={tz}
-                  onSelect={(selected) => {
-                    onChange(selected);
-                    setOpen(false);
-                  }}
-                  data-testid={`option-timezone-${tz}`}
-                >
-                  <Check
-                    className={cn(
-                      "mr-2 h-4 w-4",
-                      value === tz ? "opacity-100" : "opacity-0",
-                    )}
-                  />
-                  {tz}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 const clientFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
