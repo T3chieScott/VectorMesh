@@ -24,6 +24,11 @@ import { addMinutes, formatDistanceToNow } from "date-fns";
 import { PresetManager } from "@/components/preset-manager";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import {
+  groupScreensByCanvas,
+  siblingsOnCanvas,
+  nextFreeOffsetForRects,
+} from "@/lib/canvas-groups";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -156,6 +161,15 @@ const screenFormSchema = z.object({
 
 type ScreenFormValues = z.infer<typeof screenFormSchema>;
 
+interface CanvasSiblingRect {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 function CanvasPreview({
   canvasWidth,
   canvasHeight,
@@ -163,6 +177,7 @@ function CanvasPreview({
   screenHeight,
   canvasX,
   canvasY,
+  siblings = [],
 }: {
   canvasWidth: number;
   canvasHeight: number;
@@ -170,6 +185,7 @@ function CanvasPreview({
   screenHeight: number;
   canvasX: number;
   canvasY: number;
+  siblings?: CanvasSiblingRect[];
 }) {
   const previewMaxWidth = 280;
   const previewMaxHeight = 160;
@@ -181,6 +197,21 @@ function CanvasPreview({
   const sw = Math.min(screenWidth * scale, pw - sx);
   const sh = Math.min(screenHeight * scale, ph - sy);
 
+  // Pre-compute the overlap rectangle (in canvas coords) between the
+  // current screen and each sibling. Anything overlapping is drawn in
+  // a warning tint over the top so the user immediately sees the
+  // collision.
+  const overlapRects = siblings
+    .map((sib) => {
+      const ix1 = Math.max(canvasX, sib.x);
+      const iy1 = Math.max(canvasY, sib.y);
+      const ix2 = Math.min(canvasX + screenWidth, sib.x + sib.width);
+      const iy2 = Math.min(canvasY + screenHeight, sib.y + sib.height);
+      if (ix2 <= ix1 || iy2 <= iy1) return null;
+      return { x: ix1, y: iy1, width: ix2 - ix1, height: iy2 - iy1 };
+    })
+    .filter((r): r is { x: number; y: number; width: number; height: number } => r !== null);
+
   return (
     <div className="flex flex-col items-center gap-1.5">
       <div
@@ -188,6 +219,26 @@ function CanvasPreview({
         style={{ width: pw, height: ph }}
         data-testid="canvas-preview"
       >
+        {siblings.map((sib) => {
+          const sibX = sib.x * scale;
+          const sibY = sib.y * scale;
+          const sibW = Math.min(sib.width * scale, pw - sibX);
+          const sibH = Math.min(sib.height * scale, ph - sibY);
+          if (sibW <= 0 || sibH <= 0) return null;
+          return (
+            <div
+              key={sib.id}
+              className="absolute border border-dashed border-muted-foreground/60 bg-muted-foreground/10 rounded-sm flex items-start justify-start overflow-hidden"
+              style={{ left: sibX, top: sibY, width: Math.max(sibW, 2), height: Math.max(sibH, 2) }}
+              data-testid={`canvas-preview-sibling-${sib.id}`}
+              title={`${sib.name} — ${sib.width}×${sib.height} at (${sib.x}, ${sib.y})`}
+            >
+              <span className="text-[9px] text-muted-foreground px-1 py-0.5 leading-none truncate max-w-full">
+                {sib.name}
+              </span>
+            </div>
+          );
+        })}
         <div
           className="absolute bg-primary/20 border-2 border-primary rounded-sm flex items-start justify-start"
           style={{ left: sx, top: sy, width: Math.max(sw, 2), height: Math.max(sh, 2) }}
@@ -196,6 +247,20 @@ function CanvasPreview({
             Screen {screenWidth}×{screenHeight}
           </span>
         </div>
+        {overlapRects.map((r, idx) => {
+          const ox = r.x * scale;
+          const oy = r.y * scale;
+          const ow = r.width * scale;
+          const oh = r.height * scale;
+          return (
+            <div
+              key={`overlap-${idx}`}
+              className="absolute border border-amber-500 bg-amber-500/30 pointer-events-none"
+              style={{ left: ox, top: oy, width: Math.max(ow, 2), height: Math.max(oh, 2) }}
+              data-testid={`canvas-preview-overlap-${idx}`}
+            />
+          );
+        })}
       </div>
       <span className="text-xs text-muted-foreground">
         Canvas {canvasWidth}×{canvasHeight} • Position ({canvasX}, {canvasY})
@@ -208,10 +273,12 @@ function CanvasFields({
   form,
   profiles,
   prefix,
+  siblings = [],
 }: {
   form: any;
   profiles: DisplayProfile[];
   prefix: string;
+  siblings?: CanvasSiblingRect[];
 }) {
   const canvasEnabled = form.watch("canvasEnabled");
   const canvasWidth = form.watch("canvasWidth") || 1920;
@@ -222,6 +289,49 @@ function CanvasFields({
   const profile = profiles.find((p: DisplayProfile) => p.id === profileId);
   const screenWidth = profile?.width || 1920;
   const screenHeight = profile?.height || 1080;
+
+  // Compute non-blocking warnings for the current placement.
+  const warnings: string[] = [];
+  if (canvasEnabled && profile) {
+    const rightEdge = canvasX + screenWidth;
+    const bottomEdge = canvasY + screenHeight;
+    if (rightEdge > canvasWidth || bottomEdge > canvasHeight) {
+      warnings.push(
+        `Screen extends past the canvas (canvas is ${canvasWidth}×${canvasHeight}, screen ends at ${rightEdge}×${bottomEdge}).`,
+      );
+    }
+    const overlapping = siblings.filter((sib) => {
+      const ix1 = Math.max(canvasX, sib.x);
+      const iy1 = Math.max(canvasY, sib.y);
+      const ix2 = Math.min(rightEdge, sib.x + sib.width);
+      const iy2 = Math.min(bottomEdge, sib.y + sib.height);
+      return ix2 > ix1 && iy2 > iy1;
+    });
+    if (overlapping.length > 0) {
+      warnings.push(
+        `Overlaps with ${overlapping.map((s) => `'${s.name}'`).join(", ")}.`,
+      );
+    }
+    // Gap check: only show when there are 2+ siblings AND no overlap, so
+    // we don't nag people who intentionally space monitors apart.
+    if (siblings.length >= 2 && overlapping.length === 0) {
+      const allRects = [
+        { x: canvasX, y: canvasY, w: screenWidth, h: screenHeight },
+        ...siblings.map((s) => ({ x: s.x, y: s.y, w: s.width, h: s.height })),
+      ].sort((a, b) => a.x - b.x);
+      let prevRight = allRects[0]!.x + allRects[0]!.w;
+      for (let i = 1; i < allRects.length; i++) {
+        const r = allRects[i]!;
+        if (r.x > prevRight) {
+          warnings.push(
+            `Leaves a ${r.x - prevRight}px gap between screens at ${prevRight}px.`,
+          );
+          break;
+        }
+        prevRight = Math.max(prevRight, r.x + r.w);
+      }
+    }
+  }
 
   return (
     <div className="space-y-3 rounded-lg border p-3 bg-muted/30">
@@ -306,7 +416,29 @@ function CanvasFields({
               screenHeight={screenHeight}
               canvasX={canvasX}
               canvasY={canvasY}
+              siblings={siblings}
             />
+          )}
+          {warnings.length > 0 && (
+            <div
+              className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400"
+              data-testid={`${prefix}-canvas-warnings`}
+            >
+              {warnings.map((msg, i) => (
+                <div key={i} className="flex items-start gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span>{msg}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {siblings.length === 0 && (
+            <p
+              className="text-[11px] text-muted-foreground"
+              data-testid={`${prefix}-canvas-no-siblings`}
+            >
+              This screen is alone on its canvas. Save first, then use “Add screen to this canvas” on the screen card to add another panel to the wall.
+            </p>
           )}
         </div>
       )}
@@ -1031,6 +1163,7 @@ function ScreenCard({
   layouts,
   playlists,
   clients,
+  allScreens,
   activeOverride,
   editOpen: editOpenProp,
   onEditOpenChange,
@@ -1047,6 +1180,7 @@ function ScreenCard({
   layouts: LayoutTemplate[];
   playlists: Playlist[];
   clients: Client[];
+  allScreens: Screen[];
   activeOverride: LiveOverride | null;
   editOpen?: boolean;
   onEditOpenChange?: (open: boolean) => void;
@@ -1082,6 +1216,80 @@ function ScreenCard({
 
   const profile = profiles.find((p) => p.id === screen.displayProfileId);
   const siteProfiles = profiles.filter((p) => !p.clientId || p.clientId === screen.clientId);
+
+  // Implicit canvas grouping — find every other screen on the same
+  // canvas so the preview, the screenshot AOI overlay, and the
+  // "Add screen to this canvas" dialog all see the same set of
+  // siblings. Memoised because the screens list is large enough that
+  // re-grouping on every render adds up across cards.
+  const canvasGroups = useMemo(
+    () => groupScreensByCanvas(allScreens),
+    [allScreens],
+  );
+  const siblingScreens = useMemo(
+    () => siblingsOnCanvas(screen, canvasGroups),
+    [screen, canvasGroups],
+  );
+  // Project siblings into the rectangle shape both CanvasPreview and
+  // the screenshot overlay want. Siblings without a display profile
+  // can't be drawn (we don't know their physical size), so they're
+  // dropped silently — this matches today's behaviour for no-profile
+  // screens elsewhere on the page.
+  const siblingRects: CanvasSiblingRect[] = useMemo(
+    () =>
+      siblingScreens
+        .map((s) => {
+          const sp = profiles.find((p) => p.id === s.displayProfileId);
+          if (!sp || !sp.width || !sp.height) return null;
+          return {
+            id: s.id,
+            name: s.name,
+            x: s.canvasX ?? 0,
+            y: s.canvasY ?? 0,
+            width: sp.width,
+            height: sp.height,
+          };
+        })
+        .filter((r): r is CanvasSiblingRect => r !== null),
+    [siblingScreens, profiles],
+  );
+
+  // "Add screen to this canvas" — controlled CreateScreenDialog
+  // instance that pre-fills the new screen with this canvas's clientId
+  // + width + height + the next free X offset along the wall.
+  const [addSiblingOpen, setAddSiblingOpen] = useState(false);
+  const canAddSibling =
+    !!screen.canvasEnabled &&
+    !!screen.canvasWidth &&
+    !!screen.canvasHeight;
+  const addSiblingDefaults = useMemo<Partial<ScreenFormValues> | undefined>(() => {
+    if (!canAddSibling) return undefined;
+    const myRect = profile && profile.width && profile.height
+      ? {
+          x: screen.canvasX ?? 0,
+          y: screen.canvasY ?? 0,
+          width: profile.width,
+          height: profile.height,
+        }
+      : null;
+    const allRects = [
+      ...siblingRects.map((s) => ({ x: s.x, y: s.y, width: s.width, height: s.height })),
+      ...(myRect ? [myRect] : []),
+    ];
+    // Default new sibling size to this screen's profile size so the
+    // first click of "Add screen" lands flush to the right.
+    const newWidth = profile?.width ?? screen.canvasWidth!;
+    const newHeight = profile?.height ?? screen.canvasHeight!;
+    const next = nextFreeOffsetForRects(allRects, newWidth, newHeight);
+    return {
+      clientId: screen.clientId ?? "",
+      canvasEnabled: true,
+      canvasWidth: screen.canvasWidth ?? undefined,
+      canvasHeight: screen.canvasHeight ?? undefined,
+      canvasX: next.x,
+      canvasY: next.y,
+    };
+  }, [canAddSibling, profile, siblingRects, screen]);
 
   const lockMutation = useMutation({
     mutationFn: (locked: boolean) =>
@@ -1598,7 +1806,12 @@ function ScreenCard({
                         </FormItem>
                       )}
                     />
-                    <CanvasFields form={form} profiles={siteProfiles} prefix="edit" />
+                    <CanvasFields
+                      form={form}
+                      profiles={siteProfiles}
+                      prefix="edit"
+                      siblings={siblingRects}
+                    />
                     <RoomAndWeatherFields form={form} prefix="edit" />
                     <div className="flex justify-end gap-2">
                       <Button
@@ -1630,6 +1843,18 @@ function ScreenCard({
               >
                 <HelpCircle className="mr-2 h-4 w-4" />
                 Why is this blank?
+              </DropdownMenuItem>
+            )}
+            {canAddSibling && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setAddSiblingOpen(true);
+                }}
+                data-testid={`button-add-sibling-${screen.id}`}
+              >
+                <Grid3X3 className="mr-2 h-4 w-4" />
+                Add screen to this canvas
               </DropdownMenuItem>
             )}
             {!screen.isPaired && (
@@ -1747,6 +1972,18 @@ function ScreenCard({
             screen={screen}
             open={diagnoseOpen}
             onOpenChange={setDiagnoseOpen}
+          />
+        )}
+        {canAddSibling && (
+          <CreateScreenDialog
+            profiles={profiles}
+            events={events}
+            clients={clients}
+            controlledOpen={addSiblingOpen}
+            onControlledOpenChange={setAddSiblingOpen}
+            initialValues={addSiblingDefaults}
+            hideTrigger
+            dialogTitle={`Add screen to canvas (${screen.canvasWidth}×${screen.canvasHeight})`}
           />
         )}
       </CardHeader>
@@ -1888,6 +2125,20 @@ function ScreenCard({
                   />
                   {screen.canvasEnabled && screen.canvasWidth && screen.canvasHeight && profile?.width && profile?.height && (
                     <>
+                      {siblingRects.map((sib) => (
+                        <div
+                          key={`sib-${sib.id}`}
+                          className="absolute border border-dotted border-white/30 bg-white/5 pointer-events-none"
+                          style={{
+                            left: `${(sib.x / screen.canvasWidth!) * 100}%`,
+                            top: `${(sib.y / screen.canvasHeight!) * 100}%`,
+                            width: `${(sib.width / screen.canvasWidth!) * 100}%`,
+                            height: `${(sib.height / screen.canvasHeight!) * 100}%`,
+                          }}
+                          data-testid={`overlay-aoi-sibling-${screen.id}-${sib.id}`}
+                          title={`${sib.name} — ${sib.width}×${sib.height} at (${sib.x}, ${sib.y})`}
+                        />
+                      ))}
                       <div
                         className="absolute border border-dashed border-white/40 pointer-events-none"
                         style={{
@@ -2053,30 +2304,71 @@ function ScreenCard({
   );
 }
 
-function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayProfile[]; events: Event[]; clients: Client[] }) {
-  const [open, setOpen] = useState(false);
+function CreateScreenDialog({
+  profiles,
+  events,
+  clients,
+  controlledOpen,
+  onControlledOpenChange,
+  initialValues,
+  hideTrigger = false,
+  dialogTitle = "Create New Screen",
+  triggerLabel = "Add Screen",
+}: {
+  profiles: DisplayProfile[];
+  events: Event[];
+  clients: Client[];
+  controlledOpen?: boolean;
+  onControlledOpenChange?: (open: boolean) => void;
+  initialValues?: Partial<ScreenFormValues>;
+  hideTrigger?: boolean;
+  dialogTitle?: string;
+  triggerLabel?: string;
+}) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? !!controlledOpen : internalOpen;
+  const setOpen = (next: boolean) => {
+    if (isControlled) {
+      onControlledOpenChange?.(next);
+    } else {
+      setInternalOpen(next);
+      onControlledOpenChange?.(next);
+    }
+  };
   const { toast } = useToast();
   const { selectedClientId } = useSiteContext();
 
+  const baseDefaults: ScreenFormValues = {
+    name: "",
+    location: "",
+    clientId: selectedClientId || "",
+    displayProfileId: "",
+    canvasEnabled: false,
+    canvasWidth: undefined,
+    canvasHeight: undefined,
+    canvasX: 0,
+    canvasY: 0,
+    roomCapacity: null,
+    weatherLat: "",
+    weatherLng: "",
+    weatherPlaceName: "",
+    weatherUnit: "celsius",
+  };
+
   const form = useForm<ScreenFormValues>({
     resolver: zodResolver(screenFormSchema),
-    defaultValues: {
-      name: "",
-      location: "",
-      clientId: selectedClientId || "",
-      displayProfileId: "",
-      canvasEnabled: false,
-      canvasWidth: undefined,
-      canvasHeight: undefined,
-      canvasX: 0,
-      canvasY: 0,
-      roomCapacity: null,
-      weatherLat: "",
-      weatherLng: "",
-      weatherPlaceName: "",
-      weatherUnit: "celsius",
-    },
+    defaultValues: { ...baseDefaults, ...initialValues },
   });
+
+  // Re-apply prefill when the dialog re-opens (e.g. user clicks "Add
+  // screen to this canvas" on a different card without unmounting).
+  useEffect(() => {
+    if (open) {
+      form.reset({ ...baseDefaults, ...initialValues });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const watchedClientId = form.watch("clientId");
   const siteProfiles = profiles.filter((p) => !p.clientId || p.clientId === watchedClientId);
@@ -2111,15 +2403,17 @@ function CreateScreenDialog({ profiles, events, clients }: { profiles: DisplayPr
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button data-testid="button-create-screen">
-          <Plus className="mr-2 h-4 w-4" />
-          Add Screen
-        </Button>
-      </DialogTrigger>
+      {!hideTrigger && (
+        <DialogTrigger asChild>
+          <Button data-testid="button-create-screen">
+            <Plus className="mr-2 h-4 w-4" />
+            {triggerLabel}
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Create New Screen</DialogTitle>
+          <DialogTitle>{dialogTitle}</DialogTitle>
         </DialogHeader>
         <Form {...form}>
           <form
@@ -2366,6 +2660,7 @@ function SortableScreenCard(props: {
   layouts: LayoutTemplate[];
   playlists: Playlist[];
   clients: Client[];
+  allScreens: Screen[];
   activeOverride: LiveOverride | null;
   dragEnabled: boolean;
   dragDisabledReason?: string;
@@ -2418,6 +2713,7 @@ function SortableScreenCard(props: {
         layouts={props.layouts}
         playlists={props.playlists}
         clients={props.clients}
+        allScreens={props.allScreens}
         activeOverride={props.activeOverride}
         dragHandle={handle}
         onMoveToStart={props.onMoveToStart}
@@ -2770,6 +3066,7 @@ export default function ScreensPage() {
                     layouts={layouts}
                     playlists={playlists}
                     clients={clients}
+                    allScreens={screens}
                     activeOverride={getActiveOverrideForScreen(screen.id)}
                     dragEnabled={dragEnabled}
                     dragDisabledReason={dragDisabledReason}
@@ -2814,6 +3111,7 @@ export default function ScreensPage() {
                   layouts={layouts}
                   playlists={playlists}
                   clients={clients}
+                  allScreens={screens}
                   activeOverride={getActiveOverrideForScreen(editingScreen.id)}
                   editOpen={true}
                   onEditOpenChange={(open) => {
