@@ -205,7 +205,18 @@ export function getCanvasPairingGating<
       ? screen
       : pickCanvasOwner([screen, ...siblingScreens]) ?? screen;
   const isCanvasOwner = owner.id === screen.id;
-  const inheritsPairingFromOwner = !isCanvasOwner && siblingScreens.length > 0;
+  // Task #179 — `inheritsPairingFromOwner` (and the downstream
+  // `showsInheritsMessage`) is gated on the owner being itself paired.
+  // Before this fix, the predicate was just "I'm not the owner AND
+  // siblings exist" — which lied after an unpair: the wall stays
+  // geometrically intact, so siblings would keep displaying
+  // "Inherits pairing from <owner>" even though there is no active
+  // pairing to inherit. With `owner.isPaired` in the predicate,
+  // siblings only show the inherits message while the wall is actually
+  // paired; in the unpaired state they fall back to their no-owner
+  // empty UI (the owner card alone surfaces the pairing code panel).
+  const inheritsPairingFromOwner =
+    !isCanvasOwner && siblingScreens.length > 0 && !!owner.isPaired;
   return {
     owner,
     isCanvasOwner,

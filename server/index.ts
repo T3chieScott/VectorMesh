@@ -85,16 +85,31 @@ app.use((req, res, next) => {
   } catch (err) {
     console.error("[canvas-pairing] backfill failed:", err);
   }
-  // Task #176 — undo inheritance damage from earlier boots that grouped
-  // unrelated canvas-enabled screens sharing dims but sitting at the
-  // same (canvasX, canvasY). Resets each falsely-paired tile so the
-  // operator can re-pair it independently. Idempotent.
+  // Task #176 / Task #179 — undo inheritance damage from earlier boots
+  // that grouped unrelated canvas-enabled screens sharing dims but
+  // sitting at the same (canvasX, canvasY). Resets each falsely-paired
+  // tile so the operator can re-pair it independently.
+  //
+  // The Task #176 repair was originally invoked unconditionally on
+  // every boot, but it has no positive signal that the damage has
+  // already been cleared, so a legitimately-paired solo canvas screen
+  // (a Pi driving one canvas-authored display, paired in good faith
+  // after the #176 fix landed) would be silently re-reset on every
+  // restart with a fresh pairing code. Task #179 wraps the repair in a
+  // `system_settings` marker so it runs at most once per database;
+  // subsequent boots short-circuit and never touch a paired tile.
   try {
-    const repaired = await storage.repairFalseCanvasPairings();
-    if (repaired > 0) {
+    const result = await storage.repairFalseCanvasPairingsOnce();
+    if (result.skipped) {
       log(
-        `[canvas-pairing] repaired ${repaired} falsely-paired canvas tile(s)`,
+        `[canvas-pairing] one-shot repair already completed for this DB; skipping`,
       );
+    } else if (result.repaired > 0) {
+      log(
+        `[canvas-pairing] repaired ${result.repaired} falsely-paired canvas tile(s)`,
+      );
+    } else {
+      log(`[canvas-pairing] one-shot repair ran with nothing to fix`);
     }
   } catch (err) {
     console.error("[canvas-pairing] repair failed:", err);

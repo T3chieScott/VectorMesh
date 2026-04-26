@@ -17,10 +17,19 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { like } from "drizzle-orm";
-import { storage, pickCanvasPairingWinner } from "../server/storage";
+import { eq, like } from "drizzle-orm";
+import {
+  storage,
+  pickCanvasPairingWinner,
+  CANVAS_PAIRING_REPAIR_176_MARKER_KEY,
+} from "../server/storage";
 import { db } from "../server/db";
-import { clients, screens, type Screen } from "../shared/schema";
+import {
+  clients,
+  screens,
+  systemSettings,
+  type Screen,
+} from "../shared/schema";
 import {
   groupScreensByCanvas,
   siblingsOnCanvas,
@@ -821,4 +830,137 @@ test("siblingsForCanvasParams: still returns ALL same-dim screens across split b
     groups,
   );
   assert.deepEqual(matches.map((s) => s.id), ["b"]);
+});
+
+// ─── Task #179 — one-shot wrapper around repairFalseCanvasPairings ─
+
+test("repairFalseCanvasPairingsOnce: runs the repair on first call, sets the marker, and skips on subsequent calls (Task #179)", async () => {
+  // Plant a paired solo canvas screen — exactly the kind of row the
+  // repair would normally clobber. We assert that exactly ONE call
+  // hits the row, and a second call leaves it (and its fresh state)
+  // untouched.
+  const clientId = await makeClient("oneShotRepair");
+  const t0 = new Date("2026-09-15T00:00:00Z");
+  const victim = await makeScreen({
+    name: "oneShotVictim",
+    clientId,
+    createdAt: t0,
+    canvasEnabled: true,
+    canvasWidth: 1280,
+    canvasHeight: 720,
+    canvasX: 0,
+    canvasY: 0,
+    isPaired: true,
+    pairingCode: "OSDIRT",
+    deviceToken: "tok-os-dirty",
+    isOnline: true,
+    lastSeen: new Date("2026-09-14T23:00:00Z"),
+    ipAddress: "10.0.1.50",
+    hostname: "victim-pi",
+  });
+  // Clear any pre-existing marker so we start from a clean slate.
+  await db
+    .delete(systemSettings)
+    .where(eq(systemSettings.key, CANVAS_PAIRING_REPAIR_176_MARKER_KEY));
+
+  // First call — repair runs.
+  const first = await storage.repairFalseCanvasPairingsOnce();
+  assert.equal(first.skipped, false, "first call must run the repair");
+  assert.ok(first.repaired >= 1, "victim row must have been repaired");
+
+  // Marker now exists.
+  const marker = await storage.getSystemSetting(
+    CANVAS_PAIRING_REPAIR_176_MARKER_KEY,
+  );
+  assert.ok(marker, "marker must be written after the first call");
+  const parsed = JSON.parse(marker!.value);
+  assert.equal(typeof parsed.ranAt, "string");
+  assert.equal(typeof parsed.repaired, "number");
+
+  // Capture victim's repaired state.
+  const afterFirst = (await db
+    .select()
+    .from(screens)
+    .where(eq(screens.id, victim.id)))[0];
+  assert.equal(afterFirst.isPaired, false);
+  assert.equal(afterFirst.deviceToken, null);
+  assert.notEqual(afterFirst.pairingCode, "OSDIRT",
+    "repaired row must carry a fresh pairingCode");
+
+  // Now plant ANOTHER paired solo screen — the kind of row that
+  // would have been wiped on every restart pre-#179. The second
+  // `…Once` call must leave it alone.
+  const survivor = await makeScreen({
+    name: "oneShotSurvivor",
+    clientId,
+    createdAt: new Date(t0.getTime() + 1000),
+    canvasEnabled: true,
+    canvasWidth: 1280,
+    canvasHeight: 720,
+    canvasX: 0,
+    canvasY: 0,
+    isPaired: true,
+    pairingCode: "GOODOK",
+    deviceToken: "tok-survivor",
+    isOnline: true,
+    lastSeen: new Date("2026-09-15T01:00:00Z"),
+    ipAddress: "10.0.1.51",
+    hostname: "survivor-pi",
+  });
+
+  const second = await storage.repairFalseCanvasPairingsOnce();
+  assert.equal(second.skipped, true,
+    "second call must short-circuit on the marker");
+  assert.equal(second.repaired, 0,
+    "second call must report zero repaired rows");
+
+  // Survivor still paired.
+  const survivorAfter = (await db
+    .select()
+    .from(screens)
+    .where(eq(screens.id, survivor.id)))[0];
+  assert.equal(survivorAfter.isPaired, true,
+    "Task #179 protects legitimately-paired solo canvas screens from re-repair");
+  assert.equal(survivorAfter.deviceToken, "tok-survivor");
+  assert.equal(survivorAfter.pairingCode, "GOODOK");
+  assert.equal(survivorAfter.isOnline, true);
+  assert.equal(survivorAfter.ipAddress, "10.0.1.51");
+
+  // The first row's repaired state is unchanged too.
+  const afterSecond = (await db
+    .select()
+    .from(screens)
+    .where(eq(screens.id, victim.id)))[0];
+  assert.equal(afterSecond.pairingCode, afterFirst.pairingCode,
+    "skipped second call must not regenerate the repaired row's pairing code");
+  assert.equal(
+    afterSecond.updatedAt?.getTime(),
+    afterFirst.updatedAt?.getTime(),
+    "skipped second call must not touch the repaired row's updatedAt",
+  );
+});
+
+test("repairFalseCanvasPairingsOnce: re-runs after the marker is cleared (operational escape hatch) (Task #179)", async () => {
+  // Operators can manually clear the marker via SQL when they need
+  // the repair to run again. Pin that contract so future refactors
+  // don't accidentally make the gate immutable.
+  await db
+    .delete(systemSettings)
+    .where(eq(systemSettings.key, CANVAS_PAIRING_REPAIR_176_MARKER_KEY));
+
+  // Marker absent → first call runs.
+  const a = await storage.repairFalseCanvasPairingsOnce();
+  assert.equal(a.skipped, false);
+
+  // Marker present → second call short-circuits.
+  const b = await storage.repairFalseCanvasPairingsOnce();
+  assert.equal(b.skipped, true);
+
+  // Operator clears marker → next call runs again.
+  await db
+    .delete(systemSettings)
+    .where(eq(systemSettings.key, CANVAS_PAIRING_REPAIR_176_MARKER_KEY));
+  const c = await storage.repairFalseCanvasPairingsOnce();
+  assert.equal(c.skipped, false,
+    "after clearing the marker the repair must run again");
 });

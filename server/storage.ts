@@ -69,6 +69,17 @@ import {
 import { users, userSites, passwordResetTokens, type User, type UpsertUser, type UserSite, type PasswordResetToken } from "@shared/models/auth";
 import { apiTokens, apiTokenKnownIps, type ApiToken, type InsertApiToken } from "@shared/schema";
 
+/**
+ * Task #179 — `system_settings` key recording that the Task #176
+ * false-canvas-pairing repair has already been applied to this DB.
+ * Presence (any value) means "skip the repair on subsequent boots";
+ * absence means "this DB has not yet been swept and the repair should
+ * run once". The stored value is a JSON blob (`{ranAt, repaired}`)
+ * for forensic visibility but only the row's existence is consulted.
+ */
+export const CANVAS_PAIRING_REPAIR_176_MARKER_KEY =
+  "canvas_pairing_repair_176_completed";
+
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
@@ -204,8 +215,42 @@ export interface IStorage {
    * is reset, because the pre-#176 backfill could have stamped
    * pairing onto a screen whose original false-sibling was later
    * deleted. Returns the number of rows repaired.
+   *
+   * Note (Task #179): operators normally invoke this via
+   * {@link IStorage.repairFalseCanvasPairingsOnce} so it runs at most
+   * once per database. The raw method is left exposed for tests and
+   * for the unit case where the marker has been cleared deliberately.
    */
   repairFalseCanvasPairings(): Promise<number>;
+  /**
+   * Task #179 — boot wrapper around {@link IStorage.repairFalseCanvasPairings}
+   * that runs the repair at most once per database, gated by the
+   * {@link CANVAS_PAIRING_REPAIR_176_MARKER_KEY} system-setting marker.
+   *
+   * The original (Task #176) repair re-fired on every boot because it
+   * had no positive signal that the false-pairing damage had already
+   * been cleared. Without that signal, a legitimately paired solo
+   * canvas-enabled screen (a Pi driving one canvas-authored display)
+   * would be silently reset on every server restart with a fresh
+   * pairing code, surprising operators who paired it in good faith.
+   *
+   * Behaviour:
+   *  - If the marker exists: returns `{ repaired: 0, skipped: true }`
+   *    without touching any rows.
+   *  - If the marker is absent: invokes `repairFalseCanvasPairings`
+   *    and, on success, writes the marker (a JSON blob with the
+   *    repaired count and an ISO timestamp). Returns
+   *    `{ repaired, skipped: false }`.
+   *
+   * Idempotent across calls: any subsequent invocation hits the marker
+   * branch and no-ops. Safe to call from any process / any number of
+   * boot paths — the marker write is the last side effect, so a crash
+   * mid-repair leaves the marker absent and the next boot retries.
+   */
+  repairFalseCanvasPairingsOnce(): Promise<{
+    repaired: number;
+    skipped: boolean;
+  }>;
   /**
    * Mark every currently-online screen whose `lastSeen` is older than
    * `now - staleThresholdMs` as offline. `now` defaults to the wall clock
@@ -870,6 +915,37 @@ export class DatabaseStorage implements IStorage {
       normalised++;
     }
     return normalised;
+  }
+
+  async repairFalseCanvasPairingsOnce(): Promise<{
+    repaired: number;
+    skipped: boolean;
+  }> {
+    // Task #179: gate the (idempotent-but-still-destructive) Task #176
+    // repair behind a one-shot marker. The repair was originally meant
+    // to clean up pairing rows damaged by the pre-Task-#176 inheritance
+    // backfill — once cleaned, there's no reason to keep firing it on
+    // every restart, and doing so silently resets legitimately-paired
+    // solo canvas screens that operators paired in good faith after the
+    // fix landed. The marker is a single row in `system_settings`; once
+    // present, this wrapper short-circuits and does nothing.
+    const existing = await this.getSystemSetting(
+      CANVAS_PAIRING_REPAIR_176_MARKER_KEY,
+    );
+    if (existing) {
+      return { repaired: 0, skipped: true };
+    }
+    const repaired = await this.repairFalseCanvasPairings();
+    // Marker is the LAST side effect: a crash mid-repair leaves it
+    // absent and the next boot retries cleanly.
+    await this.setSystemSetting(
+      CANVAS_PAIRING_REPAIR_176_MARKER_KEY,
+      JSON.stringify({
+        ranAt: new Date().toISOString(),
+        repaired,
+      }),
+    );
+    return { repaired, skipped: false };
   }
 
   async repairFalseCanvasPairings(): Promise<number> {

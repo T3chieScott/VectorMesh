@@ -97,15 +97,14 @@ test.before(cleanup);
 test.after(cleanup);
 
 // ─── Two-tile canvas: UNPAIRED state ───────────────────────────────
-// "The owner card shows the pairing-code panel and the dropdown
-//  contains 'Regenerate Code' + 'Unpair Device'." (Unpair must
-//  still be hidden in the unpaired state — the `+ Unpair Device`
-//  in the task description is conditional on isPaired.)
-// "The sibling card shows the 'Inherits pairing from <owner>'
-//  message and its dropdown does NOT contain 'Regenerate Code'
-//  or 'Unpair Device'."
+// Task #179 update: when the wall is unpaired (the owner itself is
+// not paired), the sibling MUST NOT show the "Inherits pairing from
+// <owner>" message — there's nothing to inherit and the lingering
+// message confused operators after they unpaired the lead. The
+// sibling falls back to its no-owner empty UI; only the owner card
+// surfaces the pairing-code panel for the wall.
 
-test("2-tile canvas, unpaired: owner shows pairing code + Regenerate Code; sibling shows Inherits message and no controls", async () => {
+test("2-tile canvas, unpaired: owner shows pairing code + Regenerate Code; sibling shows NO inherits message and no controls (Task #179)", async () => {
   const clientId = await makeClient("ui-unpaired");
   const t0 = new Date("2026-07-01T00:00:00Z");
 
@@ -138,17 +137,16 @@ test("2-tile canvas, unpaired: owner shows pairing code + Regenerate Code; sibli
   assert.equal(sibling.gating.owner.id, ownerRow.id,
     "sibling's owner should be the earliest-created tile");
   assert.equal(sibling.gating.isCanvasOwner, false);
-  assert.equal(sibling.gating.inheritsPairingFromOwner, true);
+  assert.equal(sibling.gating.inheritsPairingFromOwner, false,
+    "Task #179: inheritsPairingFromOwner must be false when the owner itself is unpaired");
   assert.equal(sibling.gating.showsPairingCodePanel, false,
     "sibling must NOT render the pairing-code panel even though the row carries the same code");
   assert.equal(sibling.gating.showsRegenerateCodeMenuItem, false,
     "sibling dropdown must NOT contain 'Regenerate Code'");
   assert.equal(sibling.gating.showsUnpairDeviceMenuItem, false,
     "sibling dropdown must NOT contain 'Unpair Device'");
-  assert.equal(sibling.gating.showsInheritsMessage, true,
-    "sibling must show 'Inherits pairing from <owner>'");
-  assert.equal(sibling.gating.owner.name, ownerRow.name,
-    "the inherits message labels the owner by name");
+  assert.equal(sibling.gating.showsInheritsMessage, false,
+    "Task #179: sibling MUST NOT show 'Inherits pairing from <owner>' while the owner is unpaired");
 });
 
 // ─── Two-tile canvas: PAIRED state ─────────────────────────────────
@@ -255,4 +253,66 @@ test("canvas-enabled screen alone on its canvas keeps pairing controls", async (
   assert.equal(g.gating.showsPairingCodePanel, true);
   assert.equal(g.gating.showsRegenerateCodeMenuItem, true);
   assert.equal(g.gating.showsInheritsMessage, false);
+});
+
+// ─── Task #179 — pair / unpair / re-pair state transitions ─────────
+// The inherits message must follow the owner's pairing state in
+// real time. This spec drives the pure gating helper directly (no
+// DB) to pin the transition contract: paired → unpaired hides the
+// message, then unpaired → paired again brings it back. If a
+// future refactor short-circuits the predicate (e.g. caches
+// `siblingScreens.length > 0` and forgets the owner state) the
+// regression lands here.
+
+test("Task #179 — owner.isPaired transitions flip showsInheritsMessage on every sibling tick", async () => {
+  // Use the pure helper so the transition contract is exercised
+  // without any DB round-trips. We construct a 2-tile shape that
+  // mirrors what `groupScreensByCanvas` would build in the real
+  // screens.tsx render path.
+  const owner = {
+    id: "owner",
+    name: "Owner Tile",
+    createdAt: new Date("2026-09-01T00:00:00Z"),
+    isPaired: true,
+    pairingCode: "PAIRED",
+  };
+  const sibling = {
+    id: "sibling",
+    name: "Sibling Tile",
+    createdAt: new Date("2026-09-01T00:00:01Z"),
+    isPaired: true,
+    pairingCode: "PAIRED",
+  };
+
+  // Paired → sibling sees inherits.
+  let g = getCanvasPairingGating(sibling, [owner]);
+  assert.equal(g.inheritsPairingFromOwner, true);
+  assert.equal(g.showsInheritsMessage, true);
+  assert.equal(g.owner.id, "owner");
+
+  // Operator unpairs the wall — owner.isPaired flips to false. The
+  // sibling's row would be cleared by the cascade fan-out too, but
+  // even if a stale render still has the old sibling state, the
+  // helper must still hide the message.
+  const ownerUnpaired = { ...owner, isPaired: false };
+  g = getCanvasPairingGating(
+    { ...sibling, isPaired: false },
+    [ownerUnpaired],
+  );
+  assert.equal(g.inheritsPairingFromOwner, false,
+    "after unpair the sibling must stop inheriting");
+  assert.equal(g.showsInheritsMessage, false,
+    "after unpair the sibling DOM must hide the inherits message");
+
+  // Operator re-pairs (a player handshakes with the owner's new
+  // pairing code) → fan-out flips owner.isPaired back to true.
+  const ownerRepaired = { ...owner, isPaired: true, pairingCode: "REPAIR" };
+  g = getCanvasPairingGating(
+    { ...sibling, isPaired: true, pairingCode: "REPAIR" },
+    [ownerRepaired],
+  );
+  assert.equal(g.inheritsPairingFromOwner, true,
+    "re-pairing must restore the inherits state");
+  assert.equal(g.showsInheritsMessage, true,
+    "re-pairing must restore the inherits message DOM node");
 });

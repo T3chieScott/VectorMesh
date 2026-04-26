@@ -139,7 +139,12 @@ test.before(cleanup);
 test.after(cleanup);
 
 // ─── Two-tile canvas: UNPAIRED state ───────────────────────────────
-test("DOM render — 2-tile canvas, unpaired: owner card markup shows pairing code + Regenerate Code; sibling card markup shows Inherits message and no controls", async () => {
+// Task #179 update: while the owner is unpaired, the sibling DOM
+// must NOT contain the inherits-message node. Operators reported
+// the lingering "Inherits pairing from <owner>" copy after they
+// unpaired the lead screen as misleading — there is nothing to
+// inherit. Sibling falls back to its no-owner empty UI.
+test("DOM render — 2-tile canvas, unpaired: owner card markup shows pairing code + Regenerate Code; sibling card markup hides the inherits message (Task #179)", async () => {
   const clientId = await makeClient("ren-unpaired");
   const t0 = new Date("2026-08-01T00:00:00Z");
   const ownerRow = await makeCanvasScreen({
@@ -186,20 +191,13 @@ test("DOM render — 2-tile canvas, unpaired: owner card markup shows pairing co
     !siblingHtml.includes(`data-testid="text-pairing-code-${siblingRow.id}"`),
     "sibling card must NOT render the pairing-code panel even when its row carries a code",
   );
-  assert.match(
-    siblingHtml,
-    new RegExp(`data-testid="text-inherits-pairing-${siblingRow.id}"`),
-    "sibling card must render the inherits-message testid",
+  assert.ok(
+    !siblingHtml.includes(`data-testid="text-inherits-pairing-${siblingRow.id}"`),
+    "Task #179: sibling card must NOT render the inherits-message node while the owner is unpaired",
   );
-  assert.match(
-    siblingHtml,
-    /Inherits pairing from/,
-    "sibling card copy must read 'Inherits pairing from'",
-  );
-  assert.match(
-    siblingHtml,
-    new RegExp(`>${ownerRow.name}<`),
-    "sibling inherits message must label the owner by name",
+  assert.ok(
+    !/Inherits pairing from/.test(siblingHtml),
+    "Task #179: sibling card copy must NOT read 'Inherits pairing from' while the owner is unpaired",
   );
   assert.ok(
     !siblingHtml.includes(`data-testid="button-regenerate-pairing-${siblingRow.id}"`),
