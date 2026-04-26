@@ -198,10 +198,12 @@ export interface IStorage {
    * `(clientId, canvasWidth, canvasHeight)` but sitting at the same
    * `(canvasX, canvasY)`. Walks every canvas-enabled `isPaired=true`
    * screen whose group is now solo under the tightened position rule
-   * AND whose `deviceToken` is shared with another row (the telltale
-   * sign of inheritance). For each such row it resets pairing &
-   * presence fields and assigns a fresh `pairingCode`. Returns the
-   * number of rows repaired.
+   * (Task #176 step 4) and resets its pairing & presence fields,
+   * assigning a fresh unique `pairingCode`. No token-duplication
+   * heuristic — even a paired solo screen with a unique deviceToken
+   * is reset, because the pre-#176 backfill could have stamped
+   * pairing onto a screen whose original false-sibling was later
+   * deleted. Returns the number of rows repaired.
    */
   repairFalseCanvasPairings(): Promise<number>;
   /**
@@ -871,32 +873,32 @@ export class DatabaseStorage implements IStorage {
   }
 
   async repairFalseCanvasPairings(): Promise<number> {
-    // Walks every canvas-enabled paired screen, regroups by
-    // (clientId, canvasWidth, canvasHeight), and for any bucket whose
-    // members all sit at the same (canvasX, canvasY) — i.e. the false
-    // grouping pre-Task #176 — resets the pairing+presence state on
-    // every paired tile whose `deviceToken` is also held by another
-    // row (the inheritance fingerprint). A fresh `pairingCode` is
-    // assigned per repaired row so operators can re-pair each screen
-    // independently. Idempotent: a second run finds nothing to repair.
+    // Task #176 step 4: for every canvas-enabled screen that is
+    // currently `isPaired = true` AND whose group under the tightened
+    // rule (the same rule `getCanvasMembers` and `groupScreensByCanvas`
+    // apply — a real wall requires ≥2 distinct (canvasX, canvasY))
+    // resolves to a SOLO group, reset its pairing + presence state and
+    // hand it a fresh pairing code.
+    //
+    // We deliberately do NOT use a token-duplication heuristic to
+    // narrow this set: the inheritance bug could leave one victim
+    // behind (the original sibling has since been deleted, or its
+    // token was reset by another flow), and the spec is explicit that
+    // any paired solo canvas screen must be reset since pairing should
+    // only ever be granted via a real player handshake. Operators
+    // re-pair each repaired tile from the admin UI on next render.
+    //
+    // Idempotent: a second run finds no `isPaired = true` solo canvas
+    // screens because the first run cleared them all.
     const allCanvas = await db
       .select()
       .from(screens)
       .where(eq(screens.canvasEnabled, true))
       .orderBy(asc(screens.createdAt), asc(screens.id));
 
-    // Count deviceToken occurrences across the WHOLE screens table —
-    // a token shared by 2+ rows (canvas or not) is the smoking gun
-    // that one row inherited it from another.
-    const tokenRows = await db
-      .select({ deviceToken: screens.deviceToken })
-      .from(screens);
-    const tokenCounts = new Map<string, number>();
-    for (const r of tokenRows) {
-      if (!r.deviceToken) continue;
-      tokenCounts.set(r.deviceToken, (tokenCounts.get(r.deviceToken) ?? 0) + 1);
-    }
-
+    // Bucket by (clientId, w, h) so we can apply the position-
+    // distinctness gate per bucket — exactly mirroring the rule used
+    // by `getCanvasMembers` and `groupScreensByCanvas`.
     const buckets = new Map<string, Screen[]>();
     for (const s of allCanvas) {
       if (
@@ -919,21 +921,16 @@ export class DatabaseStorage implements IStorage {
       for (const m of members) {
         positions.add(`${m.canvasX ?? 0}|${m.canvasY ?? 0}`);
       }
-      // Real wall — leave alone.
+      // Real wall — every paired member legitimately shares pairing
+      // state via Task #173 fan-out. Leave alone.
       if (positions.size >= 2) continue;
       // Solo bucket (every member at the same offset). Each paired
-      // row whose deviceToken is shared with another row is a victim
-      // of the old inheritance bug; reset every such victim. We do
-      // NOT decrement the shared-token count after the first reset
-      // because both rows are equally suspect — neither is the
-      // legitimate owner; we don't know which one the operator
-      // originally paired (the older sibling that stamped the token
-      // may have been deleted). Resetting both forces the operator
-      // to re-pair each tile explicitly, which is the safe behavior.
+      // member is a victim of the old false-grouping behavior — even
+      // a lone bucket of one paired screen is suspect, because the
+      // pre-#176 backfill could have stamped pairing onto a screen
+      // that never had a player.
       for (const m of members) {
         if (!m.isPaired) continue;
-        if (!m.deviceToken) continue;
-        if ((tokenCounts.get(m.deviceToken) ?? 0) <= 1) continue;
         const newPairingCode = await this.generateUniquePairingCode();
         await db
           .update(screens)

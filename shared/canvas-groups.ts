@@ -30,18 +30,21 @@ export interface CanvasGroupKey {
 
 export interface CanvasGroup {
   key: CanvasGroupKey;
-  // String form used as the Map key. Format for real walls:
-  // `${clientId ?? ""}|${w}x${h}`. Format for split single-member
-  // groups (Task #176 — same dims at the same `(canvasX, canvasY)`):
-  // `${clientId ?? ""}|${w}x${h}#${screenId}` so each falsely-grouped
-  // tile lives in its own entry and consumers iterating
-  // `groups.values()` see correctly-shaped groups.
+  // String form used as the Map key. Default format for both real
+  // walls and lone same-dim screens: `${clientId ?? ""}|${w}x${h}`
+  // (preserves the pre-#176 lookup contract — `groups.get(dimKey)`
+  // continues to find the natural single-screen group). The ONLY
+  // exception is a same-dim, same-position cluster (≥2 tiles all at
+  // the same `(canvasX, canvasY)`): those collide on the dim key and
+  // would lose information if we kept just one entry, so they are
+  // split into per-tile entries keyed `${dimKey}#${screenId}`.
+  // Production callers don't do dim-key lookups against split
+  // clusters — they iterate `groups.values()` via siblings helpers.
   keyString: string;
   screens: Screen[];
   // True iff this group represents an actual video wall — its
-  // members occupy ≥2 distinct `(canvasX, canvasY)`. Single-position
-  // buckets are split into one-member non-wall groups, so this is
-  // also `false` for every split singleton.
+  // members occupy ≥2 distinct `(canvasX, canvasY)`. Lone screens
+  // and same-position clusters are NOT walls.
   isWall: boolean;
 }
 
@@ -64,12 +67,23 @@ export function canvasGroupKeyString(
 }
 
 // Group every canvas-enabled screen by (clientId, canvasWidth,
-// canvasHeight). Buckets that don't form a real wall (every member at
-// the same `(canvasX, canvasY)` — Task #176) are SPLIT into one
-// single-member group per screen, each with key
-// `${dimKey}#${screenId}`. Real walls keep the dim-only key. Single-
-// screen groups are still returned — the form preview wants to know
-// "is this screen alone on its canvas?" rather than guessing.
+// canvasHeight). The output preserves the pre-Task-#176 contract for
+// the common cases:
+//
+//   - LONE screen on its dim → 1 single-member non-wall group at the
+//     dim-only key (`${clientId}|${w}x${h}`). `groups.get(dimKey)`
+//     still returns it as before.
+//   - REAL wall (≥2 members at ≥2 distinct positions) → 1 multi-
+//     member wall group at the dim-only key. Same pre-#176 shape.
+//   - Same-dim cluster collapsed onto ONE position (the pre-#176 bug
+//     case: two unrelated authoring screens both sitting at
+//     (canvasX = 0, canvasY = 0)) → SPLIT into N single-member non-
+//     wall groups, each keyed `${dimKey}#${screenId}`. The dim-only
+//     key cannot fit them all without losing rows, so split is the
+//     only safe representation. Production callers reach these via
+//     `siblingsOnCanvas` (which only treats the dim-only entry as a
+//     wall) and `siblingsForCanvasParams` (which iterates values), so
+//     they never depend on `groups.get(dimKey)` for the cluster case.
 export function groupScreensByCanvas(
   screens: Screen[],
 ): Map<string, CanvasGroup> {
@@ -92,33 +106,44 @@ export function groupScreensByCanvas(
     else buckets.set(keyString, { key, screens: [s] });
   }
 
-  // Second pass: emit either a wall (multi-member, dim-keyed) or N
-  // single-member non-wall groups (`${dimKey}#${screenId}`-keyed).
+  // Second pass: emit one of three shapes per bucket.
   const out = new Map<string, CanvasGroup>();
   for (const [dimKey, bucket] of buckets) {
+    if (bucket.screens.length === 1) {
+      // Lone screen → keep dim-key contract.
+      out.set(dimKey, {
+        key: bucket.key,
+        keyString: dimKey,
+        screens: bucket.screens,
+        isWall: false,
+      });
+      continue;
+    }
     const positions = new Set<string>();
     for (const s of bucket.screens) {
       positions.add(`${s.canvasX ?? 0}|${s.canvasY ?? 0}`);
       if (positions.size >= 2) break;
     }
-    const isWall = bucket.screens.length >= 2 && positions.size >= 2;
-    if (isWall) {
+    if (positions.size >= 2) {
+      // Real wall → dim-key.
       out.set(dimKey, {
         key: bucket.key,
         keyString: dimKey,
         screens: bucket.screens,
         isWall: true,
       });
-    } else {
-      for (const s of bucket.screens) {
-        const soloKey = `${dimKey}#${s.id}`;
-        out.set(soloKey, {
-          key: bucket.key,
-          keyString: soloKey,
-          screens: [s],
-          isWall: false,
-        });
-      }
+      continue;
+    }
+    // Same-position cluster: split into per-tile non-wall entries
+    // because the dim key cannot hold them all simultaneously.
+    for (const s of bucket.screens) {
+      const soloKey = `${dimKey}#${s.id}`;
+      out.set(soloKey, {
+        key: bucket.key,
+        keyString: soloKey,
+        screens: [s],
+        isWall: false,
+      });
     }
   }
   return out;

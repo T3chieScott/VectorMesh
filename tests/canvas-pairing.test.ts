@@ -588,6 +588,59 @@ test("repairFalseCanvasPairings: resets paired-by-inheritance tile and assigns f
   void wallA; void wallB;
 });
 
+test("repairFalseCanvasPairings: resets a paired solo screen even when its sibling has been deleted (Task #176)", async () => {
+  // Regression for the "deleted-sibling" hole: under the old token-
+  // duplication heuristic, a single paired screen whose former
+  // false-sibling was deleted (so its deviceToken now appears in
+  // exactly one row) would survive the repair, leaving it paired by
+  // inheritance. The Task #176 spec mandates resetting EVERY paired
+  // canvas-enabled screen that resolves to a solo group, regardless
+  // of token duplication.
+  const clientId = await makeClient("orphan");
+  const t0 = new Date("2026-10-01T00:00:00Z");
+  // Lone canvas-enabled paired screen with a unique deviceToken — no
+  // other row holds the same token. The pre-#176 backfill could
+  // still have stamped its `isPaired = true` if a now-deleted
+  // sibling was the original pair winner.
+  const orphan = await makeScreen({
+    name: "orphanSolo", clientId, createdAt: t0,
+    canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080, canvasX: 0,
+    isPaired: true, pairingCode: "OLDORP",
+    deviceToken: "tok-orphan-unique-no-other-row-holds-this",
+    isOnline: true, lastSeen: new Date("2026-10-01T01:00:00Z"),
+    ipAddress: "10.1.1.1", hostname: "orphan-pi", hardwareClass: "rpi5",
+  });
+
+  const repaired = await storage.repairFalseCanvasPairings();
+  assert.ok(repaired >= 1, `expected ≥1 repaired, got ${repaired}`);
+
+  const after = (await db
+    .select()
+    .from(screens)
+    .where(like(screens.name, `${PREFIX}orphanSolo`)))[0];
+  assert.equal(after.isPaired, false, "orphan must be unpaired");
+  assert.equal(after.deviceToken, null, "orphan deviceToken cleared");
+  assert.equal(after.isOnline, false, "orphan online state cleared");
+  assert.equal(after.lastSeen, null);
+  assert.equal(after.ipAddress, null);
+  assert.equal(after.hostname, null);
+  assert.equal(after.hardwareClass, null);
+  assert.notEqual(after.pairingCode, "OLDORP", "fresh code minted");
+  assert.equal(after.pairingCode?.length, 6, "fresh code is 6 chars");
+
+  // Idempotent — second pass finds nothing more to repair on this row.
+  const repaired2 = await storage.repairFalseCanvasPairings();
+  // Other rows in the DB may exist from earlier tests, but our orphan
+  // row must NOT be touched again — its updatedAt should be stable.
+  const after2 = (await db
+    .select()
+    .from(screens)
+    .where(like(screens.name, `${PREFIX}orphanSolo`)))[0];
+  assert.equal(after2.updatedAt?.getTime(), after.updatedAt?.getTime());
+  void repaired2;
+  void orphan;
+});
+
 test("repairFalseCanvasPairings: every assigned pairingCode is exactly 6 chars and globally unique (Task #176)", async () => {
   // Stress the unique-code generator: stage many independent
   // false-pair groups so the repair loop has to mint many fresh
