@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -62,6 +62,10 @@ import {
   MonitorSmartphone,
 } from "lucide-react";
 import { useSiteFilteredQuery } from "@/hooks/use-site-context";
+import {
+  DEFAULT_SCHEDULE_TIMEZONE_FALLBACK,
+  getTzAbbreviation,
+} from "@shared/timezone-utils";
 import type { Client, Event, Screen, ScreenEventBooking } from "@shared/schema";
 
 const eventFormSchema = z.object({
@@ -469,6 +473,7 @@ function EventCard({ event, client }: { event: Event; client?: Client }) {
         </DropdownMenu>
         <EventBookingsDialog
           event={event}
+          client={client}
           open={bookingsOpen}
           onOpenChange={setBookingsOpen}
         />
@@ -518,12 +523,16 @@ function EventBookingRow({
   booking,
   screenName,
   eventId,
+  tz,
+  tzAbbrev,
   onDelete,
   deleting,
 }: {
   booking: ScreenEventBooking;
   screenName: string;
   eventId: string;
+  tz: string;
+  tzAbbrev: string;
   onDelete: () => void;
   deleting: boolean;
 }) {
@@ -565,7 +574,16 @@ function EventBookingRow({
         <div className="truncate font-medium">{screenName}</div>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <Label className="text-xs">Starts</Label>
+            <Label className="text-xs">
+              Starts{" "}
+              <span
+                className="text-muted-foreground font-normal"
+                title={`Wall-clock time in ${tz}`}
+                data-testid={`text-edit-event-booking-starts-tz-abbrev-${booking.id}`}
+              >
+                ({tzAbbrev})
+              </span>
+            </Label>
             <Input
               type="datetime-local"
               value={startsAt}
@@ -574,7 +592,16 @@ function EventBookingRow({
             />
           </div>
           <div>
-            <Label className="text-xs">Ends</Label>
+            <Label className="text-xs">
+              Ends{" "}
+              <span
+                className="text-muted-foreground font-normal"
+                title={`Wall-clock time in ${tz}`}
+                data-testid={`text-edit-event-booking-ends-tz-abbrev-${booking.id}`}
+              >
+                ({tzAbbrev})
+              </span>
+            </Label>
             <Input
               type="datetime-local"
               value={endsAt}
@@ -653,10 +680,12 @@ function EventBookingRow({
 
 function EventBookingsDialog({
   event,
+  client,
   open,
   onOpenChange,
 }: {
   event: Event;
+  client?: Client;
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
@@ -678,6 +707,16 @@ function EventBookingsDialog({
   });
 
   const eventScreens = screens.filter(s => s.clientId === event.clientId);
+
+  // Bookings carry wall-clock times that the player interprets in the event's
+  // site timezone. Surface that tz alongside the time inputs so an operator
+  // editing a remote site doesn't misread "14:00" as their browser's local
+  // clock — same pattern the schedule editor uses (Task #155).
+  const bookingTz = client?.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+  const bookingTzAbbrev = useMemo(
+    () => getTzAbbreviation(new Date(), bookingTz),
+    [bookingTz],
+  );
 
   const [screenId, setScreenId] = useState("");
   const [startsAt, setStartsAt] = useState(toLocalDateTimeInput(new Date(event.startDate)));
@@ -744,6 +783,8 @@ function EventBookingsDialog({
                       booking={b}
                       screenName={screens.find(s => s.id === b.screenId)?.name || "Unknown screen"}
                       eventId={event.id}
+                      tz={bookingTz}
+                      tzAbbrev={bookingTzAbbrev}
                       onDelete={() => deleteMutation.mutate(b.id)}
                       deleting={deleteMutation.isPending}
                     />
@@ -774,7 +815,16 @@ function EventBookingsDialog({
             </Select>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <Label className="text-xs">Starts</Label>
+                <Label className="text-xs">
+                  Starts{" "}
+                  <span
+                    className="text-muted-foreground font-normal"
+                    title={`Wall-clock time in ${bookingTz}`}
+                    data-testid="text-event-booking-starts-tz-abbrev"
+                  >
+                    ({bookingTzAbbrev})
+                  </span>
+                </Label>
                 <Input
                   type="datetime-local"
                   value={startsAt}
@@ -783,7 +833,16 @@ function EventBookingsDialog({
                 />
               </div>
               <div>
-                <Label className="text-xs">Ends</Label>
+                <Label className="text-xs">
+                  Ends{" "}
+                  <span
+                    className="text-muted-foreground font-normal"
+                    title={`Wall-clock time in ${bookingTz}`}
+                    data-testid="text-event-booking-ends-tz-abbrev"
+                  >
+                    ({bookingTzAbbrev})
+                  </span>
+                </Label>
                 <Input
                   type="datetime-local"
                   value={endsAt}
