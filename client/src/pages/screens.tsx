@@ -1281,6 +1281,11 @@ function ScreenCard({
     },
   });
 
+  const playerDisplaySettings = useQuery<{ globalHideNoContentMessage: boolean }>({
+    queryKey: ["/api/player-display-settings"],
+  });
+  const globalHideNoContent = !!playerDisplaySettings.data?.globalHideNoContentMessage;
+
   const requestScreenshotMutation = useMutation({
     mutationFn: () =>
       apiRequest("POST", `/api/screens/${screen.id}/request-screenshot`),
@@ -1803,17 +1808,36 @@ function ScreenCard({
             data-testid={`switch-live-banner-${screen.id}`}
           />
         </div>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <MessageSquareOff className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-xs text-muted-foreground">Hide 'No Content' message</span>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MessageSquareOff className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Hide 'No Content' message</span>
+              {globalHideNoContent && (
+                <Badge
+                  variant="outline"
+                  className="h-4 text-[10px] px-1.5 border-amber-500/40 text-amber-600 dark:text-amber-400"
+                  data-testid={`badge-global-override-${screen.id}`}
+                >
+                  GLOBAL
+                </Badge>
+              )}
+            </div>
+            <Switch
+              checked={globalHideNoContent || screen.hideNoContentMessage || false}
+              onCheckedChange={(checked) => toggleHideNoContentMutation.mutate(checked)}
+              disabled={!!screen.locked || globalHideNoContent}
+              data-testid={`switch-hide-no-content-${screen.id}`}
+            />
           </div>
-          <Switch
-            checked={screen.hideNoContentMessage || false}
-            onCheckedChange={(checked) => toggleHideNoContentMutation.mutate(checked)}
-            disabled={!!screen.locked}
-            data-testid={`switch-hide-no-content-${screen.id}`}
-          />
+          {globalHideNoContent && (
+            <p
+              className="text-[10px] text-muted-foreground pl-5"
+              data-testid={`text-global-override-hint-${screen.id}`}
+            >
+              Overridden by global setting (Settings → Player Display)
+            </p>
+          )}
         </div>
         {screen.isPaired && (
           <div className="flex items-center justify-between">

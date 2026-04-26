@@ -31,6 +31,11 @@ import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, 
 import { resolveScreenContent, type ResolverDeps } from "./contentResolver";
 import { buildContentTraceHandler } from "./contentTraceHandler";
 import {
+  applyGlobalHideOverride,
+  parseGlobalHideValue,
+  GLOBAL_HIDE_NO_CONTENT_MESSAGE_KEY,
+} from "./globalHideOverride";
+import {
   findSuspectBlocks as findScheduleTzSuspectBlocks,
   TZ_AUDIT_DEFAULT_CUTOFF,
 } from "./scheduleTzAudit";
@@ -3700,8 +3705,19 @@ export async function registerRoutes(
         pendingScreenshotRequests.delete(screen.id);
       }
 
+      // Layer the org-wide "hide 'No Content' message" switch on top of the
+      // per-screen value (Task #153). The DB row is never mutated; we only
+      // OR-merge into the response copy. The player's content-change hash
+      // already includes hideNoContentMessage, so toggling the global flag
+      // propagates within one polling interval.
+      const globalHideSetting = await storage.getSystemSetting(
+        GLOBAL_HIDE_NO_CONTENT_MESSAGE_KEY,
+      );
+      const globalHide = parseGlobalHideValue(globalHideSetting?.value);
+      const screenForResponse = applyGlobalHideOverride(screen, globalHide);
+
       res.json({
-        screen,
+        screen: screenForResponse,
         profile,
         layout,
         media: mediaAssets,
@@ -4561,6 +4577,23 @@ export async function registerRoutes(
       }
     },
   );
+
+  // ============ PLAYER DISPLAY SETTINGS ============
+  // Public-to-any-authenticated-user view of the org-wide player display
+  // toggles. This lets non-admin operators see the "overridden by global
+  // setting" hint on the Screens page without exposing the full
+  // /api/system-settings catalog (which remains admin-only).
+  app.get("/api/player-display-settings", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const setting = await storage.getSystemSetting(GLOBAL_HIDE_NO_CONTENT_MESSAGE_KEY);
+      res.json({
+        globalHideNoContentMessage: parseGlobalHideValue(setting?.value),
+      });
+    } catch (error) {
+      console.error("Error fetching player display settings:", error);
+      res.status(500).json({ error: "Failed to fetch player display settings" });
+    }
+  });
 
   // ============ SYSTEM SETTINGS ============
   app.get("/api/system-settings", requireAuth, loadUserContext, requireAdmin, async (req, res) => {

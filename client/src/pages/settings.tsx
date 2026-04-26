@@ -34,6 +34,7 @@ import {
   Trash2,
   HelpCircle,
   Globe,
+  Monitor,
 } from "lucide-react";
 import { Link } from "wouter";
 import { formatDistanceToNow } from "date-fns";
@@ -58,6 +59,79 @@ import {
 
 
 
+
+interface SystemSettingData {
+  key: string;
+  value: string;
+  updatedAt: string | null;
+}
+
+const GLOBAL_HIDE_NO_CONTENT_KEY = "global_hide_no_content_message";
+
+function PlayerDisplaySettingsCard() {
+  const { toast } = useToast();
+
+  const { data: settings = [], isLoading } = useQuery<SystemSettingData[]>({
+    queryKey: ["/api/system-settings"],
+  });
+
+  const setting = settings.find(s => s.key === GLOBAL_HIDE_NO_CONTENT_KEY);
+  const enabled = setting?.value?.trim().toLowerCase() === "true";
+
+  const updateMutation = useMutation({
+    mutationFn: async (next: boolean) => {
+      const res = await apiRequest("PUT", `/api/system-settings/${GLOBAL_HIDE_NO_CONTENT_KEY}`, {
+        value: next ? "true" : "false",
+      });
+      return res.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/system-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/player-display-settings"] });
+      toast({
+        title: variables
+          ? "'No Content' message hidden on every screen"
+          : "Per-screen settings restored",
+      });
+    },
+    onError: () => {
+      toast({ title: "Failed to update setting", variant: "destructive" });
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base font-semibold flex items-center gap-2">
+          <Monitor className="h-4 w-4" />
+          Player Display
+        </CardTitle>
+        <CardDescription>
+          Org-wide overrides applied to every player.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <Label htmlFor="switch-global-hide-no-content" className="text-sm font-medium">
+              Hide "No Content" message on all screens
+            </Label>
+            <p className="text-xs text-muted-foreground max-w-prose">
+              When on, every screen with no scheduled content goes plain black instead of showing the placeholder card. Per-screen settings are ignored while this is on. The LIVE banner still appears for screens with an active live override.
+            </p>
+          </div>
+          <Switch
+            id="switch-global-hide-no-content"
+            checked={enabled}
+            disabled={isLoading || updateMutation.isPending}
+            onCheckedChange={(checked) => updateMutation.mutate(checked)}
+            data-testid="switch-global-hide-no-content"
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 interface AlertSettingData {
   id: string;
@@ -900,6 +974,10 @@ export default function SettingsPage() {
         <ApiTokensCard />
 
         <AlertSettingsCard />
+
+        {user?.role === "admin" && (
+          <PlayerDisplaySettingsCard />
+        )}
 
         {user?.role === "admin" && (
           <StorageSettingsCard />
