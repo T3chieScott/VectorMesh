@@ -35,8 +35,9 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
-import type { Screen, LayoutTemplate, LiveOverride } from "@shared/schema";
+import type { Screen, LayoutTemplate, LiveOverride, Event } from "@shared/schema";
 import { ScreenBookingStatus } from "@/components/screen-booking-status";
+import { ScreenBookingsContextMenu } from "@/components/screen-bookings-context-menu";
 
 type ColumnId =
   | "name"
@@ -170,6 +171,10 @@ function getNowDisplaying(
 interface ScreensTableProps {
   screens: Screen[];
   layouts: LayoutTemplate[];
+  // Used by the right-click "paste bookings" preview to show event names
+  // and to filter out events the current user can't access. Defaults to
+  // an empty list so existing callers that don't pass it still render.
+  events?: Event[];
   getActiveOverrideForScreen: (screenId: string) => LiveOverride | null;
   onOpenScreen: (screen: Screen) => void;
   onDuplicateScreen?: (screen: Screen) => void;
@@ -184,6 +189,7 @@ interface ScreensTableProps {
 export function ScreensTable({
   screens,
   layouts,
+  events = [],
   getActiveOverrideForScreen,
   onOpenScreen,
   onDuplicateScreen,
@@ -365,7 +371,12 @@ export function ScreensTable({
             const activeOverride = getActiveOverrideForScreen(screen.id);
             const nowDisplaying = getNowDisplaying(screen, layouts, activeOverride);
             return (
-              <TableRow key={screen.id} data-testid={`row-screen-${screen.id}`}>
+              <ScreenBookingsContextMenu
+                key={screen.id}
+                screen={screen}
+                events={events}
+              >
+              <TableRow data-testid={`row-screen-${screen.id}`}>
                 {visibleColumns.map((id) => (
                   <TableCell key={id}>
                     {renderCell(id, {
@@ -416,6 +427,7 @@ export function ScreensTable({
                   )}
                 </TableCell>
               </TableRow>
+              </ScreenBookingsContextMenu>
             );
           })}
         </TableBody>

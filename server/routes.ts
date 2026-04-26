@@ -30,6 +30,7 @@ import { find as findTimezone } from "geo-tz";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert } from "./email";
 import { resolveScreenContent, type ResolverDeps } from "./contentResolver";
 import { buildContentTraceHandler } from "./contentTraceHandler";
+import { buildBulkBookingsHandler, type BulkBookingResult } from "./bulkBookingsHandler";
 import { resolveSimulatorContent } from "./simulatorContent";
 import {
   applyGlobalHideOverride,
@@ -3014,6 +3015,37 @@ export async function registerRoutes(
       res.status(500).json({ error: "Failed to create booking" });
     }
   });
+
+  // Bulk-create endpoint used by the screens-page right-click "paste
+  // bookings" flow. Returns per-row results so the UI can show
+  // pasted/conflict/skipped counts. Reuses storage.createScreenEventBooking
+  // so the per-screen advisory lock + overlap check still serialise writes.
+  app.post(
+    "/api/screens/:screenId/bookings/bulk",
+    requireAuth,
+    loadUserContext,
+    buildBulkBookingsHandler(
+      {
+        getScreen: (id) => storage.getScreen(id),
+        getEvent: (id) => storage.getEvent(id),
+        createScreenEventBooking: (data) => storage.createScreenEventBooking(data),
+      },
+      { canAccessClient },
+      {
+        onAudit: (req, results: BulkBookingResult[]) => {
+          for (const r of results) {
+            if (r.status === "created") {
+              logAudit(req, "create", "screen_booking", r.booking.id, {
+                screenId: r.booking.screenId,
+                eventId: r.booking.eventId,
+                bulk: true,
+              });
+            }
+          }
+        },
+      },
+    ),
+  );
 
   app.patch("/api/screen-bookings/:id", requireAuth, loadUserContext, async (req, res) => {
     try {

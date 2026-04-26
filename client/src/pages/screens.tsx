@@ -99,6 +99,7 @@ import type { Screen, DisplayProfile, LiveOverride, Event, LayoutTemplate, Clien
 import { WeatherLocationPicker } from "@/components/weather-location-picker";
 import { ScreensTable } from "@/components/screens-table";
 import { ScreenBookingStatus } from "@/components/screen-booking-status";
+import { ScreenBookingsContextMenu } from "@/components/screen-bookings-context-menu";
 import { Table as TableIcon, LayoutGrid as LayoutGridIcon } from "lucide-react";
 
 type ScreensView = "cards" | "table";
@@ -1312,7 +1313,8 @@ function ScreenCard({
   });
 
   return (
-    <Card className={`relative hover-elevate transition-all ${screen.locked ? "ring-1 ring-amber-500/30" : ""}`}>
+    <ScreenBookingsContextMenu screen={screen} events={events}>
+      <Card className={`relative hover-elevate transition-all ${screen.locked ? "ring-1 ring-amber-500/30" : ""}`}>
       {dragHandle}
       <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3">
         <div className="flex items-center gap-3">
@@ -2046,7 +2048,8 @@ function ScreenCard({
           </p>
         )}
       </CardContent>
-    </Card>
+      </Card>
+    </ScreenBookingsContextMenu>
   );
 }
 
@@ -2784,6 +2787,7 @@ export default function ScreensPage() {
           <ScreensTable
             screens={filteredScreens}
             layouts={layouts}
+            events={events}
             getActiveOverrideForScreen={getActiveOverrideForScreen}
             onOpenScreen={(s) => setEditingScreenId(s.id)}
             onDuplicateScreen={(s) => setDuplicatingScreen(s)}
