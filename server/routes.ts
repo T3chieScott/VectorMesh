@@ -30,6 +30,7 @@ import { find as findTimezone } from "geo-tz";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert } from "./email";
 import { resolveScreenContent, type ResolverDeps } from "./contentResolver";
 import { buildContentTraceHandler } from "./contentTraceHandler";
+import { resolveSimulatorContent } from "./simulatorContent";
 import {
   applyGlobalHideOverride,
   parseGlobalHideValue,
@@ -3825,6 +3826,13 @@ export async function registerRoutes(
   );
 
   // ============ SIMULATOR CONTENT ============
+  // The simulator preview shares the player's content resolver
+  // (`server/contentResolver.ts`) so the in-app preview can never silently
+  // drift from real player behaviour. The only simulator-specific concern is
+  // client-scope filtering of the active event (so an account manager can't
+  // preview scheduled content from an event whose client they cannot access)
+  // and a small mapping from the resolver's structured outcome onto the
+  // simulator UI's legacy `layoutSource` / `layoutSourceDetail` shape.
   app.get("/api/simulator/:screenId/content", requireAuth, loadUserContext, async (req, res) => {
     try {
       const screen = await storage.getScreen(getPathParam(req, "screenId"));
@@ -3837,36 +3845,7 @@ export async function registerRoutes(
       }
 
       const now = new Date();
-      let layout: any = null;
-      let layoutSource: string = "none";
-      let layoutSourceDetail: string | null = null;
-
-      const overrides = await storage.getLiveOverrides();
-      const activeOverride = overrides.find(o => {
-        if (!o.isActive || new Date(o.startTime) > now || new Date(o.endTime) < now) return false;
-        if (!o.targets || (o.targets as any[]).length === 0) return true;
-        return (o.targets as any[]).some((t: any) =>
-          (t.type === "screen" && t.id === screen.id)
-        );
-      });
-
-      if (activeOverride && activeOverride.layoutTemplateId) {
-        layout = await storage.getLayoutTemplate(activeOverride.layoutTemplateId);
-        layoutSource = "live_override";
-        layoutSourceDetail = activeOverride.message || "Live Override";
-      }
-
       const simAllowed = getAllowedClientIds(req);
-      const rawSimActiveEvent = await getActiveEventForScreen(screen.id, now);
-      const simActiveEvent =
-        rawSimActiveEvent &&
-        canAccessBooking(
-          screen.clientId ?? null,
-          rawSimActiveEvent.clientId ?? null,
-          simAllowed,
-        )
-          ? rawSimActiveEvent
-          : null;
 
       // Resolve the simulator's evaluation timezone from the screen's client.
       const simClient = screen.clientId
@@ -3874,100 +3853,13 @@ export async function registerRoutes(
         : null;
       const simTz = simClient?.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
 
-      if (!layout && simActiveEvent) {
-        const [programmes, allVersions] = await Promise.all([
-          storage.getProgrammes(),
-          storage.getProgrammeVersions(),
-        ]);
-        const eventProgrammes = programmes.filter(p => p.eventId === simActiveEvent.id);
-        const publishedVersions = allVersions.filter(v =>
-          v.status === "published" && eventProgrammes.some(p => p.id === v.programmeId)
-        );
-
-        const allBlocks = await Promise.all(
-          publishedVersions.map(v => storage.getScheduleBlocks(v.id))
-        );
-        const flatBlocks = allBlocks.flat().sort((a, b) => (b.priority || 0) - (a.priority || 0));
-
-        const simScreenGroupIds = await storage.getScreenGroupIds(screen.id);
-        const simScreenGroupSet = new Set(simScreenGroupIds);
-
-        // Pre-compute the wall-clock parts in the simulator's evaluation tz so
-        // every per-block check uses the same tz-aware view of "now".
-        const simWall = getWallPartsInTz(now, simTz);
-
-        for (const block of flatBlocks) {
-          const targets = block.targets as any[] || [];
-          const targetMatch = targets.length === 0 || targets.some((t: any) =>
-            (t.type === "screen" && t.id === screen.id) ||
-            (t.type === "group" && simScreenGroupSet.has(t.id))
-          );
-          if (!targetMatch) continue;
-
-          const rule2 = ((block.timeRules as any[]) || [])[0] as { startDate?: string; endDate?: string; startTime?: string; endTime?: string; daysOfWeek?: number[] } | undefined;
-          let timeMatch = true;
-          if (rule2) {
-            if (rule2.startDate) {
-              const sd = startOfDayInTz(rule2.startDate, simTz);
-              if (sd && now < sd) timeMatch = false;
-            }
-            if (rule2.endDate) {
-              const ed = endOfDayInTz(rule2.endDate, simTz);
-              if (ed && now > ed) timeMatch = false;
-            }
-            if (timeMatch && rule2.daysOfWeek && rule2.daysOfWeek.length > 0) {
-              if (!rule2.daysOfWeek.includes(simWall.dayOfWeek)) timeMatch = false;
-            }
-            if (timeMatch && rule2.startTime && rule2.endTime) {
-              const startHM = parseHHMMString(rule2.startTime);
-              const endHM = parseHHMMString(rule2.endTime);
-              if (startHM && endHM) {
-                const startMins = startHM.hours * 60 + startHM.minutes;
-                const endMins = endHM.hours * 60 + endHM.minutes;
-                const nowMins = simWall.minuteOfDay;
-                if (endMins <= startMins) {
-                  if (nowMins < startMins && nowMins > endMins) timeMatch = false;
-                } else {
-                  if (nowMins < startMins || nowMins > endMins) timeMatch = false;
-                }
-              }
-            } else if (timeMatch) {
-              if (rule2.startTime) {
-                const hm = parseHHMMString(rule2.startTime);
-                if (hm) {
-                  const startMins = hm.hours * 60 + hm.minutes;
-                  if (simWall.minuteOfDay < startMins) timeMatch = false;
-                }
-              }
-              if (rule2.endTime) {
-                const hm = parseHHMMString(rule2.endTime);
-                if (hm) {
-                  const endMins = hm.hours * 60 + hm.minutes;
-                  if (simWall.minuteOfDay > endMins) timeMatch = false;
-                }
-              }
-            }
-          }
-
-          if (timeMatch && block.layoutTemplateId) {
-            layout = await storage.getLayoutTemplate(block.layoutTemplateId);
-            layoutSource = "scheduled";
-            layoutSourceDetail = block.name;
-            break;
-          }
-        }
-      }
-
-      if (!layout && screen.fallbackLayoutId) {
-        layout = await storage.getLayoutTemplate(screen.fallbackLayoutId);
-        layoutSource = "fallback";
-        layoutSourceDetail = "Fallback Layout";
-      }
-
-      if (!layout && screen.fallbackPlaylistId) {
-        layoutSource = "fallback";
-        layoutSourceDetail = "Fallback Playlist";
-      }
+      const { summary } = await resolveSimulatorContent(
+        screen,
+        now,
+        storage as ResolverDeps,
+        simAllowed,
+        simTz,
+      );
 
       let playerVars: PlayerVarsPayload;
       try {
@@ -3992,10 +3884,10 @@ export async function registerRoutes(
       }
 
       res.json({
-        layoutId: layout?.id || null,
-        layoutSource,
-        layoutSourceDetail,
-        fallbackPlaylistId: (!layout && screen.fallbackPlaylistId) ? screen.fallbackPlaylistId : null,
+        layoutId: summary.layoutId,
+        layoutSource: summary.layoutSource,
+        layoutSourceDetail: summary.layoutSourceDetail,
+        fallbackPlaylistId: summary.fallbackPlaylistId,
         playerVars,
         timestamp: now.toISOString(),
       });
