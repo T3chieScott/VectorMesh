@@ -30,7 +30,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import type { Programme, Event, ProgrammeVersion } from "@shared/schema";
+import { ProgrammeBlocksContextMenu } from "@/components/programme-blocks-context-menu";
+import type {
+  Programme,
+  Event,
+  ProgrammeVersion,
+  LayoutTemplate,
+  Playlist,
+  Screen,
+  ScreenGroup,
+} from "@shared/schema";
 
 type ColumnId = "name" | "event" | "version" | "updated";
 
@@ -75,6 +84,13 @@ interface ProgrammesTableProps {
   programmes: Programme[];
   events: Event[];
   versions: ProgrammeVersion[];
+  // Lookup tables threaded through so each row can host the same
+  // copy/paste right-click menu as the cards view. The menu uses
+  // these to render its paste-preview without an extra fetch.
+  layouts: LayoutTemplate[];
+  playlists: Playlist[];
+  screens: Screen[];
+  screenGroups: ScreenGroup[];
   onEdit: (programme: Programme) => void;
   onManageBlocks: (programme: Programme) => void;
   onPublish: (programme: Programme) => void;
@@ -85,6 +101,10 @@ export function ProgrammesTable({
   programmes,
   events,
   versions,
+  layouts,
+  playlists,
+  screens,
+  screenGroups,
   onEdit,
   onManageBlocks,
   onPublish,
@@ -99,6 +119,22 @@ export function ProgrammesTable({
   const versionByProgramme = useMemo(() => {
     const map = new Map<string, VersionInfo>();
     for (const p of programmes) map.set(p.id, describeVersion(versions, p.id));
+    return map;
+  }, [programmes, versions]);
+  // Resolve the actual version row to use as the source/target for
+  // the right-click copy/paste menu — preferring the draft so the
+  // preview reflects what the bulk-paste handler will mutate. Same
+  // gating as the cards view: undefined when the programme has no
+  // versions, in which case we render the row without a menu.
+  const sourceVersionByProgramme = useMemo(() => {
+    const map = new Map<string, ProgrammeVersion>();
+    for (const p of programmes) {
+      const mine = versions.filter((v) => v.programmeId === p.id);
+      const draft = mine.find((v) => v.status === "draft");
+      const published = mine.find((v) => v.status === "published");
+      const chosen = draft ?? published;
+      if (chosen) map.set(p.id, chosen);
+    }
     return map;
   }, [programmes, versions]);
 
@@ -198,7 +234,14 @@ export function ProgrammesTable({
               publishedAt: null,
               draftAvailable: false,
             };
-            return (
+            const sourceVersion = sourceVersionByProgramme.get(programme.id);
+            // Right-click menu wrapping the entire row. Only mounted
+            // when a version exists (mirrors the cards-view gating);
+            // version-less rows still render but without copy/paste.
+            // The dropdown actions button (...) inside the row keeps
+            // working — its on-click opens its own menu, and a
+            // right-click on it bubbles up to the row-level menu.
+            const row = (
               <TableRow key={programme.id} data-testid={`row-programme-${programme.id}`}>
                 <TableCell>
                   <button
@@ -302,6 +345,22 @@ export function ProgrammesTable({
                   </DropdownMenu>
                 </TableCell>
               </TableRow>
+            );
+            if (!sourceVersion) return row;
+            return (
+              <ProgrammeBlocksContextMenu
+                key={programme.id}
+                programme={programme}
+                targetVersion={sourceVersion}
+                destinationClientId={event?.clientId ?? null}
+                layouts={layouts}
+                playlists={playlists}
+                screens={screens}
+                screenGroups={screenGroups}
+                sourceVersion={sourceVersion}
+              >
+                {row}
+              </ProgrammeBlocksContextMenu>
             );
           })}
         </TableBody>

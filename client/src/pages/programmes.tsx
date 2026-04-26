@@ -1050,7 +1050,18 @@ function ProgrammeCard({
     },
   });
 
-  return (
+  // Card-surface right-click target: lets the user copy all blocks
+  // or paste from the clipboard without first expanding "Manage
+  // Blocks". The inner block-list and per-row menus inside the
+  // collapsible still take precedence (radix's innermost
+  // ContextMenuTrigger captures the event), so existing block-row
+  // actions keep working unchanged. Only mounted when the programme
+  // already has at least one version — pasting into a version-less
+  // programme is deferred to a follow-up so the server can decide
+  // whether to auto-create a draft.
+  const cardSourceVersion = draftVersion || publishedVersion || null;
+
+  const cardElement = (
     <Card className="hover-elevate transition-all relative">
       {dragHandle}
       <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3">
@@ -1259,6 +1270,26 @@ function ProgrammeCard({
         )}
       </CardContent>
     </Card>
+  );
+
+  if (!cardSourceVersion) return cardElement;
+
+  return (
+    <ProgrammeBlocksContextMenu
+      programme={programme}
+      targetVersion={cardSourceVersion}
+      destinationClientId={event?.clientId ?? null}
+      layouts={layouts}
+      playlists={playlists}
+      screens={screens}
+      screenGroups={screenGroups}
+      sourceVersion={cardSourceVersion}
+      // Intentionally omit allBlocks: copyAll falls back to a fresh
+      // fetch so the clipboard never captures stale data, and we
+      // avoid eagerly loading blocks for every collapsed card.
+    >
+      {cardElement}
+    </ProgrammeBlocksContextMenu>
   );
 }
 
@@ -1884,6 +1915,10 @@ export default function ProgrammesPage() {
             programmes={filteredProgrammes}
             events={events}
             versions={versions}
+            layouts={layouts}
+            playlists={playlists}
+            screens={screens}
+            screenGroups={screenGroups}
             onEdit={(p) => setEditingProgrammeId(p.id)}
             onManageBlocks={(p) => setManagingBlocksProgrammeId(p.id)}
             onPublish={(p) => publishFromTable.mutate(p)}
