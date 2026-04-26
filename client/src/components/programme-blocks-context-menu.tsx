@@ -38,16 +38,24 @@ interface SharedProps {
   programme: Programme;
   // Destination programme version (preferring published over draft)
   // we use to fetch existing blocks for the preview. The bulk
-  // endpoint will create a draft itself if none exists yet.
+  // endpoint will create a draft itself if none exists yet, so this
+  // may be null when the programme has zero versions — in that case
+  // the dialog skips the existing-blocks fetch and notes that a
+  // draft will be created.
   targetVersion: ProgrammeVersion | null;
   destinationClientId: string | null;
   layouts: LayoutTemplate[];
   playlists: Playlist[];
   screens: Screen[];
   screenGroups: ScreenGroup[];
-  // Source data for the Copy menus.
-  sourceVersion: ProgrammeVersion;
+  // Source data for the Copy menus. Null when the programme has no
+  // versions yet — in that case the section-level menu shows only
+  // the Paste affordance (and the block-level menu is never rendered
+  // because there are no blocks to right-click).
+  sourceVersion: ProgrammeVersion | null;
   // For block-level menus: the single block being right-clicked.
+  // Block-level menus always require a sourceVersion (the block
+  // belongs to one); the type allows null only for section-level use.
   block?: ScheduleBlock;
   // For section-level menus: all blocks in the source version.
   allBlocks?: ScheduleBlock[];
@@ -89,7 +97,7 @@ export function ProgrammeBlocksContextMenu({
   const seriesId = block?.seriesId ?? null;
 
   async function copyOne() {
-    if (!block) return;
+    if (!block || !sourceVersion) return;
     setCopying(true);
     try {
       copyFrom(
@@ -110,7 +118,7 @@ export function ProgrammeBlocksContextMenu({
   }
 
   async function copySeries() {
-    if (!block || !seriesId) return;
+    if (!block || !seriesId || !sourceVersion) return;
     setCopying(true);
     try {
       // Fetch fresh — the user may have added/removed series rows
@@ -140,6 +148,7 @@ export function ProgrammeBlocksContextMenu({
   }
 
   async function copyAll() {
+    if (!sourceVersion) return;
     setCopying(true);
     try {
       // Prefer a fresh fetch over the prop-supplied list so the
@@ -173,6 +182,16 @@ export function ProgrammeBlocksContextMenu({
     !!clipboard &&
     clipboard.blocks.length > 0 &&
     clipboard.sourceProgrammeId !== programme.id;
+
+  // Section-level menus may be mounted on a programme that has no
+  // versions yet — purely so the user can paste into it (the server
+  // auto-creates a draft). When neither Copy nor Paste would render,
+  // skip the wrapper entirely so the right-click menu doesn't open
+  // an empty popover. Block-level menus always have a sourceVersion
+  // (they wrap an actual block row), so they aren't affected.
+  if (!isBlockMenu && !sourceVersion && !canPaste) {
+    return <>{children}</>;
+  }
 
   return (
     <>
@@ -228,7 +247,7 @@ export function ProgrammeBlocksContextMenu({
                 Copy series
               </ContextMenuItem>
             </>
-          ) : (
+          ) : sourceVersion ? (
             <ContextMenuItem
               disabled={copying}
               onSelect={(e) => {
@@ -244,7 +263,7 @@ export function ProgrammeBlocksContextMenu({
               )}
               Copy all blocks
             </ContextMenuItem>
-          )}
+          ) : null}
           {!isBlockMenu && clipboard && clipboard.blocks.length > 0 && (
             // Paste lives on the SECTION-level menu only — the spec
             // is explicit that the paste affordance belongs to the

@@ -408,6 +408,42 @@ test("bulk-blocks: auto-creates a draft when only published exists", async () =>
   assert.equal(created[0].programmeVersionId, newDraft!.id);
 });
 
+test("bulk-blocks: auto-creates a v1 draft when the programme has no versions at all", async () => {
+  // Mirrors the cards/table view's "paste into a brand-new
+  // programme" flow: the client now mounts the section-level paste
+  // menu on programmes with zero versions, relying on the server
+  // to bootstrap the destination draft.
+  const { deps, versions, created } = makeDeps({
+    programme: makeProgramme(),
+    event: makeEvent(),
+    versions: [],
+  });
+  const out = await withTestServer(
+    { allowedClientIds: ["client-A"] },
+    deps,
+    (port) =>
+      postBulk(port, "P1", {
+        blocks: [
+          { name: "B1", targets: [], timeRules: [], zoneSources: [] },
+          { name: "B2", targets: [], timeRules: [], zoneSources: [] },
+        ],
+      }),
+  );
+  assert.equal(out.status, 200);
+  assert.equal(out.body.draftCreated, true);
+  assert.equal(versions.length, 1);
+  const newDraft = versions[0];
+  assert.equal(newDraft.status, "draft");
+  // No prior versions → versionNumber starts at 1.
+  assert.equal(newDraft.versionNumber, 1);
+  assert.equal(out.body.destinationVersionId, newDraft.id);
+  assert.equal(created.length, 2);
+  assert.equal(created[0].programmeVersionId, newDraft.id);
+  assert.equal(created[1].programmeVersionId, newDraft.id);
+  assert.equal(out.body.results[0].status, "created");
+  assert.equal(out.body.results[1].status, "created");
+});
+
 test("bulk-blocks: partial-failure (server_error on one row) — remaining rows still create", async () => {
   const { deps, created } = makeDeps({
     programme: makeProgramme(),

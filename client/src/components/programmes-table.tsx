@@ -124,8 +124,11 @@ export function ProgrammesTable({
   // Resolve the actual version row to use as the source/target for
   // the right-click copy/paste menu — preferring the draft so the
   // preview reflects what the bulk-paste handler will mutate. Same
-  // gating as the cards view: undefined when the programme has no
-  // versions, in which case we render the row without a menu.
+  // shape as the cards view: missing entries (programmes with no
+  // versions yet) still get the wrapper, but with a null
+  // sourceVersion — the menu component then shows only Paste, since
+  // the bulk-paste handler will auto-create a draft on the
+  // destination.
   const sourceVersionByProgramme = useMemo(() => {
     const map = new Map<string, ProgrammeVersion>();
     for (const p of programmes) {
@@ -346,18 +349,24 @@ export function ProgrammesTable({
                 </TableCell>
               </TableRow>
             );
-            if (!sourceVersion) return row;
+            // Always wrap with the menu — when the programme has no
+            // versions yet, sourceVersion is undefined and the menu
+            // renders only Paste (the bulk-paste handler creates a
+            // draft on the destination). The menu component itself
+            // bails out of wrapping when neither Copy nor Paste
+            // would render, so version-less rows without a non-empty
+            // clipboard still get the browser's native right-click.
             return (
               <ProgrammeBlocksContextMenu
                 key={programme.id}
                 programme={programme}
-                targetVersion={sourceVersion}
+                targetVersion={sourceVersion ?? null}
                 destinationClientId={event?.clientId ?? null}
                 layouts={layouts}
                 playlists={playlists}
                 screens={screens}
                 screenGroups={screenGroups}
-                sourceVersion={sourceVersion}
+                sourceVersion={sourceVersion ?? null}
               >
                 {row}
               </ProgrammeBlocksContextMenu>

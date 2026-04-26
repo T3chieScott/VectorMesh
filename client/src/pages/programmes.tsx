@@ -1055,10 +1055,13 @@ function ProgrammeCard({
   // Blocks". The inner block-list and per-row menus inside the
   // collapsible still take precedence (radix's innermost
   // ContextMenuTrigger captures the event), so existing block-row
-  // actions keep working unchanged. Only mounted when the programme
-  // already has at least one version — pasting into a version-less
-  // programme is deferred to a follow-up so the server can decide
-  // whether to auto-create a draft.
+  // actions keep working unchanged. The wrapper is always mounted —
+  // when the programme has no versions yet, sourceVersion is null
+  // and the menu only shows Paste (the bulk-paste handler will
+  // auto-create a draft on the destination). The menu component
+  // skips rendering altogether when neither Copy nor Paste applies,
+  // so right-click on an empty programme without a clipboard still
+  // shows the browser's native menu.
   const cardSourceVersion = draftVersion || publishedVersion || null;
 
   const cardElement = (
@@ -1271,8 +1274,6 @@ function ProgrammeCard({
       </CardContent>
     </Card>
   );
-
-  if (!cardSourceVersion) return cardElement;
 
   return (
     <ProgrammeBlocksContextMenu
