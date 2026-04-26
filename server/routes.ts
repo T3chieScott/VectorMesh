@@ -31,6 +31,7 @@ import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, 
 import { resolveScreenContent, type ResolverDeps } from "./contentResolver";
 import { buildContentTraceHandler } from "./contentTraceHandler";
 import { buildBulkBookingsHandler, type BulkBookingResult } from "./bulkBookingsHandler";
+import { buildBulkBlocksHandler, type BulkBlockResult } from "./bulkBlocksHandler";
 import { resolveSimulatorContent } from "./simulatorContent";
 import {
   applyGlobalHideOverride,
@@ -2640,6 +2641,56 @@ export async function registerRoutes(
       res.status(500).json({ error: "Failed to create schedule block" });
     }
   });
+
+  // Bulk paste blocks from one programme into another (mirrors the
+  // screen-bookings copy/paste right-click flow). Returns per-row
+  // results so the client can show each block's outcome (Pasted /
+  // Skipped — layout / Skipped — playlist / Failed) and ensures the
+  // destination programme has a draft to receive the blocks.
+  app.post(
+    "/api/programmes/:programmeId/blocks/bulk",
+    requireAuth,
+    loadUserContext,
+    buildBulkBlocksHandler(
+      {
+        getProgramme: (id) => storage.getProgramme(id),
+        getEvent: (id) => storage.getEvent(id),
+        getProgrammeVersionsByProgramme: async (programmeId) => {
+          const all = await storage.getProgrammeVersions();
+          return all.filter((v) => v.programmeId === programmeId);
+        },
+        createProgrammeVersion: (data) => storage.createProgrammeVersion(data),
+        getScreen: (id) => storage.getScreen(id),
+        getScreenGroup: (id) => storage.getScreenGroup(id),
+        getLayoutTemplate: (id) => storage.getLayoutTemplate(id),
+        getPlaylist: (id) => storage.getPlaylist(id),
+        createScheduleBlock: (data) => storage.createScheduleBlock(data),
+        newSeriesId: () => crypto.randomUUID(),
+      },
+      { canAccessClient },
+      {
+        onAudit: (req, results: BulkBlockResult[], ctx) => {
+          for (const r of results) {
+            if (r.status === "created") {
+              logAudit(req, "create", "schedule_block", r.block.id, {
+                programmeVersionId: r.block.programmeVersionId,
+                sourceProgrammeId: ctx.sourceProgrammeId,
+                destinationProgrammeId: ctx.programmeId,
+                droppedTargetCount: r.droppedTargets.length,
+                bulk: true,
+              });
+            }
+          }
+        },
+        onRefreshVersion: (versionId) => {
+          // Only published versions actually drive live screens; the
+          // helper itself short-circuits on drafts so this is safe to
+          // call for newly-created drafts too.
+          refreshScreensForVersion(versionId);
+        },
+      },
+    ),
+  );
 
   app.patch("/api/schedule-blocks/:id", requireAuth, async (req, res) => {
     try {

@@ -100,6 +100,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import type { Programme, Event, ProgrammeVersion, ScheduleBlock, LayoutTemplate, Playlist, Screen, ScreenGroup, TimeRule, ScheduleTarget, ZoneSource } from "@shared/schema";
+import { ProgrammeBlocksContextMenu } from "@/components/programme-blocks-context-menu";
 
 const programmeFormSchema = z.object({
   eventId: z.string().min(1, "Event is required"),
@@ -706,6 +707,11 @@ function ScheduleBlockRow({
   screenGroups,
   onEdit,
   onDelete,
+  programme,
+  sourceVersion,
+  destinationClientId,
+  layouts,
+  playlists,
 }: {
   block: ScheduleBlock;
   layout?: LayoutTemplate;
@@ -713,6 +719,11 @@ function ScheduleBlockRow({
   screenGroups: ScreenGroup[];
   onEdit: () => void;
   onDelete: () => void;
+  programme: Programme;
+  sourceVersion: ProgrammeVersion;
+  destinationClientId: string | null;
+  layouts: LayoutTemplate[];
+  playlists: Playlist[];
 }) {
   const timeRule = ((block.timeRules as TimeRule[]) || [])[0];
   const target = ((block.targets as ScheduleTarget[]) || [])[0];
@@ -723,38 +734,54 @@ function ScheduleBlockRow({
     : "All screens";
 
   return (
-    <div className="flex items-center justify-between gap-3 p-2 rounded-md bg-muted/50">
-      <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-8 h-8 rounded bg-primary/10">
-          <Layers className="h-4 w-4 text-primary" />
-        </div>
-        <div>
-          <p className="text-sm font-medium" data-testid={`text-block-name-${block.id}`}>{block.name}</p>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-            {timeRule?.startTime && timeRule?.endTime && (
+    <ProgrammeBlocksContextMenu
+      programme={programme}
+      // The context menu's paste flow uses this programme as the
+      // destination too. Right-clicking a block in programme A and
+      // pasting from a different programme B's clipboard is allowed
+      // and writes into A.
+      targetVersion={sourceVersion}
+      destinationClientId={destinationClientId}
+      layouts={layouts}
+      playlists={playlists}
+      screens={screens}
+      screenGroups={screenGroups}
+      sourceVersion={sourceVersion}
+      block={block}
+    >
+      <div className="flex items-center justify-between gap-3 p-2 rounded-md bg-muted/50">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center justify-center w-8 h-8 rounded bg-primary/10">
+            <Layers className="h-4 w-4 text-primary" />
+          </div>
+          <div>
+            <p className="text-sm font-medium" data-testid={`text-block-name-${block.id}`}>{block.name}</p>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+              {timeRule?.startTime && timeRule?.endTime && (
+                <span className="flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  {timeRule.startTime}–{timeRule.endTime}
+                </span>
+              )}
               <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />
-                {timeRule.startTime}–{timeRule.endTime}
+                <Monitor className="h-3 w-3" />
+                {targetLabel}
               </span>
-            )}
-            <span className="flex items-center gap-1">
-              <Monitor className="h-3 w-3" />
-              {targetLabel}
-            </span>
-            <span>• P{block.priority}</span>
-            {layout && <span>• {layout.name}</span>}
+              <span>• P{block.priority}</span>
+              {layout && <span>• {layout.name}</span>}
+            </div>
           </div>
         </div>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon" onClick={onEdit} data-testid={`button-edit-block-${block.id}`}>
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={onDelete} data-testid={`button-delete-block-${block.id}`}>
+            <Trash2 className="h-4 w-4 text-destructive" />
+          </Button>
+        </div>
       </div>
-      <div className="flex items-center gap-1">
-        <Button variant="ghost" size="icon" onClick={onEdit} data-testid={`button-edit-block-${block.id}`}>
-          <Pencil className="h-4 w-4" />
-        </Button>
-        <Button variant="ghost" size="icon" onClick={onDelete} data-testid={`button-delete-block-${block.id}`}>
-          <Trash2 className="h-4 w-4 text-destructive" />
-        </Button>
-      </div>
-    </div>
+    </ProgrammeBlocksContextMenu>
   );
 }
 
@@ -764,12 +791,18 @@ function ScheduleBlocksSection({
   playlists,
   screens,
   screenGroups,
+  programme,
+  destinationClientId,
 }: {
   version: ProgrammeVersion;
   layouts: LayoutTemplate[];
   playlists: Playlist[];
   screens: Screen[];
   screenGroups: ScreenGroup[];
+  programme: Programme;
+  // Effective client id for the programme's event — used by the
+  // paste-blocks context menu to compute its preview without a refetch.
+  destinationClientId: string | null;
 }) {
   const [blocksOpen, setBlocksOpen] = useState(false);
   const [blockDialogOpen, setBlockDialogOpen] = useState(false);
