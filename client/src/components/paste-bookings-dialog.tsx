@@ -35,7 +35,7 @@ type ServerResult =
   | {
       index: number;
       status: "error";
-      code: "overlap" | "forbidden_event" | "event_not_found" | "bad_request" | "server_error";
+      code: "overlap" | "forbidden" | "event_not_found" | "bad_request" | "server_error";
       error: string;
     };
 
@@ -135,7 +135,7 @@ export function PasteBookingsDialog({
         // The events list passed in is the user's accessible events, so
         // a missing event means either the event was deleted or the
         // user can't see it. The server is authoritative — these will
-        // come back as event_not_found / forbidden_event respectively.
+        // come back as event_not_found / forbidden respectively.
         status = accessibleEventIds.size === 0 ? "no-event" : "no-event-access";
       } else {
         // Half-open `[start, end)` overlap, matching server semantics.
@@ -267,7 +267,7 @@ export function PasteBookingsDialog({
                           ? "Conflict"
                           : serverRow.code === "event_not_found"
                           ? "Event missing"
-                          : serverRow.code === "forbidden_event"
+                          : serverRow.code === "forbidden"
                           ? "No access"
                           : "Failed"}
                       </Badge>
@@ -312,9 +312,7 @@ export function PasteBookingsDialog({
             >
               {pasteMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {clipboard && clipboard.bookings.length > 0
-                ? willCreateCount > 0 && willCreateCount < clipboard.bookings.length
-                  ? `Paste ${clipboard.bookings.length} (${willCreateCount} ready)`
-                  : `Paste ${clipboard.bookings.length} ${clipboard.bookings.length === 1 ? "booking" : "bookings"}`
+                ? `Paste ${clipboard.bookings.length} ${clipboard.bookings.length === 1 ? "booking" : "bookings"}`
                 : "Nothing to paste"}
             </Button>
           )}

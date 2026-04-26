@@ -88,24 +88,29 @@ export function ScreenBookingsContextMenu({ screen, events, children, asChild = 
             )}
             Copy bookings
           </ContextMenuItem>
-          <ContextMenuItem
-            disabled={!canPaste}
-            onSelect={(e) => {
-              e.preventDefault();
-              setPasteOpen(true);
-            }}
-            data-testid={`context-paste-bookings-${screen.id}`}
-          >
-            <ClipboardPaste className="mr-2 h-4 w-4" />
-            {clipboard
-              ? `Paste ${clipboard.bookings.length} ${clipboard.bookings.length === 1 ? "booking" : "bookings"}`
-              : "Paste bookings"}
-            {clipboard && (
+          {clipboard && clipboard.bookings.length > 0 && (
+            // The paste item only appears when something has actually
+            // been copied — keeping the menu short when the clipboard
+            // is empty matches the spec ("visible only when something
+            // has been copied"). It's still rendered-but-disabled when
+            // the target itself can't be pasted into (locked / same
+            // source screen) so the user gets a clear reason instead
+            // of a silently missing option.
+            <ContextMenuItem
+              disabled={!canPaste}
+              onSelect={(e) => {
+                e.preventDefault();
+                setPasteOpen(true);
+              }}
+              data-testid={`context-paste-bookings-${screen.id}`}
+            >
+              <ClipboardPaste className="mr-2 h-4 w-4" />
+              {`Paste ${clipboard.bookings.length} ${clipboard.bookings.length === 1 ? "booking" : "bookings"}`}
               <span className="ml-auto pl-2 text-xs text-muted-foreground truncate max-w-[7rem]">
                 from {clipboard.sourceScreenName}
               </span>
-            )}
-          </ContextMenuItem>
+            </ContextMenuItem>
+          )}
         </ContextMenuContent>
       </ContextMenu>
       <PasteBookingsDialog

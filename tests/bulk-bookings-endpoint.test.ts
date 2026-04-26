@@ -195,7 +195,7 @@ test("bulk: forbidden event — caller can write to the screen but not the event
   assert.equal(out.body.results.length, 3);
   assert.equal(out.body.results[0].status, "created");
   assert.equal(out.body.results[1].status, "error");
-  assert.equal(out.body.results[1].code, "forbidden_event");
+  assert.equal(out.body.results[1].code, "forbidden");
   assert.equal(out.body.results[2].status, "error");
   assert.equal(out.body.results[2].code, "event_not_found");
   assert.equal(created.length, 1);

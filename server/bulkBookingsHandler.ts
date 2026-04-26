@@ -16,7 +16,7 @@ export type BulkBookingResult =
   | {
       index: number;
       status: "error";
-      code: "overlap" | "forbidden_event" | "event_not_found" | "bad_request" | "server_error";
+      code: "overlap" | "forbidden" | "event_not_found" | "bad_request" | "server_error";
       error: string;
       input: { eventId: string; startsAt: string; endsAt: string };
     };
@@ -114,7 +114,7 @@ export async function processBulkBookings(
       results.push({
         index: i,
         status: "error",
-        code: "forbidden_event",
+        code: "forbidden",
         error: "Access denied to event",
         input: item,
       });
