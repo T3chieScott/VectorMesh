@@ -27,6 +27,11 @@ import type {
   ZoneSource,
 } from "@shared/schema";
 import type { BlocksClipboard, ClipboardBlock } from "@/hooks/use-blocks-clipboard";
+import {
+  evaluateLayoutAccess,
+  evaluatePlaylistAccess,
+  evaluateTargetAccess,
+} from "@shared/blockPasteAccess";
 
 // Preview row status — purely client-side and advisory. The server is
 // authoritative; once the user confirms the paste we replace each
@@ -253,40 +258,46 @@ export function PasteBlocksDialog({
   const previewRows = useMemo<PreviewRow[]>(() => {
     if (!clipboard || !destination) return [];
     const destClientId = destination.destinationClientId;
+    // The preview is advisory — the server is authoritative for the
+    // caller's own client-access check, so on the client we always
+    // pass `() => true` here. The shared predicate still applies the
+    // "destination client owns this layout/playlist" rules, which is
+    // what the user actually needs to see in the preview.
+    const allowAll = () => true;
 
     return clipboard.blocks.map((block, index) => {
       const layout = block.layoutTemplateId ? layoutMap.get(block.layoutTemplateId) : null;
       const layoutName = layout?.name ?? null;
 
-      // Layout check: must exist, and be either global (no clientId)
-      // or in the destination's client.
-      if (block.layoutTemplateId) {
-        if (!layout) {
-          return {
-            index,
-            block,
-            status: "skipped-layout" as const,
-            droppedTargetCount: 0,
-            layoutName,
-          };
-        }
-        if (layout.clientId && layout.clientId !== destClientId) {
-          return {
-            index,
-            block,
-            status: "skipped-layout" as const,
-            droppedTargetCount: 0,
-            layoutName,
-          };
-        }
+      // Layout check (shared predicate).
+      const layoutDecision = evaluateLayoutAccess({
+        layoutId: block.layoutTemplateId,
+        layout: layout ?? null,
+        destinationClientId: destClientId,
+        canAccessClient: allowAll,
+      });
+      if (!layoutDecision.ok) {
+        return {
+          index,
+          block,
+          status: "skipped-layout" as const,
+          droppedTargetCount: 0,
+          layoutName,
+        };
       }
 
-      // Playlist check on each zoneSource.
+      // Playlist check on each zoneSource (shared predicate).
       const zoneSources = (block.zoneSources ?? []) as ZoneSource[];
       for (const zs of zoneSources) {
         if (zs.type === "playlist" && zs.playlistId) {
           const pl = playlistMap.get(zs.playlistId);
-          if (!pl || !pl.clientId || pl.clientId !== destClientId) {
+          const playlistDecision = evaluatePlaylistAccess({
+            playlistId: zs.playlistId,
+            playlist: pl ?? null,
+            destinationClientId: destClientId,
+            canAccessClient: allowAll,
+          });
+          if (!playlistDecision.ok) {
             return {
               index,
               block,
@@ -298,19 +309,22 @@ export function PasteBlocksDialog({
         }
       }
 
-      // Target check: count how many would be dropped.
+      // Target check: count how many would be dropped (shared predicate).
       const targets = (block.targets ?? []) as ScheduleTarget[];
       let dropped = 0;
       for (const t of targets) {
-        if (t.type === "screen") {
-          const s = screenMap.get(t.id);
-          if (!s || !s.clientId || s.clientId !== destClientId) dropped++;
-        } else if (t.type === "group") {
-          const g = groupMap.get(t.id);
-          if (!g || !g.clientId || g.clientId !== destClientId) dropped++;
-        } else {
-          dropped++;
-        }
+        const entity =
+          t.type === "screen"
+            ? screenMap.get(t.id) ?? null
+            : t.type === "group"
+            ? groupMap.get(t.id) ?? null
+            : null;
+        const targetDecision = evaluateTargetAccess({
+          type: t.type,
+          entity: entity ? { id: entity.id, clientId: entity.clientId ?? null } : null,
+          destinationClientId: destClientId,
+        });
+        if (!targetDecision.ok) dropped++;
       }
 
       const status: PreviewStatus = dropped > 0 ? "targets-reset" : "ready";

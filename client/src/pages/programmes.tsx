@@ -1236,8 +1236,13 @@ function ProgrammeCard({
           )}
         </div>
         {(publishedVersion || draftVersion) && (
+          // Prefer the DRAFT version when one exists — that's the
+          // version the bulk-paste handler will write into (or
+          // create if missing). Showing the draft here keeps the
+          // preview/refetch context aligned with what the server
+          // will actually mutate.
           <ScheduleBlocksSection
-            version={publishedVersion || draftVersion!}
+            version={draftVersion || publishedVersion!}
             layouts={layouts}
             playlists={playlists}
             screens={screens}
@@ -1285,7 +1290,10 @@ function ManageBlocksDialog({
   const programmeVersions = versions.filter((v) => v.programmeId === programme.id);
   const publishedVersion = programmeVersions.find((v) => v.status === "published");
   const draftVersion = programmeVersions.find((v) => v.status === "draft");
-  const targetVersion = publishedVersion || draftVersion;
+  // Prefer the draft version when one exists — that's the version
+  // the bulk-paste handler will mutate, so the dialog should show
+  // its blocks (not the published version's).
+  const targetVersion = draftVersion || publishedVersion;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

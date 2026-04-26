@@ -14,6 +14,11 @@ import type {
   TimeRule,
   ZoneSource,
 } from "../shared/schema";
+import {
+  evaluateLayoutAccess,
+  evaluatePlaylistAccess,
+  evaluateTargetAccess,
+} from "../shared/blockPasteAccess";
 
 // Per-row outcome of a bulk schedule-block paste. The endpoint always
 // returns HTTP 200 with one entry per input row so the client can flip
@@ -173,70 +178,62 @@ async function evaluateBlock(
   | { ok: false; code: BulkBlockResultCode; error: string }
 > {
   const destClientId = destEvent.clientId;
+  const canAccess = (clientId: string) => auth.canAccessClient(req, clientId);
 
-  // Layout: must exist, and either be global (clientId === null) or
-  // belong to the destination's client. Caller's own access is also
-  // required — admins pass automatically; non-admins need the layout's
-  // client (or a global layout) to be in their allowed set.
+  // Layout: delegated to shared/blockPasteAccess so the dialog
+  // preview and the server agree on what counts as forbidden.
   if (input.layoutTemplateId) {
     const layout = await deps.getLayoutTemplate(input.layoutTemplateId);
-    if (!layout) {
-      return { ok: false, code: "forbidden_layout", error: "Layout not found in destination" };
-    }
-    if (layout.clientId && layout.clientId !== destClientId) {
-      return { ok: false, code: "forbidden_layout", error: "Layout belongs to a different site" };
-    }
-    if (layout.clientId && !auth.canAccessClient(req, layout.clientId)) {
-      return { ok: false, code: "forbidden_layout", error: "No access to layout" };
+    const decision = evaluateLayoutAccess({
+      layoutId: input.layoutTemplateId,
+      layout: layout ?? null,
+      destinationClientId: destClientId,
+      canAccessClient: canAccess,
+    });
+    if (!decision.ok) {
+      return { ok: false, code: decision.code, error: decision.message };
     }
   }
 
-  // Playlists referenced by zoneSources: each must exist and belong to
-  // the destination's client (orphan/global playlists are admin-only
-  // and intentionally not auto-rewritten on paste).
+  // Playlists referenced by zoneSources: same shared predicate.
   const zoneSources = (input.zoneSources ?? []) as ZoneSource[];
   for (const zs of zoneSources) {
     if (zs.type === "playlist" && zs.playlistId) {
       const pl = await deps.getPlaylist(zs.playlistId);
-      if (!pl) {
-        return { ok: false, code: "forbidden_playlist", error: "Playlist not found in destination" };
-      }
-      if (!pl.clientId || pl.clientId !== destClientId) {
-        return { ok: false, code: "forbidden_playlist", error: "Playlist belongs to a different site" };
-      }
-      if (!auth.canAccessClient(req, pl.clientId)) {
-        return { ok: false, code: "forbidden_playlist", error: "No access to playlist" };
+      const decision = evaluatePlaylistAccess({
+        playlistId: zs.playlistId,
+        playlist: pl ?? null,
+        destinationClientId: destClientId,
+        canAccessClient: canAccess,
+      });
+      if (!decision.ok) {
+        return { ok: false, code: decision.code, error: decision.message };
       }
     }
   }
 
-  // Targets: drop any screen/group that doesn't exist or doesn't
-  // belong to the destination's client. The block is still created
-  // with the surviving targets — empty targets means "all screens" and
-  // is a perfectly valid block configuration.
+  // Targets: drop any screen/group that doesn't survive the shared
+  // target predicate. Empty targets means "all screens" and is a
+  // perfectly valid block configuration, so the block is still created.
   const targets = (input.targets ?? []) as ScheduleTarget[];
   const keptTargets: ScheduleTarget[] = [];
   const droppedTargets: ScheduleTarget[] = [];
   for (const t of targets) {
+    let entity: { id: string; clientId: string | null } | null = null;
     if (t.type === "screen") {
-      const screen = await deps.getScreen(t.id);
-      if (!screen || !screen.clientId || screen.clientId !== destClientId) {
-        droppedTargets.push(t);
-        continue;
-      }
-      keptTargets.push(t);
+      const s = await deps.getScreen(t.id);
+      entity = s ? { id: s.id, clientId: s.clientId ?? null } : null;
     } else if (t.type === "group") {
-      const grp = await deps.getScreenGroup(t.id);
-      if (!grp || !grp.clientId || grp.clientId !== destClientId) {
-        droppedTargets.push(t);
-        continue;
-      }
-      keptTargets.push(t);
-    } else {
-      // Unknown target type — drop defensively rather than persisting
-      // garbage into the JSONB column.
-      droppedTargets.push(t);
+      const g = await deps.getScreenGroup(t.id);
+      entity = g ? { id: g.id, clientId: g.clientId ?? null } : null;
     }
+    const decision = evaluateTargetAccess({
+      type: t.type,
+      entity,
+      destinationClientId: destClientId,
+    });
+    if (decision.ok) keptTargets.push(t);
+    else droppedTargets.push(t);
   }
 
   const payload: InsertScheduleBlock = {

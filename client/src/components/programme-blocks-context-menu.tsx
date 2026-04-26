@@ -207,19 +207,26 @@ export function ProgrammeBlocksContextMenu({
                 )}
                 Copy block
               </ContextMenuItem>
-              {seriesId && (
-                <ContextMenuItem
-                  disabled={copying}
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    void copySeries();
-                  }}
-                  data-testid={`context-copy-series-${block!.id}`}
-                >
-                  <Layers className="mr-2 h-4 w-4" />
-                  Copy series
-                </ContextMenuItem>
-              )}
+              {/*
+                Spec calls for "Copy series" to always be visible so
+                the right-click menu shape is predictable. When the
+                block isn't part of a series we render the item but
+                disable it with a tooltip-friendly title attribute,
+                rather than hiding it conditionally.
+              */}
+              <ContextMenuItem
+                disabled={copying || !seriesId}
+                title={!seriesId ? "This block is not part of a series" : undefined}
+                onSelect={(e) => {
+                  e.preventDefault();
+                  if (!seriesId) return;
+                  void copySeries();
+                }}
+                data-testid={`context-copy-series-${block!.id}`}
+              >
+                <Layers className="mr-2 h-4 w-4" />
+                Copy series
+              </ContextMenuItem>
             </>
           ) : (
             <ContextMenuItem
