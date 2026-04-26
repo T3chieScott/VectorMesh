@@ -42,6 +42,13 @@ const PREFIX = "__TEST_CVPAIR__";
 async function cleanup() {
   await db.delete(screens).where(like(screens.name, `${PREFIX}%`));
   await db.delete(clients).where(like(clients.name, `${PREFIX}%`));
+  // Task #179: the one-shot marker is a single global row; clear it
+  // after this file's tests run so other test files (and subsequent
+  // boots) see the same starting state they expected before this file
+  // ran. Avoids cross-file isolation surprises in parallel test mode.
+  await db
+    .delete(systemSettings)
+    .where(eq(systemSettings.key, CANVAS_PAIRING_REPAIR_176_MARKER_KEY));
 }
 
 async function makeClient(label: string): Promise<string> {
