@@ -3911,8 +3911,10 @@ export async function registerRoutes(
   });
 
   // Boot-time sync endpoint. Unauthenticated; returns only server
-  // epoch ms.
+  // epoch ms. `no-store` prevents any intermediary/browser cache from
+  // serving a stale timestamp on repeated boots.
   app.get("/api/player/time", (_req, res) => {
+    res.set("Cache-Control", "no-store");
     res.json({ serverTime: Date.now() });
   });
 
