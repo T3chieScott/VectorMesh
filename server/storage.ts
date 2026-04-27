@@ -80,6 +80,33 @@ import { apiTokens, apiTokenKnownIps, type ApiToken, type InsertApiToken } from 
 export const CANVAS_PAIRING_REPAIR_176_MARKER_KEY =
   "canvas_pairing_repair_176_completed";
 
+/**
+ * Task #180: structurally narrow an unknown error to detect a Postgres
+ * 23505 unique_violation against the screens.pairing_code constraint.
+ * Used by the mint+write retry helper so we can react to the brief
+ * probe-vs-write race window without falling back to `any` casting.
+ * Drivers (pg, postgres-js, neon) all surface the SQLSTATE either at
+ * `err.code` or `err.cause.code`; we additionally accept a plain
+ * message match so downstream wrappers / re-throws still trigger the
+ * retry path.
+ */
+function isPairingCodeUniqueViolation(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const e = err as {
+    code?: unknown;
+    message?: unknown;
+    cause?: { code?: unknown } | null;
+  };
+  if (e.code === "23505") return true;
+  if (e.cause && typeof e.cause === "object" && e.cause.code === "23505") {
+    return true;
+  }
+  if (typeof e.message === "string") {
+    return /screens_pairing_code_unique/i.test(e.message);
+  }
+  return false;
+}
+
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
@@ -1172,12 +1199,10 @@ export class DatabaseStorage implements IStorage {
       const code = await this.generateUniquePairingCode();
       try {
         return await write(code);
-      } catch (err: any) {
-        const isUniqueViolation =
-          err?.code === "23505" ||
-          err?.cause?.code === "23505" ||
-          /screens_pairing_code_unique/i.test(String(err?.message ?? ""));
-        if (!isUniqueViolation || attempt === MAX_ATTEMPTS) throw err;
+      } catch (err: unknown) {
+        if (!isPairingCodeUniqueViolation(err) || attempt === MAX_ATTEMPTS) {
+          throw err;
+        }
         // Lost the probe-vs-write race; mint a fresh code and retry.
         log(
           `[canvas-pairing] ${label}: pairing-code collision on attempt ${attempt}, retrying`,
@@ -1339,19 +1364,19 @@ export class DatabaseStorage implements IStorage {
     await this.withPairingCodeCollisionRetry(
       "rotateScreenPairingIdentity",
       async (code) => {
+        const reset: Partial<InsertScreen> = {
+          pairingCode: code,
+          deviceToken: null,
+          isPaired: false,
+          isOnline: false,
+          lastSeen: null,
+          ipAddress: null,
+          hostname: null,
+          hardwareClass: null,
+        };
         await db
           .update(screens)
-          .set({
-            pairingCode: code,
-            deviceToken: null,
-            isPaired: false,
-            isOnline: false,
-            lastSeen: null,
-            ipAddress: null,
-            hostname: null,
-            hardwareClass: null,
-            updatedAt: new Date(),
-          } as any)
+          .set({ ...reset, updatedAt: new Date() })
           .where(eq(screens.id, screenId));
       },
     );
@@ -1445,46 +1470,55 @@ export class DatabaseStorage implements IStorage {
   async duplicateScreen(sourceId: string, name: string): Promise<Screen | undefined> {
     const [source] = await db.select().from(screens).where(eq(screens.id, sourceId));
     if (!source) return undefined;
-    const insertValues: InsertScreen = {
-      name,
-      clientId: source.clientId,
-      location: source.location,
-      displayProfileId: source.displayProfileId,
-      fallbackLayoutId: source.fallbackLayoutId,
-      fallbackPlaylistId: source.fallbackPlaylistId,
-      canvasEnabled: source.canvasEnabled,
-      canvasWidth: source.canvasWidth,
-      canvasHeight: source.canvasHeight,
-      canvasX: source.canvasX,
-      canvasY: source.canvasY,
-      screenshotEnabled: source.screenshotEnabled,
-      testPatternEnabled: source.testPatternEnabled,
-      showLiveBanner: source.showLiveBanner,
-      hideNoContentMessage: source.hideNoContentMessage,
-      roomCapacity: source.roomCapacity,
-      weatherLat: source.weatherLat,
-      weatherLng: source.weatherLng,
-      weatherPlaceName: source.weatherPlaceName,
-      weatherUnit: source.weatherUnit,
-      // Reset runtime / identity fields. Task #180: minted via the
-      // unique-code helper rather than ad-hoc Math.random() so the
-      // duplicate never collides with another screen's pairingCode.
-      pairingCode: await this.generateUniquePairingCode(),
-      deviceToken: null,
-      isPaired: false,
-      isOnline: false,
-      lastSeen: null,
-      ipAddress: null,
-      hostname: null,
-      hardwareClass: null,
-      lastScreenshot: null,
-      lastScreenshotAt: null,
-      locked: false,
-      // displayOrder computed atomically below via SQL subquery
-      displayOrder: sql<number>`coalesce((select max(${screens.displayOrder}) from ${screens}), -1) + 1` as unknown as number,
-    };
-    const [created] = await db.insert(screens).values(insertValues).returning();
-    return created;
+    // Task #180 (round-7 review): route the mint+write through the
+    // collision-retry helper so duplicateScreen has the same race-
+    // safety guarantee as createScreen / rotateScreenPairingIdentity.
+    return await this.withPairingCodeCollisionRetry(
+      "duplicateScreen",
+      async (pairingCode) => {
+        const insertValues: InsertScreen = {
+          name,
+          clientId: source.clientId,
+          location: source.location,
+          displayProfileId: source.displayProfileId,
+          fallbackLayoutId: source.fallbackLayoutId,
+          fallbackPlaylistId: source.fallbackPlaylistId,
+          canvasEnabled: source.canvasEnabled,
+          canvasWidth: source.canvasWidth,
+          canvasHeight: source.canvasHeight,
+          canvasX: source.canvasX,
+          canvasY: source.canvasY,
+          screenshotEnabled: source.screenshotEnabled,
+          testPatternEnabled: source.testPatternEnabled,
+          showLiveBanner: source.showLiveBanner,
+          hideNoContentMessage: source.hideNoContentMessage,
+          roomCapacity: source.roomCapacity,
+          weatherLat: source.weatherLat,
+          weatherLng: source.weatherLng,
+          weatherPlaceName: source.weatherPlaceName,
+          weatherUnit: source.weatherUnit,
+          // Reset runtime / identity fields.
+          pairingCode,
+          deviceToken: null,
+          isPaired: false,
+          isOnline: false,
+          lastSeen: null,
+          ipAddress: null,
+          hostname: null,
+          hardwareClass: null,
+          lastScreenshot: null,
+          lastScreenshotAt: null,
+          locked: false,
+          // displayOrder computed atomically below via SQL subquery
+          displayOrder: sql<number>`coalesce((select max(${screens.displayOrder}) from ${screens}), -1) + 1` as unknown as number,
+        };
+        const [created] = await db
+          .insert(screens)
+          .values(insertValues)
+          .returning();
+        return created;
+      },
+    );
   }
 
   async updateScreen(id: string, data: Partial<InsertScreen>): Promise<Screen | undefined> {
