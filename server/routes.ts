@@ -349,12 +349,17 @@ async function validateDeviceToken(req: Request, res: Response, next: NextFuncti
     token = queryToken || undefined;
   }
   if (!token) {
-    // Task #185: log token-required 401s so we can correlate Pi-side
-    // unpair events with the request that triggered them.
+    // Task #185: log token-required 401s so we can correlate
+    // Pi-side unpair events with the request that triggered them.
+    // The user-agent is logged as a free-form prefix (truncated to
+    // keep log lines bounded), separately from any token helper —
+    // it's metadata about the caller, not a secret to redact.
+    const ua =
+      typeof req.headers["user-agent"] === "string"
+        ? req.headers["user-agent"].slice(0, 60)
+        : "<none>";
     console.warn(
-      `[player-auth] 401 missing-token path=${req.path} ua=${tokenPrefixForLog(
-        typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null,
-      )}`,
+      `[player-auth] 401 missing-token path=${req.path} userAgent="${ua}"`,
     );
     return res.status(401).json({ error: "Device token required" });
   }
