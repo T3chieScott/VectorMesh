@@ -92,7 +92,7 @@ async function makeScreen(opts: MakeScreenOpts): Promise<Screen> {
       hostname: opts.hostname ?? null,
       hardwareClass: opts.hardwareClass ?? null,
       createdAt: opts.createdAt,
-    } as any)
+    })
     .returning();
   return row;
 }

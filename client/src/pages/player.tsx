@@ -1,4 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import {
+  evaluateAuthHttpStatus,
+  evaluateAuthNetworkError,
+  evaluateAuthReloadingRace,
+} from "@/lib/playerAuthStrike";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem, Client, Event, PlayerContentResponse } from "@shared/schema";
 
 type PlayerContentData = PlayerContentResponse;
@@ -331,13 +336,10 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     try {
       res = await playerFetch(`/api/player/${screenId}/content`, token);
     } catch (err: any) {
-      // Network failure (DNS, offline, abort). This is NOT an auth
-      // signal — the token may still be perfectly valid. Critically,
-      // we do NOT reset the auth-strike counter here, otherwise a
-      // `401 -> network error -> 401` flake would never escalate.
-      // We just surface the connection error and let the next poll
-      // re-evaluate. Mirrors the catch-all behaviour at the end of
-      // this function.
+      // Network failure: leave strike count untouched so a later 401
+      // after a network blip still escalates. See playerAuthStrike.ts.
+      const outcome = evaluateAuthNetworkError(consecutiveAuthErrorsRef.current);
+      consecutiveAuthErrorsRef.current = outcome.newCount;
       console.error("Player error:", err);
       setIsConnected(false);
       setError(err?.message || "Connection lost");
@@ -345,23 +347,25 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     }
     // Task #185: a poll can race a reload. If reload was initiated
     // while this request was in flight, drop the response on the
-    // floor — neither incrementing nor resetting strike state — so a
-    // late 4xx during page-unload can't trip clearAuth().
-    if (reloadingRef.current) return;
+    // floor — neither incrementing nor resetting strike state.
+    if (reloadingRef.current) {
+      const outcome = evaluateAuthReloadingRace(consecutiveAuthErrorsRef.current);
+      consecutiveAuthErrorsRef.current = outcome.newCount;
+      return;
+    }
     try {
-      if (res.status === 401 || res.status === 403) {
-        consecutiveAuthErrorsRef.current += 1;
-        if (consecutiveAuthErrorsRef.current < 2) {
-          // First strike. Could be a transient inconsistency (e.g.
-          // a refresh-then-reload race, a brief storage hiccup).
-          // Wait for the next poll cycle to confirm before tearing
-          // down auth — see Task #185 for the unpair-on-publish bug
-          // this guard prevents.
-          console.warn(
-            `[player] /content returned ${res.status}; will confirm on next poll before clearing auth`,
-          );
-          return;
-        }
+      const outcome = evaluateAuthHttpStatus(
+        consecutiveAuthErrorsRef.current,
+        res.status,
+      );
+      consecutiveAuthErrorsRef.current = outcome.newCount;
+      if (outcome.action === "wait") {
+        console.warn(
+          `[player] /content returned ${res.status}; will confirm on next poll before clearing auth`,
+        );
+        return;
+      }
+      if (outcome.action === "clear") {
         console.error(
           `[player] /content returned ${res.status} on two consecutive polls — clearing auth and surfacing pair screen`,
         );
@@ -373,11 +377,8 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         setAuthError(true);
         return;
       }
-      // Any non-auth response — 2xx, 5xx, etc. — proves the server
-      // is still talking to a known token (auth would have rejected
-      // first). Reset the strike counter so a single isolated 401
-      // followed by a real success doesn't escalate later.
-      consecutiveAuthErrorsRef.current = 0;
+      // outcome.action === "continue": any non-auth status. Strike
+      // counter has already been reset by evaluateAuthHttpStatus.
       if (!res.ok) {
         throw new Error(`Failed to fetch content: ${res.status}`);
       }
