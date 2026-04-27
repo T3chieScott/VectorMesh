@@ -1410,8 +1410,17 @@ export async function registerRoutes(
 
   app.post("/api/screens", requireAuth, loadUserContext, async (req, res) => {
     try {
-      const { currentEventId: _ignoredCurrentEventId, ...incoming } =
-        req.body as Record<string, unknown>;
+      const {
+        currentEventId: _ignoredCurrentEventId,
+        // Task #180: pairingCode is ALWAYS server-minted via
+        // generateUniquePairingCode (called inside createScreen) so
+        // the DB UNIQUE constraint on screens.pairing_code can never
+        // be violated by a non-UI caller racing or sending a stale
+        // code. Strip any caller-supplied value here; the legacy UI
+        // already stopped sending it.
+        pairingCode: _ignoredCallerPairingCode,
+        ...incoming
+      } = req.body as Record<string, unknown>;
       const body: Record<string, unknown> = {
         ...incoming,
         clientId: incoming.clientId || null,
@@ -1435,16 +1444,21 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Access denied to requested site" });
       }
       const screen = await storage.createScreen(data);
-      // Implicit-canvas pairing (Task #173): a brand-new tile that
-      // joins an already-paired wall must inherit the wall's
-      // pairingCode + deviceToken on creation, otherwise the player
-      // would skip the new tile until the operator re-pairs the
-      // entire wall. We re-fetch the freshly created row before the
-      // canvas membership query so the new tile is itself in the
-      // group, then propagate the canonical state to every member
-      // (which is a no-op for the existing siblings and a sync for
-      // the new one).
+      // Task #180: a brand-new canvas-enabled tile NEVER silently
+      // inherits another screen's pairingCode just because it happens
+      // to share dims/client/position with an existing wall. The DB
+      // UNIQUE constraint would reject it anyway, but we don't want to
+      // get there — every tile keeps its own server-minted unique
+      // pairingCode. Inheritance of runtime state (deviceToken /
+      // isPaired / isOnline) is the original Task #173 affordance for
+      // "the operator is adding a tile to a Pi-driven wall that's
+      // already live", but it now requires BOTH (a) an explicit
+      // `joinExistingWall: true` flag from the request body so the
+      // operator opted in, AND (b) the existing wall to actually be
+      // paired. Without both, the new tile starts blank; the operator
+      // can pair the whole wall later via any tile's code.
       let finalScreen = screen;
+      const joinExistingWall = (incoming as any).joinExistingWall === true;
       if (
         screen.canvasEnabled &&
         typeof screen.canvasWidth === "number" &&
@@ -1454,21 +1468,25 @@ export async function registerRoutes(
         if (members.length > 1) {
           const existingSiblings = members.filter((m) => m.id !== screen.id);
           const winner = pickCanvasPairingWinner(existingSiblings);
-          await storage.setCanvasPairingState(
-            members.map((m) => m.id),
-            {
-              pairingCode: winner.pairingCode,
-              deviceToken: winner.deviceToken,
-              isPaired: !!winner.isPaired,
-              isOnline: !!winner.isOnline,
-              lastSeen: winner.lastSeen,
-              ipAddress: winner.ipAddress,
-              hostname: winner.hostname,
-              hardwareClass: winner.hardwareClass,
-            },
-          );
-          const refreshed = await storage.getScreen(screen.id);
-          if (refreshed) finalScreen = refreshed;
+          const wallIsPaired = !!winner.isPaired && !!winner.deviceToken;
+          if (joinExistingWall && wallIsPaired) {
+            // Inherit runtime state ONLY — pairingCode stays unique
+            // (one per row, enforced by the DB UNIQUE constraint).
+            await storage.setCanvasPairingState(
+              [screen.id],
+              {
+                deviceToken: winner.deviceToken,
+                isPaired: true,
+                isOnline: !!winner.isOnline,
+                lastSeen: winner.lastSeen,
+                ipAddress: winner.ipAddress,
+                hostname: winner.hostname,
+                hardwareClass: winner.hardwareClass,
+              },
+            );
+            const refreshed = await storage.getScreen(screen.id);
+            if (refreshed) finalScreen = refreshed;
+          }
         }
       }
       logAudit(req, "create", "screen", finalScreen.id, {
@@ -1557,20 +1575,15 @@ export async function registerRoutes(
       if (!seed) {
         return res.status(404).json({ error: "Screen not found" });
       }
-      const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-      // Implicit-canvas pairing (Task #173): one code claims the whole
-      // wall, so regenerating from any tile resets every member's
-      // deviceToken/isPaired and gives them all the same fresh code.
+      // Task #180: pairing codes are unique per-screen (DB-level UNIQUE).
+      // Regenerating from any wall tile rotates EVERY member onto its
+      // own fresh unique code and clears the shared deviceToken so the
+      // wall is fully unpaired. The next pair attempt against any tile
+      // re-claims the wall via getCanvasMembers fan-out.
       const members = await storage.getCanvasMembers(seed);
-      await storage.setCanvasPairingState(
-        members.map((m) => m.id),
-        {
-          pairingCode: newCode,
-          deviceToken: null,
-          isPaired: false,
-          isOnline: false,
-        },
-      );
+      for (const m of members) {
+        await storage.rotateScreenPairingIdentity(m.id);
+      }
       const screen = await storage.getScreen(seed.id);
       logAudit(req, "regenerate_pairing", "screen", seed.id, {
         name: seed.name,
@@ -1621,19 +1634,14 @@ export async function registerRoutes(
       if (!seed) {
         return res.status(404).json({ error: "Screen not found" });
       }
-      const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-      // Implicit-canvas pairing (Task #173): unpairing any tile clears
-      // the whole wall so the next pairing flow re-claims every member.
+      // Task #180: pairing codes are unique per-screen (DB-level UNIQUE).
+      // Unpairing any wall tile clears the whole wall — each member
+      // gets its own fresh unique code and a cleared deviceToken so the
+      // next pair flow re-claims every member from scratch.
       const members = await storage.getCanvasMembers(seed);
-      await storage.setCanvasPairingState(
-        members.map((m) => m.id),
-        {
-          pairingCode: newCode,
-          deviceToken: null,
-          isPaired: false,
-          isOnline: false,
-        },
-      );
+      for (const m of members) {
+        await storage.rotateScreenPairingIdentity(m.id);
+      }
       const refreshed = await storage.getScreen(seed.id);
       logAudit(req, "unpair", "screen", seed.id, {
         name: seed.name,
@@ -1643,7 +1651,7 @@ export async function registerRoutes(
         const { deviceToken, ...safeScreen } = refreshed;
         res.json(safeScreen);
       } else {
-        res.json({ id: seed.id, pairingCode: newCode, isPaired: false });
+        res.json({ id: seed.id, isPaired: false });
       }
     } catch (error) {
       console.error("Error unpairing screen:", error);
@@ -1676,7 +1684,15 @@ export async function registerRoutes(
       if (existing.locked) {
         return res.status(403).json({ error: "This screen is locked and cannot be deleted. Unlock it first." });
       }
+      // Task #180: capture wall membership BEFORE deletion so the
+      // reconciler can detect "wall dissolves into solo survivors that
+      // were sharing a deviceToken" and rotate the survivors so two
+      // formerly-tile screens don't end up holding the same Pi token.
+      const beforeMembers = await storage.getCanvasMembers(existing);
       await storage.deleteScreen(id);
+      await storage.reconcileWallPairingAfterChange(id, beforeMembers, {
+        changedScreenDeleted: true,
+      });
       logAudit(req, "delete", "screen", id);
       res.status(204).send();
     } catch (error) {

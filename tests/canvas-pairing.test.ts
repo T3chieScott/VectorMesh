@@ -264,19 +264,24 @@ test("getCanvasMembers: groups screens with NULL clientId together (and excludes
 test("setCanvasPairingState: updates every member atomically and is a no-op for an empty id list", async () => {
   const clientId = await makeClient("setState");
   const t0 = new Date("2026-04-01T00:00:00Z");
+  // Distinct per-member pairing codes — Task #180 enforces UNIQUE
+  // at the DB layer so two screens may NEVER share a pairingCode.
   const m1 = await makeScreen({
     name: "setA", clientId, createdAt: t0,
-    canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080,
-    pairingCode: "OLD123", isPaired: false,
+    canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080, canvasX: 0,
+    pairingCode: "S8AAA1", isPaired: false,
   });
   const m2 = await makeScreen({
     name: "setB", clientId, createdAt: new Date(t0.getTime() + 1000),
-    canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080,
-    pairingCode: "OLD123", isPaired: false,
+    canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080, canvasX: 1920,
+    pairingCode: "S8BBB2", isPaired: false,
   });
 
+  // Task #180: setCanvasPairingState NO LONGER accepts pairingCode.
+  // The wall's identity is shared via deviceToken only; each tile
+  // keeps its own unique pairingCode (rotated by
+  // rotateScreenPairingIdentity when the wall dissolves).
   const updated = await storage.setCanvasPairingState([m1.id, m2.id], {
-    pairingCode: "NEW456",
     deviceToken: "tok-shared",
     isPaired: true,
     isOnline: true,
@@ -289,7 +294,8 @@ test("setCanvasPairingState: updates every member atomically and is a no-op for 
 
   const after1 = await storage.getCanvasMembers(m1);
   for (const m of after1) {
-    assert.equal(m.pairingCode, "NEW456");
+    // pairingCode stays per-tile (Task #180); only runtime fans out.
+    assert.notEqual(m.pairingCode, null);
     assert.equal(m.deviceToken, "tok-shared");
     assert.equal(m.isPaired, true);
     assert.equal(m.isOnline, true);
@@ -297,9 +303,15 @@ test("setCanvasPairingState: updates every member atomically and is a no-op for 
     assert.equal(m.hostname, "wall-pi");
     assert.equal(m.hardwareClass, "rpi5");
   }
+  // Each tile's original code is preserved.
+  const codes = after1.map((m) => m.pairingCode).sort();
+  assert.deepEqual(codes, ["S8AAA1", "S8BBB2"]);
 
   // Empty id list / empty fields are no-ops, never throw.
-  assert.equal(await storage.setCanvasPairingState([], { pairingCode: "X" }), 0);
+  assert.equal(
+    await storage.setCanvasPairingState([], { deviceToken: "X" }),
+    0,
+  );
   assert.equal(await storage.setCanvasPairingState([m1.id], {}), 0);
 });
 
@@ -314,7 +326,7 @@ test("backfillCanvasPairingState: forces mismatched canvas group to share one PA
   const winner = await makeScreen({
     name: "bfWinner", clientId, createdAt: t0,
     canvasEnabled: true, canvasWidth: 5760, canvasHeight: 1080, canvasX: 0,
-    pairingCode: "WIN001", deviceToken: "tok-winner",
+    pairingCode: "W9WIN1", deviceToken: "tok-winner",
     isPaired: true, isOnline: true,
     lastSeen: new Date("2026-05-20T10:00:00Z"),
     ipAddress: "10.0.0.10", hostname: "winner-pi", hardwareClass: "rpi5",
@@ -322,7 +334,7 @@ test("backfillCanvasPairingState: forces mismatched canvas group to share one PA
   const stale = await makeScreen({
     name: "bfStale", clientId, createdAt: new Date(t0.getTime() + 1000),
     canvasEnabled: true, canvasWidth: 5760, canvasHeight: 1080, canvasX: 1920,
-    pairingCode: "STALE2", deviceToken: "tok-stale",
+    pairingCode: "W9STL2", deviceToken: "tok-stale",
     isPaired: true, isOnline: false,
     lastSeen: new Date("2026-05-10T10:00:00Z"),
     ipAddress: "10.0.0.11", hostname: "stale-pi", hardwareClass: "rpi4",
@@ -330,7 +342,7 @@ test("backfillCanvasPairingState: forces mismatched canvas group to share one PA
   const unpaired = await makeScreen({
     name: "bfUnpaired", clientId, createdAt: new Date(t0.getTime() + 2000),
     canvasEnabled: true, canvasWidth: 5760, canvasHeight: 1080, canvasX: 3840,
-    pairingCode: "FREE03", deviceToken: null,
+    pairingCode: "W9FRE3", deviceToken: null,
     isPaired: false, isOnline: false,
   });
 
@@ -341,12 +353,18 @@ test("backfillCanvasPairingState: forces mismatched canvas group to share one PA
 
   const after = await storage.getCanvasMembers(winner);
   assert.equal(after.length, 3);
-  // PAIRING IDENTITY is shared across the wall.
+  // Task #180: pairingCode is per-tile and is NEVER fanned out by
+  // the backfill. The shared identity is `deviceToken` + `isPaired`.
   for (const m of after) {
-    assert.equal(m.pairingCode, "WIN001");
     assert.equal(m.deviceToken, "tok-winner");
     assert.equal(m.isPaired, true);
   }
+  const codes = after.map((m) => m.pairingCode).sort();
+  assert.deepEqual(
+    codes,
+    ["W9FRE3", "W9STL2", "W9WIN1"],
+    "each tile keeps its own per-tile pairingCode",
+  );
   // PRESENCE fields are NOT shared — each tile keeps its own snapshot
   // (Task #176). Find the originally-stale tile and assert its
   // per-tile presence survived the backfill.
@@ -382,20 +400,20 @@ test("backfillCanvasPairingState: skips buckets that aren't a real wall (Task #1
   const a = await makeScreen({
     name: "bfFalseA", clientId, createdAt: t0,
     canvasEnabled: true, canvasWidth: 1280, canvasHeight: 720, canvasX: 0,
-    pairingCode: "AAA111", deviceToken: "tok-A", isPaired: true,
+    pairingCode: "T10AA1", deviceToken: "tok-A", isPaired: true,
   });
   const b = await makeScreen({
     name: "bfFalseB", clientId, createdAt: new Date(t0.getTime() + 1000),
     canvasEnabled: true, canvasWidth: 1280, canvasHeight: 720, canvasX: 0,
-    pairingCode: "BBB222", deviceToken: "tok-B", isPaired: false,
+    pairingCode: "T10BB2", deviceToken: "tok-B", isPaired: false,
   });
   await storage.backfillCanvasPairingState();
   const aAfter = (await db.select().from(screens).where(like(screens.name, `${PREFIX}bfFalseA`)))[0];
   const bAfter = (await db.select().from(screens).where(like(screens.name, `${PREFIX}bfFalseB`)))[0];
-  assert.equal(aAfter.pairingCode, "AAA111");
+  assert.equal(aAfter.pairingCode, "T10AA1");
   assert.equal(aAfter.deviceToken, "tok-A");
   assert.equal(aAfter.isPaired, true);
-  assert.equal(bAfter.pairingCode, "BBB222");
+  assert.equal(bAfter.pairingCode, "T10BB2");
   assert.equal(bAfter.deviceToken, "tok-B");
   assert.equal(bAfter.isPaired, false);
   void a; void b;
@@ -406,20 +424,20 @@ test("backfillCanvasPairingState: leaves non-canvas screens untouched", async ()
   const a = await makeScreen({
     name: "bfNoCanvasA", clientId, createdAt: new Date("2026-06-01"),
     canvasEnabled: false,
-    pairingCode: "AAA111", deviceToken: "tok-a", isPaired: true,
+    pairingCode: "T11AA1", deviceToken: "tok-a", isPaired: true,
   });
   const b = await makeScreen({
     name: "bfNoCanvasB", clientId, createdAt: new Date("2026-06-02"),
     canvasEnabled: false,
-    pairingCode: "BBB222", deviceToken: "tok-b", isPaired: true,
+    pairingCode: "T11BB2", deviceToken: "tok-b", isPaired: true,
   });
   await storage.backfillCanvasPairingState();
   const aAfter = await storage.getCanvasMembers(a);
   const bAfter = await storage.getCanvasMembers(b);
   assert.equal(aAfter.length, 1);
-  assert.equal(aAfter[0].pairingCode, "AAA111");
+  assert.equal(aAfter[0].pairingCode, "T11AA1");
   assert.equal(bAfter.length, 1);
-  assert.equal(bAfter[0].pairingCode, "BBB222");
+  assert.equal(bAfter[0].pairingCode, "T11BB2");
 });
 
 // ─── Task #176: position-distinctness rule ─────────────────────────
@@ -477,12 +495,12 @@ test("setCanvasPairingState fan-out is gated by getCanvasMembers — heartbeat d
   const a = await makeScreen({
     name: "hbA", clientId, createdAt: t0,
     canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080, canvasX: 0,
-    isPaired: true, pairingCode: "AAA111", deviceToken: "tok-A",
+    isPaired: true, pairingCode: "T14AA1", deviceToken: "tok-A",
   });
   const b = await makeScreen({
     name: "hbB", clientId, createdAt: new Date(t0.getTime() + 1000),
     canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080, canvasX: 0,
-    isPaired: true, pairingCode: "BBB222", deviceToken: "tok-B",
+    isPaired: true, pairingCode: "T14BB2", deviceToken: "tok-B",
   });
   // Heartbeat for tile A — routes resolve members and fan out.
   const aMembers = await storage.getCanvasMembers(a);
@@ -504,7 +522,7 @@ test("setCanvasPairingState fan-out is gated by getCanvasMembers — heartbeat d
   assert.equal(bAfter.isOnline, false);
   assert.equal(bAfter.ipAddress, null);
   assert.equal(bAfter.hostname, null);
-  assert.equal(bAfter.pairingCode, "BBB222");
+  assert.equal(bAfter.pairingCode, "T14BB2");
   assert.equal(bAfter.deviceToken, "tok-B");
 });
 
@@ -514,17 +532,23 @@ test("repairFalseCanvasPairings: resets paired-by-inheritance tile and assigns f
   // and stamped the other.
   const clientId = await makeClient("repair");
   const t0 = new Date("2026-08-01T00:00:00Z");
+  // Task #180: pairing codes are now globally UNIQUE at the DB
+  // level, so the historical "shared pairing code" damage state can't
+  // be reproduced verbatim — but the repair's actual trigger is the
+  // position-distinctness gate (solo bucket of paired canvas screens),
+  // not code duplication. Distinct codes here still exercise the same
+  // code path. Shared deviceToken still simulates the inheritance.
   const a = await makeScreen({
     name: "repairA", clientId, createdAt: t0,
     canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080, canvasX: 0,
-    isPaired: true, pairingCode: "SHARED", deviceToken: "tok-shared",
+    isPaired: true, pairingCode: "T15RA1", deviceToken: "tok-shared",
     isOnline: true, lastSeen: new Date("2026-08-05T10:00:00Z"),
     ipAddress: "10.0.0.99", hostname: "wall-pi", hardwareClass: "rpi5",
   });
   const b = await makeScreen({
     name: "repairB", clientId, createdAt: new Date(t0.getTime() + 1000),
     canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080, canvasX: 0,
-    isPaired: true, pairingCode: "SHARED", deviceToken: "tok-shared",
+    isPaired: true, pairingCode: "T15RB2", deviceToken: "tok-shared",
     isOnline: true, lastSeen: new Date("2026-08-05T10:00:00Z"),
     ipAddress: "10.0.0.99", hostname: "wall-pi", hardwareClass: "rpi5",
   });
@@ -532,14 +556,14 @@ test("repairFalseCanvasPairings: resets paired-by-inheritance tile and assigns f
   const wallA = await makeScreen({
     name: "repairWallA", clientId, createdAt: t0,
     canvasEnabled: true, canvasWidth: 5760, canvasHeight: 1080, canvasX: 0,
-    isPaired: true, pairingCode: "WALL01", deviceToken: "tok-wall",
+    isPaired: true, pairingCode: "T15WA1", deviceToken: "tok-wall",
     isOnline: true, lastSeen: new Date("2026-08-05T10:00:00Z"),
     ipAddress: "10.0.0.10", hostname: "wallA-pi", hardwareClass: "rpi5",
   });
   const wallB = await makeScreen({
     name: "repairWallB", clientId, createdAt: new Date(t0.getTime() + 1000),
     canvasEnabled: true, canvasWidth: 5760, canvasHeight: 1080, canvasX: 1920,
-    isPaired: true, pairingCode: "WALL01", deviceToken: "tok-wall",
+    isPaired: true, pairingCode: "T15WB2", deviceToken: "tok-wall",
     isOnline: true, lastSeen: new Date("2026-08-05T10:00:00Z"),
     ipAddress: "10.0.0.10", hostname: "wallA-pi", hardwareClass: "rpi5",
   });
@@ -578,12 +602,15 @@ test("repairFalseCanvasPairings: resets paired-by-inheritance tile and assigns f
     "reset tiles got distinct pairing codes",
   );
 
-  // The real wall is left alone — both members still share token,
-  // pairingCode, isPaired, and presence.
+  // The real wall is left alone — both members still share the
+  // (Pi-side) deviceToken and pairing/online state. Per Task #180
+  // pairingCode is per-tile and not shared, so we just verify it's
+  // unchanged from the seeded values.
   const wallAAfter = (await db.select().from(screens).where(like(screens.name, `${PREFIX}repairWallA`)))[0];
   const wallBAfter = (await db.select().from(screens).where(like(screens.name, `${PREFIX}repairWallB`)))[0];
+  assert.equal(wallAAfter.pairingCode, "T15WA1");
+  assert.equal(wallBAfter.pairingCode, "T15WB2");
   for (const m of [wallAAfter, wallBAfter]) {
-    assert.equal(m.pairingCode, "WALL01");
     assert.equal(m.deviceToken, "tok-wall");
     assert.equal(m.isPaired, true);
     assert.equal(m.isOnline, true);
@@ -674,17 +701,24 @@ test("repairFalseCanvasPairings: every assigned pairingCode is exactly 6 chars a
     const w = 1280 + i;
     const h = 720 + i;
     const sharedToken = `tok-ucode-${i}`;
-    const sharedCode = `UCD${(i + 100).toString(36).toUpperCase()}`.slice(0, 6);
+    // Task #180: pairingCodes are globally UNIQUE — give each
+    // member of each pair its own distinct code. The repair still
+    // triggers on the position-distinctness gate (both at canvasX:0
+    // → solo bucket of paired tiles); shared deviceToken still
+    // simulates the inheritance damage.
+    const tag = (i + 10).toString(36).toUpperCase();
+    const codeA = `T17A${tag}`.slice(0, 6).padEnd(6, "X");
+    const codeB = `T17B${tag}`.slice(0, 6).padEnd(6, "X");
     await makeScreen({
       name: `ucodeA${i}`, clientId, createdAt: t0,
       canvasEnabled: true, canvasWidth: w, canvasHeight: h, canvasX: 0,
-      isPaired: true, pairingCode: sharedCode, deviceToken: sharedToken,
+      isPaired: true, pairingCode: codeA, deviceToken: sharedToken,
       isOnline: true, lastSeen: new Date("2026-09-01T01:00:00Z"),
     });
     await makeScreen({
       name: `ucodeB${i}`, clientId, createdAt: new Date(t0.getTime() + i * 1000 + 1),
       canvasEnabled: true, canvasWidth: w, canvasHeight: h, canvasX: 0,
-      isPaired: true, pairingCode: sharedCode, deviceToken: sharedToken,
+      isPaired: true, pairingCode: codeB, deviceToken: sharedToken,
       isOnline: true, lastSeen: new Date("2026-09-01T01:00:00Z"),
     });
   }
@@ -970,4 +1004,288 @@ test("repairFalseCanvasPairingsOnce: re-runs after the marker is cleared (operat
   const c = await storage.repairFalseCanvasPairingsOnce();
   assert.equal(c.skipped, false,
     "after clearing the marker the repair must run again");
+});
+
+// ─── Task #180 — pairing-code uniqueness & wall-membership reconciliation
+
+test("schema: screens.pairing_code carries a UNIQUE constraint at the DB layer (Task #180)", async () => {
+  // Pin the wire-level guarantee: even if every code-path bug above
+  // sneaks back, the DB itself rejects a second screen with the same
+  // pairingCode. This is the last line of defence against the
+  // "different screen, same code, same Pi inheritance" class of bugs
+  // that Task #180 is closing out.
+  const clientId = await makeClient("uniq");
+  const code = "U180A1";
+  await makeScreen({
+    name: "uniqA", clientId, pairingCode: code,
+    canvasEnabled: false, canvasX: 0, canvasY: 0,
+  });
+  let threw: unknown = null;
+  try {
+    await makeScreen({
+      name: "uniqB", clientId, pairingCode: code,
+      canvasEnabled: false, canvasX: 0, canvasY: 0,
+    });
+  } catch (err) {
+    threw = err;
+  }
+  assert.ok(
+    threw,
+    "second insert with duplicate pairing_code must violate UNIQUE",
+  );
+  const msg = String((threw as Error).message ?? threw);
+  assert.match(
+    msg,
+    /unique|duplicate/i,
+    `error must mention uniqueness; got ${msg}`,
+  );
+});
+
+test("generateUniquePairingCode: returns 6-char codes and avoids existing rows (Task #180)", async () => {
+  // The centralized generator is the only sanctioned source of new
+  // codes. It must (a) return exactly 6 chars to satisfy the
+  // varchar(6) column, and (b) not hand out a code that already
+  // belongs to another screen — otherwise the new UNIQUE constraint
+  // would reject the subsequent insert.
+  const clientId = await makeClient("genU");
+  // Plant a known code so we can verify the generator avoids it.
+  const planted = "PLANT1";
+  await makeScreen({
+    name: "genUExisting", clientId, pairingCode: planted,
+    canvasEnabled: false, canvasX: 0, canvasY: 0,
+  });
+  const codes = new Set<string>();
+  for (let i = 0; i < 25; i++) {
+    const code = await storage.generateUniquePairingCode();
+    assert.equal(code.length, 6, `code #${i} must be 6 chars (got ${code})`);
+    assert.notEqual(code, planted, `code #${i} must avoid planted code`);
+    codes.add(code);
+  }
+  // The generator may return the same code across calls in theory
+  // (it doesn't "reserve"), but the chance of collision in 25 draws
+  // from a 36^6 space is vanishingly small. Catch a regression where
+  // it's accidentally hardcoded to one value.
+  assert.ok(codes.size >= 20, `expected high entropy, got ${codes.size}/25`);
+});
+
+test("createScreen: auto-mints a unique pairingCode when caller omits one (Task #180)", async () => {
+  // The route handler stripped client-provided pairingCode in the
+  // create path. The storage layer must therefore mint a fresh
+  // unique code itself; otherwise we'd insert NULL and any later
+  // pairing attempt would have nothing to match against.
+  const clientId = await makeClient("autoMint");
+  const a = await storage.createScreen({
+    name: `${PREFIX}autoMintA`,
+    clientId,
+    canvasEnabled: false,
+  } as InsertScreen);
+  const b = await storage.createScreen({
+    name: `${PREFIX}autoMintB`,
+    clientId,
+    canvasEnabled: false,
+  } as InsertScreen);
+  assert.equal(a.pairingCode?.length, 6, "A got 6-char code");
+  assert.equal(b.pairingCode?.length, 6, "B got 6-char code");
+  assert.notEqual(a.pairingCode, b.pairingCode,
+    "auto-minted codes must differ across createScreen calls");
+  assert.equal(a.isPaired, false, "auto-minted screen starts unpaired");
+  assert.equal(a.deviceToken, null, "auto-minted screen has no deviceToken");
+  assert.equal(b.isPaired, false);
+  assert.equal(b.deviceToken, null);
+});
+
+test("rotateScreenPairingIdentity: rotates pairingCode + clears device/online state (Task #180)", async () => {
+  // Rotation is the building block the reconciler uses when a screen
+  // leaves a wall: the old code is potentially compromised (its Pi
+  // could try to re-pair), so we mint a fresh code AND scrub all
+  // device-side state to force a clean re-pair.
+  const clientId = await makeClient("rotate");
+  const s = await makeScreen({
+    name: "rotateA", clientId, pairingCode: "ROT001",
+    deviceToken: "tok-rot", isPaired: true, isOnline: true,
+    lastSeen: new Date("2026-09-01T00:00:00Z"),
+    ipAddress: "10.0.0.5", hostname: "rot-pi", hardwareClass: "rpi5",
+    canvasEnabled: false, canvasX: 0, canvasY: 0,
+  });
+  await storage.rotateScreenPairingIdentity(s.id);
+  const after = (await db.select().from(screens).where(eq(screens.id, s.id)))[0];
+  assert.equal(after.pairingCode?.length, 6, "fresh 6-char code minted");
+  assert.notEqual(after.pairingCode, "ROT001", "old code rotated away");
+  assert.equal(after.deviceToken, null, "deviceToken scrubbed");
+  assert.equal(after.isPaired, false, "marked unpaired");
+  assert.equal(after.isOnline, false, "marked offline");
+  assert.equal(after.lastSeen, null);
+  assert.equal(after.ipAddress, null);
+  assert.equal(after.hostname, null);
+  assert.equal(after.hardwareClass, null);
+});
+
+test("reconcileWallPairingAfterChange: no-op when screen was never on a wall (Task #180)", async () => {
+  // Solo screens (canvasEnabled=false or canvas group of size 1)
+  // must NOT trigger any rotation — a normal PATCH on a kiosk
+  // screen has nothing to do with pairing identity.
+  const clientId = await makeClient("recNoop");
+  const solo = await makeScreen({
+    name: "recNoopSolo", clientId, pairingCode: "SOLO01",
+    deviceToken: "tok-solo", isPaired: true, isOnline: true,
+    canvasEnabled: false, canvasX: 0, canvasY: 0,
+  });
+  // beforeMembers is just [self] for solo screens.
+  await storage.reconcileWallPairingAfterChange(solo.id, [solo]);
+  const after = (await db.select().from(screens).where(eq(screens.id, solo.id)))[0];
+  assert.equal(after.pairingCode, "SOLO01", "solo PATCH must not rotate code");
+  assert.equal(after.deviceToken, "tok-solo", "solo PATCH must not scrub token");
+  assert.equal(after.isPaired, true);
+});
+
+test("reconcileWallPairingAfterChange: dissolved 2-tile wall rotates BOTH survivors so they don't share a Pi token (Task #180)", async () => {
+  // The killer scenario: two tiles paired as a wall (shared
+  // deviceToken). One tile is patched off-canvas. After the change,
+  // the wall no longer exists — but the leaver AND the surviving
+  // sibling were both stamped with the same Pi token. If we only
+  // rotate the leaver, the surviving sibling is left paired to the
+  // wall's Pi — which from the Pi's perspective is now ambiguous.
+  // The reconciler must rotate every surviving member that still
+  // carries the wall's deviceToken.
+  const clientId = await makeClient("dissolve");
+  const sharedToken = "tok-dissolve-shared";
+  const a = await makeScreen({
+    name: "dissolveA", clientId, pairingCode: "DSV0AA",
+    deviceToken: sharedToken, isPaired: true, isOnline: true,
+    lastSeen: new Date("2026-09-10T00:00:00Z"),
+    ipAddress: "10.0.0.20", hostname: "dsv-pi", hardwareClass: "rpi5",
+    canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080,
+    canvasX: 0, canvasY: 0,
+  });
+  const b = await makeScreen({
+    name: "dissolveB", clientId, pairingCode: "DSV0BB",
+    deviceToken: sharedToken, isPaired: true, isOnline: true,
+    lastSeen: new Date("2026-09-10T00:00:00Z"),
+    ipAddress: "10.0.0.20", hostname: "dsv-pi", hardwareClass: "rpi5",
+    canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080,
+    canvasX: 1920, canvasY: 0,
+  });
+  // Snapshot wall membership BEFORE the change (route layer does this).
+  const beforeMembers = await storage.getCanvasMembers(a);
+  assert.equal(beforeMembers.length, 2, "snapshot captured both wall members");
+
+  // Simulate "A leaves the wall" — flip canvasEnabled off.
+  await storage.updateScreen(a.id, {
+    canvasEnabled: false,
+    canvasWidth: null,
+    canvasHeight: null,
+    canvasX: 0,
+    canvasY: 0,
+  });
+  await storage.reconcileWallPairingAfterChange(a.id, beforeMembers);
+
+  const aAfter = (await db.select().from(screens).where(eq(screens.id, a.id)))[0];
+  const bAfter = (await db.select().from(screens).where(eq(screens.id, b.id)))[0];
+  // Leaver fully scrubbed.
+  assert.equal(aAfter.deviceToken, null, "leaver token cleared");
+  assert.equal(aAfter.isPaired, false, "leaver unpaired");
+  assert.notEqual(aAfter.pairingCode, "DSV0AA", "leaver code rotated");
+  // Survivor — wall dissolved, so it must also be scrubbed.
+  assert.equal(bAfter.deviceToken, null,
+    "survivor token cleared (shared Pi token would be ambiguous)");
+  assert.equal(bAfter.isPaired, false, "survivor unpaired");
+  assert.notEqual(bAfter.pairingCode, "DSV0BB", "survivor code rotated");
+  assert.notEqual(aAfter.pairingCode, bAfter.pairingCode,
+    "leaver and survivor get distinct fresh codes");
+});
+
+test("reconcileWallPairingAfterChange: 3-tile wall losing one tile keeps remaining 2-tile wall intact (Task #180)", async () => {
+  // When the surviving members STILL form a wall after the leaver
+  // departs, the wall lives on — only the leaver is scrubbed. The
+  // surviving 2-tile wall keeps its shared deviceToken and codes.
+  const clientId = await makeClient("trio");
+  const sharedToken = "tok-trio";
+  const sharedCode = "TRIOX1";
+  const a = await makeScreen({
+    name: "trioA", clientId, pairingCode: sharedCode,
+    deviceToken: sharedToken, isPaired: true, isOnline: true,
+    canvasEnabled: true, canvasWidth: 5760, canvasHeight: 1080,
+    canvasX: 0, canvasY: 0,
+  });
+  const b = await makeScreen({
+    name: "trioB", clientId, pairingCode: "TRIOB2",
+    deviceToken: sharedToken, isPaired: true, isOnline: true,
+    canvasEnabled: true, canvasWidth: 5760, canvasHeight: 1080,
+    canvasX: 1920, canvasY: 0,
+  });
+  const c = await makeScreen({
+    name: "trioC", clientId, pairingCode: "TRIOC3",
+    deviceToken: sharedToken, isPaired: true, isOnline: true,
+    canvasEnabled: true, canvasWidth: 5760, canvasHeight: 1080,
+    canvasX: 3840, canvasY: 0,
+  });
+  const beforeMembers = await storage.getCanvasMembers(a);
+  assert.equal(beforeMembers.length, 3, "wall snapshot captured all 3 tiles");
+
+  // A leaves the wall.
+  await storage.updateScreen(a.id, {
+    canvasEnabled: false,
+    canvasWidth: null,
+    canvasHeight: null,
+    canvasX: 0,
+    canvasY: 0,
+  });
+  await storage.reconcileWallPairingAfterChange(a.id, beforeMembers);
+
+  const aAfter = (await db.select().from(screens).where(eq(screens.id, a.id)))[0];
+  const bAfter = (await db.select().from(screens).where(eq(screens.id, b.id)))[0];
+  const cAfter = (await db.select().from(screens).where(eq(screens.id, c.id)))[0];
+  // Leaver scrubbed.
+  assert.equal(aAfter.deviceToken, null);
+  assert.equal(aAfter.isPaired, false);
+  assert.notEqual(aAfter.pairingCode, sharedCode);
+  // Surviving 2-tile wall is intact — codes & token unchanged.
+  assert.equal(bAfter.deviceToken, sharedToken,
+    "B still on wall, retains shared Pi token");
+  assert.equal(bAfter.pairingCode, "TRIOB2");
+  assert.equal(bAfter.isPaired, true);
+  assert.equal(cAfter.deviceToken, sharedToken);
+  assert.equal(cAfter.pairingCode, "TRIOC3");
+  assert.equal(cAfter.isPaired, true);
+  void c;
+});
+
+test("reconcileWallPairingAfterChange: handles deleted-screen path via changedScreenDeleted flag (Task #180)", async () => {
+  // DELETE handler captures beforeMembers, deletes the row, then
+  // calls the reconciler with changedScreenDeleted=true. The
+  // reconciler must NOT try to rotate the deleted row (it's gone)
+  // but MUST still fan rotations across the survivors when the
+  // wall dissolves to a single tile.
+  const clientId = await makeClient("delWall");
+  const sharedToken = "tok-del-wall";
+  const a = await makeScreen({
+    name: "delWallA", clientId, pairingCode: "DELWAA",
+    deviceToken: sharedToken, isPaired: true, isOnline: true,
+    canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080,
+    canvasX: 0, canvasY: 0,
+  });
+  const b = await makeScreen({
+    name: "delWallB", clientId, pairingCode: "DELWBB",
+    deviceToken: sharedToken, isPaired: true, isOnline: true,
+    canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080,
+    canvasX: 1920, canvasY: 0,
+  });
+  const beforeMembers = await storage.getCanvasMembers(a);
+  // Delete A first (real DELETE flow), then call reconciler.
+  await storage.deleteScreen(a.id);
+  await storage.reconcileWallPairingAfterChange(a.id, beforeMembers, {
+    changedScreenDeleted: true,
+  });
+  // A is gone — verify.
+  const aAfter = await db.select().from(screens).where(eq(screens.id, a.id));
+  assert.equal(aAfter.length, 0, "deleted screen stays deleted");
+  // B (survivor) was the wall's other tile holding the shared Pi
+  // token. With the wall dissolved into a single tile, B must be
+  // scrubbed so its lone Pi token doesn't outlive the wall ambiguously.
+  const bAfter = (await db.select().from(screens).where(eq(screens.id, b.id)))[0];
+  assert.equal(bAfter.deviceToken, null,
+    "lone survivor's shared Pi token is cleared");
+  assert.equal(bAfter.isPaired, false);
+  assert.notEqual(bAfter.pairingCode, "DELWBB",
+    "lone survivor's pairingCode rotated");
 });

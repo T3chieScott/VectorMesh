@@ -629,10 +629,6 @@ function RoomAndWeatherFields({ form, prefix }: { form: any; prefix: string }) {
   );
 }
 
-function generatePairingCode(): string {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
-}
-
 // Format a Date as the value expected by <input type="datetime-local"> in
 // the user's local timezone (yyyy-MM-ddTHH:mm).
 function toLocalDateTimeInput(d: Date): string {
@@ -2468,10 +2464,12 @@ function CreateScreenDialog({
 
   const createMutation = useMutation({
     mutationFn: (data: ScreenFormValues) =>
+      // Task #180: server mints the pairing code via
+      // generateUniquePairingCode so the DB-level UNIQUE constraint on
+      // screens.pairing_code holds. Client never invents codes.
       apiRequest("POST", "/api/screens", {
         ...data,
         clientId: data.clientId || null,
-        pairingCode: generatePairingCode(),
         canvasEnabled: data.canvasEnabled || false,
         canvasWidth: data.canvasEnabled ? data.canvasWidth : null,
         canvasHeight: data.canvasEnabled ? data.canvasHeight : null,

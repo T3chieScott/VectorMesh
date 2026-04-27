@@ -163,7 +163,14 @@ export const screens = pgTable("screens", {
   name: text("name").notNull(),
   location: text("location"),
   displayProfileId: varchar("display_profile_id").references(() => displayProfiles.id),
-  pairingCode: varchar("pairing_code", { length: 6 }),
+  // Task #180: pairing codes are globally unique. Each screen owns its
+  // own code; walls share runtime `deviceToken` (assigned at pair time
+  // by the player flow which fans out via getCanvasMembers) but never
+  // share `pairingCode`. The DB-level UNIQUE constraint prevents the
+  // bug class where leaving a wall, regenerating, or unpairing left
+  // duplicate codes that pointed the next pair attempt at the wrong
+  // screen.
+  pairingCode: varchar("pairing_code", { length: 6 }).unique(),
   deviceToken: text("device_token"),
   isPaired: boolean("is_paired").default(false),
   isOnline: boolean("is_online").default(false),

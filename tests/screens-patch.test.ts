@@ -47,11 +47,35 @@ interface FakeStorage {
     id: string,
     data: Partial<InsertScreen>,
   ): Promise<DbScreen | undefined>;
+  // Task #180: PATCH handler now also calls these to detect wall
+  // membership changes and rotate pairing identities to keep
+  // screens.pairing_code globally unique.
+  getCanvasMembers(screen: DbScreen): Promise<DbScreen[]>;
+  reconcileWallPairingAfterChange(
+    id: string,
+    beforeMembers: DbScreen[],
+    opts?: { changedScreenDeleted?: boolean },
+  ): Promise<void>;
 }
 
-function makeFakeStorage(initial: DbScreen) {
+function makeFakeStorage(
+  initial: DbScreen,
+  opts: {
+    membersFor?: (row: DbScreen) => DbScreen[];
+    onReconcile?: (
+      id: string,
+      beforeMembers: DbScreen[],
+      opts?: { changedScreenDeleted?: boolean },
+    ) => void;
+  } = {},
+) {
   let row: DbScreen = { ...initial };
   let lastUpdateArg: Partial<InsertScreen> | null = null;
+  const reconcileCalls: Array<{
+    id: string;
+    beforeMembers: DbScreen[];
+    opts?: { changedScreenDeleted?: boolean };
+  }> = [];
   const storage: FakeStorage = {
     async getScreen(id: string) {
       return row.id === id ? { ...row } : undefined;
@@ -61,11 +85,19 @@ function makeFakeStorage(initial: DbScreen) {
       row = { ...row, ...(data as Partial<DbScreen>) };
       return { ...row };
     },
+    async getCanvasMembers(screen: DbScreen) {
+      return opts.membersFor ? opts.membersFor(screen) : [screen];
+    },
+    async reconcileWallPairingAfterChange(id, beforeMembers, reconcileOpts) {
+      reconcileCalls.push({ id, beforeMembers, opts: reconcileOpts });
+      opts.onReconcile?.(id, beforeMembers, reconcileOpts);
+    },
   };
   return {
     storage,
     getRow: () => row,
     getLastUpdateArg: () => lastUpdateArg,
+    getReconcileCalls: () => reconcileCalls,
   };
 }
 

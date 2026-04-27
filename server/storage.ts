@@ -165,15 +165,21 @@ export interface IStorage {
   /**
    * Bulk-update pairing-related fields across every member of an
    * implicit canvas group, atomically. Used so the pair / unpair /
-   * regenerate / heartbeat flows treat the whole wall as one unit.
+   * heartbeat flows treat the whole wall as one unit.
    * Returns the number of rows affected.
+   *
+   * Task #180: `pairingCode` is intentionally NOT in the allowed
+   * field set. The DB-level UNIQUE constraint on `screens.pairing_code`
+   * forbids fanning the same code to multiple rows; the wall's
+   * shared identity is `deviceToken` only. Per-tile pairingCodes are
+   * rotated through {@link IStorage.rotateScreenPairingIdentity}
+   * when a wall dissolves.
    */
   setCanvasPairingState(
     screenIds: string[],
     fields: Partial<
       Pick<
         Screen,
-        | "pairingCode"
         | "deviceToken"
         | "isPaired"
         | "isOnline"
@@ -187,15 +193,17 @@ export interface IStorage {
   /**
    * One-shot reconciliation: walks every implicit canvas group and
    * forces all members to share the canonical PAIRING IDENTITY
-   * (`pairingCode`, `deviceToken`, `isPaired`). Per-tile presence
-   * fields (`isOnline`, `lastSeen`, `ipAddress`, `hostname`,
-   * `hardwareClass`) are intentionally NOT copied — they belong to
-   * the individual physical player and would otherwise bleed across
-   * the wall on every boot (Task #176).
+   * (`deviceToken`, `isPaired`). Per-tile presence fields
+   * (`isOnline`, `lastSeen`, `ipAddress`, `hostname`, `hardwareClass`)
+   * are intentionally NOT copied — they belong to the individual
+   * physical player and would otherwise bleed across the wall on
+   * every boot (Task #176). Task #180: `pairingCode` is also NOT
+   * copied — every tile keeps its own globally-unique code, and
+   * any tile's code resolves to the wall via getScreenByPairingCode.
    *
    * The "winner" inside a group is the most-recently-seen paired tile
    * if any tile is paired, otherwise the earliest-created tile (whose
-   * pairingCode becomes the canonical one). Buckets that don't form a
+   * deviceToken becomes the canonical one). Buckets that don't form a
    * real wall (every member at the same `(canvasX, canvasY)`) are
    * skipped — those screens are independent and must keep their own
    * pairing state. Run at server boot so pre-#173 walls with
@@ -274,6 +282,26 @@ export interface IStorage {
   deleteScreen(id: string): Promise<boolean>;
   reorderScreens(orderedIds: string[]): Promise<void>;
   duplicateScreen(sourceId: string, name: string): Promise<Screen | undefined>;
+  // Task #180 — single source of fresh, collision-free 6-char pairing
+  // codes. Every callsite that mints a code MUST go through this so
+  // the DB-level UNIQUE constraint on screens.pairing_code holds.
+  generateUniquePairingCode(): Promise<string>;
+  // Task #180 — atomically assign the screen a fresh unique pairing
+  // code AND clear its pairing/online state. Used when a tile leaves
+  // a wall (PATCH/DELETE), is unpaired, or has its code regenerated,
+  // so the screen never carries around a code/token that another
+  // screen also holds.
+  rotateScreenPairingIdentity(screenId: string): Promise<void>;
+  // Task #180 — after a PATCH or DELETE that may have changed canvas
+  // membership, reconcile the patched/deleted screen and any former
+  // wall siblings so no two solo screens end up sharing the same
+  // pairing identity. `beforeMembers` is the snapshot from
+  // `getCanvasMembers(existing)` taken BEFORE the change.
+  reconcileWallPairingAfterChange(
+    changedScreenId: string,
+    beforeMembers: Screen[],
+    options?: { changedScreenDeleted?: boolean },
+  ): Promise<void>;
 
   // Screen Event Bookings
   getScreenEventBookings(filter?: { screenId?: string; eventId?: string }): Promise<ScreenEventBooking[]>;
@@ -841,10 +869,16 @@ export class DatabaseStorage implements IStorage {
 
   async setCanvasPairingState(
     screenIds: string[],
+    // Task #180 — `pairingCode` is intentionally NOT part of the
+    // allowed field set anymore. With the DB-level UNIQUE constraint
+    // on `screens.pairing_code`, fanning the same code out to >1
+    // screens would always violate the constraint. The wall's
+    // identity is shared via `deviceToken` only; each tile keeps its
+    // own unique pairingCode (rotated through `rotateScreenPairingIdentity`
+    // when the wall dissolves).
     fields: Partial<
       Pick<
         Screen,
-        | "pairingCode"
         | "deviceToken"
         | "isPaired"
         | "isOnline"
@@ -902,18 +936,20 @@ export class DatabaseStorage implements IStorage {
       for (const m of members) positions.add(`${m.canvasX ?? 0}|${m.canvasY ?? 0}`);
       if (positions.size < 2) continue;
       const winner = pickCanvasPairingWinner(members);
-      // Narrowed (Task #176): only PAIRING IDENTITY is shared across
-      // the wall. Per-tile presence (`isOnline`, `lastSeen`,
-      // `ipAddress`, `hostname`, `hardwareClass`) is owned by each
-      // physical player and stays per-row.
+      // Narrowed (Task #176/#180): only the PAIRING RUNTIME is shared
+      // across the wall — `deviceToken` (the Pi token) and `isPaired`.
+      // Per-tile presence (`isOnline`, `lastSeen`, `ipAddress`,
+      // `hostname`, `hardwareClass`) is owned by each physical player
+      // and stays per-row. Task #180: `pairingCode` is per-screen
+      // unique (DB-level UNIQUE constraint) and is NEVER fanned out;
+      // each tile keeps its own code so any tile's code resolves to
+      // the wall via getScreenByPairingCode → getCanvasMembers.
       const fields = {
-        pairingCode: winner.pairingCode,
         deviceToken: winner.deviceToken,
         isPaired: !!winner.isPaired,
       };
       const needsUpdate = members.some(
         (m) =>
-          m.pairingCode !== fields.pairingCode ||
           m.deviceToken !== fields.deviceToken ||
           !!m.isPaired !== fields.isPaired,
       );
@@ -1074,7 +1110,12 @@ export class DatabaseStorage implements IStorage {
   // fresh code without ambiguity. Loops until a free code is found
   // (≈36^6 ≈ 2 billion possibilities — collisions on a small fleet
   // are vanishingly rare so this normally exits on the first try).
-  private async generateUniquePairingCode(): Promise<string> {
+  // Task #180: made public and used as the single source of pairing
+  // codes throughout the app — create, duplicate, regenerate, unpair,
+  // and PATCH/DELETE wall-leave reconciliation all flow through here
+  // so the DB-level UNIQUE constraint on `screens.pairing_code` never
+  // gets violated by an ad-hoc `Math.random()` callsite.
+  async generateUniquePairingCode(): Promise<string> {
     // pairingCode is varchar(6) — a 6-char base36 code yields ~2.1B
     // possibilities, so even with millions of active codes the
     // probability of N consecutive collisions is vanishingly small.
@@ -1125,8 +1166,120 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createScreen(data: InsertScreen): Promise<Screen> {
-    const [screen] = await db.insert(screens).values(data).returning();
+    // Task #180: server is the single source of pairing codes. If the
+    // caller passes one in, trust it (legacy code paths and tests still
+    // do); otherwise mint a guaranteed-unique one. The DB-level UNIQUE
+    // constraint catches any caller that tries to re-use a code, but
+    // we prefer to never get there in the happy path.
+    const insertData: InsertScreen =
+      data.pairingCode == null
+        ? { ...data, pairingCode: await this.generateUniquePairingCode() }
+        : data;
+    const [screen] = await db.insert(screens).values(insertData).returning();
     return screen;
+  }
+
+  async rotateScreenPairingIdentity(screenId: string): Promise<void> {
+    // Task #180 — assign a fresh unique 6-char pairing code AND fully
+    // scrub the screen's pairing/presence state in one statement so the
+    // screen never carries around a code, deviceToken, or stale presence
+    // metadata that belongs to another screen. Used by unpair/regenerate
+    // (looped over wall members) and by the PATCH/DELETE wall-leave
+    // reconciler. The presence fields are scrubbed to mirror what the
+    // legacy repair path does — once a screen leaves a wall, any cached
+    // hostname/IP/hardwareClass/lastSeen belongs to the wall's Pi, not
+    // to whatever Pi will eventually re-pair this screen.
+    const code = await this.generateUniquePairingCode();
+    await db
+      .update(screens)
+      .set({
+        pairingCode: code,
+        deviceToken: null,
+        isPaired: false,
+        isOnline: false,
+        lastSeen: null,
+        ipAddress: null,
+        hostname: null,
+        hardwareClass: null,
+        updatedAt: new Date(),
+      } as any)
+      .where(eq(screens.id, screenId));
+  }
+
+  async reconcileWallPairingAfterChange(
+    changedScreenId: string,
+    beforeMembers: Screen[],
+    options: { changedScreenDeleted?: boolean } = {},
+  ): Promise<void> {
+    // Task #180 — fix-up after a PATCH/DELETE that may have moved a
+    // screen out of (or dissolved) a wall.
+    //
+    // The only case that needs action is when the change broke an
+    // existing wall (≥2 members at ≥2 distinct positions). For an
+    // unchanged solo screen, or for a wall that survived intact,
+    // there's nothing to reconcile because nobody ever shared a
+    // deviceToken to begin with (or everyone still does, legitimately).
+    //
+    // When the wall is broken:
+    //   1. The leaving/deleted screen carries the wall's runtime
+    //      deviceToken even though it's no longer a wall member —
+    //      rotate its identity (skip if it was deleted; the row is
+    //      gone).
+    //   2. Each surviving sibling re-evaluates: if it's still part of
+    //      a wall, leave it alone (the deviceToken is still legitimate
+    //      shared state). If it's now solo, rotate its identity so two
+    //      former tiles don't end up holding the same deviceToken.
+    if (beforeMembers.length < 2) return;
+    const wasInWall = beforeMembers.some((m) => m.id === changedScreenId);
+    if (!wasInWall) return;
+
+    let leftWall = false;
+    if (options.changedScreenDeleted) {
+      leftWall = true;
+    } else {
+      const after = await this.getScreen(changedScreenId);
+      if (!after) {
+        leftWall = true;
+      } else {
+        const afterMembers = await this.getCanvasMembers(after);
+        const beforeIds = new Set(beforeMembers.map((m) => m.id));
+        const afterIds = new Set(afterMembers.map((m) => m.id));
+        const sameWall =
+          afterMembers.length > 1 &&
+          afterMembers.some((m) => m.id === changedScreenId) &&
+          beforeIds.size === afterIds.size &&
+          [...beforeIds].every((id) => afterIds.has(id));
+        leftWall = !sameWall;
+      }
+    }
+    if (!leftWall) return;
+
+    // 1. Rotate the leaver (skip when deleted — row is gone).
+    if (!options.changedScreenDeleted) {
+      const after = await this.getScreen(changedScreenId);
+      if (after && after.deviceToken !== null) {
+        await this.rotateScreenPairingIdentity(changedScreenId);
+      }
+    }
+
+    // 2. Survivors. Look up the wall state from any survivor; if it
+    // still resolves to ≥2 members the wall held together and we
+    // leave them alone. Otherwise dissolve them all so no two solo
+    // screens share the deviceToken.
+    const survivorIds = beforeMembers
+      .map((m) => m.id)
+      .filter((id) => id !== changedScreenId);
+    if (survivorIds.length === 0) return;
+    const firstSurvivor = await this.getScreen(survivorIds[0]);
+    if (!firstSurvivor) return;
+    const survivorMembers = await this.getCanvasMembers(firstSurvivor);
+    if (survivorMembers.length > 1) return;
+    for (const sid of survivorIds) {
+      const surv = await this.getScreen(sid);
+      if (!surv) continue;
+      if (surv.deviceToken === null) continue;
+      await this.rotateScreenPairingIdentity(sid);
+    }
   }
 
   async duplicateScreen(sourceId: string, name: string): Promise<Screen | undefined> {
@@ -1153,8 +1306,10 @@ export class DatabaseStorage implements IStorage {
       weatherLng: source.weatherLng,
       weatherPlaceName: source.weatherPlaceName,
       weatherUnit: source.weatherUnit,
-      // Reset runtime / identity fields
-      pairingCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
+      // Reset runtime / identity fields. Task #180: minted via the
+      // unique-code helper rather than ad-hoc Math.random() so the
+      // duplicate never collides with another screen's pairingCode.
+      pairingCode: await this.generateUniquePairingCode(),
       deviceToken: null,
       isPaired: false,
       isOnline: false,

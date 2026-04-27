@@ -111,12 +111,12 @@ test("2-tile canvas, unpaired: owner shows pairing code + Regenerate Code; sibli
   const ownerRow = await makeScreen({
     name: "uiOwner", clientId, createdAt: t0,
     canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080, canvasX: 0,
-    isPaired: false, pairingCode: "ABCDEF",
+    isPaired: false, pairingCode: "UIA001",
   });
   const siblingRow = await makeScreen({
     name: "uiSibling", clientId, createdAt: new Date(t0.getTime() + 1000),
     canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080, canvasX: 1920,
-    isPaired: false, pairingCode: "ABCDEF",
+    isPaired: false, pairingCode: "UIA002",
   });
 
   const owner = await gatingForScreen(ownerRow);
@@ -161,13 +161,13 @@ test("2-tile canvas, paired: owner shows Unpair Device; sibling shows Inherits m
   const ownerRow = await makeScreen({
     name: "uiOwnerP", clientId, createdAt: t0,
     canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080, canvasX: 0,
-    isPaired: true, pairingCode: "WALLED",
+    isPaired: true, pairingCode: "UIP001",
     deviceToken: "tok-shared", isOnline: true,
   });
   const siblingRow = await makeScreen({
     name: "uiSiblingP", clientId, createdAt: new Date(t0.getTime() + 1000),
     canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080, canvasX: 1920,
-    isPaired: true, pairingCode: "WALLED",
+    isPaired: true, pairingCode: "UIP002",
     deviceToken: "tok-shared", isOnline: true,
   });
 

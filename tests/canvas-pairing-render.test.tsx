@@ -153,7 +153,7 @@ test("DOM render — 2-tile canvas, unpaired: owner card markup shows pairing co
     createdAt: t0,
     canvasX: 0,
     isPaired: false,
-    pairingCode: "WALL01",
+    pairingCode: "RND01A",
   });
   const siblingRow = await makeCanvasScreen({
     name: "renSibling",
@@ -161,7 +161,7 @@ test("DOM render — 2-tile canvas, unpaired: owner card markup shows pairing co
     createdAt: new Date(t0.getTime() + 1000),
     canvasX: 1920,
     isPaired: false,
-    pairingCode: "WALL01",
+    pairingCode: "RND01B",
   });
 
   const ownerHtml = await renderForScreen(ownerRow);
@@ -170,7 +170,7 @@ test("DOM render — 2-tile canvas, unpaired: owner card markup shows pairing co
     new RegExp(`data-testid="text-pairing-code-${ownerRow.id}"`),
     "owner card must render the pairing-code panel testid",
   );
-  assert.match(ownerHtml, /WALL01/, "owner panel must render the actual code");
+  assert.match(ownerHtml, /RND01A/, "owner panel must render the actual code");
   assert.match(
     ownerHtml,
     new RegExp(`data-testid="button-regenerate-pairing-${ownerRow.id}"`),
@@ -219,7 +219,7 @@ test("DOM render — 2-tile canvas, paired: owner card markup shows Unpair Devic
     createdAt: t0,
     canvasX: 0,
     isPaired: true,
-    pairingCode: "WALL02",
+    pairingCode: "RND02A",
     deviceToken: "tok-shared",
     isOnline: true,
   });
@@ -229,7 +229,7 @@ test("DOM render — 2-tile canvas, paired: owner card markup shows Unpair Devic
     createdAt: new Date(t0.getTime() + 1000),
     canvasX: 1920,
     isPaired: true,
-    pairingCode: "WALL02",
+    pairingCode: "RND02B",
     deviceToken: "tok-shared",
     isOnline: true,
   });

@@ -40,7 +40,20 @@ export function normalizeScreenPatchBody(
   return out;
 }
 
-type ScreenPatchStorage = Pick<IStorage, "getScreen" | "updateScreen">;
+// Task #180: the PATCH handler now also needs the canvas-membership
+// helpers so it can reconcile pairing identities after a change that
+// alters wall membership (e.g. a tile toggling canvasEnabled off, or
+// moving its canvasX/Y so the wall dissolves). The reconciler in
+// storage rotates the leaver's pairingCode + clears its deviceToken,
+// and (when the wall dissolved entirely) does the same to surviving
+// solo siblings so two former tiles never share a Pi token.
+type ScreenPatchStorage = Pick<
+  IStorage,
+  | "getScreen"
+  | "updateScreen"
+  | "getCanvasMembers"
+  | "reconcileWallPairingAfterChange"
+>;
 
 type AuditFn = (
   req: Request,
@@ -92,9 +105,18 @@ export function buildScreenPatchHandler(
         body.canvasY = 0;
       }
       const data = insertScreenSchema.partial().parse(body);
+      // Task #180: snapshot wall membership BEFORE the update so the
+      // reconciler can detect "patched screen left its wall" or "wall
+      // dissolved into solo survivors". Cheap when the screen isn't a
+      // wall member (returns [self]).
+      const beforeMembers = await storage.getCanvasMembers(existing);
       const screen = await storage.updateScreen(id, data);
-      audit?.(req, "update", "screen", screen!.id, { name: screen!.name });
-      res.json(screen);
+      await storage.reconcileWallPairingAfterChange(id, beforeMembers);
+      // Re-fetch so the response reflects any rotated pairingCode /
+      // cleared deviceToken from the reconciler.
+      const final = (await storage.getScreen(id)) ?? screen;
+      audit?.(req, "update", "screen", final!.id, { name: final!.name });
+      res.json(final);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
