@@ -71,6 +71,31 @@ function clearAuth() {
   }
 }
 
+// Task #185 — Pi-side "I'm walking away" notification. Best-effort
+// POST that hands the soon-to-be-discarded token back to the server
+// so the screens page can flip from "Offline" (red) to "Unpaired"
+// (amber) immediately. Never throws and never blocks longer than a
+// short timeout — if the server is unreachable we still proceed
+// with clearAuth so the Pi doesn't get stuck.
+async function notifyServerOfForfeit(screenId: string, token: string): Promise<void> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2000);
+    try {
+      await playerFetch(`/api/player/${screenId}/forfeit-pairing`, token, {
+        method: "POST",
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    // Best-effort. The next-poll-cycle stale-screen detection will
+    // eventually mark it offline, and the Pi will surface the pair
+    // screen anyway — this is just for instant UX.
+  }
+}
+
 function playerFetch(url: string, token: string, options?: RequestInit): Promise<Response> {
   return fetch(url, {
     ...options,
@@ -210,8 +235,17 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previousMediaUrlsRef = useRef<string[]>([]);
   const captureScreenshotRef = useRef<(() => Promise<void>) | null>(null);
+  // Task #185 — Pi-side defense: a single 401/403 from /content can
+  // happen during the brief window between window.location.reload()
+  // firing and the page actually unloading (any in-flight retry sees
+  // a transient 4xx and the player would unpair). Require TWO
+  // consecutive auth errors before treating it as a real unpair.
+  // A real auth failure persists; a transient race does not.
+  const consecutiveAuthErrorsRef = useRef(0);
+  const reloadingRef = useRef(false);
 
   useEffect(() => {
     const goOffline = () => setIsOffline(true);
@@ -286,13 +320,64 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   }, [token]);
 
   const fetchContent = useCallback(async () => {
+    // Task #185: don't keep polling once we've decided to reload.
+    // The interval can fire one more time between window.location.reload()
+    // and the page actually unloading; that follow-up request is the
+    // source of the transient 4xx that used to unpair the Pi. We
+    // also clear the interval inside the reload branch — this guard
+    // is defense-in-depth in case any callers re-enter fetchContent.
+    if (reloadingRef.current) return;
+    let res: Response;
     try {
-      const res = await playerFetch(`/api/player/${screenId}/content`, token);
+      res = await playerFetch(`/api/player/${screenId}/content`, token);
+    } catch (err: any) {
+      // Network failure (DNS, offline, abort). This is NOT an auth
+      // signal — the token may still be perfectly valid. Critically,
+      // we do NOT reset the auth-strike counter here, otherwise a
+      // `401 -> network error -> 401` flake would never escalate.
+      // We just surface the connection error and let the next poll
+      // re-evaluate. Mirrors the catch-all behaviour at the end of
+      // this function.
+      console.error("Player error:", err);
+      setIsConnected(false);
+      setError(err?.message || "Connection lost");
+      return;
+    }
+    // Task #185: a poll can race a reload. If reload was initiated
+    // while this request was in flight, drop the response on the
+    // floor — neither incrementing nor resetting strike state — so a
+    // late 4xx during page-unload can't trip clearAuth().
+    if (reloadingRef.current) return;
+    try {
       if (res.status === 401 || res.status === 403) {
+        consecutiveAuthErrorsRef.current += 1;
+        if (consecutiveAuthErrorsRef.current < 2) {
+          // First strike. Could be a transient inconsistency (e.g.
+          // a refresh-then-reload race, a brief storage hiccup).
+          // Wait for the next poll cycle to confirm before tearing
+          // down auth — see Task #185 for the unpair-on-publish bug
+          // this guard prevents.
+          console.warn(
+            `[player] /content returned ${res.status}; will confirm on next poll before clearing auth`,
+          );
+          return;
+        }
+        console.error(
+          `[player] /content returned ${res.status} on two consecutive polls — clearing auth and surfacing pair screen`,
+        );
+        // Tell the server "I'm walking away" so the screens page
+        // shows "Unpaired" (amber) instead of "Offline" (red). Best
+        // effort; we proceed to clearAuth() either way.
+        await notifyServerOfForfeit(screenId, token);
         clearAuth();
         setAuthError(true);
         return;
       }
+      // Any non-auth response — 2xx, 5xx, etc. — proves the server
+      // is still talking to a known token (auth would have rejected
+      // first). Reset the strike counter so a single isolated 401
+      // followed by a real success doesn't escalate later.
+      consecutiveAuthErrorsRef.current = 0;
       if (!res.ok) {
         throw new Error(`Failed to fetch content: ${res.status}`);
       }
@@ -337,6 +422,20 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       });
 
       if (data.refreshRequested) {
+        // Task #185: stop polling BEFORE the reload so a follow-up
+        // 7-second tick can't fire a content fetch in the brief
+        // window between reload() being called and the page actually
+        // unloading. That race is what historically returned a
+        // transient 4xx and triggered an unnecessary unpair.
+        reloadingRef.current = true;
+        if (fetchIntervalRef.current) {
+          clearInterval(fetchIntervalRef.current);
+          fetchIntervalRef.current = null;
+        }
+        if (heartbeatIntervalRef.current) {
+          clearInterval(heartbeatIntervalRef.current);
+          heartbeatIntervalRef.current = null;
+        }
         window.location.reload();
         return;
       }
@@ -369,8 +468,13 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
 
   useEffect(() => {
     fetchContent();
-    const interval = setInterval(fetchContent, 7000);
-    return () => clearInterval(interval);
+    fetchIntervalRef.current = setInterval(fetchContent, 7000);
+    return () => {
+      if (fetchIntervalRef.current) {
+        clearInterval(fetchIntervalRef.current);
+        fetchIntervalRef.current = null;
+      }
+    };
   }, [fetchContent]);
 
   useEffect(() => {

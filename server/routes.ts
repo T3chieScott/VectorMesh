@@ -329,6 +329,14 @@ function canAccessClient(req: Request, clientId: string): boolean {
   return allowed ? allowed.includes(clientId) : false;
 }
 
+// Task #185 — short, non-secret prefix of a device token used in 403
+// diagnostics so we can correlate "player thinks it's paired" with
+// "server says it isn't" without leaking the full token to logs.
+function tokenPrefixForLog(token: string | undefined | null): string {
+  if (!token) return "<none>";
+  return token.slice(0, 6) + "…";
+}
+
 async function validateDeviceToken(req: Request, res: Response, next: NextFunction) {
   // Header takes precedence; only consult `?token=` (and validate it for
   // repeated/non-string values) when no valid header token is present.
@@ -341,6 +349,13 @@ async function validateDeviceToken(req: Request, res: Response, next: NextFuncti
     token = queryToken || undefined;
   }
   if (!token) {
+    // Task #185: log token-required 401s so we can correlate Pi-side
+    // unpair events with the request that triggered them.
+    console.warn(
+      `[player-auth] 401 missing-token path=${req.path} ua=${tokenPrefixForLog(
+        typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null,
+      )}`,
+    );
     return res.status(401).json({ error: "Device token required" });
   }
 
@@ -352,12 +367,29 @@ async function validateDeviceToken(req: Request, res: Response, next: NextFuncti
   if (screenId) {
     const screen = await storage.getScreen(screenId);
     if (!screen || screen.deviceToken !== token) {
+      // Task #185: structured 403 logging so a wave of player unpairs
+      // is traceable to the screen + token-mismatch class. We log
+      // token PREFIXES only (never the full secret) — enough to tell
+      // "Pi sent token A, DB has token B" apart from "Pi sent token
+      // A, DB has token NULL" apart from "screen row vanished".
+      const dbToken = screen?.deviceToken ?? null;
+      const reason = !screen
+        ? "screen-not-found"
+        : dbToken === null
+          ? "db-token-null"
+          : "token-mismatch";
+      console.warn(
+        `[player-auth] 403 path=${req.path} screenId=${screenId} reason=${reason} sent=${tokenPrefixForLog(token)} db=${tokenPrefixForLog(dbToken)}`,
+      );
       return res.status(403).json({ error: "Invalid device token" });
     }
     (req as any).pairedScreen = screen;
   } else {
     const screen = await storage.getScreenByDeviceToken(token);
     if (!screen) {
+      console.warn(
+        `[player-auth] 403 path=${req.path} reason=token-not-found sent=${tokenPrefixForLog(token)}`,
+      );
       return res.status(403).json({ error: "Invalid device token" });
     }
     (req as any).pairedScreen = screen;
@@ -3638,6 +3670,40 @@ export async function registerRoutes(
       res.status(500).json({ error: "Failed to pair screen" });
     }
   });
+
+  // Task #185 — Pi-side "I'm walking away" signal. The player calls
+  // this just before clearing its localStorage device token (after
+  // two consecutive 401/403s from /content). The server clears
+  // deviceToken/isPaired/presence on every wall member but PRESERVES
+  // each tile's existing pairingCode so the screens page can show
+  // "Unpaired" with a code the operator can immediately use to
+  // re-pair. Without this hook the DB still believes the screen is
+  // paired, the screens page shows "Offline", and the operator
+  // walks to the Pi assuming hardware failure when really they
+  // just need to type the (still-valid) pairing code.
+  //
+  // Idempotent + race-safe: validateDeviceToken has already
+  // verified the caller knows the current deviceToken, so a stale
+  // retry from a player that already cleared its token will fail
+  // auth and never reach this handler. Concurrent calls just
+  // converge on the same null state.
+  app.post(
+    "/api/player/:screenId/forfeit-pairing",
+    validateDeviceToken,
+    async (req, res) => {
+      try {
+        const screenId = getPathParam(req, "screenId");
+        await storage.forfeitWallPairing(screenId);
+        console.log(
+          `[player-auth] forfeit-pairing screenId=${screenId} — Pi-side unpair acknowledged`,
+        );
+        res.json({ success: true });
+      } catch (error) {
+        console.error("Error forfeiting pairing:", error);
+        res.status(500).json({ error: "Failed to forfeit pairing" });
+      }
+    },
+  );
 
   app.post("/api/player/heartbeat", validateDeviceToken, async (req, res) => {
     try {

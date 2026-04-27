@@ -344,6 +344,14 @@ export interface IStorage {
     beforeMembers: Screen[],
     options?: { changedScreenDeleted?: boolean },
   ): Promise<void>;
+  // Task #185 — Pi-side "I just unpaired myself" signal. Clears
+  // `deviceToken`, `isPaired`, and per-tile presence on the screen
+  // (and every wall sibling, since they share pairing identity).
+  // Critically, `pairingCode` is PRESERVED so the operator does not
+  // have to regenerate before the Pi can re-pair using the existing
+  // code. Different from `rotateScreenPairingIdentity`, which always
+  // mints a fresh code.
+  forfeitWallPairing(screenId: string): Promise<void>;
 
   // Screen Event Bookings
   getScreenEventBookings(filter?: { screenId?: string; eventId?: string }): Promise<ScreenEventBooking[]>;
@@ -1503,6 +1511,42 @@ export class DatabaseStorage implements IStorage {
       if (surv) liveSurvivorIds.push(sid);
     }
     await this.rotateScreensPairingIdentities(liveSurvivorIds);
+  }
+
+  async forfeitWallPairing(screenId: string): Promise<void> {
+    // Task #185 — Pi-side unpair signal. The player calls this just
+    // before clearing its localStorage device token (e.g. after two
+    // consecutive 401/403s from /content). We mirror the Pi's local
+    // state into the DB so the screens page surfaces "Unpaired"
+    // (amber) instead of "Offline" (red) — the operator instantly
+    // sees that they need to re-pair, not that the Pi is dead.
+    //
+    // For canvas walls we clear pairing on EVERY member because the
+    // wall shares one deviceToken under Task #176/#180 — if the Pi
+    // ditched the token, no tile in the wall is paired anymore.
+    //
+    // Critically: pairingCode is PRESERVED. Unlike
+    // rotateScreenPairingIdentity (which mints a fresh code on
+    // wall-leave / regenerate / unpair-from-app), this path is the
+    // Pi voluntarily walking away — the operator's existing pairing
+    // code on the screens page should still work for the next
+    // re-pair attempt.
+    const screen = await this.getScreen(screenId);
+    if (!screen) return;
+    const members = await this.getCanvasMembers(screen);
+    if (members.length === 0) return;
+    await this.setCanvasPairingState(
+      members.map((m) => m.id),
+      {
+        deviceToken: null,
+        isPaired: false,
+        isOnline: false,
+        lastSeen: null,
+        ipAddress: null,
+        hostname: null,
+        hardwareClass: null,
+      },
+    );
   }
 
   async duplicateScreen(sourceId: string, name: string): Promise<Screen | undefined> {
