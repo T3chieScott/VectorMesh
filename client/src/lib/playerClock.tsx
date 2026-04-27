@@ -1,3 +1,9 @@
+// React namespace import is required for files imported by node:test
+// suites via tsx (whose esbuild JSX transform compiles to
+// `React.createElement` and needs `React` in scope). Vite uses the
+// automatic JSX runtime in production and tree-shakes the unused
+// namespace, so adding it here is a no-op for the bundled app.
+import * as React from "react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   addSample,
