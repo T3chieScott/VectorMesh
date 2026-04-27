@@ -1154,6 +1154,42 @@ export class DatabaseStorage implements IStorage {
     );
   }
 
+  // Task #180 (round-6 review): generateUniquePairingCode is a check-
+  // then-write probe, so under high concurrency two callers can both
+  // pick the same "free" code and race to write it. The DB UNIQUE
+  // constraint catches the loser with a 23505 unique_violation —
+  // this helper retries with a fresh code so callers never surface a
+  // raw DB error to the client. The retry budget is small because the
+  // base collision probability is already vanishingly small (~2.1B
+  // codespace) and a tight loop here just guards the brief race
+  // window between probe and INSERT/UPDATE.
+  private async withPairingCodeCollisionRetry<T>(
+    label: string,
+    write: (code: string) => Promise<T>,
+  ): Promise<T> {
+    const MAX_ATTEMPTS = 8;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const code = await this.generateUniquePairingCode();
+      try {
+        return await write(code);
+      } catch (err: any) {
+        const isUniqueViolation =
+          err?.code === "23505" ||
+          err?.cause?.code === "23505" ||
+          /screens_pairing_code_unique/i.test(String(err?.message ?? ""));
+        if (!isUniqueViolation || attempt === MAX_ATTEMPTS) throw err;
+        // Lost the probe-vs-write race; mint a fresh code and retry.
+        log(
+          `[canvas-pairing] ${label}: pairing-code collision on attempt ${attempt}, retrying`,
+        );
+      }
+    }
+    // Unreachable — final attempt either returned or threw above.
+    throw new Error(
+      `withPairingCodeCollisionRetry: exhausted ${MAX_ATTEMPTS} attempts for ${label}`,
+    );
+  }
+
   async dedupePairingCodes(): Promise<number> {
     // Task #180 — boot-time dedupe so a fresh deployment that inherits
     // pre-#180 data (where walls fanned a single pairingCode across
@@ -1277,12 +1313,17 @@ export class DatabaseStorage implements IStorage {
     // every insert path. If a test/seeder needs a deterministic code
     // it can update the row after creation, or use db.insert directly.
     const { pairingCode: _ignoredCallerPairingCode, ...rest } = data;
-    const insertData: InsertScreen = {
-      ...rest,
-      pairingCode: await this.generateUniquePairingCode(),
-    };
-    const [screen] = await db.insert(screens).values(insertData).returning();
-    return screen;
+    return await this.withPairingCodeCollisionRetry(
+      "createScreen",
+      async (pairingCode) => {
+        const insertData: InsertScreen = { ...rest, pairingCode };
+        const [screen] = await db
+          .insert(screens)
+          .values(insertData)
+          .returning();
+        return screen;
+      },
+    );
   }
 
   async rotateScreenPairingIdentity(screenId: string): Promise<void> {
@@ -1295,21 +1336,25 @@ export class DatabaseStorage implements IStorage {
     // legacy repair path does — once a screen leaves a wall, any cached
     // hostname/IP/hardwareClass/lastSeen belongs to the wall's Pi, not
     // to whatever Pi will eventually re-pair this screen.
-    const code = await this.generateUniquePairingCode();
-    await db
-      .update(screens)
-      .set({
-        pairingCode: code,
-        deviceToken: null,
-        isPaired: false,
-        isOnline: false,
-        lastSeen: null,
-        ipAddress: null,
-        hostname: null,
-        hardwareClass: null,
-        updatedAt: new Date(),
-      } as any)
-      .where(eq(screens.id, screenId));
+    await this.withPairingCodeCollisionRetry(
+      "rotateScreenPairingIdentity",
+      async (code) => {
+        await db
+          .update(screens)
+          .set({
+            pairingCode: code,
+            deviceToken: null,
+            isPaired: false,
+            isOnline: false,
+            lastSeen: null,
+            ipAddress: null,
+            hostname: null,
+            hardwareClass: null,
+            updatedAt: new Date(),
+          } as any)
+          .where(eq(screens.id, screenId));
+      },
+    );
   }
 
   async reconcileWallPairingAfterChange(
