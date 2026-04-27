@@ -501,6 +501,7 @@ function CanvasFields({
     canvasGroups,
     excludeScreenId,
     watchedClientId,
+    watchedCanvasGroupId,
     canvasWidth,
     canvasHeight,
     allProfiles,
