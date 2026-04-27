@@ -43,6 +43,7 @@ import {
   Wifi,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
+import { useSyncedSecondTick, usePlayerClock } from "@/lib/playerClock";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
 import {
   resolvePlayerVariables as resolveVars,
@@ -269,27 +270,14 @@ function ClockWidget({
   ctx,
 }: ClockWidgetProps) {
   const resolvedLabel = label ? resolvePlayerVariables(label, ctx) : label;
-  const [time, setTime] = useState(new Date());
-
-  useEffect(() => {
-    // Sync to the second boundary so all clocks tick together
-    const now = new Date();
-    const msUntilNextSecond = 1000 - now.getMilliseconds();
-    
-    let timer: ReturnType<typeof setInterval> | null = null;
-    
-    // First, wait until the next second boundary
-    const initialTimeout = setTimeout(() => {
-      setTime(new Date());
-      // Then update every second on the boundary
-      timer = setInterval(() => setTime(new Date()), 1000);
-    }, msUntilNextSecond);
-
-    return () => {
-      clearTimeout(initialTimeout);
-      if (timer) clearInterval(timer);
-    };
-  }, []);
+  // Task #193 — use the server-synced wall clock instead of the
+  // device's `new Date()`, so a TV with a wrong system clock still
+  // shows the correct time. `useSyncedSecondTick` aligns the
+  // re-render to the SERVER's second boundary (so all paired
+  // displays tick together) and re-aligns whenever the offset
+  // changes meaningfully. Outside the player (admin previews,
+  // tests), the hook falls back to local Date.now().
+  const time = useSyncedSecondTick();
 
   // Get time parts for the specified timezone
   const getTimeParts = () => {
@@ -543,6 +531,11 @@ function CountdownWidget({
   compact = false,
   ctx,
 }: CountdownWidgetProps) {
+  // Task #193 — countdowns must use server-synced wall clock so a
+  // device with a wrong system clock doesn't show "Event Started!"
+  // hours early or hours late. `getSyncedNow()` returns the synced
+  // ms timestamp; outside the player it falls back to local Date.now().
+  const { getSyncedNow, offsetMs } = usePlayerClock();
   const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
   const [isComplete, setIsComplete] = useState(false);
   const resolvedTitle = title ? resolvePlayerVariables(title, ctx) : title;
@@ -637,7 +630,9 @@ function CountdownWidget({
         setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
         return;
       }
-      const now = Date.now();
+      // Task #193 — server-corrected wall clock so the countdown
+      // tracks real elapsed time, not whatever the device's RTC says.
+      const now = getSyncedNow();
       const diff = target - now;
 
       if (diff <= 0) {
@@ -657,7 +652,10 @@ function CountdownWidget({
     calculateTimeLeft();
     const interval = setInterval(calculateTimeLeft, 1000);
     return () => clearInterval(interval);
-  }, [targetDate, timezone]);
+    // Task #193 — re-run when the synced offset changes meaningfully
+    // so a freshly-corrected clock immediately reflects in the
+    // displayed countdown (otherwise it would lag up to 1 second).
+  }, [targetDate, timezone, getSyncedNow, offsetMs]);
 
   const formatNumber = (num: number, maxDigits: number = 2) => {
     if (showLeadingZeros) {

@@ -999,6 +999,14 @@ export interface PlayerContentResponse {
   // listens for this on the next poll and triggers a full window
   // reload so layout/code changes take effect immediately.
   refreshRequested?: boolean;
+  // Task #193 — server's `Date.now()` (epoch ms) at the moment the
+  // response was sent, used by the player to compute an NTP-style
+  // offset against its own (potentially-wrong) system clock so the
+  // ClockWidget / CountdownWidget / {{time}} render real wall-clock
+  // time even if the device's RTC is hours off. Always present for
+  // freshly-served responses; absent on cached fallback responses
+  // from older server versions.
+  serverTime?: number;
   // Implicit-canvas pairing (Task #173). Present when the polled
   // screen belongs to a multi-tile canvas group; the single Pi paired
   // against the wall composites every tile in one frame. Each tile

@@ -12,6 +12,8 @@ type PlayerContentData = PlayerContentResponse;
 import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
 import { TestPattern } from "@/components/test-pattern";
 import html2canvas from "html2canvas";
+import { PlayerClockProvider, usePlayerClock } from "@/lib/playerClock";
+import { persistOffset } from "@/lib/playerTimeSync";
 
 const TOKEN_KEY = "signage_device_token";
 const SCREEN_KEY = "signage_screen_id";
@@ -132,6 +134,11 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
     setLoading(true);
     setError(null);
     try {
+      // Task #193 — capture round-trip timestamps so we can compute
+      // an NTP-style offset from the very first response (pair),
+      // before the PlayerClockProvider mounts. Persist directly so
+      // the provider's first paint is already close to correct.
+      const t1 = Date.now();
       const res = await fetch("/api/player/pair", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -145,8 +152,13 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
         throw new Error(data?.error || "Invalid pairing code");
       }
       const data = await res.json();
+      const t2 = Date.now();
       if (!data.deviceToken) {
         throw new Error("Server did not return a device token");
+      }
+      if (typeof data.serverTime === "number") {
+        const midpoint = (t1 + t2) / 2;
+        persistOffset(data.serverTime - midpoint);
       }
       storeAuth(data.deviceToken, data.screenId);
       onPaired(data.screenId, data.deviceToken);
@@ -228,6 +240,12 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
 }
 
 function PlayerContent({ screenId, token }: { screenId: string; token: string }) {
+  // Task #193 — synced wall-clock so ClockWidget / CountdownWidget /
+  // {{time}} render real time even when the device clock is wrong.
+  // `feedSample` is called after each pair/heartbeat/content fetch;
+  // `getSyncedNow` is read at render time when constructing the
+  // playerContext.nowMs so {{date}}/{{time}}/{{day}} use server time.
+  const { feedSample, getSyncedNow } = usePlayerClock();
   const [content, setContent] = useState<PlayerContentData | null>(() => getCachedContent(screenId));
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -359,6 +377,11 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     // is defense-in-depth in case any callers re-enter fetchContent.
     if (reloadingRef.current) return;
     let res: Response;
+    // Task #193 — bracket the fetch with t1/t2 timestamps for the
+    // NTP-style offset estimator. Captured here (not later) so the
+    // RTT excludes any time spent parsing JSON or running our own
+    // decision logic.
+    const t1 = Date.now();
     try {
       res = await playerFetch(`/api/player/${screenId}/content`, token);
     } catch (err: any) {
@@ -437,6 +460,15 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         throw new Error(`Failed to fetch content: ${res.status}`);
       }
       const data: PlayerContentData = await res.json();
+      // Task #193 — feed (t1, serverTime, t2) into the rolling NTP
+      // estimator. `t2` is captured AFTER res.json() resolves but
+      // we discount that JSON-parse time by reading t2 here, just
+      // before doing any of our own logic. JSON parse is ~1ms so
+      // the extra latency in the estimator is negligible.
+      const t2 = Date.now();
+      if (typeof data.serverTime === "number") {
+        feedSample(t1, data.serverTime, t2);
+      }
       const newHash = JSON.stringify({
         layoutId: data.layout?.id,
         layoutUpdatedAt: data.layout?.updatedAt,
@@ -533,6 +565,25 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   }, [screenId, token, collectMediaUrls]);
 
   useEffect(() => {
+    // Task #193 — boot-time NTP sample. The first content poll
+    // takes ~7s on a fresh load (and can take longer if the device
+    // clock is way off and we hit a slow path). Hitting the tiny
+    // dedicated /api/player/time endpoint up-front gets the first
+    // accurate offset within the first network round-trip, so the
+    // ClockWidget rendered on frame 0 is correct (or at worst seeded
+    // from localStorage from the previous run).
+    (async () => {
+      try {
+        const t1 = Date.now();
+        const res = await fetch("/api/player/time");
+        if (!res.ok) return;
+        const data = await res.json();
+        const t2 = Date.now();
+        if (typeof data?.serverTime === "number") {
+          feedSample(t1, data.serverTime, t2);
+        }
+      } catch {}
+    })();
     fetchContent();
     fetchIntervalRef.current = setInterval(fetchContent, 7000);
     return () => {
@@ -541,12 +592,18 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         fetchIntervalRef.current = null;
       }
     };
-  }, [fetchContent]);
+  }, [fetchContent, feedSample]);
 
   useEffect(() => {
     heartbeatIntervalRef.current = setInterval(async () => {
       try {
-        await playerFetch("/api/player/heartbeat", token, {
+        // Task #193 — feed an NTP sample on every heartbeat. Even if
+        // /content stops getting fresh samples (e.g. cached 304 path,
+        // long no-change debounce), the 30s heartbeat keeps the
+        // offset estimator's rolling buffer warm so the on-screen
+        // clock stays correct over long uptimes.
+        const t1 = Date.now();
+        const res = await playerFetch("/api/player/heartbeat", token, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -560,6 +617,13 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
             errors: null,
           }),
         });
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          const t2 = Date.now();
+          if (data && typeof data.serverTime === "number") {
+            feedSample(t1, data.serverTime, t2);
+          }
+        }
       } catch {}
     }, 30000);
     return () => {
@@ -1225,6 +1289,9 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                       nextSessionCountdown:
                         content!.playerVars?.nextSessionCountdown,
                       weatherSummary: content!.playerVars?.weatherSummary,
+                      // Task #193 — server-synced wall clock for
+                      // {{date}}/{{time}}/{{day}} resolution.
+                      nowMs: getSyncedNow(),
                     }}
                   />
                 </div>
@@ -1422,6 +1489,9 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                   nextSessionTime: content.playerVars?.nextSessionTime,
                   nextSessionCountdown: content.playerVars?.nextSessionCountdown,
                   weatherSummary: content.playerVars?.weatherSummary,
+                  // Task #193 — server-synced wall clock for
+                  // {{date}}/{{time}}/{{day}} resolution.
+                  nowMs: getSyncedNow(),
                 }}
               />
             </div>
@@ -1514,5 +1584,9 @@ export default function PlayerPage({ screenId }: { screenId: string }) {
     );
   }
 
-  return <PlayerContent screenId={auth.screenId} token={auth.token} />;
+  return (
+    <PlayerClockProvider>
+      <PlayerContent screenId={auth.screenId} token={auth.token} />
+    </PlayerClockProvider>
+  );
 }

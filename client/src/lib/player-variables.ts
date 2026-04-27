@@ -7,14 +7,19 @@ export interface PlayerVariableDef {
   preview: string;
 }
 
-function sampleDate() {
-  return new Date().toLocaleDateString();
+// Task #193 — every "now"-derived sample takes an optional ms
+// timestamp so callers (the player) can feed in a server-synced
+// wall-clock time instead of the device's possibly-wrong system
+// clock. Admin previews leave it undefined and fall back to local
+// Date.now(), preserving the previous behaviour.
+function sampleDate(nowMs?: number) {
+  return new Date(nowMs ?? Date.now()).toLocaleDateString();
 }
-function sampleTime() {
-  return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function sampleTime(nowMs?: number) {
+  return new Date(nowMs ?? Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
-function sampleDay() {
-  return new Date().toLocaleDateString("en", { weekday: "long" });
+function sampleDay(nowMs?: number) {
+  return new Date(nowMs ?? Date.now()).toLocaleDateString("en", { weekday: "long" });
 }
 
 export const PLAYER_VARIABLES: PlayerVariableDef[] = [
@@ -46,6 +51,14 @@ export interface PlayerVariableContext {
   nextSessionTime?: string | null;
   nextSessionCountdown?: string | null;
   weatherSummary?: string | null;
+  /**
+   * Task #193 — server-synced "now" in ms. When set, {{date}}/{{time}}/
+   * {{day}} render off this instead of `Date.now()`. The player passes
+   * this in via `getSyncedNow()` so wall-clock tokens stay correct
+   * even when the device's system clock is wrong. Admin/preview leave
+   * this undefined and fall back to local time.
+   */
+  nowMs?: number | null;
 }
 
 function buildResolved(ctx?: PlayerVariableContext): Record<string, string> {
@@ -56,14 +69,15 @@ function buildResolved(ctx?: PlayerVariableContext): Record<string, string> {
   }
   const empty = "";
   const cap = ctx.roomCapacity;
+  const nowMs = typeof ctx.nowMs === "number" ? ctx.nowMs : undefined;
   return {
     "{{screen_name}}": ctx.screenName ?? empty,
     "{{room_name}}": ctx.roomName ?? empty,
     "{{event_name}}": ctx.eventName ?? empty,
     "{{client_name}}": ctx.clientName ?? empty,
-    "{{date}}": sampleDate(),
-    "{{time}}": sampleTime(),
-    "{{day}}": sampleDay(),
+    "{{date}}": sampleDate(nowMs),
+    "{{time}}": sampleTime(nowMs),
+    "{{day}}": sampleDay(nowMs),
     "{{room_capacity}}": cap === null || cap === undefined || cap === "" ? empty : String(cap),
     "{{event_start_date}}": ctx.eventStartDate ?? empty,
     "{{event_end_date}}": ctx.eventEndDate ?? empty,

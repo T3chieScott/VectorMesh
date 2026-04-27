@@ -3796,6 +3796,10 @@ export async function registerRoutes(
         screenId: owner.id,
         name: owner.name,
         deviceToken,
+        // Task #193 — first NTP-style sample for the freshly-paired
+        // player, so its first-rendered ClockWidget already reflects
+        // server time even before the first content poll lands.
+        serverTime: Date.now(),
         canvas: isCanvasGroup
           ? {
               ownerScreenId: owner.id,
@@ -3896,7 +3900,11 @@ export async function registerRoutes(
         }
       }
 
-      res.json({ success: true });
+      // Task #193 — piggyback an NTP-style time sample on the
+      // 30-second heartbeat the player is already sending. Cheap, no
+      // extra round-trip; the player feeds (t1, serverTime, t2) into
+      // its rolling-median offset estimator.
+      res.json({ success: true, serverTime: Date.now() });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
@@ -3904,6 +3912,14 @@ export async function registerRoutes(
       console.error("Error recording heartbeat:", error);
       res.status(500).json({ error: "Failed to record heartbeat" });
     }
+  });
+
+  // Task #193 — tiny dedicated endpoint for the player's first-boot
+  // time sync, before the first content poll lands. No auth required:
+  // it returns nothing but the server's `Date.now()`, so it's safe to
+  // hit anonymously and cheap enough to ignore in rate-limiting.
+  app.get("/api/player/time", (_req, res) => {
+    res.json({ serverTime: Date.now() });
   });
 
   app.post("/api/player/:screenId/screenshot", validateDeviceToken, async (req, res) => {
@@ -4209,6 +4225,12 @@ export async function registerRoutes(
         screenshotEnabled: screen.screenshotEnabled || false,
         screenshotRequested,
         canvas: canvasPayload,
+        // Task #193 — every 7s content poll feeds the player's
+        // NTP-style offset estimator. This is the highest-frequency
+        // sample source on the player, so it's what keeps the offset
+        // tight against mid-session drift; the heartbeat (30s) and
+        // boot /api/player/time fetch are belt-and-braces around it.
+        serverTime: Date.now(),
       });
     } catch (error) {
       console.error("Error fetching player content:", error);
