@@ -33,6 +33,7 @@ import { like } from "drizzle-orm";
 import { db } from "../server/db";
 import { storage } from "../server/storage";
 import {
+  canvasGroups,
   clients,
   screens,
   events,
@@ -53,6 +54,7 @@ async function cleanup() {
   await db.delete(scheduleBlocks).where(like(scheduleBlocks.name, `${PREFIX}%`));
   await db.delete(events).where(like(events.name, `${PREFIX}%`));
   await db.delete(screens).where(like(screens.name, `${PREFIX}%`));
+  await db.delete(canvasGroups).where(like(canvasGroups.name, `${PREFIX}%`));
   await db.delete(clients).where(like(clients.name, `${PREFIX}%`));
 }
 
@@ -89,6 +91,16 @@ test("realistic schedule-timeline edit burst leaves every screen's pairing ident
   const wallTok = `${PREFIX}wall-tok`;
   const t0 = new Date("2026-10-01T00:00:00Z");
 
+  // Task #189 — explicit shared canvas group makes A + B a real wall.
+  const [wallGroup] = await db
+    .insert(canvasGroups)
+    .values({
+      clientId: client.id,
+      name: `${PREFIX}wall`,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+    })
+    .returning();
   const [tileA] = await db
     .insert(screens)
     .values({
@@ -99,6 +111,7 @@ test("realistic schedule-timeline edit burst leaves every screen's pairing ident
       canvasHeight: 1080,
       canvasX: 0,
       canvasY: 0,
+      canvasGroupId: wallGroup.id,
       isPaired: true,
       isOnline: true,
       pairingCode: "U8WAL1",
@@ -120,6 +133,7 @@ test("realistic schedule-timeline edit burst leaves every screen's pairing ident
       canvasHeight: 1080,
       canvasX: 1920,
       canvasY: 0,
+      canvasGroupId: wallGroup.id,
       isPaired: true,
       isOnline: true,
       pairingCode: "U8WAL2",

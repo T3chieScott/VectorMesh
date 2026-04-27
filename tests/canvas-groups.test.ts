@@ -1,14 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  canvasGroupKeyString,
   groupScreensByCanvas,
   siblingsOnCanvas,
   siblingsForCanvasParams,
+  isCanvasWallGroup,
   rectIntersection,
   nextFreeOffsetForRects,
 } from "../shared/canvas-groups";
-import type { Screen } from "../shared/schema";
+import type { Screen, CanvasGroup as CanvasGroupRow } from "../shared/schema";
+
+// Task #189 — explicit canvas grouping. The grouping helpers no
+// longer infer wall membership from (clientId, dims, position-distinctness);
+// they key strictly off `canvasGroupId`. These tests pin the new
+// contract so a regression to the implicit rule fails loudly.
 
 // Minimal Screen factory — only the fields the helper reads matter.
 // Other Screen fields are stubbed with safe placeholder values so we
@@ -35,6 +40,7 @@ function makeScreen(overrides: Partial<Screen> & { id: string }): Screen {
     canvasHeight: null,
     canvasX: 0,
     canvasY: 0,
+    canvasGroupId: null,
     locked: false,
     screenshotEnabled: false,
     lastScreenshot: null,
@@ -54,79 +60,199 @@ function makeScreen(overrides: Partial<Screen> & { id: string }): Screen {
   return { ...base, ...overrides };
 }
 
-test("canvasGroupKeyString stable shape for same inputs", () => {
-  assert.equal(
-    canvasGroupKeyString("client-1", 1920, 1080),
-    "client-1|1920x1080",
-  );
-  assert.equal(canvasGroupKeyString(null, 800, 600), "|800x600");
-});
+function makeGroupRow(overrides: Partial<CanvasGroupRow> & { id: string }): CanvasGroupRow {
+  const base: CanvasGroupRow = {
+    id: overrides.id,
+    clientId: null,
+    name: `Group ${overrides.id}`,
+    canvasWidth: 1920,
+    canvasHeight: 1080,
+    createdAt: new Date("2026-04-01T00:00:00Z"),
+    updatedAt: new Date("2026-04-01T00:00:00Z"),
+  };
+  return { ...base, ...overrides };
+}
 
 test("groupScreensByCanvas excludes screens with canvas disabled", () => {
   const screens = [
-    makeScreen({ id: "a", clientId: "c1", canvasEnabled: false, canvasWidth: 1920, canvasHeight: 1080 }),
-    makeScreen({ id: "b", clientId: "c1", canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080, canvasX: 0 }),
+    makeScreen({
+      id: "a",
+      clientId: "c1",
+      canvasEnabled: false,
+      canvasWidth: 1920,
+      canvasHeight: 1080,
+      canvasGroupId: "g1",
+    }),
+    makeScreen({
+      id: "b",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 1920,
+      canvasHeight: 1080,
+      canvasX: 0,
+      canvasGroupId: "g1",
+    }),
   ];
   const groups = groupScreensByCanvas(screens);
-  // Lone canvas-enabled screen → still findable under the dim-only key
-  // (Task #176 preserves singleton-group key contract).
   assert.equal(groups.size, 1);
-  const only = groups.get("c1|1920x1080")!;
+  const only = groups.get("g1")!;
   assert.equal(only.screens.length, 1);
   assert.equal(only.screens[0]!.id, "b");
   assert.equal(only.isWall, false);
 });
 
-test("groupScreensByCanvas excludes screens with null/zero canvas dims", () => {
+test("groupScreensByCanvas excludes canvas-enabled screens with no group id", () => {
   const screens = [
-    makeScreen({ id: "a", clientId: "c1", canvasEnabled: true, canvasWidth: null, canvasHeight: null }),
-    makeScreen({ id: "b", clientId: "c1", canvasEnabled: true, canvasWidth: 0, canvasHeight: 0 }),
-    makeScreen({ id: "c", clientId: "c1", canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080, canvasX: 0 }),
+    // Canvas enabled but no group id stamped (shouldn't happen post-backfill,
+    // but the helper must defensively skip rather than crash).
+    makeScreen({
+      id: "a",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 1920,
+      canvasHeight: 1080,
+      canvasGroupId: null,
+    }),
+    makeScreen({
+      id: "b",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 1920,
+      canvasHeight: 1080,
+      canvasGroupId: "g2",
+    }),
   ];
   const groups = groupScreensByCanvas(screens);
   assert.equal(groups.size, 1);
-  assert.deepEqual(groups.get("c1|1920x1080")!.screens.map((s) => s.id), ["c"]);
+  assert.deepEqual(groups.get("g2")!.screens.map((s) => s.id), ["b"]);
 });
 
-test("groupScreensByCanvas keeps same canvas in different clients separate", () => {
+test("groupScreensByCanvas: same dims, same client, DIFFERENT groups stay separate", () => {
+  // The key Task #189 regression: two single screens with identical
+  // dims and the same client used to false-group into one wall under
+  // the old (clientId, dims) key. With explicit canvasGroupId they
+  // now stay isolated.
   const screens = [
-    makeScreen({ id: "a", clientId: "c1", canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080 }),
-    makeScreen({ id: "b", clientId: "c2", canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080 }),
+    makeScreen({
+      id: "a",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 1920,
+      canvasHeight: 1080,
+      canvasGroupId: "g-a",
+    }),
+    makeScreen({
+      id: "b",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 1920,
+      canvasHeight: 1080,
+      canvasGroupId: "g-b",
+    }),
   ];
   const groups = groupScreensByCanvas(screens);
   assert.equal(groups.size, 2);
-  assert.equal(groups.get("c1|1920x1080")!.screens.length, 1);
-  assert.equal(groups.get("c2|1920x1080")!.screens.length, 1);
+  assert.equal(groups.get("g-a")!.screens.length, 1);
+  assert.equal(groups.get("g-b")!.screens.length, 1);
+  assert.equal(groups.get("g-a")!.isWall, false);
+  assert.equal(groups.get("g-b")!.isWall, false);
 });
 
-test("groupScreensByCanvas groups matching canvas in the same client", () => {
+test("groupScreensByCanvas groups multiple screens that share a canvasGroupId", () => {
   const screens = [
-    makeScreen({ id: "a", clientId: "c1", canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080, canvasX: 0 }),
-    makeScreen({ id: "b", clientId: "c1", canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080, canvasX: 1920 }),
-    makeScreen({ id: "c", clientId: "c1", canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080 }),
+    makeScreen({
+      id: "a",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+      canvasX: 0,
+      canvasGroupId: "wall-1",
+    }),
+    makeScreen({
+      id: "b",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+      canvasX: 1920,
+      canvasGroupId: "wall-1",
+    }),
+    makeScreen({
+      id: "c",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 1920,
+      canvasHeight: 1080,
+      canvasGroupId: "lone-c",
+    }),
   ];
   const groups = groupScreensByCanvas(screens);
   assert.equal(groups.size, 2);
   assert.deepEqual(
-    groups.get("c1|3840x1080")!.screens.map((s) => s.id).sort(),
+    groups.get("wall-1")!.screens.map((s) => s.id).sort(),
     ["a", "b"],
   );
+  assert.equal(groups.get("wall-1")!.isWall, true);
+  assert.equal(groups.get("lone-c")!.isWall, false);
 });
 
-test("groupScreensByCanvas keeps single-screen groups", () => {
+test("groupScreensByCanvas attaches the persisted row when groupRows is supplied", () => {
   const screens = [
-    makeScreen({ id: "lonely", clientId: "c1", canvasEnabled: true, canvasWidth: 1920, canvasHeight: 1080 }),
+    makeScreen({
+      id: "a",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+      canvasGroupId: "wall-1",
+    }),
+  ];
+  const rows = [makeGroupRow({ id: "wall-1", name: "North Lobby" })];
+  const groups = groupScreensByCanvas(screens, rows);
+  assert.equal(groups.get("wall-1")!.group?.name, "North Lobby");
+});
+
+test("isCanvasWallGroup is true only when ≥2 members", () => {
+  const screens = [
+    makeScreen({ id: "a", canvasEnabled: true, canvasGroupId: "lone" }),
+    makeScreen({ id: "b", canvasEnabled: true, canvasGroupId: "wall" }),
+    makeScreen({ id: "c", canvasEnabled: true, canvasGroupId: "wall" }),
   ];
   const groups = groupScreensByCanvas(screens);
-  assert.equal(groups.size, 1);
-  assert.equal(groups.get("c1|1920x1080")!.screens.length, 1);
+  assert.equal(isCanvasWallGroup(groups.get("lone")!), false);
+  assert.equal(isCanvasWallGroup(groups.get("wall")!), true);
 });
 
 test("siblingsOnCanvas excludes the screen itself", () => {
   const screens = [
-    makeScreen({ id: "a", clientId: "c1", canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080, canvasX: 0 }),
-    makeScreen({ id: "b", clientId: "c1", canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080, canvasX: 1920 }),
-    makeScreen({ id: "c", clientId: "c1", canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080, canvasX: 3840 }),
+    makeScreen({
+      id: "a",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+      canvasX: 0,
+      canvasGroupId: "wall-1",
+    }),
+    makeScreen({
+      id: "b",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+      canvasX: 1920,
+      canvasGroupId: "wall-1",
+    }),
+    makeScreen({
+      id: "c",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+      canvasX: 3840,
+      canvasGroupId: "wall-1",
+    }),
   ];
   const groups = groupScreensByCanvas(screens);
   const siblings = siblingsOnCanvas(screens[0]!, groups);
@@ -135,19 +261,56 @@ test("siblingsOnCanvas excludes the screen itself", () => {
 
 test("siblingsOnCanvas returns [] for canvas-disabled screen", () => {
   const screens = [
-    makeScreen({ id: "a", clientId: "c1", canvasEnabled: false, canvasWidth: 1920, canvasHeight: 1080 }),
+    makeScreen({
+      id: "a",
+      clientId: "c1",
+      canvasEnabled: false,
+      canvasWidth: 1920,
+      canvasHeight: 1080,
+      canvasGroupId: "g1",
+    }),
   ];
   const groups = groupScreensByCanvas(screens);
   assert.deepEqual(siblingsOnCanvas(screens[0]!, groups), []);
 });
 
-test("siblingsForCanvasParams works for an unsaved screen", () => {
+test("siblingsOnCanvas returns [] when screen has no group", () => {
   const screens = [
-    makeScreen({ id: "a", clientId: "c1", canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080, canvasX: 0 }),
+    makeScreen({
+      id: "a",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 1920,
+      canvasHeight: 1080,
+      canvasGroupId: null,
+    }),
+    makeScreen({
+      id: "b",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 1920,
+      canvasHeight: 1080,
+      canvasGroupId: "g2",
+    }),
+  ];
+  const groups = groupScreensByCanvas(screens);
+  assert.deepEqual(siblingsOnCanvas(screens[0]!, groups), []);
+});
+
+test("siblingsForCanvasParams returns members of the named group", () => {
+  const screens = [
+    makeScreen({
+      id: "a",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+      canvasGroupId: "wall-1",
+    }),
   ];
   const groups = groupScreensByCanvas(screens);
   const siblings = siblingsForCanvasParams(
-    { clientId: "c1", canvasWidth: 3840, canvasHeight: 1080 },
+    { canvasGroupId: "wall-1" },
     groups,
   );
   assert.deepEqual(siblings.map((s) => s.id), ["a"]);
@@ -155,15 +318,49 @@ test("siblingsForCanvasParams works for an unsaved screen", () => {
 
 test("siblingsForCanvasParams excludes given id", () => {
   const screens = [
-    makeScreen({ id: "a", clientId: "c1", canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080 }),
-    makeScreen({ id: "b", clientId: "c1", canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080 }),
+    makeScreen({
+      id: "a",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+      canvasGroupId: "wall-1",
+    }),
+    makeScreen({
+      id: "b",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+      canvasGroupId: "wall-1",
+    }),
   ];
   const groups = groupScreensByCanvas(screens);
   const siblings = siblingsForCanvasParams(
-    { excludeScreenId: "a", clientId: "c1", canvasWidth: 3840, canvasHeight: 1080 },
+    { excludeScreenId: "a", canvasGroupId: "wall-1" },
     groups,
   );
   assert.deepEqual(siblings.map((s) => s.id), ["b"]);
+});
+
+test("siblingsForCanvasParams returns [] for null/missing group", () => {
+  const screens = [
+    makeScreen({
+      id: "a",
+      clientId: "c1",
+      canvasEnabled: true,
+      canvasWidth: 1920,
+      canvasHeight: 1080,
+      canvasGroupId: "g1",
+    }),
+  ];
+  const groups = groupScreensByCanvas(screens);
+  assert.deepEqual(siblingsForCanvasParams({ canvasGroupId: null }, groups), []);
+  assert.deepEqual(siblingsForCanvasParams({ canvasGroupId: undefined }, groups), []);
+  assert.deepEqual(
+    siblingsForCanvasParams({ canvasGroupId: "does-not-exist" }, groups),
+    [],
+  );
 });
 
 test("rectIntersection returns null when rects don't overlap", () => {

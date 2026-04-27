@@ -6,7 +6,7 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
-import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema, type InsertScreenEventBooking, type TimeRule, type ScheduleTarget } from "@shared/schema";
+import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema, insertCanvasGroupSchema, type InsertScreenEventBooking, type TimeRule, type ScheduleTarget } from "@shared/schema";
 import { derivePlaybackStatus } from "@shared/playback-derivation";
 import { canAccessBooking } from "@shared/booking-utils";
 import {
@@ -1411,6 +1411,141 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error removing screen from group:", error);
       res.status(500).json({ error: "Failed to remove screen from group" });
+    }
+  });
+
+  // ============ CANVAS GROUPS (Task #189) ============
+  // Explicit canvas-group rows replace the implicit grouping by
+  // (clientId, dims, position-distinctness). Operators name + size a
+  // wall once and pin tiles to it via screens.canvasGroupId. Screens
+  // page validation guarantees membership stays internally consistent
+  // (same client + matching dims). Auth-style mirrors /api/clients.
+  app.get("/api/canvas-groups", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const all = await storage.getCanvasGroups();
+      const allowed = getAllowedClientIds(req);
+      let filtered = allowed ? all.filter((g) => allowed.includes(g.clientId)) : all;
+      const clientId = getQueryString(req, "clientId", res);
+      if (clientId === null) return;
+      if (clientId) {
+        if (!canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        filtered = filtered.filter((g) => g.clientId === clientId);
+      }
+      res.json(filtered);
+    } catch (error) {
+      console.error("Error fetching canvas groups:", error);
+      res.status(500).json({ error: "Failed to fetch canvas groups" });
+    }
+  });
+
+  app.get("/api/canvas-groups/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const group = await storage.getCanvasGroup(getPathParam(req, "id"));
+      if (!group) return res.status(404).json({ error: "Canvas group not found" });
+      if (!canAccessClient(req, group.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      res.json(group);
+    } catch (error) {
+      console.error("Error fetching canvas group:", error);
+      res.status(500).json({ error: "Failed to fetch canvas group" });
+    }
+  });
+
+  app.post("/api/canvas-groups", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const data = insertCanvasGroupSchema.parse(req.body);
+      if (!canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
+      }
+      const created = await storage.createCanvasGroup(data);
+      logAudit(req, "create", "canvas_group", created.id, {
+        name: created.name,
+        clientId: created.clientId,
+      });
+      res.status(201).json(created);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      console.error("Error creating canvas group:", error);
+      res.status(500).json({ error: "Failed to create canvas group" });
+    }
+  });
+
+  app.patch("/api/canvas-groups/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const id = getPathParam(req, "id");
+      const existing = await storage.getCanvasGroup(id);
+      if (!existing) return res.status(404).json({ error: "Canvas group not found" });
+      if (!canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const data = insertCanvasGroupSchema.partial().parse(req.body);
+      // A group's clientId can't be reassigned — every member screen
+      // would need to be revalidated, and operators don't have a use
+      // case for it. Reject explicitly so we don't silently move a
+      // wall under another site.
+      if (data.clientId !== undefined && data.clientId !== existing.clientId) {
+        return res.status(400).json({
+          error: "Cannot move a canvas group to a different site",
+        });
+      }
+      // Resizing the group must match its members' canvas dims so we
+      // don't end up with a "640x480" group containing 1920x1080 tiles.
+      if (
+        (data.canvasWidth !== undefined && data.canvasWidth !== existing.canvasWidth) ||
+        (data.canvasHeight !== undefined && data.canvasHeight !== existing.canvasHeight)
+      ) {
+        const members = (await storage.getScreens()).filter((s) => s.canvasGroupId === id);
+        const newW = data.canvasWidth ?? existing.canvasWidth;
+        const newH = data.canvasHeight ?? existing.canvasHeight;
+        const mismatch = members.find(
+          (m) => m.canvasWidth !== newW || m.canvasHeight !== newH,
+        );
+        if (mismatch) {
+          return res.status(400).json({
+            error:
+              "Cannot resize: existing member screens have different canvas dimensions",
+          });
+        }
+      }
+      const updated = await storage.updateCanvasGroup(id, data);
+      logAudit(req, "update", "canvas_group", id, { name: updated?.name });
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      console.error("Error updating canvas group:", error);
+      res.status(500).json({ error: "Failed to update canvas group" });
+    }
+  });
+
+  app.delete("/api/canvas-groups/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const id = getPathParam(req, "id");
+      const existing = await storage.getCanvasGroup(id);
+      if (!existing) return res.status(404).json({ error: "Canvas group not found" });
+      if (!canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      // storage.deleteCanvasGroup returns false if any screen still
+      // references the group; surface that as 409 so the UI can ask
+      // the operator to move/clear members first.
+      const ok = await storage.deleteCanvasGroup(id);
+      if (!ok) {
+        return res.status(409).json({
+          error: "Cannot delete a canvas group while screens still reference it",
+        });
+      }
+      logAudit(req, "delete", "canvas_group", id, { name: existing.name });
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting canvas group:", error);
+      res.status(500).json({ error: "Failed to delete canvas group" });
     }
   });
 

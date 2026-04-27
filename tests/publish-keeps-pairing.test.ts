@@ -39,6 +39,7 @@ import { like } from "drizzle-orm";
 import { db } from "../server/db";
 import { storage } from "../server/storage";
 import {
+  canvasGroups,
   clients,
   screens,
   events,
@@ -49,7 +50,13 @@ import {
   type Screen,
 } from "../shared/schema";
 
-const PREFIX = "__TEST_S185_PUB__";
+// SQL `LIKE` treats `_` as a single-char wildcard, so any prefix
+// of the shape `__TEST_<n>__` is matched by every other test file
+// whose cleanup runs `LIKE '__TEST_<n>__%'` — when files execute
+// concurrently the cross-prefix delete races with this file's
+// inserts and surfaces as random FK violations. Use a wildcard-free
+// prefix that no sibling file's cleanup pattern can match.
+const PREFIX = "ZZPUBKEEP-";
 
 async function cleanup() {
   // Order matters and we lean on cascade deletes where possible:
@@ -64,6 +71,7 @@ async function cleanup() {
   await db.delete(scheduleBlocks).where(like(scheduleBlocks.name, `${PREFIX}%`));
   await db.delete(events).where(like(events.name, `${PREFIX}%`));
   await db.delete(screens).where(like(screens.name, `${PREFIX}%`));
+  await db.delete(canvasGroups).where(like(canvasGroups.name, `${PREFIX}%`));
   await db.delete(clients).where(like(clients.name, `${PREFIX}%`));
 }
 
@@ -97,6 +105,16 @@ test("publish/edit cycle on a programme version does NOT mutate any wall pairing
   const wallTok = `${PREFIX}wall-tok`;
   const t0 = new Date("2026-09-01T00:00:00Z");
 
+  // Task #189 — explicit shared canvas group makes A + B a real wall.
+  const [wallGroup] = await db
+    .insert(canvasGroups)
+    .values({
+      clientId: client.id,
+      name: `${PREFIX}wall`,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+    })
+    .returning();
   const [tileA] = await db
     .insert(screens)
     .values({
@@ -107,6 +125,7 @@ test("publish/edit cycle on a programme version does NOT mutate any wall pairing
       canvasHeight: 1080,
       canvasX: 0,
       canvasY: 0,
+      canvasGroupId: wallGroup.id,
       isPaired: true,
       isOnline: true,
       pairingCode: "U5PUB1",
@@ -128,6 +147,7 @@ test("publish/edit cycle on a programme version does NOT mutate any wall pairing
       canvasHeight: 1080,
       canvasX: 1920,
       canvasY: 0,
+      canvasGroupId: wallGroup.id,
       isPaired: true,
       isOnline: true,
       pairingCode: "U5PUB2",

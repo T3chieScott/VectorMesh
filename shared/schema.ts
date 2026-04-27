@@ -155,6 +155,41 @@ export const insertScreenGroupSchema = createInsertSchema(screenGroups).omit({ i
 export type InsertScreenGroup = z.infer<typeof insertScreenGroupSchema>;
 export type ScreenGroup = typeof screenGroups.$inferSelect;
 
+// ============ CANVAS GROUPS ============
+
+// Task #189 — explicit canvas grouping. Replaces the implicit
+// (clientId, canvasWidth, canvasHeight) + position-distinctness
+// model that over-grouped multiple independent screens that just
+// happened to share 1920×1080. Each canvas-enabled screen now has
+// an explicit `canvasGroupId` that points to one of these rows;
+// real walls share a group id, lone canvas screens get their own
+// group. Operators rename the wall in one place (the group's
+// `name`) instead of editing every member tile.
+export const canvasGroups = pgTable("canvas_groups", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").references(() => clients.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  canvasWidth: integer("canvas_width").notNull(),
+  canvasHeight: integer("canvas_height").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const canvasGroupsRelations = relations(canvasGroups, ({ one, many }) => ({
+  client: one(clients, { fields: [canvasGroups.clientId], references: [clients.id] }),
+  screens: many(screens),
+}));
+
+export const insertCanvasGroupSchema = createInsertSchema(canvasGroups)
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .extend({
+    name: z.string().min(1, "Name is required"),
+    canvasWidth: z.number().int().min(1, "Canvas width must be ≥ 1"),
+    canvasHeight: z.number().int().min(1, "Canvas height must be ≥ 1"),
+  });
+export type InsertCanvasGroup = z.infer<typeof insertCanvasGroupSchema>;
+export type CanvasGroup = typeof canvasGroups.$inferSelect;
+
 // ============ SCREENS ============
 
 export const screens = pgTable("screens", {
@@ -185,6 +220,12 @@ export const screens = pgTable("screens", {
   canvasHeight: integer("canvas_height"),
   canvasX: integer("canvas_x").default(0),
   canvasY: integer("canvas_y").default(0),
+  // Task #189 — explicit canvas group membership. Nullable for non-
+  // canvas screens. Set on every canvas-enabled row by the boot-time
+  // backfill and by createScreen for new canvas screens. ON DELETE
+  // SET NULL so the row survives if its group is removed (the screen
+  // simply becomes canvas-disabled-pending until reassigned).
+  canvasGroupId: varchar("canvas_group_id").references(() => canvasGroups.id, { onDelete: "set null" }),
   locked: boolean("locked").default(false),
   screenshotEnabled: boolean("screenshot_enabled").default(false),
   lastScreenshot: text("last_screenshot"),

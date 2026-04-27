@@ -33,13 +33,32 @@ import type { Server } from "node:http";
 import { like } from "drizzle-orm";
 import { db } from "../server/db";
 import { storage } from "../server/storage";
-import { clients, screens, type Screen } from "../shared/schema";
+import { canvasGroups, clients, screens, type Screen } from "../shared/schema";
 
 const PREFIX = "__TEST_S185__";
 
 async function cleanup() {
   await db.delete(screens).where(like(screens.name, `${PREFIX}%`));
+  await db.delete(canvasGroups).where(like(canvasGroups.name, `${PREFIX}%`));
   await db.delete(clients).where(like(clients.name, `${PREFIX}%`));
+}
+
+async function makeCanvasGroup(
+  clientId: string,
+  width: number,
+  height: number,
+  label: string,
+): Promise<string> {
+  const [g] = await db
+    .insert(canvasGroups)
+    .values({
+      clientId,
+      name: `${PREFIX}${label}`,
+      canvasWidth: width,
+      canvasHeight: height,
+    })
+    .returning();
+  return g.id;
 }
 
 test.before(cleanup);
@@ -62,6 +81,7 @@ interface MakeScreenOpts {
   canvasHeight?: number | null;
   canvasX?: number;
   canvasY?: number;
+  canvasGroupId?: string | null;
   isPaired?: boolean;
   isOnline?: boolean;
   pairingCode?: string | null;
@@ -73,6 +93,23 @@ interface MakeScreenOpts {
 }
 
 async function makeScreen(opts: MakeScreenOpts): Promise<Screen> {
+  // Task #189 — every canvas-enabled screen needs a canvas group.
+  // Auto-mint a per-screen group when the caller didn't supply one.
+  let groupId = opts.canvasGroupId ?? null;
+  if (
+    opts.canvasEnabled &&
+    !groupId &&
+    opts.clientId &&
+    opts.canvasWidth != null &&
+    opts.canvasHeight != null
+  ) {
+    groupId = await makeCanvasGroup(
+      opts.clientId,
+      opts.canvasWidth,
+      opts.canvasHeight,
+      `auto-${opts.name}`,
+    );
+  }
   const [row] = await db
     .insert(screens)
     .values({
@@ -83,6 +120,7 @@ async function makeScreen(opts: MakeScreenOpts): Promise<Screen> {
       canvasHeight: opts.canvasHeight ?? null,
       canvasX: opts.canvasX ?? 0,
       canvasY: opts.canvasY ?? 0,
+      canvasGroupId: groupId,
       isPaired: opts.isPaired ?? false,
       isOnline: opts.isOnline ?? false,
       pairingCode: opts.pairingCode ?? null,
@@ -135,8 +173,9 @@ test("forfeitWallPairing: solo paired screen — clears device + presence, keeps
 test("forfeitWallPairing: paired wall — clears every member, keeps each tile's own pairingCode", async () => {
   const clientId = await makeClient("wall");
   const t0 = new Date("2026-08-05T00:00:00Z");
-  // A real 2-tile wall (≥2 distinct positions) so getCanvasMembers
-  // returns both rows.
+  // Task #189 — explicit shared group makes A + B a real wall so
+  // getCanvasMembers returns both rows.
+  const wallGroup = await makeCanvasGroup(clientId, 3840, 1080, "wall-fft");
   const a = await makeScreen({
     name: "wallA",
     clientId,
@@ -145,6 +184,7 @@ test("forfeitWallPairing: paired wall — clears every member, keeps each tile's
     canvasWidth: 3840,
     canvasHeight: 1080,
     canvasX: 0,
+    canvasGroupId: wallGroup,
     pairingCode: "U5WAL1",
     deviceToken: "tok-wall",
     isPaired: true,
@@ -162,6 +202,7 @@ test("forfeitWallPairing: paired wall — clears every member, keeps each tile's
     canvasWidth: 3840,
     canvasHeight: 1080,
     canvasX: 1920,
+    canvasGroupId: wallGroup,
     pairingCode: "U5WAL2",
     deviceToken: "tok-wall",
     isPaired: true,
@@ -340,6 +381,8 @@ test("POST /forfeit-pairing — missing token rejected with 401", async () => {
 test("POST /forfeit-pairing — correct token clears wall pairing, preserves pairingCode", async () => {
   const clientId = await makeClient("http-ok");
   const t0 = new Date("2026-08-20T00:00:00Z");
+  // Task #189 — explicit shared group makes A + B a real wall.
+  const wallGroup = await makeCanvasGroup(clientId, 3840, 1080, "httpOk-wall");
   const a = await makeScreen({
     name: "httpOkA",
     clientId,
@@ -348,6 +391,7 @@ test("POST /forfeit-pairing — correct token clears wall pairing, preserves pai
     canvasWidth: 3840,
     canvasHeight: 1080,
     canvasX: 0,
+    canvasGroupId: wallGroup,
     pairingCode: "U5HOK1",
     deviceToken: "wall-tok",
     isPaired: true,
@@ -364,6 +408,7 @@ test("POST /forfeit-pairing — correct token clears wall pairing, preserves pai
     canvasWidth: 3840,
     canvasHeight: 1080,
     canvasX: 1920,
+    canvasGroupId: wallGroup,
     pairingCode: "U5HOK2",
     deviceToken: "wall-tok",
     isPaired: true,

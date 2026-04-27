@@ -29,6 +29,7 @@ type ScreenCreateStorage = Pick<
   | "getCanvasMembers"
   | "setCanvasPairingState"
   | "getScreen"
+  | "getCanvasGroup"
 >;
 
 type AuditFn = (
@@ -85,6 +86,37 @@ export function buildScreenCreateHandler(
       const data = insertScreenSchema.parse(body);
       if (data.clientId && !canAccessClient(req, data.clientId)) {
         return res.status(403).json({ error: "Access denied to requested site" });
+      }
+      // Task #189 — explicit canvas group validation. If the caller
+      // pinned a `canvasGroupId`, that group must (a) exist, (b) belong
+      // to the same client, and (c) match the requested canvas
+      // dimensions. Without this guard the operator could "join" a
+      // wall whose tiles are a different size, which would re-create
+      // the very false-grouping bug Task #189 set out to remove.
+      if (data.canvasGroupId) {
+        const group = await storage.getCanvasGroup(data.canvasGroupId);
+        if (!group) {
+          return res.status(400).json({ error: "Canvas group not found" });
+        }
+        if (group.clientId !== data.clientId) {
+          return res.status(400).json({
+            error: "Canvas group belongs to a different site",
+          });
+        }
+        if (
+          group.canvasWidth !== data.canvasWidth ||
+          group.canvasHeight !== data.canvasHeight
+        ) {
+          return res.status(400).json({
+            error:
+              "Canvas group dimensions do not match the screen's canvas size",
+          });
+        }
+        if (!data.canvasEnabled) {
+          return res.status(400).json({
+            error: "Cannot assign a canvas group when canvas is disabled",
+          });
+        }
       }
       const screen = await storage.createScreen(data);
       // Task #180: a brand-new canvas-enabled tile NEVER silently

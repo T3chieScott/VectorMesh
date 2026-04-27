@@ -7,6 +7,7 @@ import {
   displayProfiles,
   screenGroups,
   screens,
+  canvasGroups,
   screenGroupMemberships,
   screenEventBookings,
   mediaAssets,
@@ -35,6 +36,8 @@ import {
   type InsertScreenGroup,
   type Screen,
   type InsertScreen,
+  type CanvasGroup,
+  type InsertCanvasGroup,
   type MediaAsset,
   type InsertMediaAsset,
   type MediaShare,
@@ -79,6 +82,17 @@ import { apiTokens, apiTokenKnownIps, type ApiToken, type InsertApiToken } from 
  */
 export const CANVAS_PAIRING_REPAIR_176_MARKER_KEY =
   "canvas_pairing_repair_176_completed";
+
+/**
+ * Task #189 — `system_settings` key recording that the explicit-
+ * canvas-grouping backfill has run on this DB. The backfill
+ * creates one `canvas_groups` row per real wall (≥2 distinct
+ * positions) and a per-screen group for every other canvas-enabled
+ * screen, then stamps `screens.canvasGroupId`. Same one-shot
+ * marker pattern as Task #179.
+ */
+export const CANVAS_GROUPS_BACKFILL_189_MARKER_KEY =
+  "canvas_groups_backfill_189_completed";
 
 /**
  * Task #180: structurally narrow an unknown error to detect a Postgres
@@ -179,13 +193,13 @@ export interface IStorage {
   getScreenByPairingCode(code: string): Promise<Screen | undefined>;
   getScreenByDeviceToken(token: string): Promise<Screen | undefined>;
   /**
-   * Implicit-canvas grouping: returns every screen that shares a video
-   * wall with `screen` (same clientId + canvasWidth + canvasHeight, all
-   * canvasEnabled), ordered by createdAt asc. The first element is the
-   * implicit "owner" — the earliest-created tile. For non-canvas /
-   * single-tile screens this returns `[screen]`. NOTE: callers must
-   * pass a freshly fetched Screen row — this method does NOT re-fetch
-   * the seed.
+   * Task #189 — explicit-canvas grouping: returns every screen that
+   * shares `screen.canvasGroupId`, ordered by createdAt asc. The
+   * first element is the canvas "owner" — the earliest-created tile.
+   * For non-canvas screens, or canvas-enabled screens with no
+   * `canvasGroupId` (transient state pre-backfill or pre-create), this
+   * returns `[screen]`. NOTE: callers must pass a freshly fetched
+   * Screen row — this method does NOT re-fetch the seed.
    */
   getCanvasMembers(screen: Screen): Promise<Screen[]>;
   /**
@@ -217,26 +231,68 @@ export interface IStorage {
     >,
   ): Promise<number>;
   /**
-   * One-shot reconciliation: walks every implicit canvas group and
-   * forces all members to share the canonical PAIRING IDENTITY
-   * (`deviceToken`, `isPaired`). Per-tile presence fields
-   * (`isOnline`, `lastSeen`, `ipAddress`, `hostname`, `hardwareClass`)
-   * are intentionally NOT copied — they belong to the individual
-   * physical player and would otherwise bleed across the wall on
-   * every boot (Task #176). Task #180: `pairingCode` is also NOT
-   * copied — every tile keeps its own globally-unique code, and
-   * any tile's code resolves to the wall via getScreenByPairingCode.
+   * Task #189 — one-shot reconciliation across explicit canvas groups:
+   * walks every `canvas_groups` row and forces all members to share
+   * the canonical PAIRING IDENTITY (`deviceToken`, `isPaired`). Per-
+   * tile presence fields (`isOnline`, `lastSeen`, `ipAddress`,
+   * `hostname`, `hardwareClass`) are intentionally NOT copied — they
+   * belong to the individual physical player and would otherwise bleed
+   * across the wall on every boot (Task #176). Task #180: `pairingCode`
+   * is also NOT copied — every tile keeps its own globally-unique
+   * code, and any tile's code resolves to the wall via
+   * getScreenByPairingCode.
    *
    * The "winner" inside a group is the most-recently-seen paired tile
    * if any tile is paired, otherwise the earliest-created tile (whose
-   * deviceToken becomes the canonical one). Buckets that don't form a
-   * real wall (every member at the same `(canvasX, canvasY)`) are
-   * skipped — those screens are independent and must keep their own
-   * pairing state. Run at server boot so pre-#173 walls with
+   * deviceToken becomes the canonical one). Lone-screen groups (one
+   * member) are skipped — those screens are independent and must keep
+   * their own pairing state. Run at server boot so pre-#173 walls with
    * mismatched per-screen pairing rows converge before the first
    * player request arrives. Returns the number of groups normalised.
    */
   backfillCanvasPairingState(): Promise<number>;
+
+  /**
+   * Task #189 — one-shot backfill that promotes the implicit
+   * `(clientId, canvasWidth, canvasHeight, ≥2 distinct positions)`
+   * grouping into explicit `canvas_groups` rows. For each
+   * canvas-enabled screen:
+   *  - Skip if `canvasGroupId` is already set.
+   *  - If the screen is part of a real wall (≥2 members at distinct
+   *    positions sharing client + dims), reuse / create one shared
+   *    group for the whole wall.
+   *  - Otherwise create a per-screen group named after the screen so
+   *    the operator can rename it later.
+   * Idempotent: a second invocation finds every canvas-enabled screen
+   * already stamped and is a no-op. Returns
+   * `{ groupsCreated, screensStamped }` for forensic logging.
+   */
+  backfillExplicitCanvasGroups(): Promise<{
+    groupsCreated: number;
+    screensStamped: number;
+  }>;
+  /** Task #189 — boot-claimed wrapper around backfillExplicitCanvasGroups
+   * with the same one-shot semantics as repairFalseCanvasPairingsOnce. */
+  backfillExplicitCanvasGroupsOnce(): Promise<{
+    groupsCreated: number;
+    screensStamped: number;
+    skipped: boolean;
+  }>;
+
+  // Canvas Groups (Task #189)
+  getCanvasGroups(): Promise<CanvasGroup[]>;
+  getCanvasGroup(id: string): Promise<CanvasGroup | undefined>;
+  createCanvasGroup(data: InsertCanvasGroup): Promise<CanvasGroup>;
+  updateCanvasGroup(
+    id: string,
+    data: Partial<InsertCanvasGroup>,
+  ): Promise<CanvasGroup | undefined>;
+  /**
+   * Refuses (returns false) if any screen still references the group;
+   * the operator must move members off first. Returns true on a real
+   * delete.
+   */
+  deleteCanvasGroup(id: string): Promise<boolean>;
   /**
    * One-shot repair (Task #176): undoes the inheritance damage caused
    * by previous boots that grouped unrelated screens sharing
@@ -849,56 +905,32 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCanvasMembers(screen: Screen): Promise<Screen[]> {
-    if (
-      !screen.canvasEnabled ||
-      typeof screen.canvasWidth !== "number" ||
-      screen.canvasWidth <= 0 ||
-      typeof screen.canvasHeight !== "number" ||
-      screen.canvasHeight <= 0
-    ) {
-      return [screen];
-    }
-    // clientId may be NULL — and `eq(col, null)` does NOT do `IS NULL`
-    // in SQL, so we have to branch. Without this branch the query would
-    // silently return no members for orphaned (clientless) screens and
-    // pairing would degenerate to per-tile semantics.
-    const clientCondition =
-      screen.clientId === null
-        ? sql`${screens.clientId} IS NULL`
-        : eq(screens.clientId, screen.clientId);
+    // Task #189 — explicit grouping. A canvas-enabled screen lives in
+    // exactly one `canvas_groups` row identified by `canvasGroupId`.
+    // The boot-time backfill stamps every legacy canvas screen, and
+    // `createScreen` auto-creates a per-screen group for new canvas
+    // rows, so in practice `canvasGroupId` is always set on a
+    // canvas-enabled screen. The `null` branch below is kept as a
+    // defensive fallback (transient state pre-backfill, or a row whose
+    // group was just deleted via ON DELETE SET NULL) — those screens
+    // are treated as solo until the operator reassigns them.
+    if (!screen.canvasEnabled) return [screen];
+    if (!screen.canvasGroupId) return [screen];
+    // Only count canvas-enabled siblings: a row that flipped
+    // canvasEnabled off (e.g. mid-PATCH "leave the wall") may still
+    // carry the old canvasGroupId until the operator reassigns it,
+    // and must not be treated as a wall member in the meantime.
     const members = await db
       .select()
       .from(screens)
       .where(
         and(
+          eq(screens.canvasGroupId, screen.canvasGroupId),
           eq(screens.canvasEnabled, true),
-          eq(screens.canvasWidth, screen.canvasWidth),
-          eq(screens.canvasHeight, screen.canvasHeight),
-          clientCondition,
         ),
       )
       .orderBy(asc(screens.createdAt), asc(screens.id));
-    // Defensive: if the seed got deleted between the caller's fetch
-    // and our query, fall back to it so the caller still sees ≥1 row.
     if (members.length === 0) return [screen];
-    // Task #176 — position-distinctness gate. A bucket is only a real
-    // wall when its members occupy ≥2 distinct (canvasX, canvasY)
-    // positions. Otherwise these screens are independent authoring
-    // tiles that happen to share dims and accidentally collide on the
-    // same offset (typically the (0, 0) default), and treating them as
-    // siblings would let heartbeats / pairing fan out across unrelated
-    // screens. Return the seed's freshly-fetched row alone in that case
-    // (NOT the stale input object — callers like setCanvasPairingState
-    // followed by getCanvasMembers expect the latest state).
-    const positions = new Set<string>();
-    for (const m of members) {
-      positions.add(`${m.canvasX ?? 0}|${m.canvasY ?? 0}`);
-      if (positions.size >= 2) break;
-    }
-    if (positions.size < 2) {
-      const fresh = members.find((m) => m.id === screen.id);
-      return [fresh ?? screen];
-    }
     return members;
   }
 
@@ -934,10 +966,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async backfillCanvasPairingState(): Promise<number> {
-    // Walks every canvas-enabled screen, regroups by
-    // (clientId, canvasWidth, canvasHeight), and forces all members
-    // to share one pairing snapshot. Idempotent — groups that already
-    // agree are skipped. Designed to be run once at boot before the
+    // Task #189 — walks every canvas-enabled screen, buckets by
+    // explicit `canvasGroupId`, and forces all members to share one
+    // pairing snapshot. Idempotent — groups that already agree are
+    // skipped. Lone-screen groups (the default for a fresh canvas
+    // screen) are skipped — there's nothing to fan out to. Designed to
+    // run once at boot AFTER backfillExplicitCanvasGroups, before the
     // first /api/player/pair or heartbeat hits the canvas-aware paths.
     const allCanvas = await db
       .select()
@@ -947,29 +981,15 @@ export class DatabaseStorage implements IStorage {
 
     const groups = new Map<string, Screen[]>();
     for (const s of allCanvas) {
-      if (
-        typeof s.canvasWidth !== "number" ||
-        s.canvasWidth <= 0 ||
-        typeof s.canvasHeight !== "number" ||
-        s.canvasHeight <= 0
-      ) {
-        continue;
-      }
-      const key = `${s.clientId ?? ""}|${s.canvasWidth}x${s.canvasHeight}`;
-      const arr = groups.get(key);
+      if (!s.canvasGroupId) continue;
+      const arr = groups.get(s.canvasGroupId);
       if (arr) arr.push(s);
-      else groups.set(key, [s]);
+      else groups.set(s.canvasGroupId, [s]);
     }
 
     let normalised = 0;
     for (const [, members] of groups) {
       if (members.length < 2) continue;
-      // Task #176 — only backfill real walls. Buckets that collapse to
-      // a single (canvasX, canvasY) are unrelated authoring screens
-      // and must not have their pairing identity merged.
-      const positions = new Set<string>();
-      for (const m of members) positions.add(`${m.canvasX ?? 0}|${m.canvasY ?? 0}`);
-      if (positions.size < 2) continue;
       const winner = pickCanvasPairingWinner(members);
       // Narrowed (Task #176/#180): only the PAIRING RUNTIME is shared
       // across the wall — `deviceToken` (the Pi token) and `isPaired`.
@@ -996,6 +1016,239 @@ export class DatabaseStorage implements IStorage {
       normalised++;
     }
     return normalised;
+  }
+
+  async backfillExplicitCanvasGroups(): Promise<{
+    groupsCreated: number;
+    screensStamped: number;
+  }> {
+    // Task #189 — promote the legacy implicit grouping (clientId +
+    // dims + ≥2 distinct positions) into explicit `canvas_groups`
+    // rows. After this runs, every canvas-enabled screen has a non-
+    // null `canvasGroupId`; real walls share one group, every other
+    // canvas screen owns a per-screen group.
+    //
+    // Idempotent — screens already stamped are skipped, so re-running
+    // (or running on a fresh DB) is a no-op.
+    const allCanvas = await db
+      .select()
+      .from(screens)
+      .where(eq(screens.canvasEnabled, true))
+      .orderBy(asc(screens.createdAt), asc(screens.id));
+
+    // Bucket unstamped screens by (clientId, w, h) so we can apply the
+    // same position-distinctness rule the legacy `getCanvasMembers`
+    // used. Anything already stamped passes straight through.
+    interface Bucket {
+      clientId: string | null;
+      w: number;
+      h: number;
+      members: Screen[];
+    }
+    const buckets = new Map<string, Bucket>();
+    const passthrough: Screen[] = [];
+    for (const s of allCanvas) {
+      if (s.canvasGroupId) {
+        passthrough.push(s);
+        continue;
+      }
+      if (
+        typeof s.canvasWidth !== "number" ||
+        s.canvasWidth <= 0 ||
+        typeof s.canvasHeight !== "number" ||
+        s.canvasHeight <= 0
+      ) {
+        // Defensive: a canvas-enabled screen with no dims can't be
+        // grouped because canvas_groups requires NOT NULL dims. Leave
+        // it unstamped — the operator will fix it via the UI before
+        // the screen does anything useful.
+        continue;
+      }
+      const key = `${s.clientId ?? ""}|${s.canvasWidth}x${s.canvasHeight}`;
+      const bucket = buckets.get(key);
+      if (bucket) bucket.members.push(s);
+      else
+        buckets.set(key, {
+          clientId: s.clientId ?? null,
+          w: s.canvasWidth,
+          h: s.canvasHeight,
+          members: [s],
+        });
+    }
+
+    let groupsCreated = 0;
+    let screensStamped = 0;
+
+    for (const bucket of buckets.values()) {
+      const positions = new Set<string>();
+      for (const m of bucket.members) {
+        positions.add(`${m.canvasX ?? 0}|${m.canvasY ?? 0}`);
+      }
+      if (positions.size >= 2 && bucket.members.length >= 2) {
+        // Real wall → one shared group. Name it after the earliest
+        // member so operators have a recognisable label they can
+        // rename later.
+        const lead = bucket.members[0];
+        const groupName = `${lead.name} (canvas)`;
+        const [group] = await db
+          .insert(canvasGroups)
+          .values({
+            clientId: bucket.clientId,
+            name: groupName,
+            canvasWidth: bucket.w,
+            canvasHeight: bucket.h,
+          })
+          .returning();
+        groupsCreated++;
+        const ids = bucket.members.map((m) => m.id);
+        await db
+          .update(screens)
+          .set({ canvasGroupId: group.id, updatedAt: new Date() } as any)
+          .where(inArray(screens.id, ids));
+        screensStamped += ids.length;
+      } else {
+        // Independent screens that just happened to share dims (or a
+        // legitimately solo canvas screen). Each gets its OWN
+        // per-screen group so future `getCanvasMembers` calls return
+        // just that screen and pairing never fans across unrelated
+        // tiles.
+        for (const m of bucket.members) {
+          const [group] = await db
+            .insert(canvasGroups)
+            .values({
+              clientId: m.clientId ?? null,
+              name: m.name,
+              canvasWidth: bucket.w,
+              canvasHeight: bucket.h,
+            })
+            .returning();
+          groupsCreated++;
+          await db
+            .update(screens)
+            .set({ canvasGroupId: group.id, updatedAt: new Date() } as any)
+            .where(eq(screens.id, m.id));
+          screensStamped++;
+        }
+      }
+    }
+
+    void passthrough; // explicit no-op for clarity
+    return { groupsCreated, screensStamped };
+  }
+
+  async backfillExplicitCanvasGroupsOnce(): Promise<{
+    groupsCreated: number;
+    screensStamped: number;
+    skipped: boolean;
+  }> {
+    // Task #189 — boot-claimed wrapper around `backfillExplicitCanvasGroups`.
+    //
+    // We can't rely on "marker exists → skip" alone: an earlier boot
+    // that crashed mid-backfill would leave the marker present with
+    // `status:"running"`, and every future boot would skip and
+    // permanently leave canvas screens un-stamped. The architect
+    // review surfaced this stuck-state risk explicitly.
+    //
+    // Skip semantics are therefore COMPLETION-based: only a marker
+    // whose payload reads `status:"completed"` is treated as
+    // "already done". Any other state (no marker, unparseable
+    // marker, `running`, or anything else) re-runs the backfill.
+    // The backfill itself is idempotent (it scans for screens with
+    // `canvasGroupId IS NULL` and only stamps those), so even
+    // concurrent boots that both decide to re-run will converge —
+    // the second pass simply finds nothing left to do.
+    const existing = await this.getSystemSetting(
+      CANVAS_GROUPS_BACKFILL_189_MARKER_KEY,
+    );
+    // `getSystemSetting` returns the SystemSetting row (or undefined);
+    // the JSON payload lives on `.value`. Without unwrapping it the
+    // parse below always throws and we'd re-run the backfill on every
+    // boot — defeating the "skip when completed" optimisation.
+    if (existing?.value) {
+      try {
+        const parsed = JSON.parse(existing.value) as { status?: string };
+        if (parsed?.status === "completed") {
+          return { groupsCreated: 0, screensStamped: 0, skipped: true };
+        }
+      } catch {
+        // Unparseable marker — treat as needs-rerun. The backfill
+        // is idempotent so this can never make things worse.
+      }
+    }
+    // Stamp the marker as "running" before we start so concurrent
+    // observers get a useful diagnostic. We DO NOT use this as a
+    // skip-gate; only the post-run "completed" stamp is.
+    await this.setSystemSetting(
+      CANVAS_GROUPS_BACKFILL_189_MARKER_KEY,
+      JSON.stringify({
+        status: "running",
+        claimedAt: new Date().toISOString(),
+      }),
+    );
+    const result = await this.backfillExplicitCanvasGroups();
+    await this.setSystemSetting(
+      CANVAS_GROUPS_BACKFILL_189_MARKER_KEY,
+      JSON.stringify({
+        status: "completed",
+        ranAt: new Date().toISOString(),
+        ...result,
+      }),
+    );
+    return { ...result, skipped: false };
+  }
+
+  // ─── Canvas Groups CRUD (Task #189) ──────────────────────────────
+
+  async getCanvasGroups(): Promise<CanvasGroup[]> {
+    return db
+      .select()
+      .from(canvasGroups)
+      .orderBy(asc(canvasGroups.createdAt), asc(canvasGroups.id));
+  }
+
+  async getCanvasGroup(id: string): Promise<CanvasGroup | undefined> {
+    const [row] = await db
+      .select()
+      .from(canvasGroups)
+      .where(eq(canvasGroups.id, id));
+    return row;
+  }
+
+  async createCanvasGroup(data: InsertCanvasGroup): Promise<CanvasGroup> {
+    const [row] = await db.insert(canvasGroups).values(data).returning();
+    return row;
+  }
+
+  async updateCanvasGroup(
+    id: string,
+    data: Partial<InsertCanvasGroup>,
+  ): Promise<CanvasGroup | undefined> {
+    const [row] = await db
+      .update(canvasGroups)
+      .set({ ...data, updatedAt: new Date() } as any)
+      .where(eq(canvasGroups.id, id))
+      .returning();
+    return row;
+  }
+
+  async deleteCanvasGroup(id: string): Promise<boolean> {
+    // Task #189 — refuse to delete a group that still owns screens.
+    // Operators must move members off (or canvas-disable them) first;
+    // otherwise the ON DELETE SET NULL would silently strand a wall
+    // of screens with no group, which breaks `getCanvasMembers` and
+    // the pairing fan-out. Surfaces a clear error to the route layer
+    // (`409 Conflict`) instead of letting data drift.
+    const referenced = await db
+      .select({ id: screens.id })
+      .from(screens)
+      .where(eq(screens.canvasGroupId, id))
+      .limit(1);
+    if (referenced.length > 0) return false;
+    const result = await db
+      .delete(canvasGroups)
+      .where(eq(canvasGroups.id, id))
+      .returning({ id: canvasGroups.id });
+    return result.length > 0;
   }
 
   async repairFalseCanvasPairingsOnce(): Promise<{
@@ -1060,81 +1313,55 @@ export class DatabaseStorage implements IStorage {
   }
 
   async repairFalseCanvasPairings(): Promise<number> {
-    // Task #176 step 4: for every canvas-enabled screen that is
-    // currently `isPaired = true` AND whose group under the tightened
-    // rule (the same rule `getCanvasMembers` and `groupScreensByCanvas`
-    // apply — a real wall requires ≥2 distinct (canvasX, canvasY))
-    // resolves to a SOLO group, reset its pairing + presence state and
-    // hand it a fresh pairing code.
+    // Task #176 step 4 (now Task #189) — under explicit grouping the
+    // false-grouping bug this method was written to repair can no
+    // longer occur on new data: every canvas screen lives in exactly
+    // one `canvas_groups` row and pairing only ever fans out to that
+    // group's members. The repair therefore degrades to "any paired
+    // canvas screen sitting in a lone-screen group whose pairing must
+    // be the result of a legacy false-fan-out". We re-walk explicit
+    // groups, find lone-member groups whose only screen is paired,
+    // and reset each one's pairing identity so operators re-pair
+    // intentionally.
     //
-    // We deliberately do NOT use a token-duplication heuristic to
-    // narrow this set: the inheritance bug could leave one victim
-    // behind (the original sibling has since been deleted, or its
-    // token was reset by another flow), and the spec is explicit that
-    // any paired solo canvas screen must be reset since pairing should
-    // only ever be granted via a real player handshake. Operators
-    // re-pair each repaired tile from the admin UI on next render.
-    //
-    // Idempotent: a second run finds no `isPaired = true` solo canvas
-    // screens because the first run cleared them all.
+    // This still gates the original Task #179 marker so it's run at
+    // most once per DB; on a clean install it does nothing.
     const allCanvas = await db
       .select()
       .from(screens)
       .where(eq(screens.canvasEnabled, true))
       .orderBy(asc(screens.createdAt), asc(screens.id));
 
-    // Bucket by (clientId, w, h) so we can apply the position-
-    // distinctness gate per bucket — exactly mirroring the rule used
-    // by `getCanvasMembers` and `groupScreensByCanvas`.
-    const buckets = new Map<string, Screen[]>();
+    const groups = new Map<string, Screen[]>();
     for (const s of allCanvas) {
-      if (
-        typeof s.canvasWidth !== "number" ||
-        s.canvasWidth <= 0 ||
-        typeof s.canvasHeight !== "number" ||
-        s.canvasHeight <= 0
-      ) {
-        continue;
-      }
-      const key = `${s.clientId ?? ""}|${s.canvasWidth}x${s.canvasHeight}`;
-      const arr = buckets.get(key);
+      if (!s.canvasGroupId) continue;
+      const arr = groups.get(s.canvasGroupId);
       if (arr) arr.push(s);
-      else buckets.set(key, [s]);
+      else groups.set(s.canvasGroupId, [s]);
     }
 
     let repaired = 0;
-    for (const [, members] of buckets) {
-      const positions = new Set<string>();
-      for (const m of members) {
-        positions.add(`${m.canvasX ?? 0}|${m.canvasY ?? 0}`);
-      }
-      // Real wall — every paired member legitimately shares pairing
-      // state via Task #173 fan-out. Leave alone.
-      if (positions.size >= 2) continue;
-      // Solo bucket (every member at the same offset). Each paired
-      // member is a victim of the old false-grouping behavior — even
-      // a lone bucket of one paired screen is suspect, because the
-      // pre-#176 backfill could have stamped pairing onto a screen
-      // that never had a player.
-      for (const m of members) {
-        if (!m.isPaired) continue;
-        const newPairingCode = await this.generateUniquePairingCode();
-        await db
-          .update(screens)
-          .set({
-            pairingCode: newPairingCode,
-            deviceToken: null,
-            isPaired: false,
-            isOnline: false,
-            lastSeen: null,
-            ipAddress: null,
-            hostname: null,
-            hardwareClass: null,
-            updatedAt: new Date(),
-          } as any)
-          .where(eq(screens.id, m.id));
-        repaired++;
-      }
+    for (const [, members] of groups) {
+      // Real wall — pairing fan-out is legitimate, leave alone.
+      if (members.length >= 2) continue;
+      const lone = members[0];
+      if (!lone.isPaired) continue;
+      const newPairingCode = await this.generateUniquePairingCode();
+      await db
+        .update(screens)
+        .set({
+          pairingCode: newPairingCode,
+          deviceToken: null,
+          isPaired: false,
+          isOnline: false,
+          lastSeen: null,
+          ipAddress: null,
+          hostname: null,
+          hardwareClass: null,
+          updatedAt: new Date(),
+        } as any)
+        .where(eq(screens.id, lone.id));
+      repaired++;
     }
     return repaired;
   }
@@ -1346,11 +1573,45 @@ export class DatabaseStorage implements IStorage {
     // screens.pairing_code is therefore guaranteed to be respected on
     // every insert path. If a test/seeder needs a deterministic code
     // it can update the row after creation, or use db.insert directly.
+    //
+    // Task #189: every canvas-enabled screen MUST live in a
+    // `canvas_groups` row. If the caller supplied a `canvasGroupId`
+    // we trust it (the route layer validates the FK + dim match).
+    // If the caller did NOT supply one but enabled canvas, we mint a
+    // fresh per-screen group so `getCanvasMembers` always finds at
+    // least the screen itself. Operators can move the screen into a
+    // shared wall group later via the UI.
     const { pairingCode: _ignoredCallerPairingCode, ...rest } = data;
+
+    let canvasGroupId = rest.canvasGroupId ?? null;
+    if (
+      rest.canvasEnabled &&
+      !canvasGroupId &&
+      typeof rest.canvasWidth === "number" &&
+      rest.canvasWidth > 0 &&
+      typeof rest.canvasHeight === "number" &&
+      rest.canvasHeight > 0
+    ) {
+      const [group] = await db
+        .insert(canvasGroups)
+        .values({
+          clientId: rest.clientId ?? null,
+          name: rest.name,
+          canvasWidth: rest.canvasWidth,
+          canvasHeight: rest.canvasHeight,
+        })
+        .returning();
+      canvasGroupId = group.id;
+    }
+
     return await this.withPairingCodeCollisionRetry(
       "createScreen",
       async (pairingCode) => {
-        const insertData: InsertScreen = { ...rest, pairingCode };
+        const insertData: InsertScreen = {
+          ...rest,
+          pairingCode,
+          canvasGroupId,
+        };
         const [screen] = await db
           .insert(screens)
           .values(insertData)
@@ -1552,6 +1813,41 @@ export class DatabaseStorage implements IStorage {
   async duplicateScreen(sourceId: string, name: string): Promise<Screen | undefined> {
     const [source] = await db.select().from(screens).where(eq(screens.id, sourceId));
     if (!source) return undefined;
+    // Task #189 — when duplicating a canvas-enabled screen we must
+    // NOT clone its `canvasGroupId`. Two reasons:
+    //   1. Cloning the FK would silently make the duplicate a wall
+    //      sibling of the original, fanning pairing identity across
+    //      what the operator clearly intends as an independent screen
+    //      ("Duplicate" in the UI is a "give me a fresh copy" affordance,
+    //      not "add another tile to this wall" — that's the canvas-
+    //      group picker).
+    //   2. The duplicate's position will overlap the source until the
+    //      operator moves it, which is fine for a separate group but
+    //      would re-introduce the false-grouping the explicit FK was
+    //      built to eliminate.
+    // We mint a per-screen group using the source's dims so the
+    // duplicate lands in the canonical "canvas-enabled + own group"
+    // shape. A canvas-disabled source produces a canvas-disabled
+    // duplicate with no group (correct).
+    let duplicateCanvasGroupId: string | null = null;
+    if (
+      source.canvasEnabled &&
+      typeof source.canvasWidth === "number" &&
+      source.canvasWidth > 0 &&
+      typeof source.canvasHeight === "number" &&
+      source.canvasHeight > 0
+    ) {
+      const [freshGroup] = await db
+        .insert(canvasGroups)
+        .values({
+          clientId: source.clientId,
+          name,
+          canvasWidth: source.canvasWidth,
+          canvasHeight: source.canvasHeight,
+        })
+        .returning();
+      duplicateCanvasGroupId = freshGroup.id;
+    }
     // Task #180 (round-7 review): route the mint+write through the
     // collision-retry helper so duplicateScreen has the same race-
     // safety guarantee as createScreen / rotateScreenPairingIdentity.
@@ -1570,6 +1866,7 @@ export class DatabaseStorage implements IStorage {
           canvasHeight: source.canvasHeight,
           canvasX: source.canvasX,
           canvasY: source.canvasY,
+          canvasGroupId: duplicateCanvasGroupId,
           screenshotEnabled: source.screenshotEnabled,
           testPatternEnabled: source.testPatternEnabled,
           showLiveBanner: source.showLiveBanner,

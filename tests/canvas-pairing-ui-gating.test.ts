@@ -24,7 +24,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { like } from "drizzle-orm";
 import { db } from "../server/db";
-import { clients, screens, type Screen } from "../shared/schema";
+import { canvasGroups, clients, screens, type Screen } from "../shared/schema";
 import {
   getCanvasPairingGating,
   groupScreensByCanvas,
@@ -35,7 +35,26 @@ const PREFIX = "__TEST_CVUI__";
 
 async function cleanup() {
   await db.delete(screens).where(like(screens.name, `${PREFIX}%`));
+  await db.delete(canvasGroups).where(like(canvasGroups.name, `${PREFIX}%`));
   await db.delete(clients).where(like(clients.name, `${PREFIX}%`));
+}
+
+async function makeCanvasGroup(
+  clientId: string,
+  width: number,
+  height: number,
+  label: string,
+): Promise<string> {
+  const [g] = await db
+    .insert(canvasGroups)
+    .values({
+      clientId,
+      name: `${PREFIX}${label}`,
+      canvasWidth: width,
+      canvasHeight: height,
+    })
+    .returning();
+  return g.id;
 }
 
 async function makeClient(label: string): Promise<string> {
@@ -54,6 +73,7 @@ interface MakeScreenOpts {
   canvasWidth?: number | null;
   canvasHeight?: number | null;
   canvasX?: number;
+  canvasGroupId?: string | null;
   isPaired?: boolean;
   isOnline?: boolean;
   pairingCode?: string | null;
@@ -61,6 +81,23 @@ interface MakeScreenOpts {
 }
 
 async function makeScreen(opts: MakeScreenOpts): Promise<Screen> {
+  // Task #189 — every canvas-enabled screen needs a canvas group.
+  // Mint a per-screen group when the caller didn't supply one.
+  let groupId = opts.canvasGroupId ?? null;
+  if (
+    opts.canvasEnabled &&
+    !groupId &&
+    opts.clientId &&
+    opts.canvasWidth != null &&
+    opts.canvasHeight != null
+  ) {
+    groupId = await makeCanvasGroup(
+      opts.clientId,
+      opts.canvasWidth,
+      opts.canvasHeight,
+      `auto-${opts.name}`,
+    );
+  }
   const values: typeof screens.$inferInsert = {
     name: `${PREFIX}${opts.name}`,
     clientId: opts.clientId,
@@ -69,6 +106,7 @@ async function makeScreen(opts: MakeScreenOpts): Promise<Screen> {
     canvasHeight: opts.canvasHeight ?? null,
     canvasX: opts.canvasX ?? 0,
     canvasY: 0,
+    canvasGroupId: groupId,
     isPaired: opts.isPaired ?? false,
     isOnline: opts.isOnline ?? false,
     pairingCode: opts.pairingCode ?? null,
@@ -107,15 +145,18 @@ test.after(cleanup);
 test("2-tile canvas, unpaired: owner shows pairing code + Regenerate Code; sibling shows NO inherits message and no controls (Task #179)", async () => {
   const clientId = await makeClient("ui-unpaired");
   const t0 = new Date("2026-07-01T00:00:00Z");
+  const wallGroup = await makeCanvasGroup(clientId, 3840, 1080, "ui-wall-unpaired");
 
   const ownerRow = await makeScreen({
     name: "uiOwner", clientId, createdAt: t0,
     canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080, canvasX: 0,
+    canvasGroupId: wallGroup,
     isPaired: false, pairingCode: "UIA001",
   });
   const siblingRow = await makeScreen({
     name: "uiSibling", clientId, createdAt: new Date(t0.getTime() + 1000),
     canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080, canvasX: 1920,
+    canvasGroupId: wallGroup,
     isPaired: false, pairingCode: "UIA002",
   });
 
@@ -157,16 +198,19 @@ test("2-tile canvas, unpaired: owner shows pairing code + Regenerate Code; sibli
 test("2-tile canvas, paired: owner shows Unpair Device; sibling shows Inherits message and no Unpair", async () => {
   const clientId = await makeClient("ui-paired");
   const t0 = new Date("2026-07-02T00:00:00Z");
+  const wallGroup = await makeCanvasGroup(clientId, 3840, 1080, "ui-wall-paired");
 
   const ownerRow = await makeScreen({
     name: "uiOwnerP", clientId, createdAt: t0,
     canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080, canvasX: 0,
+    canvasGroupId: wallGroup,
     isPaired: true, pairingCode: "UIP001",
     deviceToken: "tok-shared", isOnline: true,
   });
   const siblingRow = await makeScreen({
     name: "uiSiblingP", clientId, createdAt: new Date(t0.getTime() + 1000),
     canvasEnabled: true, canvasWidth: 3840, canvasHeight: 1080, canvasX: 1920,
+    canvasGroupId: wallGroup,
     isPaired: true, pairingCode: "UIP002",
     deviceToken: "tok-shared", isOnline: true,
   });

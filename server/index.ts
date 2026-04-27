@@ -101,6 +101,25 @@ app.use((req, res, next) => {
       process.exit(1);
     }
   }
+  // Task #189 — promote the legacy implicit (clientId + dims +
+  // distinct positions) grouping into explicit `canvas_groups` rows
+  // and stamp each canvas-enabled screen's `canvasGroupId`. Must run
+  // BEFORE the pairing-state backfill below so the pairing reconciler
+  // sees the new explicit groups. One-shot via system_settings marker.
+  try {
+    const result = await storage.backfillExplicitCanvasGroupsOnce();
+    if (result.skipped) {
+      log(
+        `[canvas-groups] explicit-grouping backfill already completed for this DB; skipping`,
+      );
+    } else {
+      log(
+        `[canvas-groups] explicit-grouping backfill: created ${result.groupsCreated} group(s), stamped ${result.screensStamped} screen(s)`,
+      );
+    }
+  } catch (err) {
+    console.error("[canvas-groups] explicit-grouping backfill failed:", err);
+  }
   // Implicit-canvas pairing (Task #173): pre-#173 walls may carry
   // mismatched per-tile pairing rows (different deviceTokens, codes,
   // or staleness). One-shot reconciliation at boot picks the most-

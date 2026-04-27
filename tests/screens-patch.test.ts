@@ -30,6 +30,7 @@ function makeScreen(overrides: Partial<DbScreen> & { id: string }): DbScreen {
     canvasHeight: null,
     canvasX: 0,
     canvasY: 0,
+    canvasGroupId: null,
     locked: false,
     screenshotEnabled: false,
     lastScreenshot: null,
@@ -299,4 +300,163 @@ test("PATCH /api/screens/:id returns 404 for unknown screen", async () => {
   );
 
   assert.equal(status, 404);
+});
+
+// ─── Task #189 — PATCH guards around `canvasGroupId` ──────────────
+//
+// These tests pin three behaviours the architect review flagged as
+// gaps:
+//   1. A patch that changes `canvasWidth`/`canvasHeight` (or
+//      `clientId`) without re-asserting `canvasGroupId` must still
+//      validate the EXISTING binding against the post-patch dims and
+//      reject if it no longer fits — a stale FK that "looked safe"
+//      because the payload didn't touch it should not be persisted.
+//   2. An explicit `canvasGroupId: null` while canvas remains enabled
+//      is rejected — the explicit-FK invariant requires every
+//      canvas-enabled screen to carry a group binding.
+//   3. Disabling canvas (`canvasEnabled: false`) must clear any
+//      lingering `canvasGroupId`, even if the patch payload didn't
+//      mention it — otherwise the screen ends up canvas-disabled
+//      while still pointing at a group.
+//
+// We extend the `FakeStorage` shape with a tiny `getCanvasGroup`
+// stub so the handler's effective-state validation can resolve
+// (or fail to resolve) the FK without needing the full DB.
+
+interface FakeCanvasGroup {
+  id: string;
+  clientId: string | null;
+  canvasWidth: number;
+  canvasHeight: number;
+  name: string;
+}
+
+function makeFakeStorageWithGroups(
+  initial: DbScreen,
+  groups: FakeCanvasGroup[],
+) {
+  const base = makeFakeStorage(initial);
+  const byId = new Map(groups.map((g) => [g.id, g]));
+  return {
+    ...base,
+    storage: {
+      ...base.storage,
+      async getCanvasGroup(id: string) {
+        return byId.get(id);
+      },
+    } as unknown as FakeStorage,
+  };
+}
+
+test("PATCH /api/screens/:id — Task #189: changing canvas dims invalidates the existing canvasGroupId binding even when the patch didn't touch it", async () => {
+  const groupId = "group-3840x1080";
+  const fake = makeFakeStorageWithGroups(
+    makeScreen({
+      id: "screen-1",
+      clientId: "client-A",
+      canvasEnabled: true,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+      canvasGroupId: groupId,
+      name: "WallTile",
+    }),
+    [
+      {
+        id: groupId,
+        clientId: "client-A",
+        canvasWidth: 3840,
+        canvasHeight: 1080,
+        name: "Lobby Wall",
+      },
+    ],
+  );
+
+  // Patch only changes the dims — canvasGroupId is untouched in the
+  // payload. The handler must STILL validate the existing binding
+  // against the new dims and reject the mismatch.
+  const { status, body } = await withTestServer(fake.storage, {
+    canvasWidth: 1920,
+    canvasHeight: 1080,
+  });
+  assert.equal(status, 400);
+  assert.match(
+    String((body as { error?: string }).error ?? ""),
+    /canvas group dimensions/i,
+  );
+  assert.equal(
+    fake.getLastUpdateArg(),
+    null,
+    "no DB write should happen when validation rejects the patch",
+  );
+});
+
+test("PATCH /api/screens/:id — Task #189: explicit canvasGroupId:null is rejected while canvasEnabled remains true", async () => {
+  const groupId = "group-3840x1080";
+  const fake = makeFakeStorageWithGroups(
+    makeScreen({
+      id: "screen-1",
+      clientId: "client-A",
+      canvasEnabled: true,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+      canvasGroupId: groupId,
+      name: "WallTile",
+    }),
+    [
+      {
+        id: groupId,
+        clientId: "client-A",
+        canvasWidth: 3840,
+        canvasHeight: 1080,
+        name: "Lobby Wall",
+      },
+    ],
+  );
+
+  const { status, body } = await withTestServer(fake.storage, {
+    canvasGroupId: null,
+  });
+  assert.equal(status, 400);
+  assert.match(
+    String((body as { error?: string }).error ?? ""),
+    /detach canvas group while canvas is enabled/i,
+  );
+  assert.equal(fake.getLastUpdateArg(), null);
+});
+
+test("PATCH /api/screens/:id — Task #189: disabling canvas clears canvasGroupId automatically", async () => {
+  const groupId = "group-3840x1080";
+  const fake = makeFakeStorageWithGroups(
+    makeScreen({
+      id: "screen-1",
+      clientId: "client-A",
+      canvasEnabled: true,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+      canvasGroupId: groupId,
+      name: "WallTile",
+    }),
+    [
+      {
+        id: groupId,
+        clientId: "client-A",
+        canvasWidth: 3840,
+        canvasHeight: 1080,
+        name: "Lobby Wall",
+      },
+    ],
+  );
+
+  const { status } = await withTestServer(fake.storage, {
+    canvasEnabled: false,
+  });
+  assert.equal(status, 200);
+  const persisted = fake.getLastUpdateArg();
+  assert.ok(persisted, "PATCH should have produced a storage update");
+  assert.equal(
+    (persisted as { canvasGroupId?: string | null }).canvasGroupId,
+    null,
+    "disabling canvas must drop the group binding so no stale FK survives",
+  );
+  assert.equal(fake.getRow().canvasGroupId, null);
 });

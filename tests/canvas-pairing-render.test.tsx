@@ -26,7 +26,7 @@ import * as React from "react";
 import { like } from "drizzle-orm";
 import { renderToStaticMarkup } from "react-dom/server";
 import { db } from "../server/db";
-import { clients, screens, type Screen } from "../shared/schema";
+import { canvasGroups, clients, screens, type Screen } from "../shared/schema";
 import {
   getCanvasPairingGating,
   groupScreensByCanvas,
@@ -42,6 +42,7 @@ const PREFIX = "__TEST_CVRENDER__";
 
 async function cleanup() {
   await db.delete(screens).where(like(screens.name, `${PREFIX}%`));
+  await db.delete(canvasGroups).where(like(canvasGroups.name, `${PREFIX}%`));
   await db.delete(clients).where(like(clients.name, `${PREFIX}%`));
 }
 
@@ -53,11 +54,32 @@ async function makeClient(label: string): Promise<string> {
   return c.id;
 }
 
+// Task #189 — every canvas-enabled screen must belong to an explicit
+// `canvas_groups` row. Tests that want sibling screens (a real wall)
+// share one group via `canvasGroupId`; tests that want a solo screen
+// pass nothing and we auto-mint a per-screen group.
+async function makeCanvasGroup(
+  clientId: string,
+  label: string,
+): Promise<string> {
+  const [g] = await db
+    .insert(canvasGroups)
+    .values({
+      clientId,
+      name: `${PREFIX}${label}`,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+    })
+    .returning();
+  return g.id;
+}
+
 interface MakeScreenOpts {
   name: string;
   clientId: string;
   createdAt: Date;
   canvasX?: number;
+  canvasGroupId?: string;
   isPaired?: boolean;
   pairingCode?: string | null;
   isOnline?: boolean;
@@ -65,6 +87,8 @@ interface MakeScreenOpts {
 }
 
 async function makeCanvasScreen(opts: MakeScreenOpts): Promise<Screen> {
+  const canvasGroupId =
+    opts.canvasGroupId ?? (await makeCanvasGroup(opts.clientId, opts.name));
   const values: typeof screens.$inferInsert = {
     name: `${PREFIX}${opts.name}`,
     clientId: opts.clientId,
@@ -73,6 +97,7 @@ async function makeCanvasScreen(opts: MakeScreenOpts): Promise<Screen> {
     canvasHeight: 1080,
     canvasX: opts.canvasX ?? 0,
     canvasY: 0,
+    canvasGroupId,
     isPaired: opts.isPaired ?? false,
     isOnline: opts.isOnline ?? false,
     pairingCode: opts.pairingCode ?? null,
@@ -147,11 +172,15 @@ test.after(cleanup);
 test("DOM render — 2-tile canvas, unpaired: owner card markup shows pairing code + Regenerate Code; sibling card markup hides the inherits message (Task #179)", async () => {
   const clientId = await makeClient("ren-unpaired");
   const t0 = new Date("2026-08-01T00:00:00Z");
+  // Task #189 — owner + sibling share an explicit canvas group so they
+  // are recognised as a real wall.
+  const wallGroupId = await makeCanvasGroup(clientId, "ren-unpaired-wall");
   const ownerRow = await makeCanvasScreen({
     name: "renOwner",
     clientId,
     createdAt: t0,
     canvasX: 0,
+    canvasGroupId: wallGroupId,
     isPaired: false,
     pairingCode: "RND01A",
   });
@@ -160,6 +189,7 @@ test("DOM render — 2-tile canvas, unpaired: owner card markup shows pairing co
     clientId,
     createdAt: new Date(t0.getTime() + 1000),
     canvasX: 1920,
+    canvasGroupId: wallGroupId,
     isPaired: false,
     pairingCode: "RND01B",
   });
@@ -213,11 +243,14 @@ test("DOM render — 2-tile canvas, unpaired: owner card markup shows pairing co
 test("DOM render — 2-tile canvas, paired: owner card markup shows Unpair Device; sibling card markup shows Inherits message and no controls", async () => {
   const clientId = await makeClient("ren-paired");
   const t0 = new Date("2026-08-02T00:00:00Z");
+  // Task #189 — owner + sibling share an explicit canvas group.
+  const wallGroupId = await makeCanvasGroup(clientId, "ren-paired-wall");
   const ownerRow = await makeCanvasScreen({
     name: "renOwnerP",
     clientId,
     createdAt: t0,
     canvasX: 0,
+    canvasGroupId: wallGroupId,
     isPaired: true,
     pairingCode: "RND02A",
     deviceToken: "tok-shared",
@@ -228,6 +261,7 @@ test("DOM render — 2-tile canvas, paired: owner card markup shows Unpair Devic
     clientId,
     createdAt: new Date(t0.getTime() + 1000),
     canvasX: 1920,
+    canvasGroupId: wallGroupId,
     isPaired: true,
     pairingCode: "RND02B",
     deviceToken: "tok-shared",

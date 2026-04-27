@@ -104,7 +104,7 @@ import {
 } from "lucide-react";
 import { useSiteContext } from "@/hooks/use-site-context";
 import { useAuth } from "@/hooks/use-auth";
-import type { Screen, DisplayProfile, LiveOverride, Event, LayoutTemplate, Client, Playlist, ScreenEventBooking } from "@shared/schema";
+import type { Screen, DisplayProfile, LiveOverride, Event, LayoutTemplate, Client, Playlist, ScreenEventBooking, CanvasGroup as CanvasGroupRow } from "@shared/schema";
 import { WeatherLocationPicker } from "@/components/weather-location-picker";
 import { ScreensTable } from "@/components/screens-table";
 import { ScreenBookingStatus } from "@/components/screen-booking-status";
@@ -155,6 +155,7 @@ const screenFormSchema = z.object({
   canvasHeight: z.number().min(1, "Canvas height is required").optional(),
   canvasX: z.number().min(0).default(0),
   canvasY: z.number().min(0).default(0),
+  canvasGroupId: z.string().nullable().optional(),
   roomCapacity: z.number().int().min(0).optional().nullable(),
   weatherLat: z.string().optional(),
   weatherLng: z.string().optional(),
@@ -278,11 +279,151 @@ function CanvasPreview({
   );
 }
 
+// Task #189 — picker for the explicit `canvasGroupId` FK. Shows
+// groups for the current site whose dims match the form's
+// canvasWidth/Height (mismatched groups would be rejected by the
+// route validator anyway, so don't even offer them). Includes an
+// inline "+ New group" button that POSTs /api/canvas-groups using
+// the form's current site + dims and auto-selects the new row.
+function CanvasGroupPicker({
+  form,
+  prefix,
+  canvasGroupsList,
+}: {
+  form: any;
+  prefix: string;
+  canvasGroupsList: CanvasGroupRow[];
+}) {
+  const { toast } = useToast();
+  const watchedClientId = (form.watch("clientId") as string | null | undefined) || null;
+  const watchedWidth = form.watch("canvasWidth") as number | undefined;
+  const watchedHeight = form.watch("canvasHeight") as number | undefined;
+  const watchedGroupId = (form.watch("canvasGroupId") as string | null | undefined) || "";
+
+  // Match-or-mismatch. We only show groups for the same client AND
+  // the same dims — anything else would fail server validation. A
+  // mismatching currently-selected group still gets surfaced so the
+  // operator can see WHY they're being warned (rather than the
+  // dropdown silently going blank).
+  const eligibleGroups = useMemo(() => {
+    return canvasGroupsList.filter(
+      (g) =>
+        g.clientId === watchedClientId &&
+        (!watchedWidth || g.canvasWidth === watchedWidth) &&
+        (!watchedHeight || g.canvasHeight === watchedHeight),
+    );
+  }, [canvasGroupsList, watchedClientId, watchedWidth, watchedHeight]);
+
+  const selectedRow = canvasGroupsList.find((g) => g.id === watchedGroupId);
+  const selectedMismatch =
+    !!selectedRow &&
+    (!!watchedWidth && selectedRow.canvasWidth !== watchedWidth ||
+      !!watchedHeight && selectedRow.canvasHeight !== watchedHeight ||
+      selectedRow.clientId !== watchedClientId);
+
+  const createGroupMutation = useMutation<CanvasGroupRow, Error, void>({
+    mutationFn: async () => {
+      if (!watchedClientId) throw new Error("Pick a site first");
+      if (!watchedWidth || !watchedHeight) {
+        throw new Error("Set canvas width and height first");
+      }
+      const namePrompt = window.prompt(
+        "Name this canvas group (e.g. 'Lobby Wall'):",
+        `Wall ${watchedWidth}×${watchedHeight}`,
+      );
+      if (!namePrompt) throw new Error("__CANCELLED__");
+      const trimmed = namePrompt.trim();
+      if (!trimmed) throw new Error("Name is required");
+      return apiRequest("POST", "/api/canvas-groups", {
+        clientId: watchedClientId,
+        name: trimmed,
+        canvasWidth: watchedWidth,
+        canvasHeight: watchedHeight,
+      });
+    },
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/canvas-groups"] });
+      form.setValue("canvasGroupId", created.id, { shouldDirty: true });
+      toast({ title: `Created canvas group '${created.name}'` });
+    },
+    onError: (err) => {
+      if (err.message === "__CANCELLED__") return;
+      toast({
+        title: "Could not create canvas group",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const NONE_VALUE = "__none__";
+  return (
+    <div className="space-y-1" data-testid={`${prefix}-canvas-group-row`}>
+      <Label className="text-xs">Canvas Group</Label>
+      <div className="flex gap-2">
+        <Select
+          value={watchedGroupId || NONE_VALUE}
+          onValueChange={(v) =>
+            form.setValue("canvasGroupId", v === NONE_VALUE ? null : v, {
+              shouldDirty: true,
+            })
+          }
+        >
+          <SelectTrigger
+            className="h-9 text-xs"
+            data-testid={`${prefix}-canvas-group-select`}
+          >
+            <SelectValue placeholder="(none — solo screen)" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NONE_VALUE}>(none — solo screen)</SelectItem>
+            {eligibleGroups.map((g) => (
+              <SelectItem key={g.id} value={g.id}>
+                {g.name} ({g.canvasWidth}×{g.canvasHeight})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9 shrink-0"
+          disabled={
+            !watchedClientId ||
+            !watchedWidth ||
+            !watchedHeight ||
+            createGroupMutation.isPending
+          }
+          onClick={() => createGroupMutation.mutate()}
+          data-testid={`${prefix}-canvas-group-new`}
+        >
+          + New group
+        </Button>
+      </div>
+      {selectedMismatch && (
+        <p
+          className="text-[11px] text-amber-700 dark:text-amber-400"
+          data-testid={`${prefix}-canvas-group-mismatch`}
+        >
+          Selected group does not match this screen's site or canvas size and
+          will be rejected on save.
+        </p>
+      )}
+      <p className="text-[11px] text-muted-foreground">
+        Tiles in the same group form one wall (one shared device pairing). Leave
+        as “(none — solo screen)” to keep this screen independent.
+      </p>
+    </div>
+  );
+}
+
 function CanvasFields({
   form,
   profiles,
   prefix,
   canvasGroups,
+  canvasGroupsList,
   excludeScreenId,
   allProfiles,
 }: {
@@ -296,6 +437,11 @@ function CanvasFields({
   // sibling rendering entirely (e.g. for a brand-new screen with no
   // wall context yet).
   canvasGroups?: Map<string, CanvasGroup>;
+  // Task #189 — full canvas-group rows for the picker dropdown.
+  // Filtered to the currently-selected client + matching dims at
+  // render time. Optional because the legacy table-view callsite
+  // doesn't bother with the picker.
+  canvasGroupsList?: CanvasGroupRow[];
   excludeScreenId?: string;
   // Full unfiltered profile list, needed to look up profile sizes for
   // siblings whose displayProfileId may belong to a different site
@@ -318,14 +464,17 @@ function CanvasFields({
   // width/height should immediately retarget which wall this screen
   // belongs to (and therefore which ghost rectangles + warnings to
   // show), not wait for save.
+  const watchedCanvasGroupId = form.watch("canvasGroupId");
   const siblings: CanvasSiblingRect[] = useMemo(() => {
     if (!canvasGroups) return [];
+    // Task #189 — sibling preview now keys off the explicitly-selected
+    // canvas group (form value `canvasGroupId`). Two same-dim screens
+    // in DIFFERENT groups must NOT show as wall siblings of each
+    // other, which is the whole point of the explicit-group rewrite.
     const liveSiblings = siblingsForCanvasParams(
       {
         excludeScreenId,
-        clientId: watchedClientId || null,
-        canvasWidth: form.watch("canvasWidth"),
-        canvasHeight: form.watch("canvasHeight"),
+        canvasGroupId: watchedCanvasGroupId || null,
       },
       canvasGroups,
     );
@@ -438,6 +587,11 @@ function CanvasFields({
           <p className="text-xs text-muted-foreground">
             Position this screen within a larger canvas (e.g., for video walls).
           </p>
+          <CanvasGroupPicker
+            form={form}
+            prefix={prefix}
+            canvasGroupsList={canvasGroupsList ?? []}
+          />
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label className="text-xs">Canvas Width (px)</Label>
@@ -1236,6 +1390,7 @@ function ScreenCard({
   playlists,
   clients,
   canvasGroups,
+  canvasGroupsList,
   activeOverride,
   editOpen: editOpenProp,
   onEditOpenChange,
@@ -1256,6 +1411,9 @@ function ScreenCard({
   // passed down so each card doesn't re-group the entire screens
   // list on every render.
   canvasGroups: Map<string, CanvasGroup>;
+  // Task #189 — explicit canvas-group rows. Used to look up a
+  // friendly name when this screen is part of a multi-screen wall.
+  canvasGroupsList?: CanvasGroupRow[];
   activeOverride: LiveOverride | null;
   editOpen?: boolean;
   onEditOpenChange?: (open: boolean) => void;
@@ -1443,6 +1601,7 @@ function ScreenCard({
       canvasHeight: screen.canvasHeight || undefined,
       canvasX: screen.canvasX || 0,
       canvasY: screen.canvasY || 0,
+      canvasGroupId: screen.canvasGroupId ?? null,
       roomCapacity: screen.roomCapacity ?? null,
       weatherLat: screen.weatherLat ?? "",
       weatherLng: screen.weatherLng ?? "",
@@ -1463,6 +1622,7 @@ function ScreenCard({
         canvasHeight: data.canvasEnabled ? data.canvasHeight : null,
         canvasX: data.canvasEnabled ? (data.canvasX || 0) : 0,
         canvasY: data.canvasEnabled ? (data.canvasY || 0) : 0,
+        canvasGroupId: data.canvasEnabled ? (data.canvasGroupId || null) : null,
         roomCapacity: data.roomCapacity == null || Number.isNaN(data.roomCapacity) ? null : data.roomCapacity,
         weatherLat: data.weatherLat?.trim() ? data.weatherLat.trim() : null,
         weatherLng: data.weatherLng?.trim() ? data.weatherLng.trim() : null,
@@ -1902,6 +2062,7 @@ function ScreenCard({
                       profiles={siteProfiles}
                       prefix="edit"
                       canvasGroups={canvasGroups}
+                      canvasGroupsList={canvasGroupsList}
                       excludeScreenId={screen.id}
                       allProfiles={profiles}
                     />
@@ -2087,6 +2248,22 @@ function ScreenCard({
             Position ({screen.canvasX || 0}, {screen.canvasY || 0}) on {screen.canvasWidth}×{screen.canvasHeight} canvas
           </div>
         )}
+        {screen.canvasEnabled && screen.canvasGroupId && siblingScreens.length >= 1 && (() => {
+          // Task #189 — only surface the group name on actual walls
+          // (≥2 members including self). Lone-tile groups would just
+          // be visual noise.
+          const grp = canvasGroupsList?.find((g) => g.id === screen.canvasGroupId);
+          if (!grp) return null;
+          return (
+            <div
+              className="flex items-center gap-1.5 text-xs text-muted-foreground"
+              data-testid={`text-canvas-group-name-${screen.id}`}
+            >
+              <Grid3X3 className="h-3 w-3" />
+              Wall: {grp.name} ({siblingScreens.length + 1} tiles)
+            </div>
+          );
+        })()}
         <ScreenBookingStatus screenId={screen.id} />
         {/* Owner-only pairing-code panel + sibling inherits message —
             shared with tests/canvas-pairing-render.test.tsx via the
@@ -2393,6 +2570,7 @@ function CreateScreenDialog({
   events,
   clients,
   canvasGroups,
+  canvasGroupsList,
   controlledOpen,
   onControlledOpenChange,
   initialValues,
@@ -2408,6 +2586,8 @@ function CreateScreenDialog({
   // canvas dimensions / picks a site. Not having groups means the
   // dialog still works, just without that wall context.
   canvasGroups?: Map<string, CanvasGroup>;
+  // Task #189 — explicit canvas group rows for the picker.
+  canvasGroupsList?: CanvasGroupRow[];
   controlledOpen?: boolean;
   onControlledOpenChange?: (open: boolean) => void;
   initialValues?: Partial<ScreenFormValues>;
@@ -2439,6 +2619,7 @@ function CreateScreenDialog({
     canvasHeight: undefined,
     canvasX: 0,
     canvasY: 0,
+    canvasGroupId: null,
     roomCapacity: null,
     weatherLat: "",
     weatherLng: "",
@@ -2609,6 +2790,7 @@ function CreateScreenDialog({
               profiles={siteProfiles}
               prefix="create"
               canvasGroups={canvasGroups}
+              canvasGroupsList={canvasGroupsList}
               allProfiles={profiles}
             />
             <RoomAndWeatherFields form={form} prefix="create" />
@@ -2748,6 +2930,7 @@ function SortableScreenCard(props: {
   playlists: Playlist[];
   clients: Client[];
   canvasGroups: Map<string, CanvasGroup>;
+  canvasGroupsList?: CanvasGroupRow[];
   activeOverride: LiveOverride | null;
   dragEnabled: boolean;
   dragDisabledReason?: string;
@@ -2801,6 +2984,7 @@ function SortableScreenCard(props: {
         playlists={props.playlists}
         clients={props.clients}
         canvasGroups={props.canvasGroups}
+        canvasGroupsList={props.canvasGroupsList}
         activeOverride={props.activeOverride}
         dragHandle={handle}
         onMoveToStart={props.onMoveToStart}
@@ -2822,6 +3006,14 @@ export default function ScreensPage() {
 
   const { data: clients = [] } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
+  });
+
+  // Task #189 — fetch the explicit canvas-group rows. The picker in
+  // CanvasFields uses this list (filtered by current site) and the
+  // ScreenCard uses it to look up a friendly group name when a screen
+  // belongs to a multi-screen wall.
+  const { data: canvasGroupsList = [] } = useQuery<CanvasGroupRow[]>({
+    queryKey: ["/api/canvas-groups"],
   });
 
   const eventsQueryConfig = useSiteFilteredQuery<Event[]>("/api/events");
@@ -3029,6 +3221,7 @@ export default function ScreensPage() {
             events={events}
             clients={clients}
             canvasGroups={canvasGroups}
+            canvasGroupsList={canvasGroupsList}
           />
         </div>
       </div>
@@ -3147,6 +3340,7 @@ export default function ScreensPage() {
               events={events}
               clients={clients}
               canvasGroups={canvasGroups}
+              canvasGroupsList={canvasGroupsList}
             />
           </CardContent>
         </Card>
@@ -3171,6 +3365,7 @@ export default function ScreensPage() {
                     playlists={playlists}
                     clients={clients}
                     canvasGroups={canvasGroups}
+                    canvasGroupsList={canvasGroupsList}
                     activeOverride={getActiveOverrideForScreen(screen.id)}
                     dragEnabled={dragEnabled}
                     dragDisabledReason={dragDisabledReason}
@@ -3216,6 +3411,7 @@ export default function ScreensPage() {
                   playlists={playlists}
                   clients={clients}
                   canvasGroups={canvasGroups}
+                  canvasGroupsList={canvasGroupsList}
                   activeOverride={getActiveOverrideForScreen(editingScreen.id)}
                   editOpen={true}
                   onEditOpenChange={(open) => {

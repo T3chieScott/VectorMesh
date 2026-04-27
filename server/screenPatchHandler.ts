@@ -53,6 +53,7 @@ type ScreenPatchStorage = Pick<
   | "updateScreen"
   | "getCanvasMembers"
   | "reconcileWallPairingAfterChange"
+  | "getCanvasGroup"
 >;
 
 type AuditFn = (
@@ -105,6 +106,70 @@ export function buildScreenPatchHandler(
         body.canvasY = 0;
       }
       const data = insertScreenSchema.partial().parse(body);
+      // Task #189 — explicit canvas group validation, computed against
+      // the EFFECTIVE post-patch state (existing row merged with the
+      // patch payload). This catches three classes of regression:
+      //   1. Patch sets `canvasGroupId` to a group that doesn't exist,
+      //      belongs to a different site, or has wrong dims.
+      //   2. Patch changes `clientId`, `canvasWidth`, `canvasHeight`,
+      //      or `canvasEnabled` WITHOUT touching `canvasGroupId` —
+      //      the existing group binding can become invalid even though
+      //      the patch payload looks innocent. Validating effective
+      //      state catches this too.
+      //   3. Patch tries to detach (`canvasGroupId: null`) while
+      //      canvas remains enabled — that would leave the screen in
+      //      a state our invariants forbid (canvas-enabled rows must
+      //      always carry a canvasGroupId). Reject.
+      // When the patch disables canvas, we proactively NULL the group
+      // binding so a stale FK can't survive the disable.
+      const effectiveCanvasEnabled =
+        data.canvasEnabled !== undefined
+          ? data.canvasEnabled
+          : existing.canvasEnabled;
+      const effectiveClientId =
+        data.clientId !== undefined ? data.clientId : existing.clientId;
+      const effectiveWidth =
+        data.canvasWidth !== undefined ? data.canvasWidth : existing.canvasWidth;
+      const effectiveHeight =
+        data.canvasHeight !== undefined
+          ? data.canvasHeight
+          : existing.canvasHeight;
+      if (effectiveCanvasEnabled === false || effectiveCanvasEnabled === null) {
+        // Canvas going (or staying) off — drop any group binding so
+        // we never persist a canvas-disabled row pointing at a group.
+        data.canvasGroupId = null;
+      } else {
+        const effectiveCanvasGroupId =
+          data.canvasGroupId !== undefined
+            ? data.canvasGroupId
+            : existing.canvasGroupId;
+        if (data.canvasGroupId === null) {
+          return res.status(400).json({
+            error:
+              "Cannot detach canvas group while canvas is enabled — assign a different group or disable canvas first",
+          });
+        }
+        if (effectiveCanvasGroupId) {
+          const group = await storage.getCanvasGroup(effectiveCanvasGroupId);
+          if (!group) {
+            return res.status(400).json({ error: "Canvas group not found" });
+          }
+          if (group.clientId !== effectiveClientId) {
+            return res.status(400).json({
+              error: "Canvas group belongs to a different site",
+            });
+          }
+          if (
+            group.canvasWidth !== effectiveWidth ||
+            group.canvasHeight !== effectiveHeight
+          ) {
+            return res.status(400).json({
+              error:
+                "Canvas group dimensions do not match the screen's canvas size",
+            });
+          }
+        }
+      }
       // Task #180: snapshot wall membership BEFORE the update so the
       // reconciler can detect "patched screen left its wall" or "wall
       // dissolved into solo survivors". Cheap when the screen isn't a

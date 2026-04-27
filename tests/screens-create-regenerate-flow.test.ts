@@ -37,7 +37,7 @@ import type { Server } from "node:http";
 import { eq, like } from "drizzle-orm";
 import { db } from "../server/db";
 import { storage } from "../server/storage";
-import { clients, screens, type Screen } from "../shared/schema";
+import { canvasGroups, clients, screens, type Screen } from "../shared/schema";
 import { buildScreenCreateHandler } from "../server/screenCreateHandler";
 import {
   buildScreenRegeneratePairingHandler,
@@ -51,6 +51,7 @@ const PREFIX = "__TEST_S182__";
 
 async function cleanup() {
   await db.delete(screens).where(like(screens.name, `${PREFIX}%`));
+  await db.delete(canvasGroups).where(like(canvasGroups.name, `${PREFIX}%`));
   await db.delete(clients).where(like(clients.name, `${PREFIX}%`));
 }
 
@@ -202,6 +203,18 @@ test("buildCreateScreenRequestBody trims weather strings and applies defaults (T
 
 test("happy path: two canvas tiles get unique server-minted codes; regenerate rotates the whole wall (Task #182)", async () => {
   const clientId = await makeClient("happy");
+  // Task #189 — operator creates a wall group up front; both tiles
+  // post into it so the server treats them as a single wall and
+  // regenerate fans rotation across both members.
+  const [wallGroup] = await db
+    .insert(canvasGroups)
+    .values({
+      clientId,
+      name: `${PREFIX}happy-wall`,
+      canvasWidth: 3840,
+      canvasHeight: 1080,
+    })
+    .returning();
   const { baseUrl, close } = await startTestApp();
   try {
     // The same body shape `screens.tsx` sends via
@@ -216,6 +229,7 @@ test("happy path: two canvas tiles get unique server-minted codes; regenerate ro
         canvasHeight: 1080,
         canvasX,
         canvasY: 0,
+        canvasGroupId: wallGroup.id,
       });
 
     const a = await postJson(baseUrl, "/api/screens", tileBody("happyA", 0));

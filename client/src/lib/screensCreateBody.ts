@@ -21,6 +21,12 @@ export interface ScreenCreateFormInput {
   canvasHeight?: number;
   canvasX?: number;
   canvasY?: number;
+  // Task #189 — operator-selected canvas group. When provided the
+  // server validates it belongs to the same client and that the
+  // group's dims match canvasWidth/canvasHeight; when omitted the
+  // server auto-mints a per-screen group so every canvas-enabled
+  // screen always lives in exactly one group.
+  canvasGroupId?: string | null;
   roomCapacity?: number | null;
   weatherLat?: string;
   weatherLng?: string;
@@ -40,6 +46,7 @@ export interface ScreenCreateRequestBody {
   canvasHeight: number | null;
   canvasX: number;
   canvasY: number;
+  canvasGroupId: string | null;
   roomCapacity: number | null;
   weatherLat: string | null;
   weatherLng: string | null;
@@ -63,6 +70,7 @@ export function buildCreateScreenRequestBody(
     canvasHeight: data.canvasEnabled ? (data.canvasHeight ?? null) : null,
     canvasX: data.canvasEnabled ? (data.canvasX || 0) : 0,
     canvasY: data.canvasEnabled ? (data.canvasY || 0) : 0,
+    canvasGroupId: data.canvasEnabled ? (data.canvasGroupId ?? null) : null,
     roomCapacity:
       data.roomCapacity == null || Number.isNaN(data.roomCapacity)
         ? null
