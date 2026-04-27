@@ -124,28 +124,6 @@ export function buildScreenPatchHandler(
           : existing.canvasHeight;
       if (effectiveCanvasEnabled === false || effectiveCanvasEnabled === null) {
         data.canvasGroupId = null;
-      } else if (data.canvasGroupId === null) {
-        // "Leave the wall → solo screen": auto-mint a fresh per-screen
-        // group instead of rejecting, so the operator workflow works
-        // and the screen never lands in a groupless state.
-        if (
-          typeof effectiveWidth !== "number" ||
-          effectiveWidth < 1 ||
-          typeof effectiveHeight !== "number" ||
-          effectiveHeight < 1
-        ) {
-          return res.status(400).json({
-            error:
-              "Cannot leave canvas group without valid canvas width and height",
-          });
-        }
-        const minted = await storage.createCanvasGroup({
-          clientId: effectiveClientId,
-          name: existing.name,
-          canvasWidth: effectiveWidth,
-          canvasHeight: effectiveHeight,
-        });
-        data.canvasGroupId = minted.id;
       } else {
         const effectiveCanvasGroupId =
           data.canvasGroupId !== undefined
@@ -170,6 +148,30 @@ export function buildScreenPatchHandler(
                 "Canvas group dimensions do not match the screen's canvas size",
             });
           }
+        } else {
+          // Canvas is (or will remain) enabled but the effective FK is
+          // null/empty — either an explicit "leave the wall → solo
+          // screen" PATCH or an API caller that simply omitted the
+          // field on an already-groupless row. Auto-mint a fresh
+          // per-screen group so a canvas-enabled row is never groupless.
+          if (
+            typeof effectiveWidth !== "number" ||
+            effectiveWidth < 1 ||
+            typeof effectiveHeight !== "number" ||
+            effectiveHeight < 1
+          ) {
+            return res.status(400).json({
+              error:
+                "Cannot enable canvas without valid canvas width and height",
+            });
+          }
+          const minted = await storage.createCanvasGroup({
+            clientId: effectiveClientId,
+            name: existing.name,
+            canvasWidth: effectiveWidth,
+            canvasHeight: effectiveHeight,
+          });
+          data.canvasGroupId = minted.id;
         }
       }
       // Task #180: snapshot wall membership BEFORE the update so the
