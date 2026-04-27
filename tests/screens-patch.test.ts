@@ -337,12 +337,32 @@ function makeFakeStorageWithGroups(
 ) {
   const base = makeFakeStorage(initial);
   const byId = new Map(groups.map((g) => [g.id, g]));
+  const created: FakeCanvasGroup[] = [];
+  let nextId = 1;
   return {
     ...base,
+    getCreatedGroups: () => created,
     storage: {
       ...base.storage,
       async getCanvasGroup(id: string) {
         return byId.get(id);
+      },
+      async createCanvasGroup(data: {
+        clientId: string | null;
+        name: string;
+        canvasWidth: number;
+        canvasHeight: number;
+      }) {
+        const fresh: FakeCanvasGroup = {
+          id: `auto-group-${nextId++}`,
+          clientId: data.clientId,
+          name: data.name,
+          canvasWidth: data.canvasWidth,
+          canvasHeight: data.canvasHeight,
+        };
+        byId.set(fresh.id, fresh);
+        created.push(fresh);
+        return fresh;
       },
     } as unknown as FakeStorage,
   };
@@ -390,7 +410,12 @@ test("PATCH /api/screens/:id — Task #189: changing canvas dims invalidates the
   );
 });
 
-test("PATCH /api/screens/:id — Task #189: explicit canvasGroupId:null is rejected while canvasEnabled remains true", async () => {
+test("PATCH /api/screens/:id — Task #189: explicit canvasGroupId:null while canvasEnabled stays true auto-mints a fresh per-screen group (leave-group → solo screen)", async () => {
+  // Operators "leave the wall to go solo" by selecting (none) in the
+  // group picker. Rather than reject (which would block a legitimate
+  // workflow), the handler mints a fresh per-screen group server-side
+  // so the screen is independent immediately and the wall is left
+  // alone.
   const groupId = "group-3840x1080";
   const fake = makeFakeStorageWithGroups(
     makeScreen({
@@ -413,15 +438,27 @@ test("PATCH /api/screens/:id — Task #189: explicit canvasGroupId:null is rejec
     ],
   );
 
-  const { status, body } = await withTestServer(fake.storage, {
+  const { status } = await withTestServer(fake.storage, {
     canvasGroupId: null,
   });
-  assert.equal(status, 400);
-  assert.match(
-    String((body as { error?: string }).error ?? ""),
-    /detach canvas group while canvas is enabled/i,
+  assert.equal(status, 200, "leave-group should succeed, not 400");
+  const updateArg = fake.getLastUpdateArg() as
+    | { canvasGroupId?: string | null }
+    | null;
+  assert.ok(updateArg, "the handler must call updateScreen");
+  assert.ok(
+    updateArg!.canvasGroupId,
+    "the auto-minted group's id must be persisted as the new canvasGroupId",
   );
-  assert.equal(fake.getLastUpdateArg(), null);
+  assert.notEqual(
+    updateArg!.canvasGroupId,
+    groupId,
+    "the auto-minted group must be NEW, not the wall's group id",
+  );
+  assert.ok(
+    fake.getCreatedGroups().some((g) => g.id === updateArg!.canvasGroupId),
+    "the new canvasGroupId must correspond to a freshly-created group",
+  );
 });
 
 test("PATCH /api/screens/:id — Task #189: disabling canvas clears canvasGroupId automatically", async () => {

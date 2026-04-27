@@ -1022,79 +1022,80 @@ export class DatabaseStorage implements IStorage {
     groupsCreated: number;
     screensStamped: number;
   }> {
-    // Task #189 — promote the legacy implicit grouping (clientId +
-    // dims + ≥2 distinct positions) into explicit `canvas_groups`
-    // rows. After this runs, every canvas-enabled screen has a non-
-    // null `canvasGroupId`; real walls share one group, every other
-    // canvas screen owns a per-screen group.
+    // Task #189 — promote legacy implicit grouping into explicit
+    // `canvas_groups` rows. The heuristic deliberately favours
+    // operator-correct independence: only screens that the existing
+    // wall-pairing system has already coupled (≥2 canvas-enabled
+    // screens of the same client+dims sharing the SAME non-null
+    // deviceToken) become a shared group. Everything else gets a
+    // per-screen group.
     //
-    // Idempotent — screens already stamped are skipped, so re-running
-    // (or running on a fresh DB) is a no-op.
+    // Why deviceToken instead of position-distinctness:
+    //   The original implicit grouping bucketed by (clientId, w, h)
+    //   and treated ≥2 distinct positions as a "real wall". That false-
+    //   merged independent same-dimension screens (e.g. POS01..POS08
+    //   one of which had been moved off 0,0) and is exactly the bug
+    //   #189 exists to fix. A shared deviceToken is a strong, real
+    //   signal: it means the wall-pairing flow already authenticated
+    //   those screens as one wall.
+    //
+    // Idempotent — screens already stamped are skipped.
     const allCanvas = await db
       .select()
       .from(screens)
       .where(eq(screens.canvasEnabled, true))
       .orderBy(asc(screens.createdAt), asc(screens.id));
 
-    // Bucket unstamped screens by (clientId, w, h) so we can apply the
-    // same position-distinctness rule the legacy `getCanvasMembers`
-    // used. Anything already stamped passes straight through.
-    interface Bucket {
+    interface TokenBucket {
       clientId: string | null;
       w: number;
       h: number;
+      token: string;
       members: Screen[];
     }
-    const buckets = new Map<string, Bucket>();
-    const passthrough: Screen[] = [];
+    const tokenBuckets = new Map<string, TokenBucket>();
+    const soloCandidates: Screen[] = [];
+
     for (const s of allCanvas) {
-      if (s.canvasGroupId) {
-        passthrough.push(s);
-        continue;
-      }
+      if (s.canvasGroupId) continue;
       if (
         typeof s.canvasWidth !== "number" ||
         s.canvasWidth <= 0 ||
         typeof s.canvasHeight !== "number" ||
         s.canvasHeight <= 0
       ) {
-        // Defensive: a canvas-enabled screen with no dims can't be
-        // grouped because canvas_groups requires NOT NULL dims. Leave
-        // it unstamped — the operator will fix it via the UI before
-        // the screen does anything useful.
+        // canvas_groups requires NOT NULL dims. A canvas-enabled row
+        // with no dims is broken state; leave it unstamped.
         continue;
       }
-      const key = `${s.clientId ?? ""}|${s.canvasWidth}x${s.canvasHeight}`;
-      const bucket = buckets.get(key);
-      if (bucket) bucket.members.push(s);
-      else
-        buckets.set(key, {
-          clientId: s.clientId ?? null,
-          w: s.canvasWidth,
-          h: s.canvasHeight,
-          members: [s],
-        });
+      if (s.deviceToken && s.deviceToken.length > 0) {
+        const key = `${s.clientId ?? ""}|${s.canvasWidth}x${s.canvasHeight}|${s.deviceToken}`;
+        const bucket = tokenBuckets.get(key);
+        if (bucket) bucket.members.push(s);
+        else
+          tokenBuckets.set(key, {
+            clientId: s.clientId ?? null,
+            w: s.canvasWidth,
+            h: s.canvasHeight,
+            token: s.deviceToken,
+            members: [s],
+          });
+      } else {
+        soloCandidates.push(s);
+      }
     }
 
     let groupsCreated = 0;
     let screensStamped = 0;
 
-    for (const bucket of buckets.values()) {
-      const positions = new Set<string>();
-      for (const m of bucket.members) {
-        positions.add(`${m.canvasX ?? 0}|${m.canvasY ?? 0}`);
-      }
-      if (positions.size >= 2 && bucket.members.length >= 2) {
-        // Real wall → one shared group. Name it after the earliest
-        // member so operators have a recognisable label they can
-        // rename later.
+    for (const bucket of tokenBuckets.values()) {
+      if (bucket.members.length >= 2) {
         const lead = bucket.members[0];
-        const groupName = `${lead.name} (canvas)`;
         const [group] = await db
           .insert(canvasGroups)
           .values({
             clientId: bucket.clientId,
-            name: groupName,
+            name: `${lead.name} (canvas)`,
             canvasWidth: bucket.w,
             canvasHeight: bucket.h,
           })
@@ -1103,36 +1104,33 @@ export class DatabaseStorage implements IStorage {
         const ids = bucket.members.map((m) => m.id);
         await db
           .update(screens)
-          .set({ canvasGroupId: group.id, updatedAt: new Date() } as any)
+          .set({ canvasGroupId: group.id, updatedAt: new Date() })
           .where(inArray(screens.id, ids));
         screensStamped += ids.length;
       } else {
-        // Independent screens that just happened to share dims (or a
-        // legitimately solo canvas screen). Each gets its OWN
-        // per-screen group so future `getCanvasMembers` calls return
-        // just that screen and pairing never fans across unrelated
-        // tiles.
-        for (const m of bucket.members) {
-          const [group] = await db
-            .insert(canvasGroups)
-            .values({
-              clientId: m.clientId ?? null,
-              name: m.name,
-              canvasWidth: bucket.w,
-              canvasHeight: bucket.h,
-            })
-            .returning();
-          groupsCreated++;
-          await db
-            .update(screens)
-            .set({ canvasGroupId: group.id, updatedAt: new Date() } as any)
-            .where(eq(screens.id, m.id));
-          screensStamped++;
-        }
+        // Single screen with a deviceToken — same treatment as solo.
+        soloCandidates.push(bucket.members[0]);
       }
     }
 
-    void passthrough; // explicit no-op for clarity
+    for (const m of soloCandidates) {
+      const [group] = await db
+        .insert(canvasGroups)
+        .values({
+          clientId: m.clientId ?? null,
+          name: m.name,
+          canvasWidth: m.canvasWidth!,
+          canvasHeight: m.canvasHeight!,
+        })
+        .returning();
+      groupsCreated++;
+      await db
+        .update(screens)
+        .set({ canvasGroupId: group.id, updatedAt: new Date() })
+        .where(eq(screens.id, m.id));
+      screensStamped++;
+    }
+
     return { groupsCreated, screensStamped };
   }
 

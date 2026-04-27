@@ -54,6 +54,7 @@ type ScreenPatchStorage = Pick<
   | "getCanvasMembers"
   | "reconcileWallPairingAfterChange"
   | "getCanvasGroup"
+  | "createCanvasGroup"
 >;
 
 type AuditFn = (
@@ -106,22 +107,9 @@ export function buildScreenPatchHandler(
         body.canvasY = 0;
       }
       const data = insertScreenSchema.partial().parse(body);
-      // Task #189 — explicit canvas group validation, computed against
-      // the EFFECTIVE post-patch state (existing row merged with the
-      // patch payload). This catches three classes of regression:
-      //   1. Patch sets `canvasGroupId` to a group that doesn't exist,
-      //      belongs to a different site, or has wrong dims.
-      //   2. Patch changes `clientId`, `canvasWidth`, `canvasHeight`,
-      //      or `canvasEnabled` WITHOUT touching `canvasGroupId` —
-      //      the existing group binding can become invalid even though
-      //      the patch payload looks innocent. Validating effective
-      //      state catches this too.
-      //   3. Patch tries to detach (`canvasGroupId: null`) while
-      //      canvas remains enabled — that would leave the screen in
-      //      a state our invariants forbid (canvas-enabled rows must
-      //      always carry a canvasGroupId). Reject.
-      // When the patch disables canvas, we proactively NULL the group
-      // binding so a stale FK can't survive the disable.
+      // Task #189 — validate the effective post-patch state for the
+      // canvasGroupId binding. Patches that change clientId/dims/
+      // canvasEnabled without touching the FK can still invalidate it.
       const effectiveCanvasEnabled =
         data.canvasEnabled !== undefined
           ? data.canvasEnabled
@@ -135,38 +123,57 @@ export function buildScreenPatchHandler(
           ? data.canvasHeight
           : existing.canvasHeight;
       if (effectiveCanvasEnabled === false || effectiveCanvasEnabled === null) {
-        // Canvas going (or staying) off — drop any group binding so
-        // we never persist a canvas-disabled row pointing at a group.
+        // Canvas off — drop any FK so a disabled row never points at a group.
         data.canvasGroupId = null;
       } else {
-        const effectiveCanvasGroupId =
-          data.canvasGroupId !== undefined
-            ? data.canvasGroupId
-            : existing.canvasGroupId;
+        // Canvas enabled. If the patch explicitly sets canvasGroupId to
+        // null ("leave group → solo screen"), auto-mint a fresh
+        // per-screen group server-side so the screen never lands in a
+        // groupless state and the operator's intent (independence from
+        // any wall) is preserved.
         if (data.canvasGroupId === null) {
-          return res.status(400).json({
-            error:
-              "Cannot detach canvas group while canvas is enabled — assign a different group or disable canvas first",
-          });
-        }
-        if (effectiveCanvasGroupId) {
-          const group = await storage.getCanvasGroup(effectiveCanvasGroupId);
-          if (!group) {
-            return res.status(400).json({ error: "Canvas group not found" });
-          }
-          if (group.clientId !== effectiveClientId) {
-            return res.status(400).json({
-              error: "Canvas group belongs to a different site",
-            });
-          }
           if (
-            group.canvasWidth !== effectiveWidth ||
-            group.canvasHeight !== effectiveHeight
+            typeof effectiveWidth !== "number" ||
+            effectiveWidth < 1 ||
+            typeof effectiveHeight !== "number" ||
+            effectiveHeight < 1
           ) {
             return res.status(400).json({
               error:
-                "Canvas group dimensions do not match the screen's canvas size",
+                "Cannot leave canvas group without valid canvas width and height",
             });
+          }
+          const minted = await storage.createCanvasGroup({
+            clientId: effectiveClientId,
+            name: existing.name,
+            canvasWidth: effectiveWidth,
+            canvasHeight: effectiveHeight,
+          });
+          data.canvasGroupId = minted.id;
+        } else {
+          const effectiveCanvasGroupId =
+            data.canvasGroupId !== undefined
+              ? data.canvasGroupId
+              : existing.canvasGroupId;
+          if (effectiveCanvasGroupId) {
+            const group = await storage.getCanvasGroup(effectiveCanvasGroupId);
+            if (!group) {
+              return res.status(400).json({ error: "Canvas group not found" });
+            }
+            if (group.clientId !== effectiveClientId) {
+              return res.status(400).json({
+                error: "Canvas group belongs to a different site",
+              });
+            }
+            if (
+              group.canvasWidth !== effectiveWidth ||
+              group.canvasHeight !== effectiveHeight
+            ) {
+              return res.status(400).json({
+                error:
+                  "Canvas group dimensions do not match the screen's canvas size",
+              });
+            }
           }
         }
       }

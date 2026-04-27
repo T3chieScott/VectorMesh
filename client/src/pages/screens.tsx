@@ -334,12 +334,13 @@ function CanvasGroupPicker({
       if (!namePrompt) throw new Error("__CANCELLED__");
       const trimmed = namePrompt.trim();
       if (!trimmed) throw new Error("Name is required");
-      return apiRequest("POST", "/api/canvas-groups", {
+      const res = await apiRequest("POST", "/api/canvas-groups", {
         clientId: watchedClientId,
         name: trimmed,
         canvasWidth: watchedWidth,
         canvasHeight: watchedHeight,
       });
+      return (await res.json()) as CanvasGroupRow;
     },
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ["/api/canvas-groups"] });

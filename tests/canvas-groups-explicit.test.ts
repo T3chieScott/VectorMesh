@@ -293,17 +293,22 @@ test("storage.getCanvasMembers — real wall (shared canvasGroupId) returns ever
 
 // ─── Backfill contract ────────────────────────────────────────────
 
-test("backfillExplicitCanvasGroups — promotes legacy implicit walls into one shared group, same-dim independents into per-screen groups, and is idempotent", async () => {
+test("backfillExplicitCanvasGroups — promotes legacy walls (shared deviceToken) into one shared group, same-dim independents into per-screen groups, and is idempotent", async () => {
   const clientId = await muteId();
-  // Real wall: same client, same 3840×1080, two distinct positions,
-  // and crucially — `canvasGroupId` left null so the backfill must
-  // notice it and stamp them.
+  // Real wall: ≥2 canvas-enabled screens of the same client+dims
+  // sharing the SAME non-null deviceToken. The shared token is the
+  // operationally-correct signal — it means the wall-pairing flow
+  // already authenticated those screens together. Distinct positions
+  // alone are NOT enough (that was the old false-merging heuristic).
   const t0 = new Date("2026-03-01T00:00:00Z");
+  const wallTok = `${PREFIX}p5-walltok`;
   const wallA = await makeScreen({
     name: "p5-wallA",
     clientId,
     canvasGroupId: null,
     canvasX: 0,
+    deviceToken: wallTok,
+    isPaired: true,
     createdAt: t0,
   });
   const wallB = await makeScreen({
@@ -311,23 +316,23 @@ test("backfillExplicitCanvasGroups — promotes legacy implicit walls into one s
     clientId,
     canvasGroupId: null,
     canvasX: 1920,
+    deviceToken: wallTok,
+    isPaired: true,
     createdAt: new Date(t0.getTime() + 1000),
   });
-  // Independent solo screen — DIFFERENT dims so the backfill bucket
-  // keyed off (client + w×h) can't even consider folding it into the
-  // wall. This is the canonical "would have false-grouped under the
-  // old implicit rule if dims matched" case but isolated cleanly: the
-  // assertion below proves that the wall and the independent screen
-  // land in DIFFERENT explicit groups, which is the shape every new
-  // canvas-enabled screen should land in going forward.
+  // Same-dim independent — NO shared deviceToken. Under the old
+  // dim+position heuristic this would have false-merged with the
+  // wall whenever dims matched; the new heuristic correctly puts it
+  // in its own per-screen group.
   const solo = await makeScreen({
     name: "p5-solo",
     clientId,
     canvasGroupId: null,
-    canvasWidth: 1920,
+    canvasWidth: 3840,
     canvasHeight: 1080,
     canvasX: 0,
     canvasY: 0,
+    deviceToken: null,
     createdAt: new Date(t0.getTime() + 2000),
   });
 
@@ -389,7 +394,7 @@ test("storage.createScreen — canvasEnabled with no canvasGroupId auto-mints a 
     canvasHeight: 1080,
     canvasX: 0,
     canvasY: 0,
-  } as any);
+  });
 
   assert.ok(
     created.canvasGroupId,
