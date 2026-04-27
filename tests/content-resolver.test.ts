@@ -454,6 +454,151 @@ test("overnight wrap window REJECTS when 'now' falls in the gap between end and 
   );
 });
 
+// Task #195 — pin the boundary-minute behaviour. Adjacent blocks
+// (A: 10:00–10:05, B: 10:05–10:10) must hand off cleanly at exactly
+// 10:05:00. Previously `nowMins > endMins` made the end minute
+// inclusive, so A kept firing through 10:05:59; combined with the
+// player's ~7s poll, operators saw a ~66s delay before B took over.
+// End time is now exclusive at minute granularity.
+test("__TEST_S195__ adjacent blocks hand off at exact boundary minute (10:05:00 → B fires, A does not)", async () => {
+  const event = makeEvent("evt-1");
+  const programme = makeProgramme("prog-1", event.id);
+  const version = makeVersion("v-1", programme.id);
+  const layoutA = makeLayout("layout-a", "A");
+  const layoutB = makeLayout("layout-b", "B");
+  // A and B share priority — without the fix the priority sort would
+  // keep A winning through 10:05:59. The fix kicks A out at 10:05:00.
+  const blockA = makeBlock({
+    id: "block-a",
+    name: "A",
+    layoutTemplateId: layoutA.id,
+    programmeVersionId: version.id,
+    priority: 10,
+    timeRules: [{ startTime: "10:00", endTime: "10:05" }],
+  });
+  const blockB = makeBlock({
+    id: "block-b",
+    name: "B",
+    layoutTemplateId: layoutB.id,
+    programmeVersionId: version.id,
+    priority: 10,
+    timeRules: [{ startTime: "10:05", endTime: "10:10" }],
+  });
+
+  const now = new Date();
+  now.setUTCHours(10, 5, 0, 0);
+
+  const result = await resolveScreenContent(
+    makeScreen(),
+    now,
+    makeDeps({
+      event,
+      programmes: [programme],
+      versions: [version],
+      blocksByVersion: { [version.id]: [blockA, blockB] },
+      layouts: { [layoutA.id]: layoutA, [layoutB.id]: layoutB },
+    }),
+    "UTC",
+  );
+
+  assert.equal(result.layout?.id, layoutB.id, "B should win at 10:05:00");
+});
+
+test("__TEST_S195__ prior block still fires at the very last second of its minute (10:04:59)", async () => {
+  const event = makeEvent("evt-1");
+  const programme = makeProgramme("prog-1", event.id);
+  const version = makeVersion("v-1", programme.id);
+  const layoutA = makeLayout("layout-a", "A");
+  const blockA = makeBlock({
+    layoutTemplateId: layoutA.id,
+    programmeVersionId: version.id,
+    timeRules: [{ startTime: "10:00", endTime: "10:05" }],
+  });
+
+  const now = new Date();
+  now.setUTCHours(10, 4, 59, 999);
+
+  const result = await resolveScreenContent(
+    makeScreen(),
+    now,
+    makeDeps({
+      event,
+      programmes: [programme],
+      versions: [version],
+      blocksByVersion: { [version.id]: [blockA] },
+      layouts: { [layoutA.id]: layoutA },
+    }),
+    "UTC",
+  );
+
+  assert.equal(result.layout?.id, layoutA.id);
+});
+
+test("__TEST_S195__ overnight-wrap window stops firing at exact end boundary (02:00:00)", async () => {
+  const event = makeEvent("evt-1");
+  const programme = makeProgramme("prog-1", event.id);
+  const version = makeVersion("v-1", programme.id);
+  const layout = makeLayout("layout-1", "L");
+  const block = makeBlock({
+    layoutTemplateId: layout.id,
+    programmeVersionId: version.id,
+    timeRules: [{ startTime: "22:00", endTime: "02:00" }],
+  });
+
+  const now = new Date();
+  now.setUTCHours(2, 0, 0, 0);
+
+  const result = await resolveScreenContent(
+    makeScreen(),
+    now,
+    makeDeps({
+      event,
+      programmes: [programme],
+      versions: [version],
+      blocksByVersion: { [version.id]: [block] },
+      layouts: { [layout.id]: layout },
+    }),
+    "UTC",
+  );
+
+  assert.equal(result.layout, null, "wrap window must end at exactly 02:00:00");
+  const step = result.trace.find((s) => s.kind === "block-evaluated");
+  assert.equal(
+    step?.kind === "block-evaluated" && step.decision,
+    "outside-time-of-day",
+  );
+});
+
+test("__TEST_S195__ standalone endTime (no startTime) is also exclusive at the boundary", async () => {
+  const event = makeEvent("evt-1");
+  const programme = makeProgramme("prog-1", event.id);
+  const version = makeVersion("v-1", programme.id);
+  const layout = makeLayout("layout-1", "L");
+  const block = makeBlock({
+    layoutTemplateId: layout.id,
+    programmeVersionId: version.id,
+    timeRules: [{ endTime: "10:05" }],
+  });
+
+  const now = new Date();
+  now.setUTCHours(10, 5, 0, 0);
+
+  const result = await resolveScreenContent(
+    makeScreen(),
+    now,
+    makeDeps({
+      event,
+      programmes: [programme],
+      versions: [version],
+      blocksByVersion: { [version.id]: [block] },
+      layouts: { [layout.id]: layout },
+    }),
+    "UTC",
+  );
+
+  assert.equal(result.layout, null);
+});
+
 test("missing layout (deleted) → layout-deleted, keep scanning", async () => {
   const event = makeEvent("evt-1");
   const programme = makeProgramme("prog-1", event.id);

@@ -191,12 +191,17 @@ function evaluateTimeRule(
       const startMins = startHM.hours * 60 + startHM.minutes;
       const endMins = endHM.hours * 60 + endHM.minutes;
       const nowMins = wall.minuteOfDay;
+      // Window is [startMins, endMins) — end is exclusive at minute
+      // granularity so adjacent blocks (A 10:00–10:05, B 10:05–10:10)
+      // hand off cleanly at 10:05:00 instead of overlapping for the
+      // entire 10:05 minute. This matches the convention already used
+      // by `derivePlaybackStatus` in `shared/playback-derivation.ts`.
       let inside = true;
       if (endMins <= startMins) {
-        // Overnight wrap: window is [startMins, 24:00) ∪ [00:00, endMins].
-        if (nowMins < startMins && nowMins > endMins) inside = false;
+        // Overnight wrap: [startMins, 24:00) ∪ [00:00, endMins).
+        if (nowMins < startMins && nowMins >= endMins) inside = false;
       } else {
-        if (nowMins < startMins || nowMins > endMins) inside = false;
+        if (nowMins < startMins || nowMins >= endMins) inside = false;
       }
       if (!inside) {
         return {
@@ -224,7 +229,8 @@ function evaluateTimeRule(
       const hm = parseHHMMString(rule.endTime);
       if (hm) {
         const endMins = hm.hours * 60 + hm.minutes;
-        if (wall.minuteOfDay > endMins) {
+        // End is exclusive at minute granularity (see comment above).
+        if (wall.minuteOfDay >= endMins) {
           return {
             ok: false,
             decision: "outside-time-of-day",
