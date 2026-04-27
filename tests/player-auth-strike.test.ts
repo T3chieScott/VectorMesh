@@ -23,9 +23,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   evaluateAuthHttpStatus,
+  evaluateAuthHttpStatusInGrace,
   evaluateAuthNetworkError,
   evaluateAuthReloadingRace,
+  isWithinReloadGrace,
   AUTH_STRIKE_THRESHOLD,
+  RELOAD_GRACE_MS,
 } from "../client/src/lib/playerAuthStrike";
 
 test("AUTH_STRIKE_THRESHOLD is 2 — pinned by contract", () => {
@@ -142,4 +145,138 @@ test("end-to-end sequence: two consecutive 401s clear auth", () => {
   count = evaluateAuthHttpStatus(count, 401).newCount;
   const second = evaluateAuthHttpStatus(count, 401);
   assert.equal(second.action, "clear");
+});
+
+// ─── Task #188 — reload-grace coverage ──────────────────────────────
+//
+// The cross-reload edge case: every operator schedule-timeline edit
+// triggers a controlled reload via refreshRequested:true. The strike
+// counter is a useRef so it resets to 0 on every reload — meaning
+// each freshly-mounted page is exposed to its own 2-strike window
+// where two consecutive transient 401s could unpair the Pi even
+// though the server is fine. The grace helper covers this: if a
+// 401/403 lands within RELOAD_GRACE_MS of a controlled reload,
+// treat it as `wait` without touching the counter. Once grace
+// expires (or any 2xx confirms), normal rules resume.
+
+test("RELOAD_GRACE_MS is exactly 30s — pinned by contract", () => {
+  // Long enough to cover real reload aftermath (slow Pis, slow
+  // network, browser repaint), short enough that a real auth
+  // failure still escalates within a minute or two.
+  assert.equal(RELOAD_GRACE_MS, 30_000);
+});
+
+test("isWithinReloadGrace: null marker → never in grace", () => {
+  assert.equal(isWithinReloadGrace(null, Date.now()), false);
+});
+
+test("isWithinReloadGrace: marker just now → in grace", () => {
+  const now = 1_000_000;
+  assert.equal(isWithinReloadGrace(now, now), true);
+});
+
+test("isWithinReloadGrace: marker 1ms before grace expiry → in grace", () => {
+  const reloadAt = 1_000_000;
+  const now = reloadAt + RELOAD_GRACE_MS - 1;
+  assert.equal(isWithinReloadGrace(reloadAt, now), true);
+});
+
+test("isWithinReloadGrace: marker exactly at grace expiry → out of grace", () => {
+  const reloadAt = 1_000_000;
+  const now = reloadAt + RELOAD_GRACE_MS;
+  assert.equal(isWithinReloadGrace(reloadAt, now), false);
+});
+
+test("isWithinReloadGrace: marker far in the past → out of grace", () => {
+  const reloadAt = 1_000_000;
+  const now = reloadAt + RELOAD_GRACE_MS * 1000;
+  assert.equal(isWithinReloadGrace(reloadAt, now), false);
+});
+
+test("isWithinReloadGrace: clock-skew (now < reloadAt) → out of grace", () => {
+  // Defensive: a Pi whose clock just stepped backwards (NTP) must
+  // not get an unbounded grace window from a future-stamped marker.
+  assert.equal(isWithinReloadGrace(1_000_000, 999_999), false);
+});
+
+test("isWithinReloadGrace: malformed marker (NaN, 0, negative) → out of grace", () => {
+  assert.equal(isWithinReloadGrace(NaN, Date.now()), false);
+  assert.equal(isWithinReloadGrace(0, Date.now()), false);
+  assert.equal(isWithinReloadGrace(-1, Date.now()), false);
+});
+
+test("isWithinReloadGrace: custom ttlMs is honoured", () => {
+  const reloadAt = 1_000_000;
+  assert.equal(isWithinReloadGrace(reloadAt, reloadAt + 5_000, 10_000), true);
+  assert.equal(isWithinReloadGrace(reloadAt, reloadAt + 15_000, 10_000), false);
+});
+
+test("evaluateAuthHttpStatusInGrace: 401 inside grace → wait, count UNCHANGED", () => {
+  // The whole point: a 401 in the reload-aftermath window must
+  // not rack up a strike. Even if the count was already 1 from
+  // before reload, an in-grace 401 stays at 1 — strike escalation
+  // resumes only after grace expires.
+  const out = evaluateAuthHttpStatusInGrace(0, 401);
+  assert.equal(out.action, "wait");
+  assert.equal(out.newCount, 0);
+});
+
+test("evaluateAuthHttpStatusInGrace: 403 inside grace → wait, count UNCHANGED", () => {
+  const out = evaluateAuthHttpStatusInGrace(1, 403);
+  assert.equal(out.action, "wait");
+  assert.equal(out.newCount, 1, "preserves count rather than zeroing");
+});
+
+test("evaluateAuthHttpStatusInGrace: 200 inside grace → continue, count reset", () => {
+  // A successful response confirms the server is healthy and the
+  // token is good — treat as a normal reset just like the
+  // out-of-grace evaluator does.
+  const out = evaluateAuthHttpStatusInGrace(1, 200);
+  assert.equal(out.action, "continue");
+  assert.equal(out.newCount, 0);
+});
+
+test("evaluateAuthHttpStatusInGrace: 500 inside grace → continue, count reset", () => {
+  // Non-auth status proves the request reached a server that
+  // recognised the token (auth would have 401'd in middleware).
+  const out = evaluateAuthHttpStatusInGrace(1, 500);
+  assert.equal(out.action, "continue");
+  assert.equal(out.newCount, 0);
+});
+
+test("end-to-end: reload + two 401s in grace + expiry + two more 401s clears auth", () => {
+  // Simulates the full lifecycle: controlled reload → 401 inside
+  // grace (no strike) → 401 inside grace (still no strike) →
+  // grace expires → 401 (strike 1, wait) → 401 (strike 2, clear).
+  let count = 0;
+  // Two in-grace 401s. Should NEVER escalate to clear.
+  for (let i = 0; i < 5; i++) {
+    const out = evaluateAuthHttpStatusInGrace(count, 401);
+    count = out.newCount;
+    assert.equal(out.action, "wait", `in-grace 401 #${i + 1} stays wait`);
+    assert.equal(count, 0, "count never advances inside grace");
+  }
+  // After grace, normal rules apply.
+  const first = evaluateAuthHttpStatus(count, 401);
+  count = first.newCount;
+  assert.equal(first.action, "wait");
+  assert.equal(count, 1);
+  const second = evaluateAuthHttpStatus(count, 401);
+  assert.equal(second.action, "clear", "real auth failure still escalates");
+});
+
+test("end-to-end: reload + 200 inside grace flips back to normal mode", () => {
+  // A 200 inside grace resets the strike count AND (in the player
+  // wiring) clears the grace marker. The pure helper just resets
+  // the count; the marker-clear is the caller's responsibility.
+  // Either way, post-200 the next 401 should start a fresh strike
+  // sequence under normal rules.
+  let count = 1; // residual from before reload
+  const inGrace = evaluateAuthHttpStatusInGrace(count, 200);
+  assert.equal(inGrace.action, "continue");
+  count = inGrace.newCount;
+  // Now back to normal mode (caller cleared the marker).
+  const next = evaluateAuthHttpStatus(count, 401);
+  assert.equal(next.action, "wait");
+  assert.equal(next.newCount, 1, "strike sequence starts fresh from 0");
 });

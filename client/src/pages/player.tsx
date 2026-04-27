@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   evaluateAuthHttpStatus,
+  evaluateAuthHttpStatusInGrace,
   evaluateAuthNetworkError,
   evaluateAuthReloadingRace,
+  isWithinReloadGrace,
 } from "@/lib/playerAuthStrike";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem, Client, Event, PlayerContentResponse } from "@shared/schema";
 
@@ -251,6 +253,30 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   // A real auth failure persists; a transient race does not.
   const consecutiveAuthErrorsRef = useRef(0);
   const reloadingRef = useRef(false);
+  // Task #188 — cross-reload edge case. The strike counter above is
+  // a useRef, so it resets on every page reload. Every operator
+  // edit on a published programme version triggers a reload via
+  // refreshRequested:true; in a busy edit session each fresh-mount
+  // page is exposed to its own 2-strike window and a pair of
+  // transient 401s landing back-to-back can unpair the Pi even
+  // though the server's deviceToken is fine. We mark a reload-
+  // initiated timestamp in localStorage RIGHT BEFORE calling
+  // window.location.reload(), then on fresh mount we read it back
+  // and treat any 401/403 within RELOAD_GRACE_MS as a `wait` (no
+  // strike). After grace expires (or any 2xx confirms), normal
+  // 2-strike rules resume so a real auth failure still escalates.
+  const reloadGraceUntilRef = useRef<number>((() => {
+    if (typeof window === "undefined") return 0;
+    try {
+      const raw = window.localStorage.getItem(`vm_player_reload_at_${screenId}`);
+      window.localStorage.removeItem(`vm_player_reload_at_${screenId}`);
+      const reloadAt = raw ? Number.parseInt(raw, 10) : null;
+      if (reloadAt !== null && isWithinReloadGrace(reloadAt, Date.now())) {
+        return reloadAt;
+      }
+    } catch {}
+    return 0;
+  })());
 
   useEffect(() => {
     const goOffline = () => setIsOffline(true);
@@ -354,15 +380,43 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       return;
     }
     try {
-      const outcome = evaluateAuthHttpStatus(
-        consecutiveAuthErrorsRef.current,
-        res.status,
+      // Task #188 — when we're inside the post-reload grace window
+      // (we just performed a controlled reload because the server
+      // told us refreshRequested:true, which proves the deviceToken
+      // was good a moment ago), suppress strikes from any 401/403.
+      // Once a 2xx confirms or grace expires, normal 2-strike rules
+      // resume so a real persistent auth failure still escalates.
+      const inGrace = isWithinReloadGrace(
+        reloadGraceUntilRef.current || null,
+        Date.now(),
       );
+      const outcome = inGrace
+        ? evaluateAuthHttpStatusInGrace(
+            consecutiveAuthErrorsRef.current,
+            res.status,
+          )
+        : evaluateAuthHttpStatus(
+            consecutiveAuthErrorsRef.current,
+            res.status,
+          );
       consecutiveAuthErrorsRef.current = outcome.newCount;
+      // Any non-auth response confirms the server is healthy and
+      // recognises our token; we no longer need the reload grace
+      // and clearing it lets a much-later genuine 401 escalate
+      // normally instead of being silently absorbed.
+      if (outcome.action === "continue") {
+        reloadGraceUntilRef.current = 0;
+      }
       if (outcome.action === "wait") {
-        console.warn(
-          `[player] /content returned ${res.status}; will confirm on next poll before clearing auth`,
-        );
+        if (inGrace) {
+          console.warn(
+            `[player] /content returned ${res.status} within reload grace window; ignoring strike`,
+          );
+        } else {
+          console.warn(
+            `[player] /content returned ${res.status}; will confirm on next poll before clearing auth`,
+          );
+        }
         return;
       }
       if (outcome.action === "clear") {
@@ -437,6 +491,17 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
           clearInterval(heartbeatIntervalRef.current);
           heartbeatIntervalRef.current = null;
         }
+        // Task #188 — drop a reload marker so the freshly-mounted
+        // page can read it back, recognise it just performed a
+        // controlled reload (server proved healthy moments ago by
+        // returning 200 + refreshRequested), and suppress strikes
+        // from any 401/403 in the brief reload aftermath.
+        try {
+          window.localStorage.setItem(
+            `vm_player_reload_at_${screenId}`,
+            String(Date.now()),
+          );
+        } catch {}
         window.location.reload();
         return;
       }
