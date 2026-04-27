@@ -328,6 +328,13 @@ export interface IStorage {
   // so the screen never carries around a code/token that another
   // screen also holds.
   rotateScreenPairingIdentity(screenId: string): Promise<void>;
+  // Task #180 (round-7 review) — atomic multi-screen rotation. Used
+  // by regenerate / unpair / wall-dissolve reconciliation so a partial
+  // failure mid-loop can never leave the wall in a half-rotated state
+  // where some tiles got fresh codes and others kept the old shared
+  // identity. The operation is wrapped in a single DB transaction;
+  // either every supplied screen rotates or none of them do.
+  rotateScreensPairingIdentities(screenIds: string[]): Promise<void>;
   // Task #180 — after a PATCH or DELETE that may have changed canvas
   // membership, reconcile the patched/deleted screen and any former
   // wall siblings so no two solo screens end up sharing the same
@@ -1361,9 +1368,22 @@ export class DatabaseStorage implements IStorage {
     // legacy repair path does — once a screen leaves a wall, any cached
     // hostname/IP/hardwareClass/lastSeen belongs to the wall's Pi, not
     // to whatever Pi will eventually re-pair this screen.
-    await this.withPairingCodeCollisionRetry(
-      "rotateScreenPairingIdentity",
-      async (code) => {
+    await this.rotateScreensPairingIdentities([screenId]);
+  }
+
+  async rotateScreensPairingIdentities(screenIds: string[]): Promise<void> {
+    // Task #180 (round-7 review): atomic multi-screen rotation.
+    // Wrapping the loop in db.transaction means a partial DB failure
+    // mid-loop rolls every rotation back, so callers like
+    // regenerate / unpair never leave a wall in a half-rotated state
+    // (some tiles fresh, others still sharing the old identity).
+    // The collision-retry wrapper still operates per screen, but the
+    // outer transaction guarantees all-or-nothing semantics across
+    // the wall.
+    if (screenIds.length === 0) return;
+    await db.transaction(async (tx) => {
+      for (const screenId of screenIds) {
+        const code = await this.generateUniquePairingCode();
         const reset: Partial<InsertScreen> = {
           pairingCode: code,
           deviceToken: null,
@@ -1374,12 +1394,33 @@ export class DatabaseStorage implements IStorage {
           hostname: null,
           hardwareClass: null,
         };
-        await db
-          .update(screens)
-          .set({ ...reset, updatedAt: new Date() })
-          .where(eq(screens.id, screenId));
-      },
-    );
+        try {
+          await tx
+            .update(screens)
+            .set({ ...reset, updatedAt: new Date() })
+            .where(eq(screens.id, screenId));
+        } catch (err: unknown) {
+          // Probe-vs-write race: another writer claimed our minted
+          // code in the brief window between probe and UPDATE. Retry
+          // once with a fresh code; further collisions are extremely
+          // unlikely (~2.1B codespace) and bubble up to roll back the
+          // whole transaction so the wall stays consistent.
+          if (!isPairingCodeUniqueViolation(err)) throw err;
+          log(
+            `[canvas-pairing] rotateScreensPairingIdentities: pairing-code collision on ${screenId}, retrying`,
+          );
+          const retryCode = await this.generateUniquePairingCode();
+          await tx
+            .update(screens)
+            .set({
+              ...reset,
+              pairingCode: retryCode,
+              updatedAt: new Date(),
+            })
+            .where(eq(screens.id, screenId));
+        }
+      }
+    });
   }
 
   async reconcileWallPairingAfterChange(
@@ -1451,7 +1492,9 @@ export class DatabaseStorage implements IStorage {
     // legitimate). Otherwise the wall has dissolved into solo
     // screens — rotate every one of them unconditionally so no two
     // former tiles ever end up sharing a pairingCode (or a stale
-    // wall deviceToken).
+    // wall deviceToken). Round-7 review: rotate the survivors as a
+    // single transaction so a partial failure can't leave the
+    // dissolved wall half-rotated.
     const survivorIds = beforeMembers
       .map((m) => m.id)
       .filter((id) => id !== changedScreenId);
@@ -1460,11 +1503,12 @@ export class DatabaseStorage implements IStorage {
     if (!firstSurvivor) return;
     const survivorMembers = await this.getCanvasMembers(firstSurvivor);
     if (survivorMembers.length > 1) return;
+    const liveSurvivorIds: string[] = [];
     for (const sid of survivorIds) {
       const surv = await this.getScreen(sid);
-      if (!surv) continue;
-      await this.rotateScreenPairingIdentity(sid);
+      if (surv) liveSurvivorIds.push(sid);
     }
+    await this.rotateScreensPairingIdentities(liveSurvivorIds);
   }
 
   async duplicateScreen(sourceId: string, name: string): Promise<Screen | undefined> {

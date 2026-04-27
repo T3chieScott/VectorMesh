@@ -1580,10 +1580,11 @@ export async function registerRoutes(
       // own fresh unique code and clears the shared deviceToken so the
       // wall is fully unpaired. The next pair attempt against any tile
       // re-claims the wall via getCanvasMembers fan-out.
+      // Round-7 review: rotate every member atomically in one
+      // transaction so a mid-loop DB failure can't leave the wall in
+      // a half-rotated state.
       const members = await storage.getCanvasMembers(seed);
-      for (const m of members) {
-        await storage.rotateScreenPairingIdentity(m.id);
-      }
+      await storage.rotateScreensPairingIdentities(members.map((m) => m.id));
       const screen = await storage.getScreen(seed.id);
       logAudit(req, "regenerate_pairing", "screen", seed.id, {
         name: seed.name,
@@ -1638,10 +1639,11 @@ export async function registerRoutes(
       // Unpairing any wall tile clears the whole wall — each member
       // gets its own fresh unique code and a cleared deviceToken so the
       // next pair flow re-claims every member from scratch.
+      // Round-7 review: rotate every member atomically in one
+      // transaction so a mid-loop DB failure can't leave the wall in
+      // a half-unpaired state.
       const members = await storage.getCanvasMembers(seed);
-      for (const m of members) {
-        await storage.rotateScreenPairingIdentity(m.id);
-      }
+      await storage.rotateScreensPairingIdentities(members.map((m) => m.id));
       const refreshed = await storage.getScreen(seed.id);
       logAudit(req, "unpair", "screen", seed.id, {
         name: seed.name,
