@@ -1198,11 +1198,52 @@ export class DatabaseStorage implements IStorage {
         const fresh = await this.generateUniquePairingCode();
         await db
           .update(screens)
-          .set({ pairingCode: fresh } as any)
+          .set({ pairingCode: fresh })
           .where(eq(screens.id, bucket[i].id));
         reissued++;
       }
     }
+
+    // Self-heal the DB-level UNIQUE constraint regardless of which
+    // order the operator runs `npm run db:push --force` vs. starting
+    // the app. Drizzle's schema (.unique() on screens.pairingCode)
+    // emits this same constraint; if push has not yet run we add it
+    // here, otherwise the existence check no-ops. Now that the dedupe
+    // above has guaranteed uniqueness, the ADD CONSTRAINT can never
+    // fail on legacy duplicate data — closing the deploy-order race
+    // identified in the Task #180 review.
+    //
+    // Concurrency: the existence check is scoped by both conname AND
+    // conrelid (so an unrelated constraint of the same name on
+    // another table can never confuse us); and the ALTER itself is
+    // wrapped in an EXCEPTION handler that swallows `duplicate_object`
+    // — needed because under simultaneous app boots (multi-replica
+    // deploys, dev hot-restarts, etc.) two processes can both pass
+    // the NOT EXISTS check before either commits the ALTER. With the
+    // handler, whichever loses the race no-ops cleanly instead of
+    // raising. The combined check + handler makes the DDL truly
+    // idempotent and safe to run on every boot.
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'screens_pairing_code_unique'
+            AND conrelid = 'screens'::regclass
+        ) THEN
+          BEGIN
+            ALTER TABLE screens
+              ADD CONSTRAINT screens_pairing_code_unique
+              UNIQUE (pairing_code);
+          EXCEPTION WHEN duplicate_object THEN
+            -- A concurrent boot won the race; their ALTER already
+            -- installed the same constraint. Nothing to do.
+            NULL;
+          END;
+        END IF;
+      END $$;
+    `);
+
     return reissued;
   }
 
@@ -1319,18 +1360,28 @@ export class DatabaseStorage implements IStorage {
     }
     if (!leftWall) return;
 
-    // 1. Rotate the leaver (skip when deleted — row is gone).
+    // 1. Rotate the leaver unconditionally (skip only when deleted —
+    // the row is already gone). Task #180 requires every screen that
+    // leaves a wall to get a fresh unique pairingCode regardless of
+    // whether the wall was paired (had a deviceToken) at the time —
+    // even an unpaired-but-shared code (legacy duplicate) must be
+    // reissued so the screen carries a code unique to itself going
+    // forward. rotateScreenPairingIdentity is a no-op-safe scrub of
+    // device/presence state when those fields are already null.
     if (!options.changedScreenDeleted) {
       const after = await this.getScreen(changedScreenId);
-      if (after && after.deviceToken !== null) {
+      if (after) {
         await this.rotateScreenPairingIdentity(changedScreenId);
       }
     }
 
     // 2. Survivors. Look up the wall state from any survivor; if it
     // still resolves to ≥2 members the wall held together and we
-    // leave them alone. Otherwise dissolve them all so no two solo
-    // screens share the deviceToken.
+    // leave them alone (their shared deviceToken/state is still
+    // legitimate). Otherwise the wall has dissolved into solo
+    // screens — rotate every one of them unconditionally so no two
+    // former tiles ever end up sharing a pairingCode (or a stale
+    // wall deviceToken).
     const survivorIds = beforeMembers
       .map((m) => m.id)
       .filter((id) => id !== changedScreenId);
@@ -1342,7 +1393,6 @@ export class DatabaseStorage implements IStorage {
     for (const sid of survivorIds) {
       const surv = await this.getScreen(sid);
       if (!surv) continue;
-      if (surv.deviceToken === null) continue;
       await this.rotateScreenPairingIdentity(sid);
     }
   }
