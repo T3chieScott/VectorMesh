@@ -569,6 +569,52 @@ test("__TEST_S195__ overnight-wrap window stops firing at exact end boundary (02
   );
 });
 
+// Pin the pre-existing `startTime === endTime` behaviour so the
+// minute-exclusive end-time refactor doesn't accidentally flip it.
+// Today the resolver treats equal start/end as a 24h always-on
+// window (it falls into the overnight-wrap branch where
+// `endMins <= startMins`, and `now < start && now >= end` is never
+// true at any minute). If a future task wants to redefine this as
+// an empty/never-firing window instead, this test will fail loudly.
+test("__TEST_S195__ startTime === endTime keeps existing 24h-always-on semantics", async () => {
+  const event = makeEvent("evt-1");
+  const programme = makeProgramme("prog-1", event.id);
+  const version = makeVersion("v-1", programme.id);
+  const layout = makeLayout("layout-1", "L");
+  const block = makeBlock({
+    layoutTemplateId: layout.id,
+    programmeVersionId: version.id,
+    timeRules: [{ startTime: "10:00", endTime: "10:00" }],
+  });
+
+  for (const [h, m] of [
+    [9, 59],
+    [10, 0],
+    [10, 30],
+    [23, 59],
+  ] as const) {
+    const now = new Date();
+    now.setUTCHours(h, m, 0, 0);
+    const result = await resolveScreenContent(
+      makeScreen(),
+      now,
+      makeDeps({
+        event,
+        programmes: [programme],
+        versions: [version],
+        blocksByVersion: { [version.id]: [block] },
+        layouts: { [layout.id]: layout },
+      }),
+      "UTC",
+    );
+    assert.equal(
+      result.layout?.id,
+      layout.id,
+      `expected always-on match at ${h}:${m}`,
+    );
+  }
+});
+
 test("__TEST_S195__ standalone endTime (no startTime) is also exclusive at the boundary", async () => {
   const event = makeEvent("evt-1");
   const programme = makeProgramme("prog-1", event.id);
