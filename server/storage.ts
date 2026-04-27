@@ -178,7 +178,6 @@ export interface IStorage {
   getScreen(id: string): Promise<Screen | undefined>;
   getScreenByPairingCode(code: string): Promise<Screen | undefined>;
   getScreenByDeviceToken(token: string): Promise<Screen | undefined>;
-  unpairScreen(id: string, newPairingCode: string): Promise<Screen | undefined>;
   /**
    * Implicit-canvas grouping: returns every screen that shares a video
    * wall with `screen` (same clientId + canvasWidth + canvasHeight, all
@@ -841,21 +840,6 @@ export class DatabaseStorage implements IStorage {
     return screen;
   }
 
-  async unpairScreen(id: string, newPairingCode: string): Promise<Screen | undefined> {
-    const [screen] = await db
-      .update(screens)
-      .set({
-        isPaired: false,
-        isOnline: false,
-        deviceToken: null,
-        pairingCode: newPairingCode,
-        updatedAt: new Date(),
-      } as any)
-      .where(eq(screens.id, id))
-      .returning();
-    return screen;
-  }
-
   async getCanvasMembers(screen: Screen): Promise<Screen[]> {
     if (
       !screen.canvasEnabled ||
@@ -1261,13 +1245,23 @@ export class DatabaseStorage implements IStorage {
         const bT = b.createdAt?.getTime() ?? 0;
         return aT - bT;
       });
-      // Keep the earliest, reissue the rest.
+      // Keep the earliest, reissue the rest. Round-9 review: route
+      // each reissue through withPairingCodeCollisionRetry for
+      // consistency with every other mint+write path. The risk is
+      // tiny here (boot is single-shot per replica and the
+      // codespace is ~2.1B), but using the same helper means there
+      // is exactly one place in the codebase that knows how to
+      // recover from a probe-vs-write race.
       for (let i = 1; i < bucket.length; i++) {
-        const fresh = await this.generateUniquePairingCode();
-        await db
-          .update(screens)
-          .set({ pairingCode: fresh })
-          .where(eq(screens.id, bucket[i].id));
+        await this.withPairingCodeCollisionRetry(
+          "dedupePairingCodes",
+          async (fresh) => {
+            await db
+              .update(screens)
+              .set({ pairingCode: fresh })
+              .where(eq(screens.id, bucket[i].id));
+          },
+        );
         reissued++;
       }
     }
