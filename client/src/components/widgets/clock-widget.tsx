@@ -1,13 +1,5 @@
-// Task #193 — `ClockWidget` lives in its own file (extracted from
-// `client/src/components/zone-renderer.tsx`) so it can be rendered
-// in isolation by node:test suites without dragging zone-renderer's
-// leaflet / leaflet.css imports into a non-DOM environment.
-//
-// Behavior is identical to the previous in-place definition. The
-// widget reads server-synced wall-clock time via `useSyncedSecondTick`
-// (with local-Date.now() fallback outside the player provider) and
-// resolves any `{{...}}` tokens in `label` against the supplied
-// player-variable context.
+// Standalone so it can be rendered without zone-renderer's leaflet
+// imports (which won't load in node:test).
 import * as React from "react";
 import { useSyncedSecondTick } from "@/lib/playerClock";
 import {

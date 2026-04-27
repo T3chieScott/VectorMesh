@@ -1,23 +1,7 @@
-// Task #193 — render-level coverage for the real ClockWidget under
-// a skewed device clock. The estimator math is fully covered by
-// tests/player-time-sync.test.ts; this file pins the *integration*
-// rule end-to-end:
-//
-//   1. ClockWidget rendered inside PlayerClockProvider with a
-//      persisted offset shows server-corrected wall-clock time
-//      (not local Date.now()).
-//   2. ClockWidget rendered inside PlayerClockProvider that has
-//      received exactly one fresh (t1, serverTime, t2) sample shows
-//      the time the server reported (not local Date.now()).
-//   3. ClockWidget rendered WITHOUT a provider falls back to local
-//      Date.now() unchanged.
-//
-// We can't override `Date.now()` cleanly in node:test, so we drive
-// the offset through the public seams: localStorage (case 1) and
-// the provider's `feedSample` ref (case 2). `renderToStaticMarkup`
-// doesn't run useEffect, so what we read back is exactly the
-// initial useState value — perfect for asserting "the offset really
-// did flow through the provider into the widget at first paint".
+// Render-level coverage for ClockWidget under a skewed device clock.
+// The estimator math is in player-time-sync.test.ts; here we pin the
+// integration rule via three cases: persisted offset, live sample,
+// and no-provider fallback.
 
 import test from "node:test";
 import assert from "node:assert/strict";

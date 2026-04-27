@@ -7,11 +7,8 @@ export interface PlayerVariableDef {
   preview: string;
 }
 
-// Task #193 — every "now"-derived sample takes an optional ms
-// timestamp so callers (the player) can feed in a server-synced
-// wall-clock time instead of the device's possibly-wrong system
-// clock. Admin previews leave it undefined and fall back to local
-// Date.now(), preserving the previous behaviour.
+// Optional `nowMs` lets the player pass server-synced time;
+// undefined falls back to local Date.now() (admin previews etc).
 function sampleDate(nowMs?: number) {
   return new Date(nowMs ?? Date.now()).toLocaleDateString();
 }
@@ -52,19 +49,11 @@ export interface PlayerVariableContext {
   nextSessionCountdown?: string | null;
   weatherSummary?: string | null;
   /**
-   * Task #193 — server-synced "now" in ms. When set, {{date}}/{{time}}/
-   * {{day}} render off this instead of `Date.now()`. The player passes
-   * this in via `getSyncedNow()` so wall-clock tokens stay correct
-   * even when the device's system clock is wrong. Admin/preview leave
-   * this undefined and fall back to local time.
-   *
-   * IMPORTANT: prefer `getNowMs` over `nowMs`. A fixed `nowMs` snapshot
-   * was found to freeze {{time}} when downstream components (e.g.
-   * ZoneRenderer's usePlayerVariableTick) re-render independently of
-   * the parent that built the context. `getNowMs` is invoked at
-   * render-time inside `buildResolved`, so each tick gets a fresh
-   * server-synced timestamp. `nowMs` is kept only for tests that
-   * want to pin a deterministic instant.
+   * Server-synced "now" for {{date}}/{{time}}/{{day}}. Prefer
+   * `getNowMs` (invoked per render) over `nowMs` (a static snapshot
+   * that would freeze when child components re-render independently
+   * of the context provider). `nowMs` is retained for tests that
+   * pin a deterministic instant.
    */
   nowMs?: number | null;
   getNowMs?: () => number;

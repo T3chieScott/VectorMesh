@@ -1,31 +1,9 @@
-// Task #193 — exhaustive coverage for the NTP-style clock-skew
-// estimator that backs ClockWidget / CountdownWidget /
-// {{time}}/{{date}}/{{day}} on the player. The estimator is tiny and
-// pure (`client/src/lib/playerTimeSync.ts`), but the rules it
-// encodes are exactly the rules whose absence would put a wrong
-// time on every screen when a TV's RTC drifts:
-//
-//   1. A single sample with reasonable RTT must produce a usable
-//      offset right away — we cannot wait for a "warm-up" buffer or
-//      the first ClockWidget paint after boot will always be wrong.
-//   2. The offset must be the median of accepted samples, so a
-//      single jittery RTT spike can't drag the estimate sideways.
-//   3. RTT-based outlier rejection must NOT engage until we have
-//      enough samples to compute a meaningful median (>=3) — a
-//      cold-start rejection would lock out the very first samples
-//      and leave the offset at null forever.
-//   4. Once warmed up, samples whose RTT is much worse than the
-//      median (> RTT_REJECT_MULTIPLIER × median) are dropped because
-//      the symmetric-latency assumption breaks down.
-//   5. Hard-cap RTT (>5s) rejection must apply at all times — a
-//      stalled fetch can't be allowed to set the clock to a value
-//      tens of seconds wrong.
-//   6. Malformed input (NaN, t2 < t1) must be rejected without
-//      mutating the buffer.
-//   7. The rolling buffer must cap at MAX_SAMPLES so a long-running
-//      player doesn't unbounded-grow.
-//   8. Persisted offsets (localStorage) must round-trip cleanly and
-//      tolerate corrupt JSON without crashing.
+// Coverage for the NTP-style clock-skew estimator
+// (`client/src/lib/playerTimeSync.ts`). Pins the rules that matter
+// in practice: usable offset from a single in-spec sample, median
+// over the rolling buffer, no cold-start RTT rejection, post-warmup
+// outlier rejection, hard-cap RTT cutoff, malformed-input handling,
+// MAX_SAMPLES cap, and corrupt-localStorage tolerance.
 
 import test from "node:test";
 import assert from "node:assert/strict";

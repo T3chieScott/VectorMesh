@@ -239,11 +239,8 @@ function TickerWidget({ content, speed, animation, fontSize, ctx }: { content?: 
   );
 }
 
-// Task #193 — ClockWidget was extracted to its own file so it can
-// be rendered in isolation by node:test (this module pulls in
-// react-leaflet at the top, which won't load in a non-DOM env).
-// Re-export to keep zone-renderer's local <ClockWidget .../> JSX
-// usage at line ~5686 working unchanged.
+// ClockWidget lives in its own file so it can be rendered without
+// dragging this module's leaflet imports into a non-DOM env.
 import { ClockWidget, type ClockWidgetProps } from "./widgets/clock-widget";
 
 
@@ -298,10 +295,9 @@ function CountdownWidget({
   compact = false,
   ctx,
 }: CountdownWidgetProps) {
-  // Task #193 — countdowns must use server-synced wall clock so a
-  // device with a wrong system clock doesn't show "Event Started!"
-  // hours early or hours late. `getSyncedNow()` returns the synced
-  // ms timestamp; outside the player it falls back to local Date.now().
+  // Server-synced now so the countdown doesn't fire early/late on
+  // devices with a wrong system clock. Falls back to Date.now()
+  // outside the player provider.
   const { getSyncedNow, offsetMs } = usePlayerClock();
   const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
   const [isComplete, setIsComplete] = useState(false);
@@ -397,8 +393,6 @@ function CountdownWidget({
         setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
         return;
       }
-      // Task #193 — server-corrected wall clock so the countdown
-      // tracks real elapsed time, not whatever the device's RTC says.
       const now = getSyncedNow();
       const diff = target - now;
 
@@ -419,9 +413,8 @@ function CountdownWidget({
     calculateTimeLeft();
     const interval = setInterval(calculateTimeLeft, 1000);
     return () => clearInterval(interval);
-    // Task #193 — re-run when the synced offset changes meaningfully
-    // so a freshly-corrected clock immediately reflects in the
-    // displayed countdown (otherwise it would lag up to 1 second).
+    // Re-run when the synced offset changes so a corrected clock
+    // immediately reflects in the displayed countdown.
   }, [targetDate, timezone, getSyncedNow, offsetMs]);
 
   const formatNumber = (num: number, maxDigits: number = 2) => {

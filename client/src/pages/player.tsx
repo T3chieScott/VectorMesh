@@ -134,10 +134,8 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
     setLoading(true);
     setError(null);
     try {
-      // Task #193 — capture round-trip timestamps so we can compute
-      // an NTP-style offset from the very first response (pair),
-      // before the PlayerClockProvider mounts. Persist directly so
-      // the provider's first paint is already close to correct.
+      // Sample server-time offset from the pair response so the
+      // provider's first paint is already close to correct.
       const t1 = Date.now();
       const res = await fetch("/api/player/pair", {
         method: "POST",
@@ -240,11 +238,7 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
 }
 
 function PlayerContent({ screenId, token }: { screenId: string; token: string }) {
-  // Task #193 — synced wall-clock so ClockWidget / CountdownWidget /
-  // {{time}} render real time even when the device clock is wrong.
-  // `feedSample` is called after each pair/heartbeat/content fetch;
-  // `getSyncedNow` is read at render time when constructing the
-  // playerContext.nowMs so {{date}}/{{time}}/{{day}} use server time.
+  // Server-synced wall clock for widgets and {{time}} tokens.
   const { feedSample, getSyncedNow } = usePlayerClock();
   const [content, setContent] = useState<PlayerContentData | null>(() => getCachedContent(screenId));
   const [error, setError] = useState<string | null>(null);
@@ -377,7 +371,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     // is defense-in-depth in case any callers re-enter fetchContent.
     if (reloadingRef.current) return;
     let res: Response;
-    // Task #193 — bracket the fetch with t1/t2 timestamps for the
+    // Bracket the fetch with t1/t2 timestamps for the
     // NTP-style offset estimator. Captured here (not later) so the
     // RTT excludes any time spent parsing JSON or running our own
     // decision logic.
@@ -460,13 +454,9 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         throw new Error(`Failed to fetch content: ${res.status}`);
       }
       const data: PlayerContentData = await res.json();
-      // Task #193 — feed (t1, serverTime, t2) into the rolling NTP
-      // estimator. `t2` is captured immediately after `res.json()`
-      // resolves, so the measured RTT includes JSON-parse time
-      // (~1ms for our payloads). That's negligible for offset
-      // accuracy and the >3× rolling-median RTT outlier rejection
-      // in playerTimeSync rejects any sample where the parse stalls
-      // long enough to skew the midpoint.
+      // t2 is captured after res.json() resolves; JSON parse time
+      // is ~1ms for our payloads. The estimator's rolling-median
+      // RTT outlier rejection drops any sample that stalls.
       const t2 = Date.now();
       if (typeof data.serverTime === "number") {
         feedSample(t1, data.serverTime, t2);
@@ -567,13 +557,9 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   }, [screenId, token, collectMediaUrls]);
 
   useEffect(() => {
-    // Task #193 — boot-time NTP sample. The first content poll
-    // takes ~7s on a fresh load (and can take longer if the device
-    // clock is way off and we hit a slow path). Hitting the tiny
-    // dedicated /api/player/time endpoint up-front gets the first
-    // accurate offset within the first network round-trip, so the
-    // ClockWidget rendered on frame 0 is correct (or at worst seeded
-    // from localStorage from the previous run).
+    // Boot-time sync via the tiny /api/player/time endpoint so the
+    // first ClockWidget paint is correct without waiting 7s for
+    // /content.
     (async () => {
       try {
         const t1 = Date.now();
@@ -599,11 +585,8 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   useEffect(() => {
     heartbeatIntervalRef.current = setInterval(async () => {
       try {
-        // Task #193 — feed an NTP sample on every heartbeat. Even if
-        // /content stops getting fresh samples (e.g. cached 304 path,
-        // long no-change debounce), the 30s heartbeat keeps the
-        // offset estimator's rolling buffer warm so the on-screen
-        // clock stays correct over long uptimes.
+        // Heartbeat doubles as a 30s sync sample so the offset
+        // stays warm even when /content is debounced or 304-cached.
         const t1 = Date.now();
         const res = await playerFetch("/api/player/heartbeat", token, {
           method: "POST",
@@ -1291,12 +1274,9 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                       nextSessionCountdown:
                         content!.playerVars?.nextSessionCountdown,
                       weatherSummary: content!.playerVars?.weatherSummary,
-                      // Task #193 — server-synced wall clock for
-                      // {{date}}/{{time}}/{{day}} resolution. Pass the
-                      // function (not its current return value) so each
-                      // downstream re-render via usePlayerVariableTick
-                      // gets a FRESH timestamp; passing a snapshot here
-                      // froze {{time}} between PlayerContent re-fetches.
+                      // Pass the function (not the current value)
+                      // so each downstream re-render gets a fresh
+                      // synced timestamp.
                       getNowMs: getSyncedNow,
                     }}
                   />
@@ -1495,11 +1475,9 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                   nextSessionTime: content.playerVars?.nextSessionTime,
                   nextSessionCountdown: content.playerVars?.nextSessionCountdown,
                   weatherSummary: content.playerVars?.weatherSummary,
-                  // Task #193 — server-synced wall clock for
-                  // {{date}}/{{time}}/{{day}} resolution. Pass the
-                  // function (not its current return value) so each
-                  // downstream re-render via usePlayerVariableTick
-                  // gets a FRESH timestamp.
+                  // Pass the function (not the current value) so
+                  // each downstream re-render gets a fresh synced
+                  // timestamp.
                   getNowMs: getSyncedNow,
                 }}
               />

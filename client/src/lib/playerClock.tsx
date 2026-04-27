@@ -1,8 +1,5 @@
-// React namespace import is required for files imported by node:test
-// suites via tsx (whose esbuild JSX transform compiles to
-// `React.createElement` and needs `React` in scope). Vite uses the
-// automatic JSX runtime in production and tree-shakes the unused
-// namespace, so adding it here is a no-op for the bundled app.
+// React namespace import keeps node:test (esbuild classic JSX) happy;
+// Vite tree-shakes it in production.
 import * as React from "react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -14,25 +11,10 @@ import {
   type TimeSyncState,
 } from "./playerTimeSync";
 
-// Task #193 — React glue around `playerTimeSync`.
-//
-// `PlayerClockProvider` owns the rolling-sample state and exposes:
-//
-//   - `feedSample(t1, serverTime, t2)` — called by the player after
-//     each pair / heartbeat / content / dedicated-time fetch
-//   - `getSyncedNow()` — synchronous accessor that ClockWidget /
-//     CountdownWidget / template-token resolution call to get a
-//     server-corrected wall-clock time
-//
-// `getSyncedNow` is intentionally NOT a React state value (it would
-// thrash the render loop). Widgets that need to re-render on the
-// second boundary keep their existing `setInterval` and just *read*
-// from `getSyncedNow` each tick.
-//
-// Persistence: the latest accepted offset is mirrored into
-// localStorage so the next page load (controlled reload, TV reboot)
-// renders a close-to-correct clock from the very first frame instead
-// of waiting ~7 seconds for the first content poll to land.
+// React glue around the pure estimator in `playerTimeSync`.
+// Provider owns the rolling sample buffer; `getSyncedNow()` is a
+// ref-backed accessor (not a state value) so reading it doesn't
+// trigger re-renders.
 
 interface PlayerClockApi {
   feedSample: (t1: number, serverTime: number, t2: number) => void;

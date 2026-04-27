@@ -1,40 +1,15 @@
-// Task #193 — NTP-style clock skew estimator for the player.
+// NTP/SNTP single-sample estimator for the player. Each sample is a
+// (t1, serverTime, t2) triplet captured around a fetch:
 //
-// The player's host (TV, mini-PC, Pi, web kiosk) may have a wildly
-// inaccurate system clock — no NTP daemon, dead RTC battery, fresh
-// boot before time-sync, "Automatic timezone" set incorrectly, etc.
-// `ClockWidget`, `CountdownWidget`, and `{{time}}` template tokens
-// all read `new Date()` straight from that local clock, so a wrong
-// device clock means a wrong on-screen clock.
+//   offset = serverTime - (t1 + t2) / 2     // add to Date.now()
+//   rtt    = t2 - t1                         // for outlier rejection
 //
-// This module piggybacks on the existing player↔server traffic. The
-// server stamps `serverTime` (its own `Date.now()`) on every reply
-// the player already receives (pair, heartbeat, content, plus a
-// dedicated `GET /api/player/time`). The player wraps each of those
-// fetches with a `t1=Date.now()-before` and `t2=Date.now()-after`
-// timestamp, then feeds the triplet into `addSample()` here.
-//
-// The estimator follows the standard NTP/SNTP single-sample model:
-//
-//   midpoint  = (t1 + t2) / 2          // local clock at the moment
-//                                         the server stamped serverTime
-//                                         (assuming symmetric latency)
-//   offset    = serverTime - midpoint   // amount to ADD to local
-//                                         Date.now() to get server time
-//   roundTrip = t2 - t1                 // network latency
-//
-// Samples with abnormally high RTT (relative to the median of the
-// rolling buffer) are dropped, because high RTT means the symmetric-
-// latency assumption is much weaker. The exposed `getOffset()` is
-// the median of accepted samples — robust to single outliers without
-// any low-pass filter complexity.
-//
-// Persistence: the latest accepted offset is mirrored to localStorage
-// so a fresh page load (after a controlled reload, or after a TV
-// boot) renders a roughly-correct clock from frame 0, without having
-// to wait the ~7s for the first content poll to land. Offline the
-// player keeps using the last persisted offset — being a few seconds
-// off is much better than displaying the wrong time entirely.
+// `getOffset()` returns the median of accepted samples in a small
+// rolling buffer. Samples whose RTT exceeds 3× the rolling median
+// (after warmup) are dropped, since high RTT breaks the symmetric-
+// latency assumption. The latest accepted offset is mirrored to
+// localStorage so a controlled reload / TV reboot starts close to
+// correct rather than waiting for the first content poll.
 
 const STORAGE_KEY = "vectormesh_player_clock_offset";
 const MAX_SAMPLES = 8;
