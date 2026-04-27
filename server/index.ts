@@ -85,7 +85,21 @@ app.use((req, res, next) => {
       );
     }
   } catch (err) {
+    // Task #180: dedupe also installs the screens_pairing_code_unique
+    // DB constraint as part of its self-heal. If that fails we are
+    // running without DB-level enforcement of per-screen pairing-code
+    // uniqueness — the exact invariant Task #180 is meant to guarantee.
+    // In production, refuse to start: better a noisy boot failure that
+    // surfaces in deploy logs than a silently degraded fleet that lets
+    // duplicates accumulate. In development, log loudly and continue
+    // so the dev loop isn't blocked by transient DB hiccups.
     console.error("[canvas-pairing] dedupe failed:", err);
+    if (process.env.NODE_ENV === "production") {
+      console.error(
+        "[canvas-pairing] aborting boot — pairing-code uniqueness cannot be guaranteed without dedupe success",
+      );
+      process.exit(1);
+    }
   }
   // Implicit-canvas pairing (Task #173): pre-#173 walls may carry
   // mismatched per-tile pairing rows (different deviceTokens, codes,
