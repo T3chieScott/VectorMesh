@@ -107,9 +107,9 @@ export function buildScreenPatchHandler(
         body.canvasY = 0;
       }
       const data = insertScreenSchema.partial().parse(body);
-      // Task #189 — validate the effective post-patch state for the
-      // canvasGroupId binding. Patches that change clientId/dims/
-      // canvasEnabled without touching the FK can still invalidate it.
+      // Task #189: validate the effective post-patch canvas-group
+      // binding. Patches that change clientId/dims/canvasEnabled
+      // without touching the FK can still invalidate it.
       const effectiveCanvasEnabled =
         data.canvasEnabled !== undefined
           ? data.canvasEnabled
@@ -123,57 +123,52 @@ export function buildScreenPatchHandler(
           ? data.canvasHeight
           : existing.canvasHeight;
       if (effectiveCanvasEnabled === false || effectiveCanvasEnabled === null) {
-        // Canvas off — drop any FK so a disabled row never points at a group.
         data.canvasGroupId = null;
+      } else if (data.canvasGroupId === null) {
+        // "Leave the wall → solo screen": auto-mint a fresh per-screen
+        // group instead of rejecting, so the operator workflow works
+        // and the screen never lands in a groupless state.
+        if (
+          typeof effectiveWidth !== "number" ||
+          effectiveWidth < 1 ||
+          typeof effectiveHeight !== "number" ||
+          effectiveHeight < 1
+        ) {
+          return res.status(400).json({
+            error:
+              "Cannot leave canvas group without valid canvas width and height",
+          });
+        }
+        const minted = await storage.createCanvasGroup({
+          clientId: effectiveClientId,
+          name: existing.name,
+          canvasWidth: effectiveWidth,
+          canvasHeight: effectiveHeight,
+        });
+        data.canvasGroupId = minted.id;
       } else {
-        // Canvas enabled. If the patch explicitly sets canvasGroupId to
-        // null ("leave group → solo screen"), auto-mint a fresh
-        // per-screen group server-side so the screen never lands in a
-        // groupless state and the operator's intent (independence from
-        // any wall) is preserved.
-        if (data.canvasGroupId === null) {
+        const effectiveCanvasGroupId =
+          data.canvasGroupId !== undefined
+            ? data.canvasGroupId
+            : existing.canvasGroupId;
+        if (effectiveCanvasGroupId) {
+          const group = await storage.getCanvasGroup(effectiveCanvasGroupId);
+          if (!group) {
+            return res.status(400).json({ error: "Canvas group not found" });
+          }
+          if (group.clientId !== effectiveClientId) {
+            return res.status(400).json({
+              error: "Canvas group belongs to a different site",
+            });
+          }
           if (
-            typeof effectiveWidth !== "number" ||
-            effectiveWidth < 1 ||
-            typeof effectiveHeight !== "number" ||
-            effectiveHeight < 1
+            group.canvasWidth !== effectiveWidth ||
+            group.canvasHeight !== effectiveHeight
           ) {
             return res.status(400).json({
               error:
-                "Cannot leave canvas group without valid canvas width and height",
+                "Canvas group dimensions do not match the screen's canvas size",
             });
-          }
-          const minted = await storage.createCanvasGroup({
-            clientId: effectiveClientId,
-            name: existing.name,
-            canvasWidth: effectiveWidth,
-            canvasHeight: effectiveHeight,
-          });
-          data.canvasGroupId = minted.id;
-        } else {
-          const effectiveCanvasGroupId =
-            data.canvasGroupId !== undefined
-              ? data.canvasGroupId
-              : existing.canvasGroupId;
-          if (effectiveCanvasGroupId) {
-            const group = await storage.getCanvasGroup(effectiveCanvasGroupId);
-            if (!group) {
-              return res.status(400).json({ error: "Canvas group not found" });
-            }
-            if (group.clientId !== effectiveClientId) {
-              return res.status(400).json({
-                error: "Canvas group belongs to a different site",
-              });
-            }
-            if (
-              group.canvasWidth !== effectiveWidth ||
-              group.canvasHeight !== effectiveHeight
-            ) {
-              return res.status(400).json({
-                error:
-                  "Canvas group dimensions do not match the screen's canvas size",
-              });
-            }
           }
         }
       }

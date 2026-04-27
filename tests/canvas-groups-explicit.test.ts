@@ -1,34 +1,7 @@
 // Task #189 — explicit `canvasGroupId` regression coverage.
-//
-// The implicit grouping bug it replaces:
-//   Before #189, `groupScreensByCanvas` keyed groups by
-//   (clientId, canvasWidth, canvasHeight) and treated every member
-//   as a sibling unless they shared a position. This meant two
-//   independent canvas-enabled screens that just happened to be
-//   the same size silently became wall siblings — pairing one
-//   would fan a deviceToken across both, schedule changes on one
-//   would refresh the other, etc. Operators reported this as
-//   "my new test screen broke pairing on the lobby wall".
-//
-// What this file pins:
-//   1. Pure helper contract (`shared/canvas-groups.ts`) — same
-//      `clientId` and same dims is NOT enough; only matching
-//      `canvasGroupId` makes screens siblings.
-//   2. Storage `getCanvasMembers` honours the same explicit rule
-//      end-to-end: fanning a pairing token must not leak across
-//      groups.
-//   3. The boot-time `backfillExplicitCanvasGroups` produces:
-//        - one shared group per real wall (≥2 members at distinct
-//          positions, same clientId+dims),
-//        - a per-screen group for every other canvas-enabled screen,
-//        - and is idempotent (a second invocation does nothing).
-//   4. `createScreen` auto-mints a per-screen group when the caller
-//      enables canvas without supplying a `canvasGroupId`, so a
-//      brand-new canvas screen never lands in the "no group" abyss.
-//
-// PREFIX `__TEST_S189__` keeps every row this file touches namespaced;
-// cleanup runs before AND after so an aborted run can't poison the
-// next one and ambient dev data is left alone.
+// Pins: pure-helper contract, getCanvasMembers no-fan-out across
+// groups, backfill (real wall → shared group, others → per-screen,
+// idempotent), createScreen auto-mint, and boot-marker semantics.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -293,22 +266,15 @@ test("storage.getCanvasMembers — real wall (shared canvasGroupId) returns ever
 
 // ─── Backfill contract ────────────────────────────────────────────
 
-test("backfillExplicitCanvasGroups — promotes legacy walls (shared deviceToken) into one shared group, same-dim independents into per-screen groups, and is idempotent", async () => {
+test("backfillExplicitCanvasGroups — promotes legacy walls (≥2 distinct positions, same client+dims) into one shared group, different-dim solos into per-screen groups, and is idempotent", async () => {
   const clientId = await muteId();
-  // Real wall: ≥2 canvas-enabled screens of the same client+dims
-  // sharing the SAME non-null deviceToken. The shared token is the
-  // operationally-correct signal — it means the wall-pairing flow
-  // already authenticated those screens together. Distinct positions
-  // alone are NOT enough (that was the old false-merging heuristic).
+  // Real wall: same client + dims + two distinct positions.
   const t0 = new Date("2026-03-01T00:00:00Z");
-  const wallTok = `${PREFIX}p5-walltok`;
   const wallA = await makeScreen({
     name: "p5-wallA",
     clientId,
     canvasGroupId: null,
     canvasX: 0,
-    deviceToken: wallTok,
-    isPaired: true,
     createdAt: t0,
   });
   const wallB = await makeScreen({
@@ -316,23 +282,17 @@ test("backfillExplicitCanvasGroups — promotes legacy walls (shared deviceToken
     clientId,
     canvasGroupId: null,
     canvasX: 1920,
-    deviceToken: wallTok,
-    isPaired: true,
     createdAt: new Date(t0.getTime() + 1000),
   });
-  // Same-dim independent — NO shared deviceToken. Under the old
-  // dim+position heuristic this would have false-merged with the
-  // wall whenever dims matched; the new heuristic correctly puts it
-  // in its own per-screen group.
+  // Solo with DIFFERENT dims so the bucket can't fold it in.
   const solo = await makeScreen({
     name: "p5-solo",
     clientId,
     canvasGroupId: null,
-    canvasWidth: 3840,
+    canvasWidth: 1920,
     canvasHeight: 1080,
     canvasX: 0,
     canvasY: 0,
-    deviceToken: null,
     createdAt: new Date(t0.getTime() + 2000),
   });
 

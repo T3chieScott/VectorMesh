@@ -1022,40 +1022,23 @@ export class DatabaseStorage implements IStorage {
     groupsCreated: number;
     screensStamped: number;
   }> {
-    // Task #189 — promote legacy implicit grouping into explicit
-    // `canvas_groups` rows. The heuristic deliberately favours
-    // operator-correct independence: only screens that the existing
-    // wall-pairing system has already coupled (≥2 canvas-enabled
-    // screens of the same client+dims sharing the SAME non-null
-    // deviceToken) become a shared group. Everything else gets a
-    // per-screen group.
-    //
-    // Why deviceToken instead of position-distinctness:
-    //   The original implicit grouping bucketed by (clientId, w, h)
-    //   and treated ≥2 distinct positions as a "real wall". That false-
-    //   merged independent same-dimension screens (e.g. POS01..POS08
-    //   one of which had been moved off 0,0) and is exactly the bug
-    //   #189 exists to fix. A shared deviceToken is a strong, real
-    //   signal: it means the wall-pairing flow already authenticated
-    //   those screens as one wall.
-    //
-    // Idempotent — screens already stamped are skipped.
+    // Task #189: migrate legacy implicit grouping into explicit
+    // canvas_groups rows using the prior implicit-wall semantics
+    // (same clientId + same dims + ≥2 distinct positions = one
+    // shared group; everything else = per-screen group). Idempotent.
     const allCanvas = await db
       .select()
       .from(screens)
       .where(eq(screens.canvasEnabled, true))
       .orderBy(asc(screens.createdAt), asc(screens.id));
 
-    interface TokenBucket {
+    interface Bucket {
       clientId: string | null;
       w: number;
       h: number;
-      token: string;
       members: Screen[];
     }
-    const tokenBuckets = new Map<string, TokenBucket>();
-    const soloCandidates: Screen[] = [];
-
+    const buckets = new Map<string, Bucket>();
     for (const s of allCanvas) {
       if (s.canvasGroupId) continue;
       if (
@@ -1064,32 +1047,29 @@ export class DatabaseStorage implements IStorage {
         typeof s.canvasHeight !== "number" ||
         s.canvasHeight <= 0
       ) {
-        // canvas_groups requires NOT NULL dims. A canvas-enabled row
-        // with no dims is broken state; leave it unstamped.
         continue;
       }
-      if (s.deviceToken && s.deviceToken.length > 0) {
-        const key = `${s.clientId ?? ""}|${s.canvasWidth}x${s.canvasHeight}|${s.deviceToken}`;
-        const bucket = tokenBuckets.get(key);
-        if (bucket) bucket.members.push(s);
-        else
-          tokenBuckets.set(key, {
-            clientId: s.clientId ?? null,
-            w: s.canvasWidth,
-            h: s.canvasHeight,
-            token: s.deviceToken,
-            members: [s],
-          });
-      } else {
-        soloCandidates.push(s);
-      }
+      const key = `${s.clientId ?? ""}|${s.canvasWidth}x${s.canvasHeight}`;
+      const bucket = buckets.get(key);
+      if (bucket) bucket.members.push(s);
+      else
+        buckets.set(key, {
+          clientId: s.clientId ?? null,
+          w: s.canvasWidth,
+          h: s.canvasHeight,
+          members: [s],
+        });
     }
 
     let groupsCreated = 0;
     let screensStamped = 0;
 
-    for (const bucket of tokenBuckets.values()) {
-      if (bucket.members.length >= 2) {
+    for (const bucket of buckets.values()) {
+      const positions = new Set<string>();
+      for (const m of bucket.members) {
+        positions.add(`${m.canvasX ?? 0}|${m.canvasY ?? 0}`);
+      }
+      if (positions.size >= 2 && bucket.members.length >= 2) {
         const lead = bucket.members[0];
         const [group] = await db
           .insert(canvasGroups)
@@ -1108,27 +1088,24 @@ export class DatabaseStorage implements IStorage {
           .where(inArray(screens.id, ids));
         screensStamped += ids.length;
       } else {
-        // Single screen with a deviceToken — same treatment as solo.
-        soloCandidates.push(bucket.members[0]);
+        for (const m of bucket.members) {
+          const [group] = await db
+            .insert(canvasGroups)
+            .values({
+              clientId: m.clientId ?? null,
+              name: m.name,
+              canvasWidth: bucket.w,
+              canvasHeight: bucket.h,
+            })
+            .returning();
+          groupsCreated++;
+          await db
+            .update(screens)
+            .set({ canvasGroupId: group.id, updatedAt: new Date() })
+            .where(eq(screens.id, m.id));
+          screensStamped++;
+        }
       }
-    }
-
-    for (const m of soloCandidates) {
-      const [group] = await db
-        .insert(canvasGroups)
-        .values({
-          clientId: m.clientId ?? null,
-          name: m.name,
-          canvasWidth: m.canvasWidth!,
-          canvasHeight: m.canvasHeight!,
-        })
-        .returning();
-      groupsCreated++;
-      await db
-        .update(screens)
-        .set({ canvasGroupId: group.id, updatedAt: new Date() })
-        .where(eq(screens.id, m.id));
-      screensStamped++;
     }
 
     return { groupsCreated, screensStamped };
@@ -1223,7 +1200,7 @@ export class DatabaseStorage implements IStorage {
   ): Promise<CanvasGroup | undefined> {
     const [row] = await db
       .update(canvasGroups)
-      .set({ ...data, updatedAt: new Date() } as any)
+      .set({ ...data, updatedAt: new Date() })
       .where(eq(canvasGroups.id, id))
       .returning();
     return row;
