@@ -1290,8 +1290,12 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                         content!.playerVars?.nextSessionCountdown,
                       weatherSummary: content!.playerVars?.weatherSummary,
                       // Task #193 — server-synced wall clock for
-                      // {{date}}/{{time}}/{{day}} resolution.
-                      nowMs: getSyncedNow(),
+                      // {{date}}/{{time}}/{{day}} resolution. Pass the
+                      // function (not its current return value) so each
+                      // downstream re-render via usePlayerVariableTick
+                      // gets a FRESH timestamp; passing a snapshot here
+                      // froze {{time}} between PlayerContent re-fetches.
+                      getNowMs: getSyncedNow,
                     }}
                   />
                 </div>
@@ -1490,8 +1494,11 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                   nextSessionCountdown: content.playerVars?.nextSessionCountdown,
                   weatherSummary: content.playerVars?.weatherSummary,
                   // Task #193 — server-synced wall clock for
-                  // {{date}}/{{time}}/{{day}} resolution.
-                  nowMs: getSyncedNow(),
+                  // {{date}}/{{time}}/{{day}} resolution. Pass the
+                  // function (not its current return value) so each
+                  // downstream re-render via usePlayerVariableTick
+                  // gets a FRESH timestamp.
+                  getNowMs: getSyncedNow,
                 }}
               />
             </div>

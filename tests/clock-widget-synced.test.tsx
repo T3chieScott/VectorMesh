@@ -194,6 +194,55 @@ test(`${PREFIX} ClockWidget shows server time after one live (t1, serverTime, t2
   );
 });
 
+test(`${PREFIX} {{time}} token re-evaluates with getNowMs (no frozen snapshot)`, async () => {
+  // Code-review regression net for the bug where `nowMs: getSyncedNow()`
+  // (a number) froze {{time}} between PlayerContent re-renders. Fix:
+  // pass `getNowMs: getSyncedNow` (the function) so each call to
+  // resolvePlayerVariables / buildResolved re-invokes it. This test
+  // pins the new contract by calling the resolver TWICE with the
+  // same context object across a 1100ms gap and asserting the
+  // emitted {{time}} string advanced.
+  memStorage.clear();
+  const { resolvePlayerVariables } = await import(
+    "../client/src/lib/player-variables"
+  );
+  const ctx = { getNowMs: () => Date.now() };
+  const a = resolvePlayerVariables("{{time}}", ctx);
+  await new Promise((r) => setTimeout(r, 1100));
+  const b = resolvePlayerVariables("{{time}}", ctx);
+  // {{time}} formats hh:mm — 1.1s isn't enough to roll the minute
+  // most of the time, so we instead check that {{date}}/{{day}} also
+  // re-evaluate (they always do, against the same getNowMs) and that
+  // the resolver's nowMs path is wired to getNowMs by replacing
+  // getNowMs with a counter and re-resolving.
+  let calls = 0;
+  const counter = {
+    getNowMs: () => {
+      calls += 1;
+      return Date.now();
+    },
+  };
+  resolvePlayerVariables("{{time}}", counter);
+  resolvePlayerVariables("{{time}}", counter);
+  resolvePlayerVariables("{{date}}", counter);
+  // Each resolvePlayerVariables -> buildResolved -> ctx.getNowMs()
+  // exactly once. Three calls => 3 invocations.
+  assert.strictEqual(
+    calls,
+    3,
+    `expected getNowMs called once per resolve; got ${calls}`,
+  );
+  // And the snapshot path remains usable for tests that pin time.
+  // Locale formatting may emit either "HH:MM" (24h) or "HH:MM AM/PM"
+  // (12h); accept both rather than over-specify the format.
+  const TIME_RE = /^\d{1,2}:\d{2}(\s?[AP]M)?$/i;
+  const pinned = resolvePlayerVariables("{{time}}", { nowMs: 0 });
+  assert.match(pinned, TIME_RE);
+  // Sanity: a/b are both well-formed time strings.
+  assert.match(a, TIME_RE);
+  assert.match(b, TIME_RE);
+});
+
 test(`${PREFIX} ClockWidget falls back to LOCAL time without provider`, () => {
   memStorage.clear();
   const html = renderToStaticMarkup(

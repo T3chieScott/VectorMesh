@@ -57,8 +57,17 @@ export interface PlayerVariableContext {
    * this in via `getSyncedNow()` so wall-clock tokens stay correct
    * even when the device's system clock is wrong. Admin/preview leave
    * this undefined and fall back to local time.
+   *
+   * IMPORTANT: prefer `getNowMs` over `nowMs`. A fixed `nowMs` snapshot
+   * was found to freeze {{time}} when downstream components (e.g.
+   * ZoneRenderer's usePlayerVariableTick) re-render independently of
+   * the parent that built the context. `getNowMs` is invoked at
+   * render-time inside `buildResolved`, so each tick gets a fresh
+   * server-synced timestamp. `nowMs` is kept only for tests that
+   * want to pin a deterministic instant.
    */
   nowMs?: number | null;
+  getNowMs?: () => number;
 }
 
 function buildResolved(ctx?: PlayerVariableContext): Record<string, string> {
@@ -69,7 +78,14 @@ function buildResolved(ctx?: PlayerVariableContext): Record<string, string> {
   }
   const empty = "";
   const cap = ctx.roomCapacity;
-  const nowMs = typeof ctx.nowMs === "number" ? ctx.nowMs : undefined;
+  // Prefer the live `getNowMs` accessor (server-synced and re-evaluated
+  // on every render) over the static `nowMs` snapshot. The snapshot
+  // path remains so deterministic tests can pin an instant.
+  const nowMs = typeof ctx.getNowMs === "function"
+    ? ctx.getNowMs()
+    : typeof ctx.nowMs === "number"
+      ? ctx.nowMs
+      : undefined;
   return {
     "{{screen_name}}": ctx.screenName ?? empty,
     "{{room_name}}": ctx.roomName ?? empty,
