@@ -461,10 +461,12 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       }
       const data: PlayerContentData = await res.json();
       // Task #193 — feed (t1, serverTime, t2) into the rolling NTP
-      // estimator. `t2` is captured AFTER res.json() resolves but
-      // we discount that JSON-parse time by reading t2 here, just
-      // before doing any of our own logic. JSON parse is ~1ms so
-      // the extra latency in the estimator is negligible.
+      // estimator. `t2` is captured immediately after `res.json()`
+      // resolves, so the measured RTT includes JSON-parse time
+      // (~1ms for our payloads). That's negligible for offset
+      // accuracy and the >3× rolling-median RTT outlier rejection
+      // in playerTimeSync rejects any sample where the parse stalls
+      // long enough to skew the midpoint.
       const t2 = Date.now();
       if (typeof data.serverTime === "number") {
         feedSample(t1, data.serverTime, t2);

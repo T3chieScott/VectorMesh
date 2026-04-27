@@ -43,7 +43,10 @@ import {
   Wifi,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
-import { useSyncedSecondTick, usePlayerClock } from "@/lib/playerClock";
+// `useSyncedSecondTick` was removed from this file when ClockWidget
+// moved to ./widgets/clock-widget.tsx. CountdownWidget still uses
+// `usePlayerClock` directly here.
+import { usePlayerClock } from "@/lib/playerClock";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
 import {
   resolvePlayerVariables as resolveVars,
