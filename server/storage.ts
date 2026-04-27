@@ -286,6 +286,15 @@ export interface IStorage {
   // codes. Every callsite that mints a code MUST go through this so
   // the DB-level UNIQUE constraint on screens.pairing_code holds.
   generateUniquePairingCode(): Promise<string>;
+  // Task #180 — boot-time dedupe. Walks all screens, finds groups of
+  // rows that share a non-null pairing_code (the legacy wall-fan-out
+  // bug from before this fix), and rotates every member EXCEPT the
+  // earliest-created one to a fresh unique code via
+  // generateUniquePairingCode. Idempotent: when no duplicates remain
+  // it does nothing. Runs BEFORE the DB-level UNIQUE constraint is
+  // exercised by any new write so legacy data can never make a fresh
+  // server boot fall over. Returns the number of rows reissued.
+  dedupePairingCodes(): Promise<number>;
   // Task #180 — atomically assign the screen a fresh unique pairing
   // code AND clear its pairing/online state. Used when a tile leaves
   // a wall (PATCH/DELETE), is unpaired, or has its code regenerated,
@@ -1145,6 +1154,58 @@ export class DatabaseStorage implements IStorage {
     );
   }
 
+  async dedupePairingCodes(): Promise<number> {
+    // Task #180 — boot-time dedupe so a fresh deployment that inherits
+    // pre-#180 data (where walls fanned a single pairingCode across
+    // every tile) can have the new DB-level UNIQUE constraint applied
+    // without manual intervention. Strategy: for each duplicate
+    // pairing_code, keep the EARLIEST-created row's code intact (it's
+    // the canvas "owner" by the same rule as backfillCanvasPairingState)
+    // and rotate every other row to a freshly-minted unique code.
+    //
+    // We deliberately do NOT scrub deviceToken/isPaired here — the
+    // shared runtime identity of a canvas wall is still legitimate
+    // shared state under #180; only the pairingCode is per-tile. The
+    // backfillCanvasPairingState helper that runs immediately after
+    // this in the boot sequence will keep the wall's runtime state
+    // coherent. Idempotent: zero work on a clean DB.
+    const allRows = await db
+      .select({
+        id: screens.id,
+        pairingCode: screens.pairingCode,
+        createdAt: screens.createdAt,
+      })
+      .from(screens);
+
+    const byCode = new Map<string, typeof allRows>();
+    for (const row of allRows) {
+      if (!row.pairingCode) continue;
+      const bucket = byCode.get(row.pairingCode) ?? [];
+      bucket.push(row);
+      byCode.set(row.pairingCode, bucket);
+    }
+
+    let reissued = 0;
+    for (const [, bucket] of byCode) {
+      if (bucket.length < 2) continue;
+      bucket.sort((a, b) => {
+        const aT = a.createdAt?.getTime() ?? 0;
+        const bT = b.createdAt?.getTime() ?? 0;
+        return aT - bT;
+      });
+      // Keep the earliest, reissue the rest.
+      for (let i = 1; i < bucket.length; i++) {
+        const fresh = await this.generateUniquePairingCode();
+        await db
+          .update(screens)
+          .set({ pairingCode: fresh } as any)
+          .where(eq(screens.id, bucket[i].id));
+        reissued++;
+      }
+    }
+    return reissued;
+  }
+
   async markStaleScreensOffline(
     staleThresholdMs: number,
     now: Date = new Date(),
@@ -1166,15 +1227,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createScreen(data: InsertScreen): Promise<Screen> {
-    // Task #180: server is the single source of pairing codes. If the
-    // caller passes one in, trust it (legacy code paths and tests still
-    // do); otherwise mint a guaranteed-unique one. The DB-level UNIQUE
-    // constraint catches any caller that tries to re-use a code, but
-    // we prefer to never get there in the happy path.
-    const insertData: InsertScreen =
-      data.pairingCode == null
-        ? { ...data, pairingCode: await this.generateUniquePairingCode() }
-        : data;
+    // Task #180: server is the AUTHORITATIVE source of pairing codes.
+    // Any caller-supplied `pairingCode` on the InsertScreen is dropped
+    // here at the storage boundary so the contract is uniform — the
+    // route layer cannot accidentally pass one through, tests cannot
+    // depend on it, and the DB-level UNIQUE constraint on
+    // screens.pairing_code is therefore guaranteed to be respected on
+    // every insert path. If a test/seeder needs a deterministic code
+    // it can update the row after creation, or use db.insert directly.
+    const { pairingCode: _ignoredCallerPairingCode, ...rest } = data;
+    const insertData: InsertScreen = {
+      ...rest,
+      pairingCode: await this.generateUniquePairingCode(),
+    };
     const [screen] = await db.insert(screens).values(insertData).returning();
     return screen;
   }

@@ -1458,7 +1458,7 @@ export async function registerRoutes(
       // paired. Without both, the new tile starts blank; the operator
       // can pair the whole wall later via any tile's code.
       let finalScreen = screen;
-      const joinExistingWall = (incoming as any).joinExistingWall === true;
+      const joinExistingWall = incoming.joinExistingWall === true;
       if (
         screen.canvasEnabled &&
         typeof screen.canvasWidth === "number" &&

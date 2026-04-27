@@ -69,6 +69,24 @@ app.use((req, res, next) => {
   await initStorage();
   await convertBadges();
   await ensureBookingMigration();
+  // Pairing-code dedupe (Task #180): pre-#180 walls fanned the same
+  // pairingCode to every tile in a wall, so an upgrading deployment
+  // may carry duplicate pairing_code rows. The new schema-level
+  // UNIQUE constraint on screens.pairing_code would either reject
+  // those rows on the next write or refuse to apply at all, so we
+  // proactively reissue every duplicate's code (keeping the earliest
+  // tile's code intact) before any other pairing-related boot step
+  // runs. Idempotent — no-op on a clean DB.
+  try {
+    const reissued = await storage.dedupePairingCodes();
+    if (reissued > 0) {
+      log(
+        `[canvas-pairing] dedupe reissued ${reissued} duplicate pairing code(s)`,
+      );
+    }
+  } catch (err) {
+    console.error("[canvas-pairing] dedupe failed:", err);
+  }
   // Implicit-canvas pairing (Task #173): pre-#173 walls may carry
   // mismatched per-tile pairing rows (different deviceTokens, codes,
   // or staleness). One-shot reconciliation at boot picks the most-
