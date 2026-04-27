@@ -21,6 +21,7 @@ import {
 import { getDefaultScheduleTimezone } from "./scheduleTimezone";
 import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
 import { setupAuth, isAuthenticated, isAuthenticatedOrToken, hashApiToken } from "./auth";
+import { mountTestAuthRoute } from "./testAuthRoute";
 import multer from "multer";
 import path from "path";
 import os from "os";
@@ -50,6 +51,8 @@ import { createNextSpaceXLaunchHandler } from "./spacexLaunch";
 import { createEarthquakesHandler } from "./usgsEarthquakes";
 import { createAircraftOverheadHandler } from "./openSkyAircraft";
 import { buildScreenPatchHandler } from "./screenPatchHandler";
+import { buildScreenCreateHandler } from "./screenCreateHandler";
+import { buildScreenRegeneratePairingHandler } from "./screenRegeneratePairingHandler";
 import { getPathParam, getOptionalPathParam, getQueryString } from "./requestParams";
 
 const playerWeatherSummaryCache = new Map<string, { summary: string; timestamp: number }>();
@@ -400,6 +403,13 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   setupAuth(app);
+
+  // Test-only auth bypass — only mounted when NODE_ENV !== "production"
+  // AND ENABLE_TEST_AUTH_BYPASS=1. Lets browser-driven UI tests log in
+  // as a known user without typing a password or 2FA TOTP. See
+  // server/testAuthRoute.ts for the safety gate; production deploys
+  // never set ENABLE_TEST_AUTH_BYPASS so the route is never registered.
+  mountTestAuthRoute(app, storage);
 
   app.post("/api/auth/login", async (req, res) => {
     try {
@@ -1408,100 +1418,15 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/screens", requireAuth, loadUserContext, async (req, res) => {
-    try {
-      const {
-        currentEventId: _ignoredCurrentEventId,
-        // Task #180: pairingCode is ALWAYS server-minted via
-        // generateUniquePairingCode (called inside createScreen) so
-        // the DB UNIQUE constraint on screens.pairing_code can never
-        // be violated by a non-UI caller racing or sending a stale
-        // code. Strip any caller-supplied value here; the legacy UI
-        // already stopped sending it.
-        pairingCode: _ignoredCallerPairingCode,
-        ...incoming
-      } = req.body as Record<string, unknown>;
-      const body: Record<string, unknown> = {
-        ...incoming,
-        clientId: incoming.clientId || null,
-        displayProfileId: incoming.displayProfileId || null,
-      };
-      if (body.canvasEnabled) {
-        if (!body.canvasWidth || body.canvasWidth < 1 || !body.canvasHeight || body.canvasHeight < 1) {
-          return res.status(400).json({ error: "Canvas width and height are required when canvas positioning is enabled" });
-        }
-        body.canvasX = body.canvasX ?? 0;
-        body.canvasY = body.canvasY ?? 0;
-      } else {
-        body.canvasEnabled = false;
-        body.canvasWidth = null;
-        body.canvasHeight = null;
-        body.canvasX = 0;
-        body.canvasY = 0;
-      }
-      const data = insertScreenSchema.parse(body);
-      if (data.clientId && !canAccessClient(req, data.clientId)) {
-        return res.status(403).json({ error: "Access denied to requested site" });
-      }
-      const screen = await storage.createScreen(data);
-      // Task #180: a brand-new canvas-enabled tile NEVER silently
-      // inherits another screen's pairingCode just because it happens
-      // to share dims/client/position with an existing wall. The DB
-      // UNIQUE constraint would reject it anyway, but we don't want to
-      // get there — every tile keeps its own server-minted unique
-      // pairingCode. Inheritance of runtime state (deviceToken /
-      // isPaired / isOnline) is the original Task #173 affordance for
-      // "the operator is adding a tile to a Pi-driven wall that's
-      // already live", but it now requires BOTH (a) an explicit
-      // `joinExistingWall: true` flag from the request body so the
-      // operator opted in, AND (b) the existing wall to actually be
-      // paired. Without both, the new tile starts blank; the operator
-      // can pair the whole wall later via any tile's code.
-      let finalScreen = screen;
-      const joinExistingWall = incoming.joinExistingWall === true;
-      if (
-        screen.canvasEnabled &&
-        typeof screen.canvasWidth === "number" &&
-        typeof screen.canvasHeight === "number"
-      ) {
-        const members = await storage.getCanvasMembers(screen);
-        if (members.length > 1) {
-          const existingSiblings = members.filter((m) => m.id !== screen.id);
-          const winner = pickCanvasPairingWinner(existingSiblings);
-          const wallIsPaired = !!winner.isPaired && !!winner.deviceToken;
-          if (joinExistingWall && wallIsPaired) {
-            // Inherit runtime state ONLY — pairingCode stays unique
-            // (one per row, enforced by the DB UNIQUE constraint).
-            await storage.setCanvasPairingState(
-              [screen.id],
-              {
-                deviceToken: winner.deviceToken,
-                isPaired: true,
-                isOnline: !!winner.isOnline,
-                lastSeen: winner.lastSeen,
-                ipAddress: winner.ipAddress,
-                hostname: winner.hostname,
-                hardwareClass: winner.hardwareClass,
-              },
-            );
-            const refreshed = await storage.getScreen(screen.id);
-            if (refreshed) finalScreen = refreshed;
-          }
-        }
-      }
-      logAudit(req, "create", "screen", finalScreen.id, {
-        name: finalScreen.name,
-        clientId: finalScreen.clientId,
-      });
-      res.status(201).json(finalScreen);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.errors });
-      }
-      console.error("Error creating screen:", error);
-      res.status(500).json({ error: "Failed to create screen" });
-    }
-  });
+  // Task #182: handler logic lives in server/screenCreateHandler.ts so
+  // the screens-create-regenerate-flow test can drive the same code
+  // path the React `screens.tsx` createMutation hits.
+  app.post(
+    "/api/screens",
+    requireAuth,
+    loadUserContext,
+    buildScreenCreateHandler(storage, canAccessClient, logAudit),
+  );
 
   app.patch("/api/screens/reorder", requireAuth, loadUserContext, async (req, res) => {
     try {
@@ -1569,33 +1494,15 @@ export async function registerRoutes(
     buildScreenPatchHandler(storage, logAudit),
   );
 
-  app.post("/api/screens/:id/regenerate-pairing", requireAuth, async (req, res) => {
-    try {
-      const seed = await storage.getScreen(getPathParam(req, "id"));
-      if (!seed) {
-        return res.status(404).json({ error: "Screen not found" });
-      }
-      // Task #180: pairing codes are unique per-screen (DB-level UNIQUE).
-      // Regenerating from any wall tile rotates EVERY member onto its
-      // own fresh unique code and clears the shared deviceToken so the
-      // wall is fully unpaired. The next pair attempt against any tile
-      // re-claims the wall via getCanvasMembers fan-out.
-      // Round-7 review: rotate every member atomically in one
-      // transaction so a mid-loop DB failure can't leave the wall in
-      // a half-rotated state.
-      const members = await storage.getCanvasMembers(seed);
-      await storage.rotateScreensPairingIdentities(members.map((m) => m.id));
-      const screen = await storage.getScreen(seed.id);
-      logAudit(req, "regenerate_pairing", "screen", seed.id, {
-        name: seed.name,
-        canvasMembers: members.length,
-      });
-      res.json(screen);
-    } catch (error) {
-      console.error("Error regenerating pairing code:", error);
-      res.status(500).json({ error: "Failed to regenerate pairing code" });
-    }
-  });
+  // Task #182: handler logic lives in
+  // server/screenRegeneratePairingHandler.ts so the
+  // screens-create-regenerate-flow test can drive the real production
+  // code path through the same factory.
+  app.post(
+    "/api/screens/:id/regenerate-pairing",
+    requireAuth,
+    buildScreenRegeneratePairingHandler(storage, logAudit),
+  );
 
   app.post("/api/screens/:id/refresh", requireAuth, async (req, res) => {
     try {

@@ -23,6 +23,7 @@ import { z } from "zod";
 import { addMinutes, formatDistanceToNow } from "date-fns";
 import { PresetManager } from "@/components/preset-manager";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { buildCreateScreenRequestBody } from "@/lib/screensCreateBody";
 import { cn } from "@/lib/utils";
 import {
   groupScreensByCanvas,
@@ -2464,23 +2465,12 @@ function CreateScreenDialog({
 
   const createMutation = useMutation({
     mutationFn: (data: ScreenFormValues) =>
-      // Task #180: server mints the pairing code via
-      // generateUniquePairingCode so the DB-level UNIQUE constraint on
-      // screens.pairing_code holds. Client never invents codes.
-      apiRequest("POST", "/api/screens", {
-        ...data,
-        clientId: data.clientId || null,
-        canvasEnabled: data.canvasEnabled || false,
-        canvasWidth: data.canvasEnabled ? data.canvasWidth : null,
-        canvasHeight: data.canvasEnabled ? data.canvasHeight : null,
-        canvasX: data.canvasEnabled ? (data.canvasX || 0) : 0,
-        canvasY: data.canvasEnabled ? (data.canvasY || 0) : 0,
-        roomCapacity: data.roomCapacity == null || Number.isNaN(data.roomCapacity) ? null : data.roomCapacity,
-        weatherLat: data.weatherLat?.trim() ? data.weatherLat.trim() : null,
-        weatherLng: data.weatherLng?.trim() ? data.weatherLng.trim() : null,
-        weatherPlaceName: data.weatherPlaceName?.trim() ? data.weatherPlaceName.trim() : null,
-        weatherUnit: data.weatherUnit || "celsius",
-      }),
+      // Task #180 / #182: body shape is built by the pure helper in
+      // @/lib/screensCreateBody so the wire payload — including the
+      // guarantee that no `pairingCode` field is sent (server is the
+      // only sanctioned source of pairing codes) — is unit-pinned by
+      // tests/screens-create-regenerate-flow.test.ts.
+      apiRequest("POST", "/api/screens", buildCreateScreenRequestBody(data)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
       setOpen(false);

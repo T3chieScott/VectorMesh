@@ -22,6 +22,8 @@ PostgreSQL is the chosen database, accessed via Drizzle ORM. The schema is defin
 ### Authentication & Authorization
 The system uses custom email/password authentication with bcryptjs for hashing and PostgreSQL for session storage. Mandatory TOTP-based Two-Factor Authentication (2FA) is enforced for all users via `otpauth`. A robust Role-Based Access Control (RBAC) system defines Admin, Account Manager, and Site User tiers. An audit logging system tracks all mutating actions and authentication events. Configurable email alerts notify about screen status changes.
 
+A test-only auth bypass route `POST /api/auth/test-login` exists in `server/testAuthRoute.ts` so browser-driven UI tests can authenticate without a TOTP. It is double-gated: it is mounted only when `NODE_ENV !== "production"` AND `ENABLE_TEST_AUTH_BYPASS=1`. Production deploys never set the env var, so the route is never registered. The dev environment sets `ENABLE_TEST_AUTH_BYPASS=1` so both the testing skill (`runTest`) and the committed Playwright E2E tests in `tests/e2e/` (run via the `e2e` workflow or `npx playwright test`) can drive `/screens` and other authenticated pages end-to-end. Playwright config lives in `playwright.config.ts`.
+
 ### Key Design Patterns
 - **Shared Schema**: Ensures type consistency across frontend and backend.
 - **Insert Schemas**: Zod schemas derived from Drizzle for data validation.
