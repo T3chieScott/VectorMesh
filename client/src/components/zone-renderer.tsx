@@ -4,6 +4,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useQuery } from "@tanstack/react-query";
 import { useOptionalSiteFilteredQuery } from "@/hooks/use-site-context";
+import { useVideoKeepAlive } from "@/hooks/use-video-keep-alive";
 import { WORLD_MAP_PATHS, WORLD_MAP_VIEWBOX } from "./world-map-paths";
 import {
   Clock,
@@ -3680,7 +3681,7 @@ function MediaWidget({
   
   if (currentMedia.mediaType === "video") {
     return (
-      <video
+      <KeepAliveVideo
         key={currentMedia.id}
         src={mediaUrl}
         className="h-full w-full object-contain"
@@ -3688,6 +3689,7 @@ function MediaWidget({
         loop
         muted
         playsInline
+        keepAliveEnabled={isPlaying}
       />
     );
   }
@@ -3700,6 +3702,18 @@ function MediaWidget({
       className="h-full w-full object-contain"
     />
   );
+}
+
+// Task #196 — small <video> wrapper that owns its own ref and
+// wires the keep-alive watchdog. Centralised so every player-side
+// <video> gets the same auto-resume behaviour.
+function KeepAliveVideo({
+  keepAliveEnabled,
+  ...props
+}: React.VideoHTMLAttributes<HTMLVideoElement> & { keepAliveEnabled?: boolean }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useVideoKeepAlive(ref, { enabled: keepAliveEnabled ?? true });
+  return <video ref={ref} {...props} />;
 }
 
 function MontageWidget({
@@ -5355,13 +5369,21 @@ function MediaPlayerWidget({
     return base;
   };
 
+  // Task #196 — when a media playlist contains a single item that
+  // happens to be a video, the layered crossfader has nothing to
+  // advance to (advanceToNext early-returns when order.length<=1)
+  // and the <video> would freeze on the last frame. Force the
+  // native `loop` attribute in that case so it plays forever; for
+  // multi-item playlists keep onEnded → advanceToNext as before.
+  const singleItem = items.length <= 1;
+
   const renderLayer = (mediaAssetId: string, mediaType: "image" | "video" | "gif", isActive: boolean) => {
     const url = getUrl(mediaAssetId);
     if (!url) return null;
 
     if (mediaType === "video") {
       return (
-        <video
+        <KeepAliveVideo
           key={`${mediaAssetId}-${isActive ? "active" : "inactive"}`}
           src={url}
           className="h-full w-full"
@@ -5369,7 +5391,9 @@ function MediaPlayerWidget({
           autoPlay={isActive && autoPlay}
           muted={muted}
           playsInline
-          onEnded={isActive ? handleVideoEnded : undefined}
+          loop={singleItem}
+          onEnded={!singleItem && isActive ? handleVideoEnded : undefined}
+          keepAliveEnabled={isActive && autoPlay && isPlaying && !stopped}
         />
       );
     }
@@ -5912,7 +5936,7 @@ export function ZoneRenderer({
       data-testid={`zone-${zone.id}`}
     >
       {zone.backgroundVideo && (
-        <video
+        <KeepAliveVideo
           src={zone.backgroundVideo}
           autoPlay
           loop

@@ -14,6 +14,7 @@ import { TestPattern } from "@/components/test-pattern";
 import html2canvas from "html2canvas";
 import { PlayerClockProvider, usePlayerClock } from "@/lib/playerClock";
 import { persistOffset } from "@/lib/playerTimeSync";
+import { useScreenWakeLock } from "@/hooks/use-screen-wake-lock";
 
 const TOKEN_KEY = "signage_device_token";
 const SCREEN_KEY = "signage_screen_id";
@@ -300,6 +301,13 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       window.removeEventListener("online", goOnline);
     };
   }, []);
+
+  // Task #196 — keep the display active and the media pipeline
+  // alive on long-running signage tabs. The Wake Lock API stops the
+  // OS from dimming/sleeping the screen (which can suspend the
+  // video decoder), and the keep-alive watchdog wired into every
+  // <video> in zone-renderer recovers from transient stalls.
+  useScreenWakeLock(true);
 
   const collectMediaUrls = useCallback((data: PlayerContentData): string[] => {
     const urls: string[] = [];
