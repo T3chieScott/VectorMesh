@@ -5,6 +5,7 @@ import "leaflet/dist/leaflet.css";
 import { useQuery } from "@tanstack/react-query";
 import { useOptionalSiteFilteredQuery } from "@/hooks/use-site-context";
 import { useVideoKeepAlive } from "@/hooks/use-video-keep-alive";
+import { getMediaPlayerVideoLoopProps } from "@/lib/media-player-loop";
 import { WORLD_MAP_PATHS, WORLD_MAP_VIEWBOX } from "./world-map-paths";
 import {
   Clock,
@@ -5369,19 +5370,19 @@ function MediaPlayerWidget({
     return base;
   };
 
-  // Task #196 — when a media playlist contains a single item that
-  // happens to be a video, the layered crossfader has nothing to
-  // advance to (advanceToNext early-returns when order.length<=1)
-  // and the <video> would freeze on the last frame. Force the
-  // native `loop` attribute in that case so it plays forever; for
-  // multi-item playlists keep onEnded → advanceToNext as before.
-  const singleItem = items.length <= 1;
-
   const renderLayer = (mediaAssetId: string, mediaType: "image" | "video" | "gif", isActive: boolean) => {
     const url = getUrl(mediaAssetId);
     if (!url) return null;
 
     if (mediaType === "video") {
+      // Task #196: extracted helper picks the loop / onEnded combo
+      // for single- vs multi-item playlists so the freeze on
+      // length-≤1 inputs is fixed and unit-tested independently of
+      // the React tree.
+      const { loop, attachOnEnded } = getMediaPlayerVideoLoopProps({
+        itemsLength: items.length,
+        isActiveLayer: isActive,
+      });
       return (
         <KeepAliveVideo
           key={`${mediaAssetId}-${isActive ? "active" : "inactive"}`}
@@ -5391,8 +5392,8 @@ function MediaPlayerWidget({
           autoPlay={isActive && autoPlay}
           muted={muted}
           playsInline
-          loop={singleItem}
-          onEnded={!singleItem && isActive ? handleVideoEnded : undefined}
+          loop={loop}
+          onEnded={attachOnEnded ? handleVideoEnded : undefined}
           keepAliveEnabled={isActive && autoPlay && isPlaying && !stopped}
         />
       );
