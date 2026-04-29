@@ -317,17 +317,20 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   // recovers it. We also fire a `vm:player-wake` CustomEvent so
   // other widgets (tickers, animated overlays) can react.
   useEffect(() => {
+    // Broadcast a `vm:player-wake` CustomEvent on every page-lifecycle
+    // thaw. Each KeepAliveVideo subscribes to this event AND respects
+    // its own `enabled` gate — so inactive MediaPlayerWidget crossfade
+    // layers (which mount with keep-alive disabled) stay silent and
+    // we never accidentally start an offscreen video.
+    //
+    // We deliberately do NOT do a `document.querySelectorAll("video")`
+    // walk here: that would bypass the per-video `enabled` gate and
+    // start inactive layers, wasting decode cycles and risking
+    // crossfade state drift.
     const wakeAll = () => {
       try {
         window.dispatchEvent(new CustomEvent("vm:player-wake"));
       } catch {}
-      const videos = document.querySelectorAll("video");
-      videos.forEach((v) => {
-        if (v.paused && !(v.ended && !v.loop)) {
-          const p = v.play();
-          if (p && typeof p.catch === "function") p.catch(() => {});
-        }
-      });
     };
     const onVisibility = () => {
       if (document.visibilityState === "visible") wakeAll();

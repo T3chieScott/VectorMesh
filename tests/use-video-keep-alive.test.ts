@@ -362,6 +362,47 @@ test(`${PREFIX} vm:player-wake on a paused video resumes playback`, async () => 
   assert.equal(video.playCalls, 1, "wake after cleanup must not retry");
 });
 
+test(`${PREFIX} wake event has no effect on a video without keep-alive attached (inactive crossfade layer)`, async () => {
+  // Regression guard for Task #196 architect review:
+  // The player root broadcasts `vm:player-wake` on every lifecycle
+  // thaw. The MediaPlayerWidget's *inactive* crossfade layer mounts
+  // with keep-alive disabled (`enabled={isActive && ...}`), which
+  // means useVideoKeepAlive does NOT call attachVideoKeepAlive on
+  // it. The hook with no attached listeners must stay silent — if
+  // the root ever reverts to a blanket querySelectorAll('video').play()
+  // walk, this test will fail because the inactive video would be
+  // played anyway.
+  const video = makeFakeVideo();
+  video.paused = true;
+  const win = {
+    listeners: {} as ListenerMap,
+    addEventListener(type: string, listener: () => void) {
+      (win.listeners[type] ||= []).push(listener);
+    },
+    removeEventListener(type: string, listener: () => void) {
+      const arr = win.listeners[type];
+      if (!arr) return;
+      const i = arr.indexOf(listener);
+      if (i >= 0) arr.splice(i, 1);
+    },
+    location: { reload: () => {} },
+    fire(type: string) {
+      for (const l of [...(win.listeners[type] || [])]) l();
+    },
+  };
+
+  // Deliberately do NOT call attachVideoKeepAlive — this models the
+  // disabled hook (inactive crossfade layer).
+  win.fire("vm:player-wake");
+  await flushMicrotasks();
+
+  assert.equal(
+    video.playCalls,
+    0,
+    "inactive layer with disabled keep-alive must not be auto-played by the root wake broadcast",
+  );
+});
+
 test(`${PREFIX} cleanup detaches every listener`, () => {
   const video = makeFakeVideo();
   const doc = makeFakeTarget("visible");
