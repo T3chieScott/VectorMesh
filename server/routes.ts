@@ -53,6 +53,10 @@ import { createAircraftOverheadHandler } from "./openSkyAircraft";
 import { buildScreenPatchHandler } from "./screenPatchHandler";
 import { buildScreenCreateHandler } from "./screenCreateHandler";
 import { buildScreenRegeneratePairingHandler } from "./screenRegeneratePairingHandler";
+import {
+  decideVideoHealthUpdate,
+  extractVideoStats,
+} from "./videoHealthHeartbeat";
 import { getPathParam, getOptionalPathParam, getQueryString } from "./requestParams";
 
 const playerWeatherSummaryCache = new Map<string, { summary: string; timestamp: number }>();
@@ -3861,6 +3865,25 @@ export async function registerRoutes(
       if (heartbeatClientIp) {
         heartbeatUpdate.ipAddress = heartbeatClientIp;
       }
+
+      // Task #197 — pull the keep-alive video stats out of the
+      // heartbeat (they piggy-back on `errors.video`) and persist
+      // them on the owning screen row so the Screens dashboard can
+      // surface a per-screen Video health badge. A reload counter
+      // that ticked up since the last heartbeat additionally
+      // writes an audit_log row so support can correlate
+      // "black screen" reports with watchdog-driven refreshes.
+      const videoStats = extractVideoStats(data.errors);
+      if (videoStats && screen) {
+        const decision = decideVideoHealthUpdate(screen, videoStats);
+        Object.assign(heartbeatUpdate, decision.patch);
+        if (decision.auditLog) {
+          storage.createAuditLog(decision.auditLog).catch((err) => {
+            console.error("Failed to record video reload audit:", err);
+          });
+        }
+      }
+
       // Implicit-canvas pairing (Task #173): one Pi drives every tile,
       // so a single heartbeat from any member tile keeps the whole wall
       // marked online. Avoids "siblings show stale offline" in admin UI

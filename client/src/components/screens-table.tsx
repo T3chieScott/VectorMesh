@@ -11,6 +11,7 @@ import {
   Settings2,
   GripVertical,
   Zap,
+  Activity,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +39,8 @@ import { cn } from "@/lib/utils";
 import type { Screen, LayoutTemplate, LiveOverride, Event } from "@shared/schema";
 import { ScreenBookingStatus } from "@/components/screen-booking-status";
 import { ScreenBookingsContextMenu } from "@/components/screen-bookings-context-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { deriveVideoHealth, type VideoHealthStatus } from "@shared/video-health";
 
 type ColumnId =
   | "name"
@@ -46,6 +49,7 @@ type ColumnId =
   | "testPattern"
   | "nowDisplaying"
   | "playback"
+  | "videoHealth"
   | "location"
   | "lastSeen";
 
@@ -66,6 +70,9 @@ const COLUMNS: Record<ColumnId, ColumnDef> = {
   // device. Not sortable because the answer comes from a per-row async
   // query and we don't materialise it into the row sort key.
   playback: { id: "playback", label: "Playback", sortable: false },
+  // Task #197 — keep-alive watchdog status. Sortable so operators
+  // can sort red/amber rows to the top in long screen lists.
+  videoHealth: { id: "videoHealth", label: "Video health", sortable: true },
   location: { id: "location", label: "Location", sortable: true },
   lastSeen: { id: "lastSeen", label: "Last seen", sortable: true },
 };
@@ -77,6 +84,7 @@ const DEFAULT_ORDER: ColumnId[] = [
   "testPattern",
   "nowDisplaying",
   "playback",
+  "videoHealth",
   "location",
   "lastSeen",
 ];
@@ -88,6 +96,7 @@ const DEFAULT_VISIBILITY: Record<ColumnId, boolean> = {
   testPattern: true,
   nowDisplaying: true,
   playback: true,
+  videoHealth: true,
   location: true,
   lastSeen: true,
 };
@@ -455,6 +464,17 @@ function sortValue(
       const info = getNowDisplaying(screen, layouts, getActiveOverrideForScreen(screen.id));
       return info.label === "—" ? "" : info.label.toLowerCase();
     }
+    case "videoHealth": {
+      // Sort red first, then amber, then green, then unknown — so a
+      // descending sort surfaces the worst-off screens at the top.
+      const verdict = deriveVideoHealth(screen);
+      switch (verdict.status) {
+        case "red": return 0;
+        case "amber": return 1;
+        case "green": return 2;
+        case "unknown": return 3;
+      }
+    }
     case "location":
       return (screen.location ?? "").toLowerCase();
     case "lastSeen":
@@ -543,6 +563,8 @@ function renderCell(id: ColumnId, ctx: CellContext) {
       );
     case "playback":
       return <ScreenBookingStatus screenId={screen.id} variant="table" />;
+    case "videoHealth":
+      return <VideoHealthCell screen={screen} />;
     case "location":
       return screen.location ? (
         <span data-testid={`text-location-${screen.id}`}>{screen.location}</span>
@@ -564,6 +586,57 @@ function renderCell(id: ColumnId, ctx: CellContext) {
     default:
       return null;
   }
+}
+
+// Task #197 — table-row counterpart to the card-view VideoHealthBadge.
+// Renders a small dot rather than the wider pill so the column stays
+// narrow in long tables; the tooltip carries the same raw counters
+// and last-reload timestamp.
+function VideoHealthCell({ screen }: { screen: Screen }) {
+  const verdict = deriveVideoHealth(screen);
+  if (verdict.status === "unknown") {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  const TONE: Record<Exclude<VideoHealthStatus, "unknown">, string> = {
+    green: "bg-green-500",
+    amber: "bg-amber-500",
+    red: "bg-red-500",
+  };
+  const LABEL: Record<Exclude<VideoHealthStatus, "unknown">, string> = {
+    green: "OK",
+    amber: "Recovering",
+    red: "Reloaded",
+  };
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="inline-flex items-center gap-1.5 cursor-default"
+          data-testid={`cell-video-health-${screen.id}`}
+          data-video-health={verdict.status}
+        >
+          <span className={cn("inline-block h-2 w-2 rounded-full", TONE[verdict.status])} />
+          <Activity className="h-3 w-3 text-muted-foreground" />
+          <span className="text-xs">{LABEL[verdict.status]}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-xs">
+        <div className="font-medium">Video keep-alive</div>
+        <div>Stalls: {verdict.stalls}</div>
+        <div>Recoveries: {verdict.recoveries}</div>
+        <div>Reloads: {verdict.reloads}</div>
+        <div>
+          Last reload:{" "}
+          {verdict.lastReloadAt ? verdict.lastReloadAt.toLocaleString() : "never"}
+        </div>
+        {verdict.updatedAt && (
+          <div className="text-muted-foreground">
+            Updated {formatDistanceToNow(verdict.updatedAt, { addSuffix: true })}
+          </div>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 function TestPatternToggle({ screen }: { screen: Screen }) {

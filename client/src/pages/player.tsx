@@ -15,6 +15,7 @@ import html2canvas from "html2canvas";
 import { PlayerClockProvider, usePlayerClock } from "@/lib/playerClock";
 import { persistOffset } from "@/lib/playerTimeSync";
 import { useScreenWakeLock } from "@/hooks/use-screen-wake-lock";
+import { getVideoStats } from "@/hooks/use-video-keep-alive";
 
 const TOKEN_KEY = "signage_device_token";
 const SCREEN_KEY = "signage_screen_id";
@@ -654,13 +655,14 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         // Task #196 — surface video keep-alive counters in the
         // heartbeat so the diagnostics page can show silent stalls
         // and self-recoveries to operators.
-        const videoStats =
-          typeof window !== "undefined"
-            ? (window as unknown as { __vmPlayerVideoStats?: { stalls: number; recoveries: number; reloads: number } }).__vmPlayerVideoStats
-            : undefined;
-        const errorsPayload = videoStats
-          ? { video: { stalls: videoStats.stalls, recoveries: videoStats.recoveries, reloads: videoStats.reloads } }
-          : null;
+        // Task #197 — call getVideoStats() (NOT window.__vmPlayerVideoStats
+        // directly) so the first heartbeat after a watchdog-triggered
+        // page reload still reports the bumped reloads count that
+        // bumpStat persisted to sessionStorage right before the reload.
+        // Without this hop the in-memory cache is empty on a fresh
+        // page lifecycle and the increase never reaches the server.
+        const videoStats = getVideoStats();
+        const errorsPayload = { video: videoStats };
         const res = await playerFetch("/api/player/heartbeat", token, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

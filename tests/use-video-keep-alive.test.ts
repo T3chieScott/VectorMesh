@@ -493,3 +493,168 @@ test(`${PREFIX} cleanup detaches every listener`, () => {
   // After cleanup, even if we fire timer (defense in depth), play() should not be called.
   void RESUME_DELAY_MS;
 });
+
+// ─── Task #197: cross-reload persistence ─────────────────────────
+//
+// The watchdog increments `reloads` and immediately calls
+// `window.location.reload()`. Without persistence, the in-memory
+// counter resets on the way down and the next heartbeat reports
+// the same value the server already had — so the audit-log row
+// never fires and the dashboard badge never turns red. These
+// tests pin the sessionStorage round-trip so that gap stays fixed.
+
+const {
+  getVideoStats,
+  VIDEO_STATS_STORAGE_KEY,
+} = await import("../client/src/hooks/use-video-keep-alive");
+
+interface FakeStorage {
+  store: Record<string, string>;
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+  clear(): void;
+}
+
+function makeFakeStorage(seed: Record<string, string> = {}): FakeStorage {
+  const store: Record<string, string> = { ...seed };
+  return {
+    store,
+    getItem: (k) => (k in store ? store[k] : null),
+    setItem: (k, v) => { store[k] = String(v); },
+    removeItem: (k) => { delete store[k]; },
+    clear: () => { for (const k of Object.keys(store)) delete store[k]; },
+  };
+}
+
+// Clean room for each test: install a global window/sessionStorage,
+// wipe the in-memory cache key, then run the assertion. We restore
+// (delete) the globals afterwards so other tests aren't affected.
+async function withFakeWindow(
+  seed: Record<string, string>,
+  fn: (storage: FakeStorage) => void | Promise<void>,
+): Promise<void> {
+  const storage = makeFakeStorage(seed);
+  const fakeWindow = { sessionStorage: storage } as Record<string, unknown>;
+  const g = globalThis as Record<string, unknown>;
+  const prevWindow = g.window;
+  g.window = fakeWindow;
+  try {
+    await fn(storage);
+  } finally {
+    delete fakeWindow.__vmPlayerVideoStats;
+    if (prevWindow === undefined) delete g.window;
+    else g.window = prevWindow;
+  }
+}
+
+test(`${PREFIX} Task #197: getVideoStats hydrates from sessionStorage on first call after reload`, async () => {
+  // Simulate the post-reload fresh page: sessionStorage already
+  // carries the bumped reloads count from the pre-reload tick.
+  await withFakeWindow(
+    { [VIDEO_STATS_STORAGE_KEY]: JSON.stringify({ stalls: 7, recoveries: 4, reloads: 2 }) },
+    () => {
+      const stats = getVideoStats();
+      assert.deepEqual(stats, { stalls: 7, recoveries: 4, reloads: 2 });
+    },
+  );
+});
+
+test(`${PREFIX} Task #197: bumping reloads writes through to sessionStorage so the value survives a page reload`, async () => {
+  await withFakeWindow({}, async (storage) => {
+    const video = makeFakeVideo();
+    const reloads: number[] = [];
+    const win = {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      location: { reload: () => reloads.push(Date.now()) },
+    };
+    const timer = makeManualTimer();
+
+    // Drive a real reload escalation through attachVideoKeepAlive
+    // WITHOUT injecting a custom bump — that way we exercise the
+    // production bumpStat path that mirrors to sessionStorage.
+    video.paused = true;
+    video.playRejectsWith = new Error("decode failed");
+
+    let now = 0;
+    const cleanup = attachVideoKeepAlive(video, {
+      doc: makeFakeTarget(),
+      win,
+      setTimeoutFn: timer.setTimeoutFn,
+      clearTimeoutFn: timer.clearTimeoutFn,
+      nowFn: () => now,
+    });
+
+    for (let i = 0; i < MAX_CONSECUTIVE_FAILURES; i++) {
+      video.fire("pause");
+      timer.flush();
+      await flushMicrotasks();
+      now += 100; // stay inside the failure window
+    }
+
+    assert.equal(reloads.length, 1, "reload should have fired once");
+
+    const raw = storage.getItem(VIDEO_STATS_STORAGE_KEY);
+    assert.ok(raw, "sessionStorage should hold the persisted stats");
+    const parsed = JSON.parse(raw!) as { reloads: number };
+    assert.equal(
+      parsed.reloads,
+      1,
+      "reloads counter must be persisted BEFORE window.location.reload() returns " +
+        "— otherwise the post-reload heartbeat reports the stale pre-bump value " +
+        "and the server never sees the increase",
+    );
+
+    cleanup();
+  });
+});
+
+test(`${PREFIX} Task #197: corrupt sessionStorage value falls back to clean stats`, async () => {
+  await withFakeWindow({ [VIDEO_STATS_STORAGE_KEY]: "{not json" }, () => {
+    const stats = getVideoStats();
+    assert.deepEqual(stats, { stalls: 0, recoveries: 0, reloads: 0 });
+  });
+});
+
+test(`${PREFIX} Task #197: negative or non-numeric values in sessionStorage are coerced to 0`, async () => {
+  await withFakeWindow(
+    { [VIDEO_STATS_STORAGE_KEY]: JSON.stringify({ stalls: -3, recoveries: "abc", reloads: 5.7 }) },
+    () => {
+      const stats = getVideoStats();
+      assert.deepEqual(stats, { stalls: 0, recoveries: 0, reloads: 5 });
+    },
+  );
+});
+
+test(`${PREFIX} Task #197: post-reload first heartbeat picks up persisted reloads even with no new video events`, async () => {
+  // The end-to-end gap the dashboard depends on: after a watchdog
+  // forces window.location.reload(), the brand-new page has a fresh
+  // in-memory `__vmPlayerVideoStats` (none). If the heartbeat reads
+  // the in-memory cache directly it sends 0/0/0 and the server
+  // never sees the bumped count. The fix is that the heartbeat
+  // calls getVideoStats() — which transparently hydrates from
+  // sessionStorage — so the very first heartbeat after reload
+  // already carries the persisted count even though no stall,
+  // recovery or other watchdog event has fired yet.
+  await withFakeWindow(
+    { [VIDEO_STATS_STORAGE_KEY]: JSON.stringify({ stalls: 9, recoveries: 3, reloads: 4 }) },
+    () => {
+      // Sanity: in-memory cache is empty at the start of the new
+      // page lifecycle (we wipe __vmPlayerVideoStats in withFakeWindow's
+      // finally; here we have a fresh fake window).
+      const w = (globalThis as { window?: Record<string, unknown> }).window!;
+      assert.equal(w["__vmPlayerVideoStats"], undefined);
+
+      // Production path: heartbeat reads stats via getVideoStats.
+      const reported = getVideoStats();
+      assert.deepEqual(reported, { stalls: 9, recoveries: 3, reloads: 4 });
+      assert.equal(
+        reported.reloads,
+        4,
+        "first heartbeat after reload MUST report the persisted reloads " +
+          "count so the server detects an increase and writes the audit row",
+      );
+    },
+  );
+});

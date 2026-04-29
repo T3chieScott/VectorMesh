@@ -34,25 +34,74 @@ export interface VmPlayerVideoStats {
 }
 
 const STAT_KEY = "__vmPlayerVideoStats";
+// Task #197 — counters are mirrored to sessionStorage so the
+// `reloads` increment that happens right before a watchdog-driven
+// `window.location.reload()` survives the navigation. Without this
+// the post-reload first heartbeat would report the same count as
+// the pre-reload one, the server would never see the increase, and
+// neither the audit-log row nor the red badge would ever trigger.
+export const VIDEO_STATS_STORAGE_KEY = "vm:video-stats";
 export const FAILURE_WINDOW_MS = 60_000;
 export const MAX_CONSECUTIVE_FAILURES = 5;
 export const RESUME_DELAY_MS = 250;
 
-function bumpStat(key: keyof VmPlayerVideoStats) {
-  if (typeof window === "undefined") return;
+function emptyStats(): VmPlayerVideoStats {
+  return { stalls: 0, recoveries: 0, reloads: 0 };
+}
+
+function readStorageStats(): VmPlayerVideoStats | null {
+  try {
+    if (typeof window === "undefined" || !window.sessionStorage) return null;
+    const raw = window.sessionStorage.getItem(VIDEO_STATS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<VmPlayerVideoStats>;
+    // Defensive: only trust finite, non-negative integers. Anything
+    // else means the storage was tampered with or written by an
+    // older format — fall back to a clean slate rather than poison
+    // the in-memory counter.
+    const coerce = (n: unknown) =>
+      typeof n === "number" && Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+    return {
+      stalls: coerce(parsed.stalls),
+      recoveries: coerce(parsed.recoveries),
+      reloads: coerce(parsed.reloads),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeStorageStats(stats: VmPlayerVideoStats) {
+  try {
+    if (typeof window === "undefined" || !window.sessionStorage) return;
+    window.sessionStorage.setItem(VIDEO_STATS_STORAGE_KEY, JSON.stringify(stats));
+  } catch {
+    // sessionStorage can throw under quota/security restrictions —
+    // never let stat bookkeeping take down the watchdog.
+  }
+}
+
+function ensureWindowStats(): VmPlayerVideoStats | null {
+  if (typeof window === "undefined") return null;
   const w = window as unknown as Record<string, VmPlayerVideoStats>;
   if (!w[STAT_KEY]) {
-    w[STAT_KEY] = { stalls: 0, recoveries: 0, reloads: 0 };
+    // First touch in this page lifecycle — hydrate from sessionStorage
+    // so a watchdog-triggered reload's `reloads` increment is preserved.
+    w[STAT_KEY] = readStorageStats() ?? emptyStats();
   }
-  w[STAT_KEY][key] = (w[STAT_KEY][key] || 0) + 1;
+  return w[STAT_KEY];
+}
+
+function bumpStat(key: keyof VmPlayerVideoStats) {
+  const stats = ensureWindowStats();
+  if (!stats) return;
+  stats[key] = (stats[key] || 0) + 1;
+  writeStorageStats(stats);
 }
 
 export function getVideoStats(): VmPlayerVideoStats {
-  if (typeof window === "undefined") {
-    return { stalls: 0, recoveries: 0, reloads: 0 };
-  }
-  const w = window as unknown as Record<string, VmPlayerVideoStats>;
-  return w[STAT_KEY] || { stalls: 0, recoveries: 0, reloads: 0 };
+  const stats = ensureWindowStats();
+  return stats ?? emptyStats();
 }
 
 // Minimal subset of HTMLVideoElement we actually call. Lets the

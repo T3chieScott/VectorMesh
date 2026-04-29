@@ -239,6 +239,25 @@ export const screens = pgTable("screens", {
   weatherPlaceName: text("weather_place_name"),
   weatherUnit: text("weather_unit").default("celsius"),
   displayOrder: integer("display_order"),
+  // Task #197 — player-side video keep-alive watchdog reports its
+  // running counters on every heartbeat. Persisted here so the
+  // Screens dashboard can show a per-screen Video health badge
+  // (green / amber / red) without needing to scrape devtools.
+  // Counters are cumulative since the last player page load (the
+  // watchdog itself resets to 0 on reload), so a sudden drop in
+  // reloads is normal and not treated as an error by the badge.
+  videoStatsStalls: integer("video_stats_stalls").default(0),
+  videoStatsRecoveries: integer("video_stats_recoveries").default(0),
+  videoStatsReloads: integer("video_stats_reloads").default(0),
+  // Server-stamped timestamp when the heartbeat first reported a
+  // higher reloads count than was previously stored — i.e. the
+  // moment the player actually refreshed itself. Used by the badge
+  // to decide whether a reload is "recent" (red) or stale.
+  videoStatsLastReloadAt: timestamp("video_stats_last_reload_at"),
+  // Server-stamped timestamp of the most recent heartbeat that
+  // carried a video-stats payload. Lets the UI distinguish "never
+  // reported" from "reported zeroes" without a separate column.
+  videoStatsUpdatedAt: timestamp("video_stats_updated_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

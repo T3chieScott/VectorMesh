@@ -54,6 +54,11 @@ function makeScreen(overrides: Partial<Screen> & { id: string }): Screen {
     weatherPlaceName: null,
     weatherUnit: "celsius",
     displayOrder: null,
+    videoStatsStalls: 0,
+    videoStatsRecoveries: 0,
+    videoStatsReloads: 0,
+    videoStatsLastReloadAt: null,
+    videoStatsUpdatedAt: null,
     createdAt: new Date("2026-04-01T00:00:00Z"),
     updatedAt: new Date("2026-04-01T00:00:00Z"),
   };

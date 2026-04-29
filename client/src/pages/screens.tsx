@@ -83,6 +83,7 @@ import {
   WifiOff,
   MapPin,
   RefreshCw,
+  Activity,
   Copy,
   Zap,
   Unlink,
@@ -115,6 +116,12 @@ import {
   CanvasPairingInheritsMessage,
   CanvasPairingMenuItems,
 } from "@/pages/canvas-pairing-elements";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { deriveVideoHealth, type VideoHealthStatus } from "@shared/video-health";
 
 type ScreensView = "cards" | "table";
 
@@ -1384,6 +1391,60 @@ function TraceStepRow({ step }: { step: ContentTraceStep }) {
   }
 }
 
+// Task #197 — small badge that surfaces the player keep-alive
+// watchdog's stalls/recoveries/reloads counters so operators get an
+// early warning of an unhealthy display. Hidden entirely when the
+// player has never reported stats (the badge would otherwise just
+// add noise to brand-new screens).
+function VideoHealthBadge({ screen }: { screen: Screen }) {
+  const verdict = deriveVideoHealth(screen);
+  if (verdict.status === "unknown") return null;
+
+  const TONE: Record<Exclude<VideoHealthStatus, "unknown">, string> = {
+    green: "bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/30",
+    amber: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30",
+    red: "bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/30",
+  };
+  const LABEL: Record<Exclude<VideoHealthStatus, "unknown">, string> = {
+    green: "Video OK",
+    amber: "Video recovering",
+    red: "Video reloaded",
+  };
+  const tone = TONE[verdict.status];
+  const label = LABEL[verdict.status];
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge
+          variant="outline"
+          className={`gap-1 cursor-default ${tone}`}
+          data-testid={`badge-video-health-${screen.id}`}
+          data-video-health={verdict.status}
+        >
+          <Activity className="h-3 w-3" />
+          {label}
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-xs">
+        <div className="font-medium" data-testid={`tooltip-video-health-title-${screen.id}`}>Video keep-alive</div>
+        <div data-testid={`tooltip-video-health-stalls-${screen.id}`}>Stalls: {verdict.stalls}</div>
+        <div data-testid={`tooltip-video-health-recoveries-${screen.id}`}>Recoveries: {verdict.recoveries}</div>
+        <div data-testid={`tooltip-video-health-reloads-${screen.id}`}>Reloads: {verdict.reloads}</div>
+        <div data-testid={`tooltip-video-health-last-reload-${screen.id}`}>
+          Last reload:{" "}
+          {verdict.lastReloadAt ? verdict.lastReloadAt.toLocaleString() : "never"}
+        </div>
+        {verdict.updatedAt && (
+          <div className="text-muted-foreground" data-testid={`tooltip-video-health-updated-${screen.id}`}>
+            Updated {formatDistanceToNow(verdict.updatedAt, { addSuffix: true })}
+          </div>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function ScreenCard({
   screen,
   profiles,
@@ -1825,6 +1886,7 @@ function ScreenCard({
               ) : (
                 <Badge variant="secondary">Unpaired</Badge>
               )}
+              <VideoHealthBadge screen={screen} />
               {!screen.displayProfileId && (
                 <button
                   type="button"
