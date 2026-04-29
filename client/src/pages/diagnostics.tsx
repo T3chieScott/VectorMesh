@@ -148,17 +148,26 @@ function ScreenStatusRow({ screen }: { screen: Screen }) {
           const errs = latestHeartbeat?.errors as
             | { video?: { stalls?: number; recoveries?: number; reloads?: number } }
             | Record<string, unknown>
+            | string
+            | number
             | null
             | undefined;
-          const v = errs && typeof errs === "object" ? (errs as { video?: { stalls?: number; recoveries?: number; reloads?: number } }).video : undefined;
+          const isObjectErrors = !!errs && typeof errs === "object" && !Array.isArray(errs);
+          const v = isObjectErrors
+            ? (errs as { video?: { stalls?: number; recoveries?: number; reloads?: number } }).video
+            : undefined;
           const stalls = v?.stalls ?? 0;
           const recoveries = v?.recoveries ?? 0;
           const reloads = v?.reloads ?? 0;
-          const otherKeys =
-            errs && typeof errs === "object"
-              ? Object.keys(errs).filter((k) => k !== "video")
-              : [];
-          const hasOtherErrors = otherKeys.length > 0;
+          // Compatibility with pre-#196 heartbeat payloads where
+          // `errors` was a truthy scalar (string/number) rather than
+          // a structured object — still surface the generic "Errors"
+          // badge in that case.
+          const otherKeys = isObjectErrors
+            ? Object.keys(errs as Record<string, unknown>).filter((k) => k !== "video")
+            : [];
+          const hasNonObjectErrors = !!errs && !isObjectErrors;
+          const hasOtherErrors = otherKeys.length > 0 || hasNonObjectErrors;
           const videoTooltip = `Video health (cumulative since player loaded): ${stalls} stalls, ${recoveries} recoveries, ${reloads} reloads`;
 
           let videoBadge: JSX.Element;
