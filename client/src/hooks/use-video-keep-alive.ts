@@ -117,19 +117,22 @@ export function attachVideoKeepAlive(
   let lastFailureAt = 0;
   let resumeTimer: unknown = null;
 
-  const tryPlay = () => {
-    if (cancelled) return;
-    if (!video.paused) return;
-    if (video.ended && !video.loop) return;
+  const tryPlay = async (): Promise<boolean> => {
+    if (cancelled) return false;
+    if (!video.paused) return false;
+    if (video.ended && !video.loop) return false;
     try {
       const promise = video.play();
-      if (promise && typeof (promise as Promise<void>).catch === "function") {
-        (promise as Promise<void>).catch(() => {
-          handleFailure();
-        });
+      if (promise && typeof (promise as Promise<void>).then === "function") {
+        await promise;
+        return true;
       }
+      // Older browsers return undefined synchronously. Trust the
+      // call and let onPlaying clear the failure counter.
+      return true;
     } catch {
       handleFailure();
+      return false;
     }
   };
 
@@ -139,8 +142,12 @@ export function attachVideoKeepAlive(
       resumeTimer = null;
       if (cancelled) return;
       if (video.paused && !(video.ended && !video.loop)) {
-        tryPlay();
-        bump("recoveries");
+        // Recovery counter only ticks on a play() that actually
+        // resolves — counting attempts would over-report and mask
+        // chronically failing streams.
+        void tryPlay().then((ok) => {
+          if (ok && !cancelled) bump("recoveries");
+        });
       }
     }, RESUME_DELAY_MS);
   };
@@ -190,14 +197,16 @@ export function attachVideoKeepAlive(
     if (!doc) return;
     if (doc.visibilityState !== "visible") return;
     if (video.paused && !(video.ended && !video.loop)) {
-      tryPlay();
-      bump("recoveries");
+      void tryPlay().then((ok) => {
+        if (ok && !cancelled) bump("recoveries");
+      });
     }
   };
   const onPageShow = () => {
     if (video.paused && !(video.ended && !video.loop)) {
-      tryPlay();
-      bump("recoveries");
+      void tryPlay().then((ok) => {
+        if (ok && !cancelled) bump("recoveries");
+      });
     }
   };
 

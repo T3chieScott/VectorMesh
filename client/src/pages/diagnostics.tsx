@@ -134,16 +134,57 @@ function ScreenStatusRow({ screen }: { screen: Screen }) {
         {latestHeartbeat?.currentBlockId || "-"}
       </TableCell>
       <TableCell>
-        {latestHeartbeat?.errors ? (
-          <Badge variant="destructive" className="gap-1">
-            <AlertTriangle className="h-3 w-3" />
-            Errors
-          </Badge>
-        ) : (
-          <Badge variant="secondary" className="bg-green-500/10 text-green-600">
-            OK
-          </Badge>
-        )}
+        {(() => {
+          // Task #196 — read video keep-alive counters out of the
+          // heartbeat's `errors` JSONB. The watchdog reports
+          // {video:{stalls,recoveries,reloads}} so operators can
+          // see silent self-recoveries before users complain.
+          const errs = latestHeartbeat?.errors as
+            | { video?: { stalls?: number; recoveries?: number; reloads?: number } }
+            | null
+            | undefined;
+          const v = errs?.video;
+          const stalls = v?.stalls ?? 0;
+          const recoveries = v?.recoveries ?? 0;
+          const reloads = v?.reloads ?? 0;
+          const tooltip = `Video health (last 30s heartbeat): ${stalls} stalls, ${recoveries} recoveries, ${reloads} reloads`;
+          if (reloads > 0) {
+            return (
+              <Badge
+                variant="destructive"
+                className="gap-1"
+                title={tooltip}
+                data-testid={`badge-video-health-${screen.id}`}
+              >
+                <AlertTriangle className="h-3 w-3" />
+                {reloads} reload{reloads === 1 ? "" : "s"}
+              </Badge>
+            );
+          }
+          if (stalls > 0 || recoveries > 0) {
+            return (
+              <Badge
+                variant="secondary"
+                className="gap-1 bg-amber-500/10 text-amber-600"
+                title={tooltip}
+                data-testid={`badge-video-health-${screen.id}`}
+              >
+                <Activity className="h-3 w-3" />
+                {recoveries} recoveries
+              </Badge>
+            );
+          }
+          return (
+            <Badge
+              variant="secondary"
+              className="bg-green-500/10 text-green-600"
+              title={tooltip}
+              data-testid={`badge-video-health-${screen.id}`}
+            >
+              OK
+            </Badge>
+          );
+        })()}
       </TableCell>
     </TableRow>
   );

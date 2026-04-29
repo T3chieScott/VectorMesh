@@ -309,6 +309,39 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   // <video> in zone-renderer recovers from transient stalls.
   useScreenWakeLock(true);
 
+  // Task #196 — root-level lifecycle wake broadcast. The per-video
+  // hook handles its own listeners, but on long-running tabs we
+  // also walk every <video> on the page when the tab regains focus
+  // or visibility. This is belt-and-braces: if a future zone is
+  // ever rendered without the keep-alive wrapper, this still
+  // recovers it. We also fire a `vm:player-wake` CustomEvent so
+  // other widgets (tickers, animated overlays) can react.
+  useEffect(() => {
+    const wakeAll = () => {
+      try {
+        window.dispatchEvent(new CustomEvent("vm:player-wake"));
+      } catch {}
+      const videos = document.querySelectorAll("video");
+      videos.forEach((v) => {
+        if (v.paused && !(v.ended && !v.loop)) {
+          const p = v.play();
+          if (p && typeof p.catch === "function") p.catch(() => {});
+        }
+      });
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") wakeAll();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", wakeAll);
+    window.addEventListener("pageshow", wakeAll);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", wakeAll);
+      window.removeEventListener("pageshow", wakeAll);
+    };
+  }, []);
+
   const collectMediaUrls = useCallback((data: PlayerContentData): string[] => {
     const urls: string[] = [];
     const zones = (data.layout?.zones as LayoutZone[]) || [];
@@ -596,6 +629,16 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         // Heartbeat doubles as a 30s sync sample so the offset
         // stays warm even when /content is debounced or 304-cached.
         const t1 = Date.now();
+        // Task #196 — surface video keep-alive counters in the
+        // heartbeat so the diagnostics page can show silent stalls
+        // and self-recoveries to operators.
+        const videoStats =
+          typeof window !== "undefined"
+            ? (window as unknown as { __vmPlayerVideoStats?: { stalls: number; recoveries: number; reloads: number } }).__vmPlayerVideoStats
+            : undefined;
+        const errorsPayload = videoStats
+          ? { video: { stalls: videoStats.stalls, recoveries: videoStats.recoveries, reloads: videoStats.reloads } }
+          : null;
         const res = await playerFetch("/api/player/heartbeat", token, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -607,7 +650,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
             uptime: Math.floor(performance.now() / 1000),
             currentBlockId: null,
             currentItemId: null,
-            errors: null,
+            errors: errorsPayload,
           }),
         });
         if (res.ok) {

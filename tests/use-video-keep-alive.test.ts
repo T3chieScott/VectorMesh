@@ -113,6 +113,12 @@ function makeStats() {
   };
 }
 
+// Lets pending microtasks (e.g. .then() chains queued by tryPlay)
+// run before we assert. node:test doesn't auto-drain microtasks.
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 function makeManualTimer() {
   let pending: Array<{ id: number; cb: () => void; ms: number }> = [];
   let next = 1;
@@ -163,6 +169,7 @@ test(`${PREFIX} unexpected pause schedules a deferred resume that calls play()`,
   assert.equal(video.playCalls, 0, "play() should not be called synchronously");
 
   timer.flush();
+  await flushMicrotasks();
 
   assert.equal(video.playCalls, 1, "resume should call play()");
   assert.equal(stats.recoveries, 1, "recovery should be counted");
@@ -200,6 +207,7 @@ test(`${PREFIX} suspend on a paused video triggers a deferred resume; suspend on
   video.fire("suspend");
   assert.equal(timer.pendingCount(), 1, "suspend on paused video schedules resume");
   timer.flush();
+  await flushMicrotasks();
   assert.equal(video.playCalls, 1);
   assert.equal(stats.recoveries, 1);
   assert.equal(stats.stalls, 0, "suspend still must not bump stall counter");
@@ -228,6 +236,7 @@ test(`${PREFIX} stalled event bumps stall counter and retries play()`, async () 
   video.fire("stalled");
   assert.equal(stats.stalls, 1, "stall should be counted immediately");
   timer.flush();
+  await flushMicrotasks();
   assert.equal(video.playCalls, 1, "stall should schedule a resume");
   assert.equal(stats.recoveries, 1);
 
@@ -261,6 +270,7 @@ test(`${PREFIX} visibilitychange → visible resumes a paused video`, async () =
   // Tab thaws → resume.
   doc.visibilityState = "visible";
   doc.fire("visibilitychange");
+  await flushMicrotasks();
   assert.equal(video.playCalls, 1, "becoming visible should retry play()");
   assert.equal(stats.recoveries, 1);
 
