@@ -209,6 +209,17 @@ export function attachVideoKeepAlive(
       });
     }
   };
+  // The player root broadcasts `vm:player-wake` whenever any
+  // lifecycle thaw event lands (visibilitychange/focus/pageshow/
+  // resume). Each video subscribes individually so they receive the
+  // signal even if the root happens to walk a stale DOM snapshot.
+  const onPlayerWake = () => {
+    if (video.paused && !(video.ended && !video.loop)) {
+      void tryPlay().then((ok) => {
+        if (ok && !cancelled) bump("recoveries");
+      });
+    }
+  };
 
   video.addEventListener("pause", onPause);
   video.addEventListener("stalled", onStalled);
@@ -217,6 +228,7 @@ export function attachVideoKeepAlive(
   video.addEventListener("playing", onPlaying);
   doc?.addEventListener("visibilitychange", onVisibility);
   win?.addEventListener("pageshow", onPageShow);
+  win?.addEventListener("vm:player-wake", onPlayerWake);
 
   return () => {
     cancelled = true;
@@ -228,6 +240,7 @@ export function attachVideoKeepAlive(
     video.removeEventListener("playing", onPlaying);
     doc?.removeEventListener("visibilitychange", onVisibility);
     win?.removeEventListener("pageshow", onPageShow);
+    win?.removeEventListener("vm:player-wake", onPlayerWake);
   };
 }
 

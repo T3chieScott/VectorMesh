@@ -159,7 +159,7 @@ function ScreenStatusRow({ screen }: { screen: Screen }) {
               ? Object.keys(errs).filter((k) => k !== "video")
               : [];
           const hasOtherErrors = otherKeys.length > 0;
-          const videoTooltip = `Video health (last 30s heartbeat): ${stalls} stalls, ${recoveries} recoveries, ${reloads} reloads`;
+          const videoTooltip = `Video health (cumulative since player loaded): ${stalls} stalls, ${recoveries} recoveries, ${reloads} reloads`;
 
           let videoBadge: JSX.Element;
           if (reloads > 0) {

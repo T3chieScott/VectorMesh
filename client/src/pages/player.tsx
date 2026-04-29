@@ -335,10 +335,15 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", wakeAll);
     window.addEventListener("pageshow", wakeAll);
+    // Page Lifecycle API "resume" fires when a frozen tab is thawed
+    // (Chrome Memory Saver, mobile background-tab freeze). Catching
+    // it here is more direct than waiting for visibilitychange.
+    document.addEventListener("resume", wakeAll);
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", wakeAll);
       window.removeEventListener("pageshow", wakeAll);
+      document.removeEventListener("resume", wakeAll);
     };
   }, []);
 

@@ -317,6 +317,51 @@ test(`${PREFIX} five consecutive failures inside the window trigger reload`, asy
   cleanup();
 });
 
+test(`${PREFIX} vm:player-wake on a paused video resumes playback`, async () => {
+  const video = makeFakeVideo();
+  video.paused = true;
+  const win = {
+    listeners: {} as ListenerMap,
+    addEventListener(type: string, listener: () => void) {
+      (win.listeners[type] ||= []).push(listener);
+    },
+    removeEventListener(type: string, listener: () => void) {
+      const arr = win.listeners[type];
+      if (!arr) return;
+      const i = arr.indexOf(listener);
+      if (i >= 0) arr.splice(i, 1);
+    },
+    location: { reload: () => {} },
+    fire(type: string) {
+      for (const l of [...(win.listeners[type] || [])]) l();
+    },
+  };
+  const { stats, bump } = makeStats();
+  const timer = makeManualTimer();
+
+  const cleanup = attachVideoKeepAlive(video, {
+    doc: makeFakeTarget("visible"),
+    win,
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    bump,
+  });
+
+  // Root-level wake broadcast lands on window.
+  win.fire("vm:player-wake");
+  await flushMicrotasks();
+
+  assert.equal(video.playCalls, 1, "wake event should retry play() on paused video");
+  assert.equal(stats.recoveries, 1, "successful resume should bump recoveries");
+
+  cleanup();
+
+  // After cleanup the listener is gone — extra wakes are no-ops.
+  win.fire("vm:player-wake");
+  await flushMicrotasks();
+  assert.equal(video.playCalls, 1, "wake after cleanup must not retry");
+});
+
 test(`${PREFIX} cleanup detaches every listener`, () => {
   const video = makeFakeVideo();
   const doc = makeFakeTarget("visible");
