@@ -342,11 +342,25 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     // (Chrome Memory Saver, mobile background-tab freeze). Catching
     // it here is more direct than waiting for visibilitychange.
     document.addEventListener("resume", wakeAll);
+    // "freeze" is the entry side of the freeze/resume pair. The tab
+    // is going inert in microseconds — we can't usefully run play()
+    // here, but listening for parity with the documented root cause
+    // (a) makes the page-lifecycle wiring complete and (b) lets us
+    // record that a freeze happened so the matching resume's wake
+    // broadcast is unambiguous if we ever need to debug from logs.
+    const onFreeze = () => {
+      try {
+        // eslint-disable-next-line no-console
+        console.debug("[player] tab freeze; will wake on resume/visibilitychange");
+      } catch {}
+    };
+    document.addEventListener("freeze", onFreeze);
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", wakeAll);
       window.removeEventListener("pageshow", wakeAll);
       document.removeEventListener("resume", wakeAll);
+      document.removeEventListener("freeze", onFreeze);
     };
   }, []);
 
