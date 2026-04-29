@@ -131,7 +131,11 @@ export function attachVideoKeepAlive(
       // call and let onPlaying clear the failure counter.
       return true;
     } catch {
-      handleFailure();
+      // A failed play() retry is the only thing that should count
+      // toward the reload threshold — a raw stalled/error event
+      // followed by a successful retry is a clean recovery, not a
+      // problem worth reloading the page over.
+      handleRetryFailure();
       return false;
     }
   };
@@ -152,12 +156,11 @@ export function attachVideoKeepAlive(
     }, RESUME_DELAY_MS);
   };
 
-  const handleFailure = () => {
+  const handleRetryFailure = () => {
     const t = now();
     if (t - lastFailureAt > FAILURE_WINDOW_MS) failures = 0;
     lastFailureAt = t;
     failures += 1;
-    bump("stalls");
     if (failures >= MAX_CONSECUTIVE_FAILURES) {
       failures = 0;
       bump("reloads");
@@ -174,11 +177,13 @@ export function attachVideoKeepAlive(
     scheduleResume();
   };
   const onStalled = () => {
-    handleFailure();
+    // Bump the operator-visible stat, but DO NOT touch the reload
+    // threshold — that escalation only fires when retries fail.
+    bump("stalls");
     scheduleResume();
   };
   const onError = () => {
-    handleFailure();
+    bump("stalls");
     scheduleResume();
   };
   // `suspend` is benign and fires often during normal buffering — we

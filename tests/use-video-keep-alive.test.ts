@@ -277,10 +277,10 @@ test(`${PREFIX} visibilitychange → visible resumes a paused video`, async () =
   cleanup();
 });
 
-test(`${PREFIX} five consecutive failures inside the window trigger reload`, async () => {
+test(`${PREFIX} five consecutive failed retries inside the window trigger reload`, async () => {
   const video = makeFakeVideo();
   video.paused = true;
-  // play() always rejects so each retry counts another failure.
+  // play() always rejects so every retry counts as a failed retry.
   video.playRejectsWith = new Error("decode failed");
   const { stats, bump } = makeStats();
   const timer = makeManualTimer();
@@ -299,20 +299,63 @@ test(`${PREFIX} five consecutive failures inside the window trigger reload`, asy
     bump,
   });
 
-  // Drive the failure pipeline. Each `error` synchronously bumps a
-  // stall and schedules a resume; the resume's play() rejection
-  // bumps another stall. We trigger errors directly until we cross
-  // the threshold.
+  // Drive the failure pipeline. Each `error` event bumps the stalls
+  // stat and schedules a retry. We flush the timer (and microtasks)
+  // between events so each retry actually runs and rejects, ticking
+  // the internal failures counter that drives reload escalation.
+  // Stalled/error events alone must NOT count toward the threshold.
   for (let i = 0; i < MAX_CONSECUTIVE_FAILURES; i++) {
     video.fire("error");
+    timer.flush();
+    await flushMicrotasks();
   }
 
-  assert.ok(
-    stats.stalls >= MAX_CONSECUTIVE_FAILURES,
-    `expected at least ${MAX_CONSECUTIVE_FAILURES} stalls, got ${stats.stalls}`,
+  assert.equal(
+    stats.stalls,
+    MAX_CONSECUTIVE_FAILURES,
+    `error events should bump the stalls stat exactly once each (got ${stats.stalls})`,
   );
-  assert.equal(reloads, 1, "should reload once after threshold reached");
+  assert.equal(reloads, 1, "should reload once after MAX failed retries reached");
   assert.equal(stats.reloads, 1);
+
+  cleanup();
+});
+
+test(`${PREFIX} stalled+recovered cycles never trigger reload, no matter how many`, async () => {
+  // Regression guard for the "failed retries only" semantics: even
+  // 50 stall-then-recover cycles must not cross the reload threshold,
+  // because each retry succeeds.
+  const video = makeFakeVideo();
+  video.paused = true;
+  // play() resolves cleanly every time → no failed retries.
+  const { stats, bump } = makeStats();
+  const timer = makeManualTimer();
+  let reloads = 0;
+
+  const cleanup = attachVideoKeepAlive(video, {
+    doc: makeFakeTarget("visible"),
+    win: {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      location: { reload: () => { reloads += 1; } },
+    },
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    nowFn: () => 1000,
+    bump,
+  });
+
+  for (let i = 0; i < 50; i++) {
+    video.paused = true; // simulate the browser re-pausing between cycles
+    video.fire("stalled");
+    timer.flush();
+    await flushMicrotasks();
+  }
+
+  assert.equal(reloads, 0, "successful recoveries must never trigger reload");
+  assert.equal(stats.reloads, 0);
+  assert.equal(stats.stalls, 50, "stat counter still reflects all stall events");
+  assert.ok(stats.recoveries > 0, "successful retries should bump recoveries");
 
   cleanup();
 });
