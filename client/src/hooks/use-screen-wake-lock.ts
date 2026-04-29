@@ -11,10 +11,12 @@ import { useEffect } from "react";
 //
 // No-op on browsers without the API (Safari/iOS legacy, etc).
 
-interface NavigatorWithWakeLock extends Navigator {
-  wakeLock?: {
-    request(type: "screen"): Promise<WakeLockSentinelLike>;
-  };
+// Structural shape we actually call. We deliberately do NOT extend
+// `Navigator` here, because the lib.dom.d.ts version may already
+// declare `wakeLock` as a non-optional, more specific type, and an
+// optional `extends Navigator` redeclaration trips strict tsc.
+interface WakeLockApi {
+  request(type: "screen"): Promise<WakeLockSentinelLike>;
 }
 
 interface WakeLockSentinelLike {
@@ -22,12 +24,25 @@ interface WakeLockSentinelLike {
   addEventListener(type: "release", listener: () => void): void;
 }
 
+function getWakeLockApi(): WakeLockApi | null {
+  if (typeof navigator === "undefined") return null;
+  const candidate = (navigator as unknown as { wakeLock?: unknown }).wakeLock;
+  if (
+    candidate &&
+    typeof candidate === "object" &&
+    "request" in candidate &&
+    typeof (candidate as { request?: unknown }).request === "function"
+  ) {
+    return candidate as WakeLockApi;
+  }
+  return null;
+}
+
 export function useScreenWakeLock(enabled = true): void {
   useEffect(() => {
     if (!enabled) return;
-    if (typeof navigator === "undefined") return;
-    const nav = navigator as NavigatorWithWakeLock;
-    if (!nav.wakeLock || typeof nav.wakeLock.request !== "function") return;
+    const api = getWakeLockApi();
+    if (!api) return;
 
     let sentinel: WakeLockSentinelLike | null = null;
     let cancelled = false;
@@ -44,7 +59,7 @@ export function useScreenWakeLock(enabled = true): void {
       }
       acquiring = true;
       try {
-        const next = await nav.wakeLock!.request("screen");
+        const next = await api.request("screen");
         if (cancelled) {
           next.release().catch(() => {});
           return;

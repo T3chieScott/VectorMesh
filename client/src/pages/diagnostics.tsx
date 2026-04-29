@@ -139,50 +139,83 @@ function ScreenStatusRow({ screen }: { screen: Screen }) {
           // heartbeat's `errors` JSONB. The watchdog reports
           // {video:{stalls,recoveries,reloads}} so operators can
           // see silent self-recoveries before users complain.
+          //
+          // We also still need to surface any *other* error payload
+          // the heartbeat carries (the pre-#196 behaviour was a
+          // generic "Errors" badge whenever heartbeat.errors was
+          // truthy). After #196, video stats live alongside any
+          // legacy / future error keys, so we render both signals.
           const errs = latestHeartbeat?.errors as
             | { video?: { stalls?: number; recoveries?: number; reloads?: number } }
+            | Record<string, unknown>
             | null
             | undefined;
-          const v = errs?.video;
+          const v = errs && typeof errs === "object" ? (errs as { video?: { stalls?: number; recoveries?: number; reloads?: number } }).video : undefined;
           const stalls = v?.stalls ?? 0;
           const recoveries = v?.recoveries ?? 0;
           const reloads = v?.reloads ?? 0;
-          const tooltip = `Video health (last 30s heartbeat): ${stalls} stalls, ${recoveries} recoveries, ${reloads} reloads`;
+          const otherKeys =
+            errs && typeof errs === "object"
+              ? Object.keys(errs).filter((k) => k !== "video")
+              : [];
+          const hasOtherErrors = otherKeys.length > 0;
+          const videoTooltip = `Video health (last 30s heartbeat): ${stalls} stalls, ${recoveries} recoveries, ${reloads} reloads`;
+
+          let videoBadge: JSX.Element;
           if (reloads > 0) {
-            return (
+            videoBadge = (
               <Badge
                 variant="destructive"
                 className="gap-1"
-                title={tooltip}
+                title={videoTooltip}
                 data-testid={`badge-video-health-${screen.id}`}
               >
                 <AlertTriangle className="h-3 w-3" />
                 {reloads} reload{reloads === 1 ? "" : "s"}
               </Badge>
             );
-          }
-          if (stalls > 0 || recoveries > 0) {
-            return (
+          } else if (stalls > 0 || recoveries > 0) {
+            videoBadge = (
               <Badge
                 variant="secondary"
                 className="gap-1 bg-amber-500/10 text-amber-600"
-                title={tooltip}
+                title={videoTooltip}
                 data-testid={`badge-video-health-${screen.id}`}
               >
                 <Activity className="h-3 w-3" />
                 {recoveries} recoveries
               </Badge>
             );
+          } else {
+            videoBadge = (
+              <Badge
+                variant="secondary"
+                className="bg-green-500/10 text-green-600"
+                title={videoTooltip}
+                data-testid={`badge-video-health-${screen.id}`}
+              >
+                OK
+              </Badge>
+            );
           }
+
+          if (!hasOtherErrors) {
+            return videoBadge;
+          }
+
           return (
-            <Badge
-              variant="secondary"
-              className="bg-green-500/10 text-green-600"
-              title={tooltip}
-              data-testid={`badge-video-health-${screen.id}`}
-            >
-              OK
-            </Badge>
+            <div className="flex flex-col gap-1">
+              {videoBadge}
+              <Badge
+                variant="destructive"
+                className="gap-1"
+                title={`Heartbeat reported error fields: ${otherKeys.join(", ")}`}
+                data-testid={`badge-other-errors-${screen.id}`}
+              >
+                <AlertTriangle className="h-3 w-3" />
+                Errors
+              </Badge>
+            </div>
           );
         })()}
       </TableCell>
