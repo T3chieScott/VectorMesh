@@ -3,6 +3,8 @@ import type {
   AgendaItem,
   AgendaWidgetConfig,
   AgendaStatus,
+  AgendaDisplayMode,
+  AgendaLayoutMode,
 } from "@shared/schema";
 import {
   pickAgendaLayout,
@@ -89,21 +91,44 @@ function StatusBadge({ status, scale }: { status: AgendaStatus; scale: number })
   );
 }
 
+function isCurrentlyRunning(item: AgendaItem, now: Date): boolean {
+  const start = new Date(item.startsAt).getTime();
+  const end = new Date(item.endsAt).getTime();
+  const t = now.getTime();
+  return start <= t && t < end && item.status !== "cancelled";
+}
+
 function AgendaRow({
   item,
   config,
   tz,
   scale,
+  isCurrent,
+  accentColor,
 }: {
   item: AgendaItem;
   config: AgendaWidgetConfig;
   tz: string | null | undefined;
   scale: number;
+  isCurrent?: boolean;
+  accentColor?: string;
 }) {
+  // When the operator picks "now_next" mode, the currently-running
+  // session is rendered with a strong accent ring + brighter bg in
+  // every layout, so audiences can tell at a glance which session
+  // is happening now without reading the timestamp.
+  const highlightClass = isCurrent
+    ? "border-2 bg-white/15 shadow-[0_0_24px_rgba(255,255,255,0.15)]"
+    : "border border-white/10 bg-white/5";
+  const highlightStyle: React.CSSProperties = isCurrent && accentColor
+    ? { borderColor: accentColor }
+    : {};
   return (
     <div
-      className="flex items-start gap-4 rounded-lg border border-white/10 bg-white/5 px-4 py-3 backdrop-blur-sm"
+      className={`flex items-start gap-4 rounded-lg ${highlightClass} px-4 py-3 backdrop-blur-sm`}
+      style={highlightStyle}
       data-testid={`agenda-row-${item.id}`}
+      data-current={isCurrent ? "true" : undefined}
     >
       <div className="flex flex-col items-center min-w-[6.5em] border-r border-white/10 pr-4">
         <span className="font-mono font-bold" style={{ fontSize: scale * 1.15 }}>
@@ -154,61 +179,64 @@ function AgendaRow({
 
 // ---- Layout components -------------------------------------------------
 
-function LandscapeGrid({
-  pageItems,
-  config,
-  tz,
-  scale,
-}: {
+interface RowGridProps {
   pageItems: AgendaItem[];
   config: AgendaWidgetConfig;
   tz: string | null | undefined;
   scale: number;
-}) {
+  now: Date;
+  highlightCurrent: boolean;
+}
+
+function LandscapeGrid({ pageItems, config, tz, scale, now, highlightCurrent }: RowGridProps) {
   return (
     <div className="flex-1 grid grid-cols-2 gap-3 overflow-hidden">
       {pageItems.map((it) => (
-        <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} />
+        <AgendaRow
+          key={it.id}
+          item={it}
+          config={config}
+          tz={tz}
+          scale={scale}
+          isCurrent={highlightCurrent && isCurrentlyRunning(it, now)}
+          accentColor={config.accentColor}
+        />
       ))}
     </div>
   );
 }
 
-function PortraitCards({
-  pageItems,
-  config,
-  tz,
-  scale,
-}: {
-  pageItems: AgendaItem[];
-  config: AgendaWidgetConfig;
-  tz: string | null | undefined;
-  scale: number;
-}) {
+function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent }: RowGridProps) {
   return (
     <div className="flex-1 flex flex-col gap-3 overflow-hidden">
       {pageItems.map((it) => (
-        <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} />
+        <AgendaRow
+          key={it.id}
+          item={it}
+          config={config}
+          tz={tz}
+          scale={scale}
+          isCurrent={highlightCurrent && isCurrentlyRunning(it, now)}
+          accentColor={config.accentColor}
+        />
       ))}
     </div>
   );
 }
 
-function UltraWideGrid({
-  pageItems,
-  config,
-  tz,
-  scale,
-}: {
-  pageItems: AgendaItem[];
-  config: AgendaWidgetConfig;
-  tz: string | null | undefined;
-  scale: number;
-}) {
+function UltraWideGrid({ pageItems, config, tz, scale, now, highlightCurrent }: RowGridProps) {
   return (
     <div className="flex-1 grid grid-cols-3 xl:grid-cols-4 gap-3 overflow-hidden">
       {pageItems.map((it) => (
-        <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} />
+        <AgendaRow
+          key={it.id}
+          item={it}
+          config={config}
+          tz={tz}
+          scale={scale}
+          isCurrent={highlightCurrent && isCurrentlyRunning(it, now)}
+          accentColor={config.accentColor}
+        />
       ))}
     </div>
   );
@@ -380,7 +408,12 @@ export function AgendaDisplayWidget({
   }, [nowProp]);
 
   const layout = useMemo(
-    () => pickAgendaLayout(config.layoutMode as any, measured.w, measured.h, config.displayMode as any),
+    () => pickAgendaLayout(
+      config.layoutMode as AgendaLayoutMode,
+      measured.w,
+      measured.h,
+      config.displayMode as AgendaDisplayMode,
+    ),
     [config.layoutMode, config.displayMode, measured.w, measured.h],
   );
 
@@ -411,6 +444,10 @@ export function AgendaDisplayWidget({
   }, [pages.length, config.rotationIntervalSeconds]);
 
   const pageItems = pages[pageIndex] ?? [];
+
+  // In now_next mode every layout (not only totem/room_door) gets a
+  // strong "live now" highlight on the currently-running row(s).
+  const highlightCurrent = config.displayMode === "now_next";
 
   const themeClass = config.theme === "light"
     ? "bg-white text-slate-900"
@@ -474,15 +511,15 @@ export function AgendaDisplayWidget({
           No agenda items match this display right now.
         </div>
       ) : layout === "ultrawide" ? (
-        <UltraWideGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} />
+        <UltraWideGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} />
       ) : layout === "portrait" ? (
-        <PortraitCards pageItems={pageItems} config={config} tz={timezone} scale={scale} />
+        <PortraitCards pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} />
       ) : layout === "totem" ? (
         <TotemNowNext items={items} config={config} tz={timezone} scale={scale} now={now} />
       ) : layout === "room_door" ? (
         <RoomDoor items={items} config={config} tz={timezone} scale={scale} now={now} />
       ) : (
-        <LandscapeGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} />
+        <LandscapeGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} />
       )}
     </div>
   );

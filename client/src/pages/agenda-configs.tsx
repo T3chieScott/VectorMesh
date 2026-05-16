@@ -35,9 +35,9 @@ import { resolveAgendaItems } from "@shared/agenda-resolver";
 const PREVIEW_PRESETS = [
   { label: "Landscape 1080p", subtitle: "1920×1080", w: 1920, h: 1080 },
   { label: "Portrait", subtitle: "1080×1920", w: 1080, h: 1920 },
-  { label: "Totem", subtitle: "1080×3840 (9:32)", w: 1080, h: 3840 },
+  { label: "Totem", subtitle: "1080×1920", w: 1080, h: 1920 },
   { label: "Ultrawide", subtitle: "3840×1080", w: 3840, h: 1080 },
-  { label: "Room door", subtitle: "1024×600 (7\")", w: 1024, h: 600 },
+  { label: "Room door", subtitle: "1280×720", w: 1280, h: 720 },
 ] as const;
 
 // Sample data shown in the live preview when the site has no real
@@ -106,11 +106,11 @@ type ConfigFormValues = z.infer<typeof configFormSchema>;
 function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
   return {
     name: c?.name ?? "",
-    displayMode: (c?.displayMode as any) ?? "full",
-    layoutMode: (c?.layoutMode as any) ?? "auto",
-    fontScale: (c?.fontScale as any) ?? "normal",
-    density: (c?.density as any) ?? "normal",
-    theme: (c?.theme as any) ?? "dark",
+    displayMode: (c?.displayMode as ConfigFormValues["displayMode"]) ?? "full",
+    layoutMode: (c?.layoutMode as ConfigFormValues["layoutMode"]) ?? "auto",
+    fontScale: (c?.fontScale as ConfigFormValues["fontScale"]) ?? "normal",
+    density: (c?.density as ConfigFormValues["density"]) ?? "normal",
+    theme: (c?.theme as ConfigFormValues["theme"]) ?? "dark",
     accentColor: c?.accentColor ?? "#0ea5e9",
     eventName: c?.eventName ?? "",
     backgroundUrl: c?.backgroundUrl ?? "",
@@ -305,7 +305,7 @@ function ConfigEditor({
                           onChange={(e) => {
                             const cur = new Set(watched.statusFilter);
                             if (e.target.checked) cur.add(s); else cur.delete(s);
-                            form.setValue("statusFilter", Array.from(cur) as any);
+                            form.setValue("statusFilter", Array.from(cur) as ConfigFormValues["statusFilter"]);
                           }}
                           data-testid={`checkbox-status-${s}`}
                         />
