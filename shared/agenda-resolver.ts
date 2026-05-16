@@ -90,6 +90,26 @@ export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
     return a.title.localeCompare(b.title);
   });
 
+  // now_next mode: keep only the currently-running session(s) and the
+  // immediate next-up per room. Applied here (not just in the totem
+  // layout) so landscape / portrait / ultrawide renders honour the
+  // operator's display-mode choice too.
+  if (input.config.displayMode === "now_next") {
+    const { current, upcoming } = splitCurrentNext(filtered, now);
+    const nextByRoom = new Map<string, AgendaItem>();
+    for (const it of upcoming) {
+      const key = (it.room || "__no_room__").toLowerCase();
+      if (!nextByRoom.has(key)) nextByRoom.set(key, it);
+    }
+    const merged = [...current, ...Array.from(nextByRoom.values())];
+    // Preserve start-asc order for the merged set.
+    merged.sort(
+      (a, b) =>
+        new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+    );
+    return merged;
+  }
+
   return filtered;
 }
 

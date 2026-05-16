@@ -109,6 +109,18 @@ test("resolveAgendaItems alert mode keeps only delayed/cancelled/moved", () => {
   assert.deepEqual(got.map((i) => i.id).sort(), ["cancelled", "delayed"]);
 });
 
+test("resolveAgendaItems now_next mode keeps current + one upcoming per room", () => {
+  const items = [
+    item({ id: "live_main", room: "Main Hall", startsAt: new Date("2026-06-01T11:30:00Z"), endsAt: new Date("2026-06-01T12:30:00Z") }),
+    item({ id: "live_b", room: "Room B", startsAt: new Date("2026-06-01T11:45:00Z"), endsAt: new Date("2026-06-01T12:45:00Z") }),
+    item({ id: "next_main", room: "Main Hall", startsAt: new Date("2026-06-01T13:00:00Z"), endsAt: new Date("2026-06-01T14:00:00Z") }),
+    item({ id: "later_main", room: "Main Hall", startsAt: new Date("2026-06-01T15:00:00Z"), endsAt: new Date("2026-06-01T16:00:00Z") }),
+    item({ id: "next_b", room: "Room B", startsAt: new Date("2026-06-01T13:30:00Z"), endsAt: new Date("2026-06-01T14:30:00Z") }),
+  ];
+  const got = resolveAgendaItems({ items, config: cfg({ displayMode: "now_next" }), now: NOW });
+  assert.deepEqual(got.map((i) => i.id), ["live_main", "live_b", "next_main", "next_b"]);
+});
+
 test("resolveAgendaItems sorts by start asc", () => {
   const items = [
     item({ id: "late", startsAt: new Date("2026-06-01T13:00:00Z"), endsAt: new Date("2026-06-01T14:00:00Z") }),

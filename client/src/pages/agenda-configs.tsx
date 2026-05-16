@@ -180,14 +180,17 @@ function ConfigEditor({
   const watched = form.watch();
 
   // Build a synthetic config from the live form values for the preview.
-  const previewConfig = useMemo<AgendaWidgetConfig>(() => ({
-    id: initial?.id ?? "preview",
-    clientId,
-    createdAt: initial?.createdAt ?? new Date(),
-    updatedAt: initial?.updatedAt ?? new Date(),
-    ...toApiPayload(watched, clientId),
-    statusFilter: watched.statusFilter as any,
-  }) as any, [watched, clientId, initial]);
+  const previewConfig = useMemo<AgendaWidgetConfig>(() => {
+    const payload = toApiPayload(watched, clientId);
+    return {
+      id: initial?.id ?? "preview",
+      clientId,
+      createdAt: initial?.createdAt ?? new Date(),
+      updatedAt: initial?.updatedAt ?? new Date(),
+      ...payload,
+      statusFilter: watched.statusFilter as AgendaWidgetConfig["statusFilter"],
+    };
+  }, [watched, clientId, initial]);
 
   // Fall back to seeded sample items so the preview is never empty
   // while operators are still wiring up their first event.

@@ -56,10 +56,21 @@ test("parseAgendaCsv flags missing required fields", () => {
   assert.equal(out[0].status, "error");
 });
 
+test("parseAgendaCsv rejects rows with missing room", () => {
+  const csv = [
+    AGENDA_CSV_HEADER,
+    `Orphan Session,,,Tech,,2026-06-01T09:00:00Z,2026-06-01T10:00:00Z,scheduled,`,
+  ].join("\n");
+  const out = parseAgendaCsv(csv);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].status, "error");
+  assert.match(out[0].error ?? "", /room/i);
+});
+
 test("parseAgendaCsv flags invalid timestamps", () => {
   const csv = [
     AGENDA_CSV_HEADER,
-    `Talk,,,,,not-a-date,also-not-a-date,scheduled,`,
+    `Talk,,Main Hall,,,not-a-date,also-not-a-date,scheduled,`,
   ].join("\n");
   const out = parseAgendaCsv(csv);
   assert.equal(out[0].status, "error");
@@ -69,7 +80,7 @@ test("parseAgendaCsv flags invalid timestamps", () => {
 test("parseAgendaCsv flags endsAt <= startsAt", () => {
   const csv = [
     AGENDA_CSV_HEADER,
-    `Talk,,,,,2026-06-01T10:00:00Z,2026-06-01T10:00:00Z,scheduled,`,
+    `Talk,,Main Hall,,,2026-06-01T10:00:00Z,2026-06-01T10:00:00Z,scheduled,`,
   ].join("\n");
   const out = parseAgendaCsv(csv);
   assert.equal(out[0].status, "error");
@@ -79,7 +90,7 @@ test("parseAgendaCsv flags endsAt <= startsAt", () => {
 test("parseAgendaCsv falls back to scheduled for unknown status", () => {
   const csv = [
     AGENDA_CSV_HEADER,
-    `Talk,,,,,2026-06-01T10:00:00Z,2026-06-01T11:00:00Z,bogus,`,
+    `Talk,,Main Hall,,,2026-06-01T10:00:00Z,2026-06-01T11:00:00Z,bogus,`,
   ].join("\n");
   const out = parseAgendaCsv(csv);
   assert.equal(out[0].status, "ok");

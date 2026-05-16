@@ -86,6 +86,18 @@ export function parseAgendaCsv(text: string): AgendaCsvRowResult[] {
       });
       continue;
     }
+    // Room is required because every agenda widget surface (room
+    // door, totem, landscape grid) keys off "where is this happening".
+    // Empty room would render an unattributable session on the wall.
+    if (!room) {
+      results.push({
+        index: i - startIdx,
+        status: "error",
+        error: "room is required",
+        raw: cols,
+      });
+      continue;
+    }
     const start = new Date(startsAt);
     const end = new Date(endsAt);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
