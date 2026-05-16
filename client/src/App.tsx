@@ -41,6 +41,9 @@ import StreamingServerPage from "@/pages/streaming-server";
 import ControlPanelPage from "@/pages/control-panel";
 import PlayerPage from "@/pages/player";
 import HelpPage from "@/pages/help";
+import AgendaItemsPage from "@/pages/agenda-items";
+import AgendaConfigsPage from "@/pages/agenda-configs";
+import DisplayAgendaPage from "@/pages/display-agenda";
 
 function AdminRoute({ component: Component }: { component: () => JSX.Element }) {
   const { user } = useAuth();
@@ -73,6 +76,8 @@ function AuthenticatedRouter() {
       <Route path="/admin/display-profiles">{() => <AdminRoute component={AdminDisplayProfilesPage} />}</Route>
       <Route path="/admin/activity">{() => <AdminRoute component={ActivityLogPage} />}</Route>
       <Route path="/control-panel" component={ControlPanelPage} />
+      <Route path="/agenda" component={AgendaItemsPage} />
+      <Route path="/agenda/displays" component={AgendaConfigsPage} />
       <Route path="/admin/streaming">{() => <AdminRoute component={StreamingServerPage} />}</Route>
       <Route component={NotFound} />
     </Switch>
@@ -134,6 +139,12 @@ function AppContent() {
   const [isPlayerRouteWithId] = useRoute("/player/:screenId");
   const [isPlayerRouteBase] = useRoute("/player");
   const isPlayerRoute = isPlayerRouteWithId || isPlayerRouteBase;
+
+  // Task #208 — chromeless public agenda display, no auth/sidebar.
+  const [isAgendaDisplayRoute] = useRoute("/display/agenda/:configId");
+  if (isAgendaDisplayRoute) {
+    return <DisplayAgendaPage />;
+  }
 
   const [isLoginRoute] = useRoute("/login");
   const [isForgotRoute] = useRoute("/forgot-password");

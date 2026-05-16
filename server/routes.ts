@@ -5568,6 +5568,11 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Access denied to this site" });
       }
       const data = insertAgendaWidgetConfigSchema.partial().parse(req.body);
+      // Tenant boundary: if caller is moving the config to another
+      // client, they must have access to the destination too.
+      if (data.clientId && data.clientId !== existing.clientId && !canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to target site" });
+      }
       const config = await storage.updateAgendaWidgetConfig(id, data);
       logAudit(req, "update", "agenda_widget_config", id, { name: config?.name });
       res.json(config);
@@ -5608,11 +5613,45 @@ export async function registerRoutes(
       const now = new Date();
       const items = resolveAgendaItems({ items: pool, config, now });
       const client = await storage.getClient(config.clientId);
+      // Strip internal/admin-only fields from the public payload.
+      const publicConfig = {
+        id: config.id,
+        name: config.name,
+        eventName: config.eventName,
+        backgroundUrl: config.backgroundUrl,
+        accentColor: config.accentColor,
+        displayMode: config.displayMode,
+        layoutMode: config.layoutMode,
+        fontScale: config.fontScale,
+        density: config.density,
+        theme: config.theme,
+        refreshIntervalSeconds: config.refreshIntervalSeconds,
+        rotationIntervalSeconds: config.rotationIntervalSeconds,
+        maxItemsPerPage: config.maxItemsPerPage,
+        showDescription: config.showDescription,
+        showPresenter: config.showPresenter,
+        showRoom: config.showRoom,
+        showStatus: config.showStatus,
+        showCurrentTime: config.showCurrentTime,
+        showEventName: config.showEventName,
+      };
+      const publicItems = items.map((it) => ({
+        id: it.id,
+        title: it.title,
+        description: it.description,
+        room: it.room,
+        track: it.track,
+        presenter: it.presenter,
+        startsAt: it.startsAt,
+        endsAt: it.endsAt,
+        status: it.status,
+        statusMessage: it.statusMessage,
+      }));
       res.setHeader("Cache-Control", "no-store");
       res.json({
-        config,
-        items,
-        client: client ? { id: client.id, name: client.name, timezone: client.timezone } : null,
+        config: publicConfig,
+        items: publicItems,
+        client: client ? { name: client.name, timezone: client.timezone } : null,
         serverTime: Date.now(),
       });
     } catch (error) {

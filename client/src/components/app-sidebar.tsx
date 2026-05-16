@@ -22,6 +22,7 @@ import {
   Radio,
   SlidersHorizontal,
   HelpCircle,
+  CalendarDays,
 } from "lucide-react";
 import {
   Sidebar,
@@ -118,6 +119,19 @@ const displayNavItems = [
     title: "Player Simulator",
     url: "/simulator",
     icon: Tv2,
+  },
+];
+
+const agendaNavItems = [
+  {
+    title: "Agenda Items",
+    url: "/agenda",
+    icon: CalendarDays,
+  },
+  {
+    title: "Agenda Displays",
+    url: "/agenda/displays",
+    icon: SlidersHorizontal,
   },
 ];
 
@@ -289,6 +303,7 @@ export function AppSidebar() {
         <NavGroup label="Overview" items={mainNavItems} />
         <NavGroup label="Content" items={contentNavItems} />
         <NavGroup label="Display" items={displayNavItems} />
+        <NavGroup label="Agenda" items={agendaNavItems} />
         <NavGroup label="System" items={systemNavItems} />
         {(user?.role === "admin" || user?.role === "account_manager") && (
           <NavGroup label="Admin" items={adminNavItems} />

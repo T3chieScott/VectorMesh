@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRoute } from "wouter";
 import { AgendaDisplayWidget } from "@/components/agenda/AgendaDisplayWidget";
 import type { AgendaItem, AgendaWidgetConfig } from "@shared/schema";
@@ -20,6 +20,9 @@ export default function DisplayAgendaPage() {
   const configId = params?.configId;
   const [data, setData] = useState<DisplayPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Ref-based polling so the next interval is always derived from the
+  // latest fetched config, not the effect's initial closure.
+  const intervalRef = useRef<number>(30);
 
   useEffect(() => {
     if (!configId) return;
@@ -38,20 +41,21 @@ export default function DisplayAgendaPage() {
           if (!cancelled) {
             setData(payload);
             setError(null);
+            intervalRef.current = payload.config?.refreshIntervalSeconds ?? 30;
           }
         }
       } catch (e) {
         if (!cancelled) setError(String(e));
       }
-      const intervalSec = data?.config?.refreshIntervalSeconds ?? 30;
-      timer = setTimeout(load, Math.max(5, intervalSec) * 1000);
+      if (!cancelled) {
+        timer = setTimeout(load, Math.max(5, intervalRef.current) * 1000);
+      }
     }
     load();
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configId]);
 
   // Lock body so the chromeless page never scrolls under the widget.
