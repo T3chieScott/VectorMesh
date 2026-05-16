@@ -461,6 +461,70 @@ test("PATCH /api/screens/:id — Task #189: explicit canvasGroupId:null while ca
   );
 });
 
+test("PATCH /api/screens/:id — Task #205: rejects callers without access to the existing client", async () => {
+  const fake = makeFakeStorage(makeScreen({
+    id: "screen-1",
+    clientId: "client-A",
+    name: "Lobby",
+  }));
+  const app = express();
+  app.use(express.json());
+  app.patch(
+    "/api/screens/:id",
+    buildScreenPatchHandler(
+      fake.storage,
+      () => {},
+      (_req, clientId) => clientId === "client-B",
+    ),
+  );
+  const server = app.listen(0);
+  try {
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const res = await fetch(`http://127.0.0.1:${port}/api/screens/screen-1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ screenshotEnabled: true }),
+    });
+    assert.equal(res.status, 403);
+    assert.equal(fake.getLastUpdateArg(), null);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("PATCH /api/screens/:id — Task #205: rejects callers attempting to move a screen to an inaccessible client", async () => {
+  const fake = makeFakeStorage(makeScreen({
+    id: "screen-1",
+    clientId: "client-A",
+    name: "Lobby",
+  }));
+  const app = express();
+  app.use(express.json());
+  app.patch(
+    "/api/screens/:id",
+    buildScreenPatchHandler(
+      fake.storage,
+      () => {},
+      (_req, clientId) => clientId === "client-A",
+    ),
+  );
+  const server = app.listen(0);
+  try {
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const res = await fetch(`http://127.0.0.1:${port}/api/screens/screen-1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "client-B" }),
+    });
+    assert.equal(res.status, 403);
+    assert.equal(fake.getLastUpdateArg(), null);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("PATCH /api/screens/:id — Task #189: disabling canvas clears canvasGroupId automatically", async () => {
   const groupId = "group-3840x1080";
   const fake = makeFakeStorageWithGroups(

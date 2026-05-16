@@ -68,6 +68,7 @@ type AuditFn = (
 export function buildScreenPatchHandler(
   storage: ScreenPatchStorage,
   audit?: AuditFn,
+  canAccessClient?: (req: Request, clientId: string) => boolean,
 ) {
   return async function screenPatchHandler(req: Request, res: Response) {
     try {
@@ -75,6 +76,22 @@ export function buildScreenPatchHandler(
       const existing = await storage.getScreen(id);
       if (!existing) {
         return res.status(404).json({ error: "Screen not found" });
+      }
+      // Task #205: tenant authz — the patch body may now move the
+      // screen across clients (clientId) and rebind its canvas group
+      // (canvasGroupId), so reject callers that can't access either
+      // the existing client or the requested target client.
+      if (canAccessClient) {
+        if (existing.clientId && !canAccessClient(req, existing.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+        const requestedClientId =
+          typeof req.body?.clientId === "string" && req.body.clientId
+            ? req.body.clientId
+            : null;
+        if (requestedClientId && !canAccessClient(req, requestedClientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
       }
       if (existing.locked) {
         return res.status(403).json({

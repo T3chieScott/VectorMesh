@@ -1686,7 +1686,7 @@ export async function registerRoutes(
     "/api/screens/:id",
     requireAuth,
     loadUserContext,
-    buildScreenPatchHandler(storage, logAudit),
+    buildScreenPatchHandler(storage, logAudit, canAccessClient),
   );
 
   // Task #182: handler logic lives in
