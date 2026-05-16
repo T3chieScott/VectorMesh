@@ -121,7 +121,22 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { deriveVideoHealth, type VideoHealthStatus } from "@shared/video-health";
+import {
+  deriveVideoHealth,
+  bucketVideoHealthSamples,
+  type VideoHealthStatus,
+  type VideoHealthBucket,
+} from "@shared/video-health";
+import type { VideoHealthSample } from "@shared/schema";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 type ScreensView = "cards" | "table";
 
@@ -1398,6 +1413,7 @@ function TraceStepRow({ step }: { step: ContentTraceStep }) {
 // add noise to brand-new screens).
 function VideoHealthBadge({ screen }: { screen: Screen }) {
   const verdict = deriveVideoHealth(screen);
+  const [historyOpen, setHistoryOpen] = useState(false);
   if (verdict.status === "unknown") return null;
 
   const TONE: Record<Exclude<VideoHealthStatus, "unknown">, string> = {
@@ -1414,34 +1430,172 @@ function VideoHealthBadge({ screen }: { screen: Screen }) {
   const label = LABEL[verdict.status];
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Badge
-          variant="outline"
-          className={`gap-1 cursor-default ${tone}`}
-          data-testid={`badge-video-health-${screen.id}`}
-          data-video-health={verdict.status}
-        >
-          <Activity className="h-3 w-3" />
-          {label}
-        </Badge>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" className="text-xs">
-        <div className="font-medium" data-testid={`tooltip-video-health-title-${screen.id}`}>Video keep-alive</div>
-        <div data-testid={`tooltip-video-health-stalls-${screen.id}`}>Stalls: {verdict.stalls}</div>
-        <div data-testid={`tooltip-video-health-recoveries-${screen.id}`}>Recoveries: {verdict.recoveries}</div>
-        <div data-testid={`tooltip-video-health-reloads-${screen.id}`}>Reloads: {verdict.reloads}</div>
-        <div data-testid={`tooltip-video-health-last-reload-${screen.id}`}>
-          Last reload:{" "}
-          {verdict.lastReloadAt ? verdict.lastReloadAt.toLocaleString() : "never"}
-        </div>
-        {verdict.updatedAt && (
-          <div className="text-muted-foreground" data-testid={`tooltip-video-health-updated-${screen.id}`}>
-            Updated {formatDistanceToNow(verdict.updatedAt, { addSuffix: true })}
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(true)}
+            className="inline-flex"
+            data-testid={`button-video-health-${screen.id}`}
+            aria-label={`Show 24-hour video health history for ${screen.name}`}
+          >
+            <Badge
+              variant="outline"
+              className={`gap-1 cursor-pointer hover-elevate ${tone}`}
+              data-testid={`badge-video-health-${screen.id}`}
+              data-video-health={verdict.status}
+            >
+              <Activity className="h-3 w-3" />
+              {label}
+            </Badge>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-xs">
+          <div className="font-medium" data-testid={`tooltip-video-health-title-${screen.id}`}>Video keep-alive</div>
+          <div data-testid={`tooltip-video-health-stalls-${screen.id}`}>Stalls: {verdict.stalls}</div>
+          <div data-testid={`tooltip-video-health-recoveries-${screen.id}`}>Recoveries: {verdict.recoveries}</div>
+          <div data-testid={`tooltip-video-health-reloads-${screen.id}`}>Reloads: {verdict.reloads}</div>
+          <div data-testid={`tooltip-video-health-last-reload-${screen.id}`}>
+            Last reload:{" "}
+            {verdict.lastReloadAt ? verdict.lastReloadAt.toLocaleString() : "never"}
           </div>
-        )}
-      </TooltipContent>
-    </Tooltip>
+          {verdict.updatedAt && (
+            <div className="text-muted-foreground" data-testid={`tooltip-video-health-updated-${screen.id}`}>
+              Updated {formatDistanceToNow(verdict.updatedAt, { addSuffix: true })}
+            </div>
+          )}
+          <div className="text-muted-foreground mt-1">Click for 24h history</div>
+        </TooltipContent>
+      </Tooltip>
+      <VideoHealthHistoryDialog
+        screen={screen}
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+      />
+    </>
+  );
+}
+
+// Task #200 — drawer-style dialog opened from the VideoHealthBadge.
+// Renders a 24h bar chart of reload events (with stalls / recoveries
+// in the tooltip) so operators can spot a screen that has been
+// stalling repeatedly even when it currently shows green.
+function VideoHealthHistoryDialog({
+  screen,
+  open,
+  onOpenChange,
+}: {
+  screen: Screen;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { data: samples, isLoading } = useQuery<VideoHealthSample[]>({
+    queryKey: ["/api/screens", screen.id, "video-health-samples", { hours: 24 }],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/screens/${screen.id}/video-health-samples?hours=24`,
+        { credentials: "include" },
+      );
+      if (!res.ok) throw new Error("Failed to load video health samples");
+      return res.json();
+    },
+    enabled: open,
+    refetchInterval: open ? 60_000 : false,
+  });
+
+  const buckets: VideoHealthBucket[] = useMemo(
+    () => bucketVideoHealthSamples(samples ?? []),
+    [samples],
+  );
+  const chartData = useMemo(
+    () =>
+      buckets.map((b) => ({
+        bucketStart: b.bucketStart,
+        label: new Date(b.bucketStart).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        reloads: b.reloads,
+        stalls: b.stalls,
+        recoveries: b.recoveries,
+      })),
+    [buckets],
+  );
+  const totals = useMemo(
+    () =>
+      buckets.reduce(
+        (acc, b) => ({
+          stalls: acc.stalls + b.stalls,
+          recoveries: acc.recoveries + b.recoveries,
+          reloads: acc.reloads + b.reloads,
+        }),
+        { stalls: 0, recoveries: 0, reloads: 0 },
+      ),
+    [buckets],
+  );
+  const hasAnyActivity = totals.reloads + totals.stalls + totals.recoveries > 0;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl" data-testid={`dialog-video-health-history-${screen.id}`}>
+        <DialogHeader>
+          <DialogTitle>Video health — last 24 hours</DialogTitle>
+          <DialogDescription>
+            Reload events per hour for "{screen.name}". A reload means the player
+            forcibly refreshed itself after the watchdog failed to recover a
+            stalled video.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-3 gap-3 text-sm">
+          <div className="rounded-md border p-2" data-testid={`stat-video-health-reloads-${screen.id}`}>
+            <div className="text-muted-foreground text-xs">Reloads (24h)</div>
+            <div className="text-xl font-semibold">{totals.reloads}</div>
+          </div>
+          <div className="rounded-md border p-2" data-testid={`stat-video-health-recoveries-${screen.id}`}>
+            <div className="text-muted-foreground text-xs">Recoveries (24h)</div>
+            <div className="text-xl font-semibold">{totals.recoveries}</div>
+          </div>
+          <div className="rounded-md border p-2" data-testid={`stat-video-health-stalls-${screen.id}`}>
+            <div className="text-muted-foreground text-xs">Stalls (24h)</div>
+            <div className="text-xl font-semibold">{totals.stalls}</div>
+          </div>
+        </div>
+        <div className="h-56 w-full" data-testid={`chart-video-health-${screen.id}`}>
+          {isLoading ? (
+            <Skeleton className="h-full w-full" />
+          ) : hasAnyActivity ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={28} />
+                <RechartsTooltip
+                  contentStyle={{ fontSize: 12 }}
+                  labelFormatter={(_, payload) => {
+                    const ts = payload?.[0]?.payload?.bucketStart as number | undefined;
+                    return ts ? new Date(ts).toLocaleString() : "";
+                  }}
+                />
+                <Bar dataKey="reloads" fill="hsl(var(--destructive))" name="Reloads" />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div
+              className="flex h-full items-center justify-center text-sm text-muted-foreground"
+              data-testid={`text-video-health-empty-${screen.id}`}
+            >
+              No reload, recovery, or stall events recorded in the last 24 hours.
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} data-testid={`button-close-video-health-history-${screen.id}`}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

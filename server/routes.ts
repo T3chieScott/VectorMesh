@@ -906,6 +906,25 @@ export async function registerRoutes(
     }
   }, 30000);
 
+  // Task #200 — prune video health samples older than 30 days. The
+  // samples table grows ~1 row per heartbeat per screen (every 30s on
+  // active players), so retention has to be capped or the table runs
+  // away. Runs once at boot and then every 6h.
+  const VIDEO_HEALTH_RETENTION_DAYS = 30;
+  const pruneVideoHealthSamples = async () => {
+    try {
+      const cutoff = new Date(Date.now() - VIDEO_HEALTH_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+      const removed = await storage.pruneVideoHealthSamples(cutoff);
+      if (removed > 0) {
+        console.log(`[video-health] pruned ${removed} sample(s) older than ${VIDEO_HEALTH_RETENTION_DAYS}d`);
+      }
+    } catch (err) {
+      console.error("[video-health] prune failed:", err);
+    }
+  };
+  pruneVideoHealthSamples().catch(() => {});
+  setInterval(pruneVideoHealthSamples, 6 * 60 * 60 * 1000);
+
   // ============ HEALTH CHECK ============
   app.get("/api/manual", requireAuth, async (_req, res) => {
     try {
@@ -1793,6 +1812,23 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching heartbeats:", error);
       res.status(500).json({ error: "Failed to fetch heartbeats" });
+    }
+  });
+
+  // Task #200 — video health samples for the per-screen sparkline.
+  // `hours` defaults to 24h, clamped to the 30d retention window so a
+  // bogus query string can't blow up the response.
+  app.get("/api/screens/:id/video-health-samples", requireAuth, async (req, res) => {
+    try {
+      const screenId = getPathParam(req, "id");
+      const hoursRaw = Number.parseFloat(String(req.query.hours ?? "24"));
+      const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 24 * 30) : 24;
+      const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+      const samples = await storage.getVideoHealthSamples(screenId, since);
+      res.json(samples);
+    } catch (error) {
+      console.error("Error fetching video health samples:", error);
+      res.status(500).json({ error: "Failed to fetch video health samples" });
     }
   });
 
@@ -3874,11 +3910,12 @@ export async function registerRoutes(
       // writes an audit_log row so support can correlate
       // "black screen" reports with watchdog-driven refreshes.
       const videoStats = extractVideoStats(data.errors);
+      let videoHealthDecision: ReturnType<typeof decideVideoHealthUpdate> | null = null;
       if (videoStats && screen) {
-        const decision = decideVideoHealthUpdate(screen, videoStats);
-        Object.assign(heartbeatUpdate, decision.patch);
-        if (decision.auditLog) {
-          storage.createAuditLog(decision.auditLog).catch((err) => {
+        videoHealthDecision = decideVideoHealthUpdate(screen, videoStats);
+        Object.assign(heartbeatUpdate, videoHealthDecision.patch);
+        if (videoHealthDecision.auditLog) {
+          storage.createAuditLog(videoHealthDecision.auditLog).catch((err) => {
             console.error("Failed to record video reload audit:", err);
           });
         }
@@ -3888,14 +3925,40 @@ export async function registerRoutes(
       // so a single heartbeat from any member tile keeps the whole wall
       // marked online. Avoids "siblings show stale offline" in admin UI
       // when only the owner emits heartbeats.
+      let affectedScreenIds: string[];
       if (screen) {
         const members = await storage.getCanvasMembers(screen);
-        await storage.setCanvasPairingState(
-          members.map((m) => m.id),
-          heartbeatUpdate,
-        );
+        affectedScreenIds = members.map((m) => m.id);
+        await storage.setCanvasPairingState(affectedScreenIds, heartbeatUpdate);
       } else {
+        affectedScreenIds = [data.screenId];
         await storage.updateScreen(data.screenId, heartbeatUpdate);
+      }
+
+      // Task #200 — record a per-heartbeat history sample so the
+      // Screens UI can render a 24h sparkline. Fan-out to every
+      // canvas member that just had its live counters updated:
+      // the badge state is shared across the wall via
+      // setCanvasPairingState above, so sibling history must be
+      // shared too or the per-screen "Video health history" dialog
+      // would look empty on every tile except the heartbeat sender.
+      // Fire-and-forget so sample writes never block the heartbeat
+      // response.
+      if (videoStats && videoHealthDecision) {
+        const ts = videoHealthDecision.patch.videoStatsUpdatedAt;
+        for (const sid of affectedScreenIds) {
+          storage
+            .createVideoHealthSample({
+              screenId: sid,
+              timestamp: ts,
+              stalls: videoStats.stalls,
+              recoveries: videoStats.recoveries,
+              reloads: videoStats.reloads,
+            })
+            .catch((err) => {
+              console.error("Failed to record video health sample:", err);
+            });
+        }
       }
 
       if (wasOffline && screen) {

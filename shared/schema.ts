@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, jsonb, pgEnum, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, jsonb, pgEnum, uniqueIndex, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -864,6 +864,49 @@ export const playerHeartbeatsRelations = relations(playerHeartbeats, ({ one }) =
 export const insertPlayerHeartbeatSchema = createInsertSchema(playerHeartbeats).omit({ id: true });
 export type InsertPlayerHeartbeat = z.infer<typeof insertPlayerHeartbeatSchema>;
 export type PlayerHeartbeat = typeof playerHeartbeats.$inferSelect;
+
+// ============ VIDEO HEALTH SAMPLES ============
+//
+// Task #200 — per-heartbeat snapshots of the player keep-alive
+// watchdog counters. Task #197 only persists the *latest* counter
+// values on the screen row, which is enough for the live badge but
+// throws away the history operators need to spot a screen that has
+// been stalling repeatedly over the past day. Each row captures the
+// cumulative counters at the moment the heartbeat arrived; the
+// sparkline in the screens UI diffs consecutive rows to render a
+// per-hour bar chart of reload events. Old rows are pruned by a
+// background interval (see `pruneVideoHealthSamples` in storage).
+export const videoHealthSamples = pgTable(
+  "video_health_samples",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    screenId: varchar("screen_id").notNull().references(() => screens.id, { onDelete: "cascade" }),
+    timestamp: timestamp("timestamp").defaultNow().notNull(),
+    stalls: integer("stalls").notNull().default(0),
+    recoveries: integer("recoveries").notNull().default(0),
+    reloads: integer("reloads").notNull().default(0),
+  },
+  (table) => ({
+    // Per-screen sparkline reads filter by screen_id + timestamp range
+    // and order by timestamp; this composite index covers both paths.
+    screenTimestampIdx: index("video_health_samples_screen_timestamp_idx").on(
+      table.screenId,
+      table.timestamp,
+    ),
+    // The 6-hourly prune sweeps everything with timestamp < cutoff
+    // across all screens; a standalone timestamp index keeps that
+    // delete from devolving into a sequential scan.
+    timestampIdx: index("video_health_samples_timestamp_idx").on(table.timestamp),
+  }),
+);
+
+export const videoHealthSamplesRelations = relations(videoHealthSamples, ({ one }) => ({
+  screen: one(screens, { fields: [videoHealthSamples.screenId], references: [screens.id] }),
+}));
+
+export const insertVideoHealthSampleSchema = createInsertSchema(videoHealthSamples).omit({ id: true });
+export type InsertVideoHealthSample = z.infer<typeof insertVideoHealthSampleSchema>;
+export type VideoHealthSample = typeof videoHealthSamples.$inferSelect;
 
 // ============ AUDIT LOG ============
 

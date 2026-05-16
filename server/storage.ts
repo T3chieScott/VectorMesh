@@ -21,6 +21,7 @@ import {
   screenPresets,
   liveOverrides,
   playerHeartbeats,
+  videoHealthSamples,
   auditLogs,
   alertSettings,
   alertHistory,
@@ -56,6 +57,8 @@ import {
   type InsertLiveOverride,
   type PlayerHeartbeat,
   type InsertPlayerHeartbeat,
+  type VideoHealthSample,
+  type InsertVideoHealthSample,
   type AuditLog,
   type InsertAuditLog,
   type PlaylistItem,
@@ -495,6 +498,15 @@ export interface IStorage {
   // Player Heartbeats
   getPlayerHeartbeats(screenId: string): Promise<PlayerHeartbeat[]>;
   createPlayerHeartbeat(data: InsertPlayerHeartbeat): Promise<PlayerHeartbeat>;
+
+  // Video Health Samples (Task #200) — per-heartbeat history of the
+  // keep-alive watchdog counters so the screens UI can render a 24h
+  // sparkline. `since` filters by sample timestamp; samples come back
+  // oldest-first so the chart can diff consecutive rows. Pruning is
+  // driven from a background interval in routes.ts.
+  createVideoHealthSample(data: InsertVideoHealthSample): Promise<VideoHealthSample>;
+  getVideoHealthSamples(screenId: string, since: Date): Promise<VideoHealthSample[]>;
+  pruneVideoHealthSamples(olderThan: Date): Promise<number>;
 
   // Audit Logs
   createAuditLog(data: InsertAuditLog): Promise<AuditLog>;
@@ -2365,6 +2377,27 @@ export class DatabaseStorage implements IStorage {
   async createPlayerHeartbeat(data: InsertPlayerHeartbeat): Promise<PlayerHeartbeat> {
     const [heartbeat] = await db.insert(playerHeartbeats).values(data).returning();
     return heartbeat;
+  }
+
+  // Video Health Samples (Task #200)
+  async createVideoHealthSample(data: InsertVideoHealthSample): Promise<VideoHealthSample> {
+    const [sample] = await db.insert(videoHealthSamples).values(data).returning();
+    return sample;
+  }
+
+  async getVideoHealthSamples(screenId: string, since: Date): Promise<VideoHealthSample[]> {
+    return db
+      .select()
+      .from(videoHealthSamples)
+      .where(and(eq(videoHealthSamples.screenId, screenId), gte(videoHealthSamples.timestamp, since)))
+      .orderBy(asc(videoHealthSamples.timestamp));
+  }
+
+  async pruneVideoHealthSamples(olderThan: Date): Promise<number> {
+    const result = await db
+      .delete(videoHealthSamples)
+      .where(lt(videoHealthSamples.timestamp, olderThan));
+    return result.rowCount ?? 0;
   }
 
   // Audit Logs

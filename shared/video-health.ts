@@ -82,3 +82,108 @@ export function deriveVideoHealth(
 
   return { status: "green", stalls, recoveries, reloads, lastReloadAt, updatedAt };
 }
+
+// Task #200 — bucket per-heartbeat watchdog samples into a series of
+// fixed-width time buckets so the Screens UI can render a sparkline
+// of reload (and recovery / stall) events over time.
+//
+// The watchdog counters are cumulative for the lifetime of a player
+// page; a full page reload resets them to 0. So to turn a stream of
+// cumulative snapshots into per-bucket *event counts* we look at
+// consecutive samples and either:
+//   - take the positive delta (counter went up — N new events), or
+//   - take the new absolute value (counter dropped — the page just
+//     reloaded and we lost whatever the old top was; the new value
+//     is the count of events that have happened since the reset).
+// Events are credited to the bucket containing the *later* sample's
+// timestamp, which is where they actually occurred.
+
+export interface VideoHealthSampleLike {
+  timestamp: Date | string;
+  stalls: number;
+  recoveries: number;
+  reloads: number;
+}
+
+export interface VideoHealthBucket {
+  /** Inclusive start of the bucket, as ms since epoch. */
+  bucketStart: number;
+  stalls: number;
+  recoveries: number;
+  reloads: number;
+}
+
+export interface BucketOptions {
+  /** Total window covered by the returned buckets, in ms. Default 24h. */
+  windowMs?: number;
+  /** Bucket width in ms. Default 1h. */
+  bucketMs?: number;
+  /** "Now" for deterministic tests. */
+  now?: Date;
+}
+
+export function bucketVideoHealthSamples(
+  samples: VideoHealthSampleLike[],
+  options: BucketOptions = {},
+): VideoHealthBucket[] {
+  const windowMs = options.windowMs ?? 24 * 60 * 60 * 1000;
+  const bucketMs = options.bucketMs ?? 60 * 60 * 1000;
+  const now = options.now ?? new Date();
+  const nowMs = now.getTime();
+  // Align "now" to the end of its bucket so the most recent bucket
+  // is the one currently being filled. windowEnd is exclusive.
+  const windowEnd = Math.floor(nowMs / bucketMs) * bucketMs + bucketMs;
+  const bucketCount = Math.max(1, Math.ceil(windowMs / bucketMs));
+  const windowStart = windowEnd - bucketCount * bucketMs;
+
+  const buckets: VideoHealthBucket[] = [];
+  for (let i = 0; i < bucketCount; i++) {
+    buckets.push({
+      bucketStart: windowStart + i * bucketMs,
+      stalls: 0,
+      recoveries: 0,
+      reloads: 0,
+    });
+  }
+  if (samples.length === 0) return buckets;
+
+  // Defensive sort — server already returns oldest-first but callers
+  // may concatenate or hand-build arrays for tests.
+  const sorted = [...samples].sort((a, b) => {
+    const ta = toDate(a.timestamp)?.getTime() ?? 0;
+    const tb = toDate(b.timestamp)?.getTime() ?? 0;
+    return ta - tb;
+  });
+
+  let prev: VideoHealthSampleLike | null = null;
+  for (const curr of sorted) {
+    const currTs = toDate(curr.timestamp);
+    if (!currTs) {
+      prev = curr;
+      continue;
+    }
+    const currMs = currTs.getTime();
+    let dStalls = 0;
+    let dRecoveries = 0;
+    let dReloads = 0;
+    if (prev === null) {
+      // The first sample on its own can't be a delta — we don't
+      // know how much of its counter is "new" vs pre-window. Drop
+      // it as a baseline; it'll seed subsequent diffs.
+    } else {
+      dStalls = curr.stalls >= prev.stalls ? curr.stalls - prev.stalls : curr.stalls;
+      dRecoveries =
+        curr.recoveries >= prev.recoveries ? curr.recoveries - prev.recoveries : curr.recoveries;
+      dReloads = curr.reloads >= prev.reloads ? curr.reloads - prev.reloads : curr.reloads;
+    }
+    prev = curr;
+    if (currMs < windowStart || currMs >= windowEnd) continue;
+    const idx = Math.floor((currMs - windowStart) / bucketMs);
+    const b = buckets[idx];
+    if (!b) continue;
+    b.stalls += dStalls;
+    b.recoveries += dRecoveries;
+    b.reloads += dReloads;
+  }
+  return buckets;
+}
