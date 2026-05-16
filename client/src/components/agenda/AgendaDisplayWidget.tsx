@@ -1,0 +1,489 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  AgendaItem,
+  AgendaWidgetConfig,
+  AgendaStatus,
+} from "@shared/schema";
+import {
+  pickAgendaLayout,
+  paginate,
+  splitCurrentNext,
+} from "@shared/agenda-resolver";
+
+// Single reusable widget for both the live admin preview and the
+// public chromeless /display/agenda/:configId page. Caller passes
+// the config + resolved items; widget handles layout selection,
+// pagination/rotation and ticking the clock.
+
+export interface AgendaDisplayWidgetProps {
+  config: AgendaWidgetConfig;
+  items: AgendaItem[];
+  // Optional outer dims (px). When omitted, the widget measures its
+  // own container with ResizeObserver. The admin preview passes
+  // explicit dims so it can simulate target screen sizes.
+  width?: number;
+  height?: number;
+  timezone?: string | null;
+  now?: Date;
+}
+
+const STATUS_LABELS: Record<AgendaStatus, string> = {
+  scheduled: "Scheduled",
+  in_progress: "Live now",
+  delayed: "Delayed",
+  cancelled: "Cancelled",
+  moved: "Moved",
+};
+
+const STATUS_COLOR: Record<AgendaStatus, string> = {
+  scheduled: "bg-slate-500/30 text-slate-100 border-slate-400/40",
+  in_progress: "bg-emerald-500/30 text-emerald-100 border-emerald-400/60 animate-pulse",
+  delayed: "bg-amber-500/30 text-amber-100 border-amber-400/60",
+  cancelled: "bg-rose-600/30 text-rose-100 border-rose-400/60",
+  moved: "bg-indigo-500/30 text-indigo-100 border-indigo-400/60",
+};
+
+const FONT_SCALE_PX = {
+  small: 14,
+  normal: 18,
+  large: 22,
+  xlarge: 28,
+} as const;
+
+const DENSITY_GAP_PX = {
+  compact: 6,
+  normal: 12,
+  spacious: 20,
+} as const;
+
+function formatTime(iso: Date | string, tz: string | null | undefined): string {
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  if (Number.isNaN(d.getTime())) return "—";
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: tz || undefined,
+  }).format(d);
+}
+
+function formatNow(tz: string | null | undefined, now: Date): string {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: tz || undefined,
+  }).format(now);
+}
+
+function StatusBadge({ status, scale }: { status: AgendaStatus; scale: number }) {
+  return (
+    <span
+      className={`inline-flex items-center rounded-md border px-2 py-0.5 font-semibold uppercase tracking-wide ${STATUS_COLOR[status]}`}
+      style={{ fontSize: scale * 0.6 }}
+      data-testid={`agenda-status-${status}`}
+    >
+      {STATUS_LABELS[status]}
+    </span>
+  );
+}
+
+function AgendaRow({
+  item,
+  config,
+  tz,
+  scale,
+}: {
+  item: AgendaItem;
+  config: AgendaWidgetConfig;
+  tz: string | null | undefined;
+  scale: number;
+}) {
+  return (
+    <div
+      className="flex items-start gap-4 rounded-lg border border-white/10 bg-white/5 px-4 py-3 backdrop-blur-sm"
+      data-testid={`agenda-row-${item.id}`}
+    >
+      <div className="flex flex-col items-center min-w-[6.5em] border-r border-white/10 pr-4">
+        <span className="font-mono font-bold" style={{ fontSize: scale * 1.15 }}>
+          {formatTime(item.startsAt, tz)}
+        </span>
+        <span className="font-mono opacity-60" style={{ fontSize: scale * 0.75 }}>
+          {formatTime(item.endsAt, tz)}
+        </span>
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <h3
+            className="font-semibold leading-tight truncate"
+            style={{ fontSize: scale * 1.15 }}
+            data-testid={`agenda-title-${item.id}`}
+          >
+            {item.title}
+          </h3>
+          {config.showStatus && <StatusBadge status={item.status as AgendaStatus} scale={scale} />}
+        </div>
+        {(config.showRoom && item.room) || (item.track) || (config.showPresenter && item.presenter) ? (
+          <div className="mt-1 flex flex-wrap gap-3 opacity-80" style={{ fontSize: scale * 0.75 }}>
+            {config.showRoom && item.room && (
+              <span data-testid={`agenda-room-${item.id}`}>📍 {item.room}</span>
+            )}
+            {item.track && <span>🏷 {item.track}</span>}
+            {config.showPresenter && item.presenter && <span>🎤 {item.presenter}</span>}
+          </div>
+        ) : null}
+        {config.showDescription && item.description && (
+          <p className="mt-1 opacity-75 line-clamp-2" style={{ fontSize: scale * 0.8 }}>
+            {item.description}
+          </p>
+        )}
+        {item.statusMessage && item.status !== "scheduled" && (
+          <p
+            className="mt-1 italic opacity-90"
+            style={{ fontSize: scale * 0.75 }}
+            data-testid={`agenda-status-msg-${item.id}`}
+          >
+            {item.statusMessage}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---- Layout components -------------------------------------------------
+
+function LandscapeGrid({
+  pageItems,
+  config,
+  tz,
+  scale,
+}: {
+  pageItems: AgendaItem[];
+  config: AgendaWidgetConfig;
+  tz: string | null | undefined;
+  scale: number;
+}) {
+  return (
+    <div className="flex-1 grid grid-cols-2 gap-3 overflow-hidden">
+      {pageItems.map((it) => (
+        <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} />
+      ))}
+    </div>
+  );
+}
+
+function PortraitCards({
+  pageItems,
+  config,
+  tz,
+  scale,
+}: {
+  pageItems: AgendaItem[];
+  config: AgendaWidgetConfig;
+  tz: string | null | undefined;
+  scale: number;
+}) {
+  return (
+    <div className="flex-1 flex flex-col gap-3 overflow-hidden">
+      {pageItems.map((it) => (
+        <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} />
+      ))}
+    </div>
+  );
+}
+
+function UltraWideGrid({
+  pageItems,
+  config,
+  tz,
+  scale,
+}: {
+  pageItems: AgendaItem[];
+  config: AgendaWidgetConfig;
+  tz: string | null | undefined;
+  scale: number;
+}) {
+  return (
+    <div className="flex-1 grid grid-cols-3 xl:grid-cols-4 gap-3 overflow-hidden">
+      {pageItems.map((it) => (
+        <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} />
+      ))}
+    </div>
+  );
+}
+
+function TotemNowNext({
+  items,
+  config,
+  tz,
+  scale,
+  now,
+}: {
+  items: AgendaItem[];
+  config: AgendaWidgetConfig;
+  tz: string | null | undefined;
+  scale: number;
+  now: Date;
+}) {
+  const { current, upcoming } = splitCurrentNext(items, now);
+  const cur = current[0];
+  const next = upcoming.slice(0, 4);
+  return (
+    <div className="flex-1 flex flex-col gap-6 overflow-hidden">
+      <section>
+        <h2
+          className="font-semibold opacity-70 uppercase tracking-wider mb-2"
+          style={{ fontSize: scale * 0.8 }}
+        >
+          Now
+        </h2>
+        {cur ? (
+          <AgendaRow item={cur} config={config} tz={tz} scale={scale * 1.3} />
+        ) : (
+          <p className="opacity-60" style={{ fontSize: scale }}>
+            No session in progress.
+          </p>
+        )}
+      </section>
+      <section className="flex-1 overflow-hidden">
+        <h2
+          className="font-semibold opacity-70 uppercase tracking-wider mb-2"
+          style={{ fontSize: scale * 0.8 }}
+        >
+          Next
+        </h2>
+        <div className="flex flex-col gap-2">
+          {next.length === 0 && (
+            <p className="opacity-60" style={{ fontSize: scale }}>
+              Nothing else scheduled.
+            </p>
+          )}
+          {next.map((it) => (
+            <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} />
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function RoomDoor({
+  items,
+  config,
+  tz,
+  scale,
+  now,
+}: {
+  items: AgendaItem[];
+  config: AgendaWidgetConfig;
+  tz: string | null | undefined;
+  scale: number;
+  now: Date;
+}) {
+  const { current, upcoming } = splitCurrentNext(items, now);
+  const cur = current[0];
+  const next = upcoming[0];
+  const roomName = cur?.room || next?.room || config.roomFilter[0] || "Room";
+  return (
+    <div className="flex-1 flex flex-col justify-center gap-8 text-center px-8">
+      <div>
+        <p className="opacity-70 uppercase tracking-widest" style={{ fontSize: scale }}>
+          {roomName}
+        </p>
+        {cur ? (
+          <>
+            <p className="font-mono opacity-80 mt-4" style={{ fontSize: scale * 1.6 }}>
+              {formatTime(cur.startsAt, tz)} – {formatTime(cur.endsAt, tz)}
+            </p>
+            <h1 className="font-bold mt-3 leading-tight" style={{ fontSize: scale * 3 }}>
+              {cur.title}
+            </h1>
+            {cur.presenter && (
+              <p className="mt-3 opacity-80" style={{ fontSize: scale * 1.3 }}>
+                {cur.presenter}
+              </p>
+            )}
+            <div className="mt-4 inline-block">
+              <StatusBadge status={cur.status as AgendaStatus} scale={scale * 1.4} />
+            </div>
+            {cur.statusMessage && (
+              <p className="mt-3 italic opacity-80" style={{ fontSize: scale }}>
+                {cur.statusMessage}
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="opacity-60 mt-6" style={{ fontSize: scale * 1.4 }}>
+            No session in this room right now.
+          </p>
+        )}
+      </div>
+      {next && (
+        <div className="border-t border-white/10 pt-6">
+          <p className="opacity-60 uppercase tracking-widest" style={{ fontSize: scale * 0.8 }}>
+            Up next
+          </p>
+          <p className="font-mono opacity-80 mt-2" style={{ fontSize: scale * 1.1 }}>
+            {formatTime(next.startsAt, tz)}
+          </p>
+          <p className="font-semibold mt-1" style={{ fontSize: scale * 1.4 }}>
+            {next.title}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Main widget -------------------------------------------------------
+
+export function AgendaDisplayWidget({
+  config,
+  items,
+  width,
+  height,
+  timezone,
+  now: nowProp,
+}: AgendaDisplayWidgetProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [measured, setMeasured] = useState({ w: width ?? 1920, h: height ?? 1080 });
+  const [now, setNow] = useState(() => nowProp ?? new Date());
+  const [pageIndex, setPageIndex] = useState(0);
+
+  // Resize observer for auto layout selection when consumer doesn't
+  // pass explicit dims.
+  useEffect(() => {
+    if (width && height) {
+      setMeasured({ w: width, h: height });
+      return;
+    }
+    if (!containerRef.current) return;
+    const el = containerRef.current;
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[0]?.contentRect;
+      if (cr) setMeasured({ w: cr.width, h: cr.height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [width, height]);
+
+  // Tick the wall-clock when not externally controlled.
+  useEffect(() => {
+    if (nowProp) {
+      setNow(nowProp);
+      return;
+    }
+    const id = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, [nowProp]);
+
+  const layout = useMemo(
+    () => pickAgendaLayout(config.layoutMode as any, measured.w, measured.h, config.displayMode as any),
+    [config.layoutMode, config.displayMode, measured.w, measured.h],
+  );
+
+  const scale = FONT_SCALE_PX[(config.fontScale as keyof typeof FONT_SCALE_PX) || "normal"];
+  const gap = DENSITY_GAP_PX[(config.density as keyof typeof DENSITY_GAP_PX) || "normal"];
+
+  const pageSize =
+    layout === "portrait" ? Math.min(config.maxItemsPerPage, 6)
+    : layout === "totem" ? config.maxItemsPerPage
+    : layout === "room_door" ? config.maxItemsPerPage
+    : layout === "ultrawide" ? Math.max(config.maxItemsPerPage, 12)
+    : config.maxItemsPerPage;
+
+  const pages = useMemo(() => paginate(items, pageSize), [items, pageSize]);
+
+  // Rotate pages every rotationIntervalSeconds; reset when items change.
+  useEffect(() => {
+    setPageIndex(0);
+  }, [items.length, pageSize]);
+
+  useEffect(() => {
+    if (pages.length <= 1) return;
+    const ms = Math.max(3, config.rotationIntervalSeconds) * 1000;
+    const id = setInterval(() => {
+      setPageIndex((i) => (i + 1) % pages.length);
+    }, ms);
+    return () => clearInterval(id);
+  }, [pages.length, config.rotationIntervalSeconds]);
+
+  const pageItems = pages[pageIndex] ?? [];
+
+  const themeClass = config.theme === "light"
+    ? "bg-white text-slate-900"
+    : "bg-slate-950 text-slate-50";
+
+  const bgStyle: React.CSSProperties = config.backgroundUrl
+    ? {
+        backgroundImage: `url(${config.backgroundUrl})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+      }
+    : {};
+
+  return (
+    <div
+      ref={containerRef}
+      className={`relative w-full h-full flex flex-col ${themeClass}`}
+      style={{
+        ...bgStyle,
+        padding: gap * 2,
+        gap,
+        fontFamily: "Inter, system-ui, sans-serif",
+      }}
+      data-testid="agenda-display-root"
+      data-layout={layout}
+    >
+      {/* Accent bar */}
+      <div
+        className="absolute top-0 left-0 right-0 h-1"
+        style={{ backgroundColor: config.accentColor }}
+      />
+
+      {/* Header */}
+      <header className="flex items-center justify-between" style={{ paddingBottom: gap / 2 }}>
+        <div className="flex flex-col">
+          {config.showEventName && (config.eventName || config.name) && (
+            <h1 className="font-bold leading-none" style={{ fontSize: scale * 1.5 }}>
+              {config.eventName || config.name}
+            </h1>
+          )}
+          <p className="opacity-60 mt-1" style={{ fontSize: scale * 0.8 }}>
+            {layout === "room_door" || layout === "totem"
+              ? "Agenda"
+              : `${items.length} session${items.length === 1 ? "" : "s"}${pages.length > 1 ? ` · page ${pageIndex + 1}/${pages.length}` : ""}`}
+          </p>
+        </div>
+        {config.showCurrentTime && (
+          <p
+            className="font-mono opacity-80"
+            style={{ fontSize: scale * 1.3 }}
+            data-testid="agenda-clock"
+          >
+            {formatNow(timezone, now)}
+          </p>
+        )}
+      </header>
+
+      {/* Body */}
+      {items.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center opacity-60" style={{ fontSize: scale }}>
+          No agenda items match this display right now.
+        </div>
+      ) : layout === "ultrawide" ? (
+        <UltraWideGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} />
+      ) : layout === "portrait" ? (
+        <PortraitCards pageItems={pageItems} config={config} tz={timezone} scale={scale} />
+      ) : layout === "totem" ? (
+        <TotemNowNext items={items} config={config} tz={timezone} scale={scale} now={now} />
+      ) : layout === "room_door" ? (
+        <RoomDoor items={items} config={config} tz={timezone} scale={scale} now={now} />
+      ) : (
+        <LandscapeGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} />
+      )}
+    </div>
+  );
+}

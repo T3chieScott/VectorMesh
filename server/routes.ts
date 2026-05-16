@@ -6,7 +6,9 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
-import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema, insertCanvasGroupSchema, type InsertScreenEventBooking, type TimeRule, type ScheduleTarget } from "@shared/schema";
+import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema, insertCanvasGroupSchema, insertAgendaItemSchema, insertAgendaWidgetConfigSchema, type InsertScreenEventBooking, type TimeRule, type ScheduleTarget, type InsertAgendaItem } from "@shared/schema";
+import { parseAgendaCsv } from "@shared/agenda-csv";
+import { resolveAgendaItems } from "@shared/agenda-resolver";
 import { derivePlaybackStatus } from "@shared/playback-derivation";
 import { canAccessBooking } from "@shared/booking-utils";
 import {
@@ -5378,6 +5380,244 @@ export async function registerRoutes(
       }
     } catch (e) {
       res.status(500).json({ error: "Failed to serve package" });
+    }
+  });
+
+  // ============ AGENDA DISPLAY WIDGET (Task #208) ============
+  // Central pool of agenda items per site + per-display widget
+  // configs. All authed endpoints are tenant-scoped via the
+  // existing canAccessClient / getAllowedClientIds pattern. The
+  // public display endpoint is unauthenticated so a signage
+  // player can hit it directly with just a configId.
+
+  app.get("/api/agenda", requireAuthOrToken, loadUserContext, async (req, res) => {
+    try {
+      const clientIdParam = getQueryString(req, "clientId", res);
+      if (clientIdParam === null) return;
+      const allowed = getAllowedClientIds(req);
+      if (clientIdParam) {
+        if (!canAccessClient(req, clientIdParam)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        const items = await storage.getAgendaItems(clientIdParam);
+        return res.json(items);
+      }
+      const all = await storage.getAgendaItems();
+      const filtered = allowed ? all.filter((i) => allowed.includes(i.clientId)) : all;
+      res.json(filtered);
+    } catch (error) {
+      console.error("Error fetching agenda items:", error);
+      res.status(500).json({ error: "Failed to fetch agenda items" });
+    }
+  });
+
+  app.post("/api/agenda", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const data = insertAgendaItemSchema.parse(req.body);
+      if (!canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
+      }
+      if (!(data.endsAt > data.startsAt)) {
+        return res.status(400).json({ error: "endsAt must be after startsAt" });
+      }
+      const item = await storage.createAgendaItem(data);
+      logAudit(req, "create", "agenda_item", item.id, { title: item.title, clientId: item.clientId });
+      res.status(201).json(item);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      console.error("Error creating agenda item:", error);
+      res.status(500).json({ error: "Failed to create agenda item" });
+    }
+  });
+
+  app.patch("/api/agenda/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const id = getPathParam(req, "id");
+      const existing = await storage.getAgendaItem(id);
+      if (!existing) return res.status(404).json({ error: "Agenda item not found" });
+      if (!canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied to this site" });
+      }
+      const data = insertAgendaItemSchema.partial().parse(req.body);
+      // Disallow moving an item to a different site than the user can access.
+      if (data.clientId && data.clientId !== existing.clientId && !canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to target site" });
+      }
+      const start = data.startsAt ?? existing.startsAt;
+      const end = data.endsAt ?? existing.endsAt;
+      if (!(end > start)) {
+        return res.status(400).json({ error: "endsAt must be after startsAt" });
+      }
+      const item = await storage.updateAgendaItem(id, data);
+      logAudit(req, "update", "agenda_item", id, { title: item?.title });
+      res.json(item);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      console.error("Error updating agenda item:", error);
+      res.status(500).json({ error: "Failed to update agenda item" });
+    }
+  });
+
+  app.delete("/api/agenda/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const id = getPathParam(req, "id");
+      const existing = await storage.getAgendaItem(id);
+      if (!existing) return res.status(404).json({ error: "Agenda item not found" });
+      if (!canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied to this site" });
+      }
+      await storage.deleteAgendaItem(id);
+      logAudit(req, "delete", "agenda_item", id, { title: existing.title });
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting agenda item:", error);
+      res.status(500).json({ error: "Failed to delete agenda item" });
+    }
+  });
+
+  // Bulk CSV import (paste in textarea, multipart not required). Returns
+  // per-row results so the UI can surface per-line errors.
+  app.post("/api/agenda/import", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const clientId = String(req.body?.clientId || "");
+      const csv = String(req.body?.csv || "");
+      const replace = Boolean(req.body?.replace);
+      if (!clientId || !csv) {
+        return res.status(400).json({ error: "clientId and csv are required" });
+      }
+      if (!canAccessClient(req, clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
+      }
+      const parsed = parseAgendaCsv(csv);
+      const errors = parsed.filter((r) => r.status === "error");
+      if (errors.length > 0) {
+        return res.status(400).json({ error: "csv_parse_error", results: parsed });
+      }
+      const okRows = parsed.filter((r) => r.status === "ok");
+      const toInsert: InsertAgendaItem[] = okRows.map((r) => ({
+        clientId,
+        title: r.item!.title,
+        description: r.item!.description ?? null,
+        room: r.item!.room ?? null,
+        track: r.item!.track ?? null,
+        presenter: r.item!.presenter ?? null,
+        startsAt: r.item!.startsAt,
+        endsAt: r.item!.endsAt,
+        status: r.item!.status ?? "scheduled",
+        statusMessage: r.item!.statusMessage ?? null,
+      }));
+      if (replace) {
+        await storage.deleteAgendaItemsForClient(clientId);
+      }
+      const inserted = await storage.createAgendaItemsBulk(toInsert);
+      logAudit(req, "import", "agenda_item", clientId, {
+        count: inserted.length,
+        replace,
+      });
+      res.json({ inserted: inserted.length, results: parsed });
+    } catch (error) {
+      console.error("Error importing agenda CSV:", error);
+      res.status(500).json({ error: "Failed to import CSV" });
+    }
+  });
+
+  // Widget configs CRUD
+  app.get("/api/agenda/configs", requireAuthOrToken, loadUserContext, async (req, res) => {
+    try {
+      const clientIdParam = getQueryString(req, "clientId", res);
+      if (clientIdParam === null) return;
+      const allowed = getAllowedClientIds(req);
+      if (clientIdParam) {
+        if (!canAccessClient(req, clientIdParam)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        const configs = await storage.getAgendaWidgetConfigs(clientIdParam);
+        return res.json(configs);
+      }
+      const all = await storage.getAgendaWidgetConfigs();
+      const filtered = allowed ? all.filter((c) => allowed.includes(c.clientId)) : all;
+      res.json(filtered);
+    } catch (error) {
+      console.error("Error fetching agenda configs:", error);
+      res.status(500).json({ error: "Failed to fetch agenda configs" });
+    }
+  });
+
+  app.post("/api/agenda/configs", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const data = insertAgendaWidgetConfigSchema.parse(req.body);
+      if (!canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
+      }
+      const config = await storage.createAgendaWidgetConfig(data);
+      logAudit(req, "create", "agenda_widget_config", config.id, { name: config.name });
+      res.status(201).json(config);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      console.error("Error creating agenda config:", error);
+      res.status(500).json({ error: "Failed to create agenda config" });
+    }
+  });
+
+  app.patch("/api/agenda/configs/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const id = getPathParam(req, "id");
+      const existing = await storage.getAgendaWidgetConfig(id);
+      if (!existing) return res.status(404).json({ error: "Config not found" });
+      if (!canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied to this site" });
+      }
+      const data = insertAgendaWidgetConfigSchema.partial().parse(req.body);
+      const config = await storage.updateAgendaWidgetConfig(id, data);
+      logAudit(req, "update", "agenda_widget_config", id, { name: config?.name });
+      res.json(config);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      console.error("Error updating agenda config:", error);
+      res.status(500).json({ error: "Failed to update agenda config" });
+    }
+  });
+
+  app.delete("/api/agenda/configs/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const id = getPathParam(req, "id");
+      const existing = await storage.getAgendaWidgetConfig(id);
+      if (!existing) return res.status(404).json({ error: "Config not found" });
+      if (!canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied to this site" });
+      }
+      await storage.deleteAgendaWidgetConfig(id);
+      logAudit(req, "delete", "agenda_widget_config", id, { name: existing.name });
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting agenda config:", error);
+      res.status(500).json({ error: "Failed to delete agenda config" });
+    }
+  });
+
+  // Public display endpoint — unauthenticated, used by /display/agenda/:configId
+  // chromeless page rendered on Pi players. The config id itself is
+  // the unguessable bearer (uuid v4). Returns the config + the
+  // already-filtered items so the player can render without any
+  // extra round trips.
+  app.get("/api/agenda/display/:configId", async (req, res) => {
+    try {
+      const config = await storage.getAgendaWidgetConfig(getPathParam(req, "configId"));
+      if (!config) return res.status(404).json({ error: "Config not found" });
+      const pool = await storage.getAgendaItems(config.clientId);
+      const now = new Date();
+      const items = resolveAgendaItems({ items: pool, config, now });
+      const client = await storage.getClient(config.clientId);
+      res.setHeader("Cache-Control", "no-store");
+      res.json({
+        config,
+        items,
+        client: client ? { id: client.id, name: client.name, timezone: client.timezone } : null,
+        serverTime: Date.now(),
+      });
+    } catch (error) {
+      console.error("Error serving agenda display:", error);
+      res.status(500).json({ error: "Failed to serve agenda" });
     }
   });
 

@@ -71,6 +71,12 @@ import {
   type InsertScreenEventBooking,
   systemSettings,
   type SystemSetting,
+  agendaItems,
+  agendaWidgetConfigs,
+  type AgendaItem,
+  type InsertAgendaItem,
+  type AgendaWidgetConfig,
+  type InsertAgendaWidgetConfig,
 } from "@shared/schema";
 import { users, userSites, passwordResetTokens, type User, type UpsertUser, type UserSite, type PasswordResetToken } from "@shared/models/auth";
 import { apiTokens, apiTokenKnownIps, type ApiToken, type InsertApiToken } from "@shared/schema";
@@ -174,6 +180,20 @@ export interface IStorage {
   createDisplayProfile(data: InsertDisplayProfile): Promise<DisplayProfile>;
   updateDisplayProfile(id: string, data: Partial<InsertDisplayProfile>): Promise<DisplayProfile | undefined>;
   deleteDisplayProfile(id: string): Promise<boolean>;
+
+  // Agenda Items + Widget Configs (Task #208)
+  getAgendaItems(clientId?: string): Promise<AgendaItem[]>;
+  getAgendaItem(id: string): Promise<AgendaItem | undefined>;
+  createAgendaItem(data: InsertAgendaItem): Promise<AgendaItem>;
+  createAgendaItemsBulk(rows: InsertAgendaItem[]): Promise<AgendaItem[]>;
+  updateAgendaItem(id: string, data: Partial<InsertAgendaItem>): Promise<AgendaItem | undefined>;
+  deleteAgendaItem(id: string): Promise<boolean>;
+  deleteAgendaItemsForClient(clientId: string): Promise<number>;
+  getAgendaWidgetConfigs(clientId?: string): Promise<AgendaWidgetConfig[]>;
+  getAgendaWidgetConfig(id: string): Promise<AgendaWidgetConfig | undefined>;
+  createAgendaWidgetConfig(data: InsertAgendaWidgetConfig): Promise<AgendaWidgetConfig>;
+  updateAgendaWidgetConfig(id: string, data: Partial<InsertAgendaWidgetConfig>): Promise<AgendaWidgetConfig | undefined>;
+  deleteAgendaWidgetConfig(id: string): Promise<boolean>;
 
   // Screen Groups
   getScreenGroups(): Promise<ScreenGroup[]>;
@@ -2704,6 +2724,92 @@ export class DatabaseStorage implements IStorage {
       .delete(apiTokenKnownIps)
       .where(and(eq(apiTokenKnownIps.tokenId, tokenId), eq(apiTokenKnownIps.ip, ip)));
   }
+
+  // Agenda Items (Task #208)
+  async getAgendaItems(clientId?: string): Promise<AgendaItem[]> {
+    if (clientId) {
+      return db
+        .select()
+        .from(agendaItems)
+        .where(eq(agendaItems.clientId, clientId))
+        .orderBy(asc(agendaItems.startsAt));
+    }
+    return db.select().from(agendaItems).orderBy(asc(agendaItems.startsAt));
+  }
+
+  async getAgendaItem(id: string): Promise<AgendaItem | undefined> {
+    const [row] = await db.select().from(agendaItems).where(eq(agendaItems.id, id));
+    return row;
+  }
+
+  async createAgendaItem(data: InsertAgendaItem): Promise<AgendaItem> {
+    const [row] = await db.insert(agendaItems).values(data).returning();
+    return row;
+  }
+
+  async createAgendaItemsBulk(rows: InsertAgendaItem[]): Promise<AgendaItem[]> {
+    if (rows.length === 0) return [];
+    return db.insert(agendaItems).values(rows).returning();
+  }
+
+  async updateAgendaItem(id: string, data: Partial<InsertAgendaItem>): Promise<AgendaItem | undefined> {
+    const [row] = await db
+      .update(agendaItems)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(agendaItems.id, id))
+      .returning();
+    return row;
+  }
+
+  async deleteAgendaItem(id: string): Promise<boolean> {
+    const result = await db.delete(agendaItems).where(eq(agendaItems.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async deleteAgendaItemsForClient(clientId: string): Promise<number> {
+    const result = await db.delete(agendaItems).where(eq(agendaItems.clientId, clientId));
+    return result.rowCount ?? 0;
+  }
+
+  // Agenda Widget Configs (Task #208)
+  async getAgendaWidgetConfigs(clientId?: string): Promise<AgendaWidgetConfig[]> {
+    if (clientId) {
+      return db
+        .select()
+        .from(agendaWidgetConfigs)
+        .where(eq(agendaWidgetConfigs.clientId, clientId))
+        .orderBy(desc(agendaWidgetConfigs.createdAt));
+    }
+    return db.select().from(agendaWidgetConfigs).orderBy(desc(agendaWidgetConfigs.createdAt));
+  }
+
+  async getAgendaWidgetConfig(id: string): Promise<AgendaWidgetConfig | undefined> {
+    const [row] = await db.select().from(agendaWidgetConfigs).where(eq(agendaWidgetConfigs.id, id));
+    return row;
+  }
+
+  async createAgendaWidgetConfig(data: InsertAgendaWidgetConfig): Promise<AgendaWidgetConfig> {
+    const [row] = await db.insert(agendaWidgetConfigs).values(data).returning();
+    return row;
+  }
+
+  async updateAgendaWidgetConfig(
+    id: string,
+    data: Partial<InsertAgendaWidgetConfig>,
+  ): Promise<AgendaWidgetConfig | undefined> {
+    const [row] = await db
+      .update(agendaWidgetConfigs)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(agendaWidgetConfigs.id, id))
+      .returning();
+    return row;
+  }
+
+  async deleteAgendaWidgetConfig(id: string): Promise<boolean> {
+    const result = await db.delete(agendaWidgetConfigs).where(eq(agendaWidgetConfigs.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
 }
 
 export const storage = new DatabaseStorage();
+
