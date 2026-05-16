@@ -1,0 +1,235 @@
+Build a new Agenda Display Widget for the VectorMesh web app.
+
+Goal:
+Clients need to display live event agendas on screens around a venue. The agenda must be clear, readable and automatically formatted for different screen types including landscape screens, portrait screens, totems, ultrawide displays and room-door screens. Clients must be able to update sessions, timings, presenters and room assignments without rebuilding the app.
+
+Important:
+Do not remove or break any existing functionality. Keep all existing routes, widgets, UI patterns, authentication, database usage and styling intact. Add this as a new feature.
+
+Feature name:
+Agenda Display Widget
+
+Core concept:
+Agenda content should be stored centrally in the database. Individual screens should render filtered versions of the same agenda based on their screen configuration.
+
+Database additions:
+Create tables/models for:
+
+1. agenda_items
+Fields:
+- id
+- title
+- description
+- start_time
+- end_time
+- room
+- location
+- presenter
+- session_type
+- track
+- audience_group
+- status: scheduled, delayed, cancelled, moved
+- status_message
+- priority
+- featured
+- created_at
+- updated_at
+
+2. agenda_widget_configs
+Fields:
+- id
+- name
+- screen_id or display_id
+- event_name
+- mode: full_agenda, room_agenda, now_next, room_focus, alert
+- room_filter: array or comma-separated list of rooms
+- track_filter
+- time_window_mode: full_day, current_plus_next, next_2_hours, next_4_hours, custom
+- custom_start_time
+- custom_end_time
+- layout_mode: auto, landscape_grid, portrait_cards, totem_now_next, room_door, ultrawide_grid
+- font_scale: small, normal, large, extra_large
+- content_density: compact, standard, spacious
+- show_description: boolean
+- show_presenter: boolean
+- show_room: boolean
+- show_track: boolean
+- show_current_time: boolean
+- show_qr_code: boolean
+- rotation_enabled: boolean
+- rotation_interval_seconds
+- max_items_per_page
+- theme_variant
+- accent_colour
+- refresh_interval_seconds
+- created_at
+- updated_at
+
+Admin UI:
+Create a new admin section called Agenda.
+
+It should allow users to:
+- add agenda items
+- edit agenda items
+- delete agenda items
+- change session times
+- assign rooms
+- assign presenters
+- set status to scheduled, delayed, cancelled or moved
+- add a status message
+- filter agenda items by room, date, track and status
+- bulk import agenda items from CSV
+- export agenda items to CSV
+
+CSV import:
+Support columns:
+title, description, start_time, end_time, room, location, presenter, session_type, track, audience_group, status, status_message, featured
+
+Validate imported data before saving.
+Show clear errors for missing title, invalid date/time or missing room.
+
+Screen/display configuration UI:
+Create an Agenda Widget configuration panel.
+
+The user should be able to:
+- create multiple agenda widget configs
+- name each config
+- select display mode
+- select rooms to show
+- select layout mode or auto layout
+- choose font scale
+- choose content density
+- choose whether to show presenters, descriptions, rooms and tracks
+- set refresh interval
+- set rotation interval
+- preview the selected layout
+
+API endpoints:
+Add API endpoints similar to the existing app style:
+
+GET /api/agenda
+POST /api/agenda
+PATCH /api/agenda/:id
+DELETE /api/agenda/:id
+
+GET /api/agenda/configs
+POST /api/agenda/configs
+PATCH /api/agenda/configs/:id
+DELETE /api/agenda/configs/:id
+
+GET /api/agenda/display/:configId
+
+The display endpoint should return only the agenda items relevant to that config, already sorted and filtered.
+
+Filtering logic:
+- full_agenda: show agenda across all rooms based on time window
+- room_agenda: show only agenda items matching selected rooms
+- now_next: show current session and next upcoming sessions
+- room_focus: show current and next sessions for one room
+- alert: show status messages or featured notices
+
+Responsive layout engine:
+Build an auto layout system.
+
+The agenda display component should detect or use configured screen dimensions/orientation and select layout automatically:
+
+- Landscape 16:9: timeline/grid layout
+- Portrait 9:16: stacked agenda cards
+- Totem portrait: large current time, Now section, Next sessions
+- Room door: room name, current session, presenter, end time, next session
+- Ultrawide: multi-room grid
+
+Important layout rules:
+- Never shrink text too small just to fit more content.
+- Prioritise readability.
+- If too many agenda items exist, paginate or rotate.
+- Long titles should truncate gracefully.
+- Descriptions should hide automatically on compact layouts unless enabled.
+- Status should be visually obvious:
+  - delayed
+  - cancelled
+  - moved
+- Current session should be highlighted.
+- Next session should be clearly marked.
+- Include current time if enabled.
+- Include event name if configured.
+
+Display components to create:
+- AgendaDisplayWidget
+- AgendaLandscapeGrid
+- AgendaPortraitCards
+- AgendaTotemNowNext
+- AgendaRoomDoor
+- AgendaUltraWideGrid
+- AgendaStatusBadge
+- AgendaTimeBlock
+- AgendaPaginationRotator
+- AgendaConfigEditor
+- AgendaItemEditor
+- AgendaCsvImport
+
+Auto-refresh:
+The display widget should poll the backend using the configured refresh interval, default 30 seconds.
+Do not require page refresh for agenda changes.
+
+Rotation:
+If rotation is enabled and there are more items than can fit, rotate pages every configured number of seconds.
+Default rotation interval: 12 seconds.
+
+Preview:
+In the admin config panel, include a preview area with buttons for:
+- landscape 1920x1080
+- portrait 1080x1920
+- totem 1080x1920
+- ultrawide 3840x1080
+- room door 1280x720
+
+The preview should use real agenda data where available, or sample agenda data if none exists.
+
+Styling:
+Use the existing app design system and Tailwind style.
+Keep the design clean, premium and suitable for corporate events.
+Large readable typography.
+High contrast.
+Minimal clutter.
+Good spacing.
+Suitable for viewing from distance.
+
+Accessibility/readability:
+- strong contrast
+- no tiny text
+- clear hierarchy
+- time must be very visible
+- current and next sessions must be obvious
+- avoid cramming too many sessions on one screen
+
+Routing/UI:
+Add navigation entry for Agenda in the existing admin/menu system.
+Add display route such as:
+/display/agenda/:configId
+
+This route should render the agenda full-screen with no admin chrome/navigation, suitable for signage players.
+
+Data safety:
+Do not overwrite existing database data.
+Use safe migrations.
+Do not truncate agenda or screen tables automatically.
+Do not delete existing records unless explicitly requested by user action.
+
+Testing:
+Add tests or validation where practical for:
+- filtering by room
+- now/next logic
+- sorting by start time
+- layout selection based on screen size
+- CSV import validation
+
+Done criteria:
+- User can create agenda sessions.
+- User can create a screen-specific agenda config.
+- Display URL renders a full-screen agenda.
+- Agenda auto-refreshes after edits.
+- Room-specific screens only show relevant sessions.
+- Layout automatically adapts for landscape, portrait, totem, ultrawide and room-door use.
+- Build passes.
+- Existing functionality remains intact.
