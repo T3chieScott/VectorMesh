@@ -1018,6 +1018,142 @@ export const apiTokenKnownIps = pgTable(
 export type ApiTokenKnownIp = typeof apiTokenKnownIps.$inferSelect;
 export type InsertApiTokenKnownIp = typeof apiTokenKnownIps.$inferInsert;
 
+// ============ AGENDA DISPLAY WIDGET (Task #208) ============
+
+// Central pool of agenda items per site. Each item represents one
+// session / talk / break / activity on the schedule. Items are
+// site-scoped via clientId; widget configs filter the pool by room,
+// track, time window, status etc to render a slice on each screen.
+export const agendaItems = pgTable("agenda_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  description: text("description"),
+  room: text("room"),
+  track: text("track"),
+  presenter: text("presenter"),
+  startsAt: timestamp("starts_at").notNull(),
+  endsAt: timestamp("ends_at").notNull(),
+  // scheduled | in_progress | delayed | cancelled | moved
+  status: text("status").notNull().default("scheduled"),
+  statusMessage: text("status_message"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const agendaItemsRelations = relations(agendaItems, ({ one }) => ({
+  client: one(clients, { fields: [agendaItems.clientId], references: [clients.id] }),
+}));
+
+export const AGENDA_STATUSES = [
+  "scheduled",
+  "in_progress",
+  "delayed",
+  "cancelled",
+  "moved",
+] as const;
+export type AgendaStatus = (typeof AGENDA_STATUSES)[number];
+
+export const insertAgendaItemSchema = createInsertSchema(agendaItems)
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .extend({
+    title: z.string().min(1, "Title is required"),
+    startsAt: z.coerce.date(),
+    endsAt: z.coerce.date(),
+    status: z.enum(AGENDA_STATUSES).default("scheduled"),
+  });
+export type InsertAgendaItem = z.infer<typeof insertAgendaItemSchema>;
+export type AgendaItem = typeof agendaItems.$inferSelect;
+
+// Per-screen / per-display configuration for the Agenda Display
+// Widget. One config drives one full-screen display URL
+// (/display/agenda/:configId). All filters and visual options live
+// here so an operator can publish many specialised slices of the
+// same agenda pool without duplicating items.
+export const AGENDA_DISPLAY_MODES = [
+  "full",        // every matching item
+  "room",        // filter by rooms[]
+  "now_next",    // currently-running + next upcoming (single column)
+  "room_focus",  // single-room now/next, large
+  "alert",       // delayed/cancelled/moved only
+] as const;
+export type AgendaDisplayMode = (typeof AGENDA_DISPLAY_MODES)[number];
+
+export const AGENDA_LAYOUT_MODES = [
+  "auto",
+  "landscape",
+  "portrait",
+  "totem",
+  "ultrawide",
+  "room_door",
+] as const;
+export type AgendaLayoutMode = (typeof AGENDA_LAYOUT_MODES)[number];
+
+export const AGENDA_FONT_SCALES = ["small", "normal", "large", "xlarge"] as const;
+export type AgendaFontScale = (typeof AGENDA_FONT_SCALES)[number];
+
+export const AGENDA_DENSITIES = ["compact", "normal", "spacious"] as const;
+export type AgendaDensity = (typeof AGENDA_DENSITIES)[number];
+
+export const AGENDA_THEMES = ["dark", "light"] as const;
+export type AgendaTheme = (typeof AGENDA_THEMES)[number];
+
+export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  displayMode: text("display_mode").notNull().default("full"),
+  layoutMode: text("layout_mode").notNull().default("auto"),
+  roomFilter: text("room_filter").array().notNull().default(sql`'{}'::text[]`),
+  trackFilter: text("track_filter").array().notNull().default(sql`'{}'::text[]`),
+  statusFilter: text("status_filter").array().notNull().default(sql`'{}'::text[]`),
+  // Optional rolling window. If set, only items whose startsAt is
+  // within ±timeWindowMinutes of "now" are shown. Null = no window.
+  timeWindowMinutes: integer("time_window_minutes"),
+  refreshIntervalSeconds: integer("refresh_interval_seconds").notNull().default(30),
+  rotationIntervalSeconds: integer("rotation_interval_seconds").notNull().default(12),
+  maxItemsPerPage: integer("max_items_per_page").notNull().default(8),
+  fontScale: text("font_scale").notNull().default("normal"),
+  density: text("density").notNull().default("normal"),
+  theme: text("theme").notNull().default("dark"),
+  accentColor: text("accent_color").notNull().default("#0ea5e9"),
+  backgroundUrl: text("background_url"),
+  eventName: text("event_name"),
+  showDescription: boolean("show_description").notNull().default(true),
+  showPresenter: boolean("show_presenter").notNull().default(true),
+  showRoom: boolean("show_room").notNull().default(true),
+  showStatus: boolean("show_status").notNull().default(true),
+  showCurrentTime: boolean("show_current_time").notNull().default(true),
+  showEventName: boolean("show_event_name").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const agendaWidgetConfigsRelations = relations(agendaWidgetConfigs, ({ one }) => ({
+  client: one(clients, { fields: [agendaWidgetConfigs.clientId], references: [clients.id] }),
+}));
+
+export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetConfigs)
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .extend({
+    name: z.string().min(1, "Name is required"),
+    displayMode: z.enum(AGENDA_DISPLAY_MODES).default("full"),
+    layoutMode: z.enum(AGENDA_LAYOUT_MODES).default("auto"),
+    fontScale: z.enum(AGENDA_FONT_SCALES).default("normal"),
+    density: z.enum(AGENDA_DENSITIES).default("normal"),
+    theme: z.enum(AGENDA_THEMES).default("dark"),
+    refreshIntervalSeconds: z.number().int().min(5).max(3600).default(30),
+    rotationIntervalSeconds: z.number().int().min(3).max(3600).default(12),
+    maxItemsPerPage: z.number().int().min(1).max(50).default(8),
+    timeWindowMinutes: z.number().int().min(1).max(60 * 24).nullable().optional(),
+    roomFilter: z.array(z.string()).default([]),
+    trackFilter: z.array(z.string()).default([]),
+    statusFilter: z.array(z.enum(AGENDA_STATUSES)).default([]),
+    accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#0ea5e9"),
+  });
+export type InsertAgendaWidgetConfig = z.infer<typeof insertAgendaWidgetConfigSchema>;
+export type AgendaWidgetConfig = typeof agendaWidgetConfigs.$inferSelect;
+
 // ============ PLAYER CONTENT API CONTRACT ============
 // Shape of the JSON payload returned by GET /api/player/:screenId/content
 // (see server/routes.ts ~3493-3713). Declared here so the player client
