@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, Upload, Download, Calendar } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, Download, Calendar, FileText } from "lucide-react";
 import { AGENDA_STATUSES, type AgendaItem } from "@shared/schema";
 import { serializeAgendaCsv, AGENDA_CSV_HEADER } from "@shared/agenda-csv";
 
@@ -172,6 +172,13 @@ function CsvImportDialog({ open, onOpenChange, clientId }: { open: boolean; onOp
   const [replace, setReplace] = useState(false);
   const [results, setResults] = useState<any[] | null>(null);
 
+  const onFile = async (file: File | null) => {
+    if (!file) return;
+    const text = await file.text();
+    setCsv(text);
+    toast({ title: `Loaded ${file.name}`, description: `${text.split(/\r?\n/).filter(Boolean).length} non-empty line(s)` });
+  };
+
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/agenda/import", { clientId, csv, replace });
@@ -201,6 +208,22 @@ function CsvImportDialog({ open, onOpenChange, clientId }: { open: boolean; onOp
         <p className="text-sm text-muted-foreground">
           One row per item. Header line: <code className="text-xs">{AGENDA_CSV_HEADER}</code>
         </p>
+        <div className="flex items-center gap-2">
+          <Button asChild variant="outline" size="sm" data-testid="button-csv-file-upload">
+            <label className="cursor-pointer">
+              <FileText className="h-4 w-4 mr-2" />
+              Upload .csv file
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={(e) => onFile(e.target.files?.[0] ?? null)}
+                data-testid="input-csv-file"
+              />
+            </label>
+          </Button>
+          <span className="text-xs text-muted-foreground">or paste below:</span>
+        </div>
         <Textarea
           rows={10}
           value={csv}
@@ -239,6 +262,10 @@ export default function AgendaItemsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<AgendaItem | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [roomFilter, setRoomFilter] = useState<string>("__all__");
+  const [trackFilter, setTrackFilter] = useState<string>("__all__");
+  const [statusFilter, setStatusFilter] = useState<string>("__all__");
+  const [dateFilter, setDateFilter] = useState<string>("");
 
   const queryConfig = useSiteFilteredQuery<AgendaItem[]>("/api/agenda");
   const { data: items = [], isLoading } = useQuery(queryConfig);
@@ -251,17 +278,55 @@ export default function AgendaItemsPage() {
     },
   });
 
-  const sorted = useMemo(() =>
-    [...items].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()),
-    [items]);
+  // Unique facets for the filter dropdowns.
+  const rooms = useMemo(
+    () => Array.from(new Set(items.map((i) => i.room).filter(Boolean))) as string[],
+    [items],
+  );
+  const tracks = useMemo(
+    () => Array.from(new Set(items.map((i) => i.track).filter(Boolean))) as string[],
+    [items],
+  );
 
+  // Filtered + sorted view used both for rendering AND for export.
+  const filtered = useMemo(() => {
+    return items.filter((it) => {
+      if (roomFilter !== "__all__" && it.room !== roomFilter) return false;
+      if (trackFilter !== "__all__" && it.track !== trackFilter) return false;
+      if (statusFilter !== "__all__" && it.status !== statusFilter) return false;
+      if (dateFilter) {
+        const d = new Date(it.startsAt);
+        const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        if (ymd !== dateFilter) return false;
+      }
+      return true;
+    });
+  }, [items, roomFilter, trackFilter, statusFilter, dateFilter]);
+
+  const sorted = useMemo(() =>
+    [...filtered].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()),
+    [filtered]);
+
+  const filtersActive =
+    roomFilter !== "__all__" || trackFilter !== "__all__" || statusFilter !== "__all__" || !!dateFilter;
+
+  const clearFilters = () => {
+    setRoomFilter("__all__");
+    setTrackFilter("__all__");
+    setStatusFilter("__all__");
+    setDateFilter("");
+  };
+
+  // Export honours the active filter set — so operators can hand a
+  // room-specific or day-specific CSV to a partner without re-editing.
   const downloadCsv = () => {
-    const csv = serializeAgendaCsv(items);
+    const csv = serializeAgendaCsv(sorted);
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `agenda-${selectedClient?.name || "site"}.csv`;
+    const suffix = filtersActive ? "filtered" : "all";
+    a.download = `agenda-${selectedClient?.name || "site"}-${suffix}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -291,7 +356,7 @@ export default function AgendaItemsPage() {
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={downloadCsv} data-testid="button-export-csv">
-            <Download className="h-4 w-4 mr-2" /> Export CSV
+            <Download className="h-4 w-4 mr-2" /> Export CSV{filtersActive ? " (filtered)" : ""}
           </Button>
           <Button variant="outline" onClick={() => setImportOpen(true)} data-testid="button-import-csv">
             <Upload className="h-4 w-4 mr-2" /> Import CSV
@@ -301,6 +366,61 @@ export default function AgendaItemsPage() {
           </Button>
         </div>
       </div>
+
+      {/* Filter bar — room / track / status / date. Drives both the
+          rendered list and the CSV export. */}
+      <Card>
+        <CardContent className="flex flex-wrap items-end gap-3 p-4">
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs">Room</Label>
+            <Select value={roomFilter} onValueChange={setRoomFilter}>
+              <SelectTrigger className="w-[160px]" data-testid="filter-room"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All rooms</SelectItem>
+                {rooms.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs">Track</Label>
+            <Select value={trackFilter} onValueChange={setTrackFilter}>
+              <SelectTrigger className="w-[160px]" data-testid="filter-track"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All tracks</SelectItem>
+                {tracks.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs">Status</Label>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[160px]" data-testid="filter-status"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All statuses</SelectItem>
+                {AGENDA_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs">Date</Label>
+            <Input
+              type="date"
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value)}
+              className="w-[180px]"
+              data-testid="filter-date"
+            />
+          </div>
+          {filtersActive && (
+            <Button variant="ghost" size="sm" onClick={clearFilters} data-testid="button-clear-filters">
+              Clear filters
+            </Button>
+          )}
+          <p className="text-xs text-muted-foreground ml-auto">
+            Showing {sorted.length} of {items.length} item(s)
+          </p>
+        </CardContent>
+      </Card>
 
       {isLoading ? (
         <div className="space-y-2">

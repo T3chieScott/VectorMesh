@@ -194,6 +194,10 @@ export interface IStorage {
   createAgendaWidgetConfig(data: InsertAgendaWidgetConfig): Promise<AgendaWidgetConfig>;
   updateAgendaWidgetConfig(id: string, data: Partial<InsertAgendaWidgetConfig>): Promise<AgendaWidgetConfig | undefined>;
   deleteAgendaWidgetConfig(id: string): Promise<boolean>;
+  getResolvedAgendaForConfig(
+    configId: string,
+    now: Date,
+  ): Promise<{ config: AgendaWidgetConfig; items: AgendaItem[] } | undefined>;
 
   // Screen Groups
   getScreenGroups(): Promise<ScreenGroup[]>;
@@ -2808,6 +2812,18 @@ export class DatabaseStorage implements IStorage {
   async deleteAgendaWidgetConfig(id: string): Promise<boolean> {
     const result = await db.delete(agendaWidgetConfigs).where(eq(agendaWidgetConfigs.id, id));
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async getResolvedAgendaForConfig(
+    configId: string,
+    now: Date,
+  ): Promise<{ config: AgendaWidgetConfig; items: AgendaItem[] } | undefined> {
+    const config = await this.getAgendaWidgetConfig(configId);
+    if (!config) return undefined;
+    const pool = await this.getAgendaItems(config.clientId);
+    const { resolveAgendaItems } = await import("@shared/agenda-resolver");
+    const items = resolveAgendaItems({ items: pool, config, now });
+    return { config, items };
   }
 }
 

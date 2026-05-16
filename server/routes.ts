@@ -5607,11 +5607,13 @@ export async function registerRoutes(
   // extra round trips.
   app.get("/api/agenda/display/:configId", async (req, res) => {
     try {
-      const config = await storage.getAgendaWidgetConfig(getPathParam(req, "configId"));
-      if (!config) return res.status(404).json({ error: "Config not found" });
-      const pool = await storage.getAgendaItems(config.clientId);
       const now = new Date();
-      const items = resolveAgendaItems({ items: pool, config, now });
+      const resolved = await storage.getResolvedAgendaForConfig(
+        getPathParam(req, "configId"),
+        now,
+      );
+      if (!resolved) return res.status(404).json({ error: "Config not found" });
+      const { config, items } = resolved;
       const client = await storage.getClient(config.clientId);
       // Strip internal/admin-only fields from the public payload.
       const publicConfig = {
@@ -5625,6 +5627,11 @@ export async function registerRoutes(
         fontScale: config.fontScale,
         density: config.density,
         theme: config.theme,
+        // Filter values are needed by the room_door layout (it surfaces
+        // the filtered room name when no live session exists).
+        roomFilter: config.roomFilter ?? [],
+        trackFilter: config.trackFilter ?? [],
+        statusFilter: config.statusFilter ?? [],
         refreshIntervalSeconds: config.refreshIntervalSeconds,
         rotationIntervalSeconds: config.rotationIntervalSeconds,
         maxItemsPerPage: config.maxItemsPerPage,

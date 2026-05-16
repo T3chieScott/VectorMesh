@@ -29,13 +29,53 @@ import {
 } from "@shared/schema";
 import { resolveAgendaItems } from "@shared/agenda-resolver";
 
+// Real-world conference signage form factors. Totem is the narrow
+// 9:32 floor kiosk you see at hotel lobbies; room door is the small
+// 7-inch landscape panel mounted next to a meeting-room door.
 const PREVIEW_PRESETS = [
-  { label: "1080p (1920×1080)", w: 1920, h: 1080 },
-  { label: "Portrait (1080×1920)", w: 1080, h: 1920 },
-  { label: "Totem (720×1920)", w: 720, h: 1920 },
-  { label: "Ultrawide (3840×1080)", w: 3840, h: 1080 },
-  { label: "Room door (1280×800)", w: 1280, h: 800 },
+  { label: "Landscape 1080p", subtitle: "1920×1080", w: 1920, h: 1080 },
+  { label: "Portrait", subtitle: "1080×1920", w: 1080, h: 1920 },
+  { label: "Totem", subtitle: "1080×3840 (9:32)", w: 1080, h: 3840 },
+  { label: "Ultrawide", subtitle: "3840×1080", w: 3840, h: 1080 },
+  { label: "Room door", subtitle: "1024×600 (7\")", w: 1024, h: 600 },
 ] as const;
+
+// Sample data shown in the live preview when the site has no real
+// agenda items yet. Lets operators see the layout before importing.
+function buildSampleAgendaItems(clientId: string): AgendaItem[] {
+  const base = new Date();
+  base.setMinutes(0, 0, 0);
+  const mk = (offsetMin: number, durationMin: number, partial: Partial<AgendaItem>): AgendaItem => {
+    const startsAt = new Date(base.getTime() + offsetMin * 60_000);
+    const endsAt = new Date(startsAt.getTime() + durationMin * 60_000);
+    return {
+      id: `sample-${offsetMin}`,
+      clientId,
+      title: "Sample session",
+      description: null,
+      room: null,
+      track: null,
+      presenter: null,
+      startsAt,
+      endsAt,
+      status: "scheduled",
+      statusMessage: null,
+      sortOrder: 0,
+      externalId: null,
+      createdAt: base,
+      updatedAt: base,
+      ...partial,
+    } as AgendaItem;
+  };
+  return [
+    mk(-30, 60, { title: "Opening Keynote", room: "Main Hall", presenter: "Jane Doe", track: "Keynote", status: "in_progress", statusMessage: "Live now" }),
+    mk(60, 45, { title: "Designing for Big Walls", room: "Main Hall", presenter: "A. Architect", track: "Design" }),
+    mk(120, 30, { title: "Coffee & Networking", room: "Foyer", track: "Break" }),
+    mk(180, 60, { title: "Real-time Signage Panel", room: "Room A", presenter: "Panel", track: "Operations" }),
+    mk(240, 45, { title: "Hands-on Workshop", room: "Room B", presenter: "T. Trainer", track: "Workshop", status: "delayed", statusMessage: "Starting 10 min late" }),
+    mk(300, 30, { title: "Closing Remarks", room: "Main Hall", presenter: "Jane Doe", track: "Keynote" }),
+  ];
+}
 
 const configFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -149,9 +189,17 @@ function ConfigEditor({
     statusFilter: watched.statusFilter as any,
   }) as any, [watched, clientId, initial]);
 
+  // Fall back to seeded sample items so the preview is never empty
+  // while operators are still wiring up their first event.
+  const effectiveItems = useMemo(
+    () => (items.length === 0 ? buildSampleAgendaItems(clientId) : items),
+    [items, clientId],
+  );
+  const usingSampleData = items.length === 0;
+
   const previewItems = useMemo(
-    () => resolveAgendaItems({ items, config: previewConfig, now: new Date() }),
-    [items, previewConfig],
+    () => resolveAgendaItems({ items: effectiveItems, config: previewConfig, now: new Date() }),
+    [effectiveItems, previewConfig],
   );
 
   const mutation = useMutation({
@@ -300,14 +348,24 @@ function ConfigEditor({
           </Form>
 
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>Live preview</Label>
-              <Select value={String(preset)} onValueChange={(v) => setPreset(Number(v))}>
-                <SelectTrigger className="w-[200px]" data-testid="select-preview-size"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {PREVIEW_PRESETS.map((p, i) => <SelectItem key={i} value={String(i)}>{p.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
+            <Label>Live preview</Label>
+            {/* Quick-switch buttons — one click per signage form factor,
+                no dropdown to fight. */}
+            <div className="flex flex-wrap gap-2" data-testid="preview-preset-buttons">
+              {PREVIEW_PRESETS.map((p, i) => (
+                <Button
+                  key={p.label}
+                  type="button"
+                  size="sm"
+                  variant={preset === i ? "default" : "outline"}
+                  onClick={() => setPreset(i)}
+                  data-testid={`button-preset-${p.label.toLowerCase().replace(/\s+/g, "-")}`}
+                  className="flex flex-col h-auto py-1.5 px-3 leading-tight"
+                >
+                  <span className="font-medium">{p.label}</span>
+                  <span className="text-[10px] opacity-70">{p.subtitle}</span>
+                </Button>
+              ))}
             </div>
             <div className="border rounded-md overflow-hidden bg-black" style={{ aspectRatio: `${dims.w} / ${dims.h}` }}>
               <div style={{ width: "100%", height: "100%" }}>
@@ -320,7 +378,8 @@ function ConfigEditor({
               </div>
             </div>
             <p className="text-xs text-muted-foreground">
-              {previewItems.length} item(s) match the current filters.
+              {previewItems.length} item(s) match the current filters
+              {usingSampleData && " (showing sample data — add real items to see your event)"}.
             </p>
           </div>
         </div>

@@ -285,7 +285,7 @@ function RoomDoor({
   const { current, upcoming } = splitCurrentNext(items, now);
   const cur = current[0];
   const next = upcoming[0];
-  const roomName = cur?.room || next?.room || config.roomFilter[0] || "Room";
+  const roomName = cur?.room || next?.room || config.roomFilter?.[0] || "Room";
   return (
     <div className="flex-1 flex flex-col justify-center gap-8 text-center px-8">
       <div>
