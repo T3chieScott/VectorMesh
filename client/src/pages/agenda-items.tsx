@@ -16,8 +16,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, Upload, Download, Calendar, FileText } from "lucide-react";
-import { AGENDA_STATUSES, type AgendaItem } from "@shared/schema";
+import { Plus, Pencil, Trash2, Upload, Download, Calendar, FileText, RefreshCw, AlertTriangle, CheckCircle2, Link2 } from "lucide-react";
+import { AGENDA_STATUSES, AGENDA_SYNC_SOURCE_TYPES, type AgendaItem, type AgendaSyncConfig } from "@shared/schema";
 import { serializeAgendaCsv, AGENDA_CSV_HEADER } from "@shared/agenda-csv";
 
 const itemFormSchema = z.object({
@@ -257,6 +257,283 @@ function CsvImportDialog({ open, onOpenChange, clientId }: { open: boolean; onOp
   );
 }
 
+function SyncConfigDialog({
+  open,
+  onOpenChange,
+  initial,
+  clientId,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  initial?: AgendaSyncConfig;
+  clientId: string;
+}) {
+  const { toast } = useToast();
+  const [name, setName] = useState(initial?.name ?? "");
+  type SourceType = typeof AGENDA_SYNC_SOURCE_TYPES[number];
+  const initialSourceType: SourceType =
+    initial && (AGENDA_SYNC_SOURCE_TYPES as readonly string[]).includes(initial.sourceType)
+      ? (initial.sourceType as SourceType)
+      : "ics";
+  const [sourceType, setSourceType] = useState<SourceType>(initialSourceType);
+  const [sourceUrl, setSourceUrl] = useState(initial?.sourceUrl ?? "");
+  const [enabled, setEnabled] = useState(initial?.enabled ?? true);
+  const [syncIntervalMinutes, setSyncIntervalMinutes] = useState<number>(
+    initial?.syncIntervalMinutes ?? 60,
+  );
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const payload = { clientId, name, sourceType, sourceUrl, enabled, syncIntervalMinutes };
+      if (initial) {
+        return apiRequest("PATCH", `/api/agenda/sync-configs/${initial.id}`, payload);
+      }
+      return apiRequest("POST", `/api/agenda/sync-configs`, payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agenda/sync-configs"] });
+      onOpenChange(false);
+      toast({ title: initial ? "Sync source updated" : "Sync source added" });
+    },
+    onError: (e: any) =>
+      toast({ title: "Save failed", description: String(e?.message ?? e), variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{initial ? "Edit Sync Source" : "Add Sync Source"}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div>
+            <Label>Name</Label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Main agenda (Sched ICS)"
+              data-testid="input-sync-name"
+            />
+          </div>
+          <div>
+            <Label>Source type</Label>
+            <Select value={sourceType} onValueChange={(v) => setSourceType(v as SourceType)}>
+              <SelectTrigger data-testid="select-sync-source-type"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ics">ICS / iCalendar URL</SelectItem>
+                <SelectItem value="google_sheets_csv">Google Sheets (CSV publish URL)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground mt-1">
+              {sourceType === "ics"
+                ? "Paste the .ics feed URL from Sched, Cvent, Google Calendar, etc."
+                : "In Google Sheets: File → Share → Publish to web → CSV. The columns must match the import format."}
+            </p>
+          </div>
+          <div>
+            <Label>Source URL</Label>
+            <Input
+              value={sourceUrl}
+              onChange={(e) => setSourceUrl(e.target.value)}
+              placeholder="https://…"
+              data-testid="input-sync-url"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Refresh every (minutes)</Label>
+              <Input
+                type="number"
+                min={5}
+                max={60 * 24}
+                value={syncIntervalMinutes}
+                onChange={(e) => setSyncIntervalMinutes(Math.max(5, Math.min(60 * 24, parseInt(e.target.value || "60", 10))))}
+                data-testid="input-sync-interval"
+              />
+            </div>
+            <div className="flex items-end">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={enabled}
+                  onChange={(e) => setEnabled(e.target.checked)}
+                  data-testid="checkbox-sync-enabled"
+                />
+                Enabled
+              </label>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Items you edit by hand here are kept and never overwritten by the next sync.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button
+              disabled={!name || !sourceUrl || mutation.isPending}
+              onClick={() => mutation.mutate()}
+              data-testid="button-save-sync"
+            >
+              {mutation.isPending ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SyncSourcesSection({ clientId }: { clientId: string }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<AgendaSyncConfig | null>(null);
+  const { data: configs = [], isLoading } = useQuery<AgendaSyncConfig[]>({
+    queryKey: ["/api/agenda/sync-configs", clientId],
+    queryFn: async () => {
+      const r = await fetch(`/api/agenda/sync-configs?clientId=${clientId}`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load sync configs");
+      return r.json();
+    },
+  });
+
+  const runMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await apiRequest("POST", `/api/agenda/sync-configs/${id}/run`, {});
+      return r.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agenda/sync-configs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agenda"] });
+      if (data?.ok) {
+        toast({
+          title: "Sync complete",
+          description: `${data.inserted} new, ${data.updated} updated, ${data.skippedManual} kept (manual), ${data.removed} removed`,
+        });
+      } else {
+        toast({ title: "Sync failed", description: data?.error ?? "Unknown error", variant: "destructive" });
+      }
+    },
+    onError: (e: any) =>
+      toast({ title: "Sync failed", description: String(e?.message ?? e), variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/agenda/sync-configs/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agenda/sync-configs"] });
+      toast({ title: "Sync source removed" });
+    },
+  });
+
+  return (
+    <Card data-testid="card-sync-sources">
+      <CardHeader className="flex flex-row items-start justify-between gap-2">
+        <div>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Link2 className="h-4 w-4" /> Sync sources
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            Pull session schedules in automatically from Sched, Cvent, Google Calendar, or a
+            published Google Sheet. Hand-edited items are preserved.
+          </p>
+        </div>
+        <Button size="sm" onClick={() => { setEditing(null); setOpen(true); }} data-testid="button-add-sync">
+          <Plus className="h-4 w-4 mr-2" /> Add source
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <Skeleton className="h-12 w-full" />
+        ) : configs.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No sync sources yet. Add one to pull agenda items in automatically.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {configs.map((cfg) => (
+              <div
+                key={cfg.id}
+                className="border rounded-md p-3 flex flex-col gap-1"
+                data-testid={`sync-row-${cfg.id}`}
+              >
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium">{cfg.name}</span>
+                    <Badge variant="outline">
+                      {cfg.sourceType === "ics" ? "ICS" : "Google Sheets CSV"}
+                    </Badge>
+                    {cfg.enabled ? (
+                      <Badge variant="secondary">Enabled · every {cfg.syncIntervalMinutes}m</Badge>
+                    ) : (
+                      <Badge variant="outline">Disabled</Badge>
+                    )}
+                    {cfg.lastSyncOk === true && (
+                      <Badge variant="secondary" className="text-emerald-700 dark:text-emerald-400">
+                        <CheckCircle2 className="h-3 w-3 mr-1" /> Last sync OK
+                      </Badge>
+                    )}
+                    {cfg.lastSyncOk === false && (
+                      <Badge variant="destructive">
+                        <AlertTriangle className="h-3 w-3 mr-1" /> Last sync failed
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => runMutation.mutate(cfg.id)}
+                      disabled={runMutation.isPending}
+                      data-testid={`button-run-sync-${cfg.id}`}
+                    >
+                      <RefreshCw className={`h-4 w-4 mr-1 ${runMutation.isPending ? "animate-spin" : ""}`} /> Sync now
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => { setEditing(cfg); setOpen(true); }}
+                      data-testid={`button-edit-sync-${cfg.id}`}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => deleteMutation.mutate(cfg.id)}
+                      data-testid={`button-delete-sync-${cfg.id}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground break-all">{cfg.sourceUrl}</div>
+                {cfg.lastSyncAt && (
+                  <div className="text-xs text-muted-foreground">
+                    Last run {new Date(cfg.lastSyncAt).toLocaleString()}
+                    {typeof cfg.lastItemCount === "number" && ` · ${cfg.lastItemCount} item(s) upstream`}
+                  </div>
+                )}
+                {cfg.lastError && (
+                  <div className="text-xs text-rose-600 break-all" data-testid={`sync-error-${cfg.id}`}>
+                    Error: {cfg.lastError}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+      {open && (
+        <SyncConfigDialog
+          open={open}
+          onOpenChange={(o) => { setOpen(o); if (!o) setEditing(null); }}
+          initial={editing ?? undefined}
+          clientId={clientId}
+        />
+      )}
+    </Card>
+  );
+}
+
 export default function AgendaItemsPage() {
   const { selectedClientId, selectedClient } = useSiteContext();
   const { toast } = useToast();
@@ -367,6 +644,8 @@ export default function AgendaItemsPage() {
           </Button>
         </div>
       </div>
+
+      <SyncSourcesSection clientId={selectedClientId} />
 
       {/* Filter bar — room / track / status / date. Drives both the
           rendered list and the CSV export. */}

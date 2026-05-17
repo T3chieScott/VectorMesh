@@ -73,10 +73,13 @@ import {
   type SystemSetting,
   agendaItems,
   agendaWidgetConfigs,
+  agendaSyncConfigs,
   type AgendaItem,
   type InsertAgendaItem,
   type AgendaWidgetConfig,
   type InsertAgendaWidgetConfig,
+  type AgendaSyncConfig,
+  type InsertAgendaSyncConfig,
 } from "@shared/schema";
 import { users, userSites, passwordResetTokens, type User, type UpsertUser, type UserSite, type PasswordResetToken } from "@shared/models/auth";
 import { apiTokens, apiTokenKnownIps, type ApiToken, type InsertApiToken } from "@shared/schema";
@@ -194,6 +197,13 @@ export interface IStorage {
   createAgendaWidgetConfig(data: InsertAgendaWidgetConfig): Promise<AgendaWidgetConfig>;
   updateAgendaWidgetConfig(id: string, data: Partial<InsertAgendaWidgetConfig>): Promise<AgendaWidgetConfig | undefined>;
   deleteAgendaWidgetConfig(id: string): Promise<boolean>;
+  // Agenda sync configs (Task #210)
+  getAgendaSyncConfigs(clientId?: string): Promise<AgendaSyncConfig[]>;
+  getAgendaSyncConfig(id: string): Promise<AgendaSyncConfig | undefined>;
+  createAgendaSyncConfig(data: InsertAgendaSyncConfig): Promise<AgendaSyncConfig>;
+  updateAgendaSyncConfig(id: string, data: Partial<AgendaSyncConfig>): Promise<AgendaSyncConfig | undefined>;
+  deleteAgendaSyncConfig(id: string): Promise<boolean>;
+  getAgendaItemsBySyncConfig(syncConfigId: string): Promise<AgendaItem[]>;
   getResolvedAgendaForConfig(
     configId: string,
     now: Date,
@@ -2773,6 +2783,53 @@ export class DatabaseStorage implements IStorage {
   async deleteAgendaItemsForClient(clientId: string): Promise<number> {
     const result = await db.delete(agendaItems).where(eq(agendaItems.clientId, clientId));
     return result.rowCount ?? 0;
+  }
+
+  // Agenda Sync Configs (Task #210)
+  async getAgendaSyncConfigs(clientId?: string): Promise<AgendaSyncConfig[]> {
+    if (clientId) {
+      return db
+        .select()
+        .from(agendaSyncConfigs)
+        .where(eq(agendaSyncConfigs.clientId, clientId))
+        .orderBy(desc(agendaSyncConfigs.createdAt));
+    }
+    return db.select().from(agendaSyncConfigs).orderBy(desc(agendaSyncConfigs.createdAt));
+  }
+
+  async getAgendaSyncConfig(id: string): Promise<AgendaSyncConfig | undefined> {
+    const [row] = await db.select().from(agendaSyncConfigs).where(eq(agendaSyncConfigs.id, id));
+    return row;
+  }
+
+  async createAgendaSyncConfig(data: InsertAgendaSyncConfig): Promise<AgendaSyncConfig> {
+    const [row] = await db.insert(agendaSyncConfigs).values(data).returning();
+    return row;
+  }
+
+  async updateAgendaSyncConfig(
+    id: string,
+    data: Partial<AgendaSyncConfig>,
+  ): Promise<AgendaSyncConfig | undefined> {
+    const [row] = await db
+      .update(agendaSyncConfigs)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(agendaSyncConfigs.id, id))
+      .returning();
+    return row;
+  }
+
+  async deleteAgendaSyncConfig(id: string): Promise<boolean> {
+    const result = await db.delete(agendaSyncConfigs).where(eq(agendaSyncConfigs.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async getAgendaItemsBySyncConfig(syncConfigId: string): Promise<AgendaItem[]> {
+    return db
+      .select()
+      .from(agendaItems)
+      .where(eq(agendaItems.externalSyncConfigId, syncConfigId))
+      .orderBy(asc(agendaItems.startsAt));
   }
 
   // Agenda Widget Configs (Task #208)

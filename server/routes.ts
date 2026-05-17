@@ -25,6 +25,7 @@ import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
 import { setupAuth, isAuthenticated, isAuthenticatedOrToken, hashApiToken } from "./auth";
 import { mountTestAuthRoute } from "./testAuthRoute";
 import { mountAgendaRoutes } from "./agendaRoutes";
+import { runDueAgendaSyncs } from "./agendaSync";
 import multer from "multer";
 import path from "path";
 import os from "os";
@@ -927,6 +928,29 @@ export async function registerRoutes(
   };
   pruneVideoHealthSamples().catch(() => {});
   setInterval(pruneVideoHealthSamples, 6 * 60 * 60 * 1000);
+
+  // Task #210 — agenda sync tick. Every minute we look at every
+  // enabled sync config and run those whose syncIntervalMinutes has
+  // elapsed since their lastSyncAt. The merge engine itself
+  // (server/agendaSync.ts) records ok / error state back on the
+  // config row so the /agenda UI can surface failures.
+  const AGENDA_SYNC_TICK_MS = 60_000;
+  const tickAgendaSync = async () => {
+    try {
+      const { ran, results } = await runDueAgendaSyncs({ storage });
+      if (ran > 0) {
+        const failed = results.filter((r) => !r.result.ok).length;
+        console.log(
+          `[agenda-sync] ran ${ran} config(s), ${ran - failed} ok, ${failed} failed`,
+        );
+      }
+    } catch (err) {
+      console.error("[agenda-sync] tick failed:", err);
+    }
+  };
+  // Don't await — boot must not block on an upstream that's slow or
+  // unreachable. The first tick fires AGENDA_SYNC_TICK_MS later.
+  setInterval(tickAgendaSync, AGENDA_SYNC_TICK_MS);
 
   // ============ HEALTH CHECK ============
   app.get("/api/manual", requireAuth, async (_req, res) => {

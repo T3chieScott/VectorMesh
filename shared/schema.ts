@@ -1053,9 +1053,22 @@ export const agendaItems = pgTable("agenda_items", {
   // scheduled | in_progress | delayed | cancelled | moved
   status: text("status").notNull().default("scheduled"),
   statusMessage: text("status_message"),
+  // Task #210 — external sync provenance. When a row is created or
+  // refreshed by the agenda-sync engine (server/agendaSync.ts) we
+  // stamp the source config id + the upstream item's stable id (ICS
+  // UID or Google Sheets externalId column). `manualOverride` flips
+  // to true the moment an operator edits the row in the UI, which
+  // freezes it against future sync passes so hand-tweaked sessions
+  // never get clobbered when the upstream changes.
+  externalSyncConfigId: varchar("external_sync_config_id"),
+  externalId: text("external_id"),
+  manualOverride: boolean("manual_override").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => ({
+  externalIdLookup: uniqueIndex("agenda_items_sync_external_id_unique")
+    .on(table.externalSyncConfigId, table.externalId),
+}));
 
 export const agendaItemsRelations = relations(agendaItems, ({ one }) => ({
   client: one(clients, { fields: [agendaItems.clientId], references: [clients.id] }),
@@ -1080,6 +1093,57 @@ export const insertAgendaItemSchema = createInsertSchema(agendaItems)
   });
 export type InsertAgendaItem = z.infer<typeof insertAgendaItemSchema>;
 export type AgendaItem = typeof agendaItems.$inferSelect;
+
+// Task #210 — external agenda sync. Each row defines one upstream
+// source feeding agenda_items for a single site. The sync engine
+// (server/agendaSync.ts) periodically pulls the source, parses it
+// into agenda rows, and upserts by (externalSyncConfigId, externalId).
+// Rows that an operator has hand-edited (manualOverride=true) are
+// skipped by future syncs so manual fixes are never clobbered.
+export const AGENDA_SYNC_SOURCE_TYPES = ["ics", "google_sheets_csv"] as const;
+export type AgendaSyncSourceType = (typeof AGENDA_SYNC_SOURCE_TYPES)[number];
+
+export const agendaSyncConfigs = pgTable("agenda_sync_configs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  sourceType: text("source_type").notNull(),
+  sourceUrl: text("source_url").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  syncIntervalMinutes: integer("sync_interval_minutes").notNull().default(60),
+  lastSyncAt: timestamp("last_sync_at"),
+  lastSyncOk: boolean("last_sync_ok"),
+  lastError: text("last_error"),
+  lastErrorAt: timestamp("last_error_at"),
+  lastItemCount: integer("last_item_count"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const agendaSyncConfigsRelations = relations(agendaSyncConfigs, ({ one }) => ({
+  client: one(clients, { fields: [agendaSyncConfigs.clientId], references: [clients.id] }),
+}));
+
+export const insertAgendaSyncConfigSchema = createInsertSchema(agendaSyncConfigs)
+  .omit({
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+    lastSyncAt: true,
+    lastSyncOk: true,
+    lastError: true,
+    lastErrorAt: true,
+    lastItemCount: true,
+  })
+  .extend({
+    name: z.string().min(1, "Name is required"),
+    sourceType: z.enum(AGENDA_SYNC_SOURCE_TYPES),
+    sourceUrl: z.string().url("Must be a valid URL"),
+    syncIntervalMinutes: z.number().int().min(5).max(60 * 24).default(60),
+    enabled: z.boolean().default(true),
+  });
+export type InsertAgendaSyncConfig = z.infer<typeof insertAgendaSyncConfigSchema>;
+export type AgendaSyncConfig = typeof agendaSyncConfigs.$inferSelect;
 
 // Per-screen / per-display configuration for the Agenda Display
 // Widget. One config drives one full-screen display URL
