@@ -787,11 +787,32 @@ type ZoneFormValues = z.infer<typeof zoneFormSchema>;
 // the "Agenda Display" zone type. Lists agenda widget configs for
 // the active site (or all sites for admins) and binds the chosen id
 // to the zone's `agendaConfigId` field.
+// Task #234 — friendlier labels for the agenda mode badges so the
+// picker reads naturally ("Now + next · Portrait") rather than the
+// raw enum keys stored in the DB.
+const AGENDA_DISPLAY_MODE_LABELS: Record<string, string> = {
+  full: "Full agenda",
+  room: "Room filtered",
+  now_next: "Now + next",
+  room_focus: "Room focus",
+  alert: "Alerts only",
+};
+const AGENDA_LAYOUT_MODE_LABELS: Record<string, string> = {
+  auto: "Auto",
+  landscape: "Landscape",
+  portrait: "Portrait",
+  totem: "Totem",
+  ultrawide: "Ultrawide",
+  room_door: "Room door",
+};
+
 function AgendaConfigPickerSection({ form }: { form: any }) {
   const agendaConfigsQuery = useSiteFilteredQuery<AgendaWidgetConfig[]>("/api/agenda/configs");
   const { data: configs, isLoading } = useQuery<AgendaWidgetConfig[]>({
     ...agendaConfigsQuery,
   });
+  const selectedId = form.watch("agendaConfigId") as string | undefined;
+  const selected = (configs || []).find((c) => c.id === selectedId);
   return (
     <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
       <div className="flex items-center gap-2 text-sm font-medium">
@@ -803,23 +824,51 @@ function AgendaConfigPickerSection({ form }: { form: any }) {
         name="agendaConfigId"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Agenda Config</FormLabel>
+            <FormLabel>Agenda Design</FormLabel>
             <Select onValueChange={field.onChange} value={field.value || ""}>
               <FormControl>
                 <SelectTrigger data-testid="select-agenda-config">
-                  <SelectValue placeholder={isLoading ? "Loading…" : "Select an agenda"} />
+                  <SelectValue placeholder={isLoading ? "Loading…" : "Select an agenda design"} />
                 </SelectTrigger>
               </FormControl>
               <SelectContent>
                 {(configs || []).map((cfg) => (
                   <SelectItem key={cfg.id} value={cfg.id}>
-                    {cfg.name}
+                    <div className="flex flex-col" data-testid={`agenda-config-option-${cfg.id}`}>
+                      <span className="font-medium">{cfg.name}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {AGENDA_DISPLAY_MODE_LABELS[cfg.displayMode] ?? cfg.displayMode}
+                        {" · "}
+                        {AGENDA_LAYOUT_MODE_LABELS[cfg.layoutMode] ?? cfg.layoutMode}
+                        {" · "}
+                        {cfg.theme === "light" ? "Light theme" : "Dark theme"}
+                      </span>
+                    </div>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {selected && (
+              <div
+                className="flex flex-wrap gap-2 pt-1"
+                data-testid={`agenda-config-summary-${selected.id}`}
+              >
+                <Badge variant="secondary" data-testid="badge-agenda-display-mode">
+                  {AGENDA_DISPLAY_MODE_LABELS[selected.displayMode] ?? selected.displayMode}
+                </Badge>
+                <Badge variant="outline" data-testid="badge-agenda-layout-mode">
+                  Layout: {AGENDA_LAYOUT_MODE_LABELS[selected.layoutMode] ?? selected.layoutMode}
+                </Badge>
+                <Badge variant="outline" data-testid="badge-agenda-theme">
+                  {selected.theme === "light" ? "Light" : "Dark"}
+                </Badge>
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">
-              The selected agenda is rendered inside this zone the same way it appears at <code>/display/agenda/&lt;id&gt;</code>.
+              The selected agenda renders inside this zone exactly as it does at{" "}
+              <code>/display/agenda/&lt;id&gt;</code>. Fonts and spacing scale to the zone size.
+              Pick a specific layout on the design itself (not "Auto") if you need a particular
+              variant inside this zone.
             </p>
             <FormMessage />
           </FormItem>

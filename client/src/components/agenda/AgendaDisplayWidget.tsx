@@ -78,18 +78,62 @@ const STATUS_COLOR: Record<AgendaStatus, string> = {
   moved: "bg-indigo-500/30 text-indigo-100 border-indigo-400/60",
 };
 
-const FONT_SCALE_PX = {
-  small: 14,
-  normal: 18,
-  large: 22,
-  xlarge: 28,
+// Task #234 — container-relative scaling. Tables are *multipliers*
+// of the container's min dimension, calibrated so a 1920×1080 container
+// at fontScale="normal" / density="normal" produces exactly the legacy
+// 18 px font / 12 px gap (since min(1920,1080) === 1080, and
+// 18/1080 ≈ 0.01667, 12/1080 ≈ 0.01111). Inside layout zones the
+// container is the zone (commonly far smaller than a full screen), so
+// the agenda now scales down/up to match its host instead of always
+// rendering 18 px text regardless of container size.
+export const AGENDA_FONT_SCALE_RATIO = {
+  small: 14 / 1080,
+  normal: 18 / 1080,
+  large: 22 / 1080,
+  xlarge: 28 / 1080,
 } as const;
 
-const DENSITY_GAP_PX = {
-  compact: 6,
-  normal: 12,
-  spacious: 20,
+export const AGENDA_DENSITY_GAP_RATIO = {
+  compact: 6 / 1080,
+  normal: 12 / 1080,
+  spacious: 20 / 1080,
 } as const;
+
+// Floors keep the agenda legible inside tiny zone thumbnails / pickers
+// where min(w,h) might be ~80 px. Without these, text would collapse
+// to sub-pixel values and become invisible.
+const MIN_SCALE_PX = 6;
+const MIN_GAP_PX = 2;
+
+export function resolveAgendaFontPx(
+  fontScale: string | null | undefined,
+  containerWidth: number,
+  containerHeight: number,
+): number {
+  const ratio = AGENDA_FONT_SCALE_RATIO[
+    (fontScale as keyof typeof AGENDA_FONT_SCALE_RATIO) || "normal"
+  ] ?? AGENDA_FONT_SCALE_RATIO.normal;
+  const base = Math.min(
+    containerWidth > 0 ? containerWidth : 1080,
+    containerHeight > 0 ? containerHeight : 1080,
+  );
+  return Math.max(MIN_SCALE_PX, base * ratio);
+}
+
+export function resolveAgendaGapPx(
+  density: string | null | undefined,
+  containerWidth: number,
+  containerHeight: number,
+): number {
+  const ratio = AGENDA_DENSITY_GAP_RATIO[
+    (density as keyof typeof AGENDA_DENSITY_GAP_RATIO) || "normal"
+  ] ?? AGENDA_DENSITY_GAP_RATIO.normal;
+  const base = Math.min(
+    containerWidth > 0 ? containerWidth : 1080,
+    containerHeight > 0 ? containerHeight : 1080,
+  );
+  return Math.max(MIN_GAP_PX, base * ratio);
+}
 
 function formatTime(iso: Date | string, tz: string | null | undefined): string {
   const d = typeof iso === "string" ? new Date(iso) : iso;
@@ -493,8 +537,8 @@ export function AgendaDisplayWidget({
     [config.layoutMode, config.displayMode, measured.w, measured.h],
   );
 
-  const scale = FONT_SCALE_PX[(config.fontScale as keyof typeof FONT_SCALE_PX) || "normal"];
-  const gap = DENSITY_GAP_PX[(config.density as keyof typeof DENSITY_GAP_PX) || "normal"];
+  const scale = resolveAgendaFontPx(config.fontScale, measured.w, measured.h);
+  const gap = resolveAgendaGapPx(config.density, measured.w, measured.h);
 
   const pageSize =
     layout === "portrait" ? Math.min(config.maxItemsPerPage, 6)

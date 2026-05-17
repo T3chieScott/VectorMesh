@@ -46,6 +46,8 @@ import {
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { AgendaConfigZoneWidget } from "./agenda/AgendaConfigZoneWidget";
+import { buildZoneBaseStyle } from "./zone-base-style";
+export { buildZoneBaseStyle } from "./zone-base-style";
 // `useSyncedSecondTick` was removed from this file when ClockWidget
 // moved to ./widgets/clock-widget.tsx. CountdownWidget still uses
 // `usePlayerClock` directly here.
@@ -5906,18 +5908,11 @@ export function ZoneRenderer({
     return {};
   };
 
-  const baseStyle: React.CSSProperties = zone.type === "shape" 
-    ? { containerType: "size" as const }
-    : {
-        containerType: "size" as const,
-        ...getBackgroundStyle(),
-        ...(zone.textColor && { color: zone.textColor }),
-        ...getTextShadowStyle(),
-        ...getTextOutlineStyle(),
-        ...(zone.borderColor && zone.borderWidth && { borderColor: zone.borderColor }),
-        ...(zone.borderWidth && { borderWidth: `${zone.borderWidth}px`, borderStyle: "solid" }),
-        ...(zone.borderRadius && { borderRadius: `${zone.borderRadius}px` }),
-      };
+  const baseStyle: React.CSSProperties = buildZoneBaseStyle(zone, {
+    backgroundStyle: getBackgroundStyle(),
+    textShadowStyle: getTextShadowStyle(),
+    textOutlineStyle: getTextOutlineStyle(),
+  });
 
   const zoneStyle: React.CSSProperties = fillContainer
     ? {
