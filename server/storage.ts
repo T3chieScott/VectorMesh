@@ -309,8 +309,25 @@ export interface IStorage {
     groupsCreated: number;
     screensStamped: number;
   }>;
-  /** Task #189 — boot-claimed wrapper around backfillExplicitCanvasGroups
-   * with the same one-shot semantics as repairFalseCanvasPairingsOnce. */
+  /**
+   * Task #189 — boot-claimed wrapper around
+   * {@link IStorage.backfillExplicitCanvasGroups} with the same
+   * atomic at-most-once semantics as
+   * {@link IStorage.repairFalseCanvasPairingsOnce}.
+   *
+   * Claims the `canvas_groups_backfill_189_completed` row in
+   * `system_settings` via INSERT … ON CONFLICT DO NOTHING; only
+   * the winner runs the backfill, every other concurrent boot
+   * returns `{ skipped: true }`. On clean completion the marker
+   * is stamped with `status:"completed"` and forensic counts.
+   *
+   * Crash recovery: if the process dies between the claim and
+   * the completion stamp the marker stays at `status:"running"`
+   * and subsequent boots will skip. The operator escape hatch is
+   * to delete the marker row:
+   *   `DELETE FROM system_settings WHERE key = 'canvas_groups_backfill_189_completed';`
+   * Documented in the operations runbook in `replit.md`.
+   */
   backfillExplicitCanvasGroupsOnce(): Promise<{
     groupsCreated: number;
     screensStamped: number;
@@ -1165,51 +1182,50 @@ export class DatabaseStorage implements IStorage {
     screensStamped: number;
     skipped: boolean;
   }> {
-    // Task #189 — boot-claimed wrapper around `backfillExplicitCanvasGroups`.
+    // Task #189 — boot-claimed wrapper around `backfillExplicitCanvasGroups`,
+    // following the same atomic-claim pattern as
+    // `repairFalseCanvasPairingsOnce` (Task #179).
     //
-    // We can't rely on "marker exists → skip" alone: an earlier boot
-    // that crashed mid-backfill would leave the marker present with
-    // `status:"running"`, and every future boot would skip and
-    // permanently leave canvas screens un-stamped. The architect
-    // review surfaced this stuck-state risk explicitly.
+    // The claim is *atomic*: we INSERT the marker with `ON CONFLICT
+    // DO NOTHING` and check whether a row was actually returned. If
+    // two app instances boot concurrently against the same DB,
+    // exactly one of them sees its insert succeed (the "winner")
+    // and runs the backfill; the other gets zero returned rows and
+    // skips. This gives strict at-most-once semantics under
+    // concurrent startup, which a naive read-then-insert pattern
+    // (where both observers see the marker absent and both run the
+    // backfill) would not — and avoids producing duplicate
+    // canvas_groups rows on a fresh DB.
     //
-    // Skip semantics are therefore COMPLETION-based: only a marker
-    // whose payload reads `status:"completed"` is treated as
-    // "already done". Any other state (no marker, unparseable
-    // marker, `running`, or anything else) re-runs the backfill.
-    // The backfill itself is idempotent (it scans for screens with
-    // `canvasGroupId IS NULL` and only stamps those), so even
-    // concurrent boots that both decide to re-run will converge —
-    // the second pass simply finds nothing left to do.
-    const existing = await this.getSystemSetting(
-      CANVAS_GROUPS_BACKFILL_189_MARKER_KEY,
-    );
-    // `getSystemSetting` returns the SystemSetting row (or undefined);
-    // the JSON payload lives on `.value`. Without unwrapping it the
-    // parse below always throws and we'd re-run the backfill on every
-    // boot — defeating the "skip when completed" optimisation.
-    if (existing?.value) {
-      try {
-        const parsed = JSON.parse(existing.value) as { status?: string };
-        if (parsed?.status === "completed") {
-          return { groupsCreated: 0, screensStamped: 0, skipped: true };
-        }
-      } catch {
-        // Unparseable marker — treat as needs-rerun. The backfill
-        // is idempotent so this can never make things worse.
-      }
+    // Crash safety: the claim is recorded with a `running` status. If
+    // the process crashes mid-backfill, the marker stays at `running`
+    // and the next boot sees the marker as present and skips. The
+    // operator's escape hatch is to delete the marker row by hand
+    // (documented in the storage interface docblock and in the
+    // operations runbook in replit.md). We deliberately accept
+    // "stuck-running marker after a crash" as preferable to
+    // "every concurrent boot re-runs the backfill", because
+    // `backfillExplicitCanvasGroups` is idempotent only on a clean
+    // DB (it skips screens that already carry a `canvasGroupId`),
+    // not across concurrent first runs.
+    const claim = await db
+      .insert(systemSettings)
+      .values({
+        key: CANVAS_GROUPS_BACKFILL_189_MARKER_KEY,
+        value: JSON.stringify({
+          status: "running",
+          claimedAt: new Date().toISOString(),
+        }),
+        updatedAt: new Date(),
+      })
+      .onConflictDoNothing({ target: systemSettings.key })
+      .returning({ key: systemSettings.key });
+    if (claim.length === 0) {
+      return { groupsCreated: 0, screensStamped: 0, skipped: true };
     }
-    // Stamp the marker as "running" before we start so concurrent
-    // observers get a useful diagnostic. We DO NOT use this as a
-    // skip-gate; only the post-run "completed" stamp is.
-    await this.setSystemSetting(
-      CANVAS_GROUPS_BACKFILL_189_MARKER_KEY,
-      JSON.stringify({
-        status: "running",
-        claimedAt: new Date().toISOString(),
-      }),
-    );
     const result = await this.backfillExplicitCanvasGroups();
+    // Stamp the final "completed" outcome onto our claim row so the
+    // marker carries forensic info (`ranAt`, counts) for ops.
     await this.setSystemSetting(
       CANVAS_GROUPS_BACKFILL_189_MARKER_KEY,
       JSON.stringify({

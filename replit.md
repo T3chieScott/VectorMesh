@@ -71,6 +71,35 @@ The next boot will re-claim the marker and run the repair. The
 underlying repair is idempotent against clean data, so re-running on a
 healthy DB is a safe no-op.
 
+### Canvas groups — explicit-grouping backfill marker (Task #189)
+
+The boot path runs `backfillExplicitCanvasGroupsOnce()` which gates the
+Task #189 explicit-grouping backfill behind a `system_settings` marker
+keyed `canvas_groups_backfill_189_completed`. The marker is claimed
+*atomically* (insert with `ON CONFLICT DO NOTHING`) **before** the
+backfill runs, so concurrent boots cannot both produce `canvas_groups`
+rows; only the winner runs and the loser returns `{ skipped: true }`.
+On success the marker is stamped with `status: "completed"` plus
+`groupsCreated` / `screensStamped` counts for forensics.
+
+Boot log lines:
+- `[canvas-groups] explicit-grouping backfill already completed for this DB; skipping` — marker present, no work done.
+- `[canvas-groups] explicit-grouping backfill: created N group(s), stamped M screen(s)` — marker absent, backfill ran and stamped completion.
+
+**Recovery — marker stuck in `running` state**: if the server crashes
+between the marker claim and the completion stamp, the marker stays at
+`status: "running"` and every subsequent boot will skip the backfill,
+leaving any unstamped canvas screens without a `canvasGroupId`. To
+force a re-run, delete the row by hand:
+
+```sql
+DELETE FROM system_settings WHERE key = 'canvas_groups_backfill_189_completed';
+```
+
+The next boot will re-claim the marker and run the backfill. The
+backfill only touches screens with `canvasGroupId IS NULL`, so
+re-running on a healthy (fully-stamped) DB is a safe no-op.
+
 ## External Dependencies
 
 ### Database

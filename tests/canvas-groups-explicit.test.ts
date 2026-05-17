@@ -379,13 +379,20 @@ test("storage.createScreen — canvasEnabled with no canvasGroupId auto-mints a 
 
 // ─── Boot-marker semantics ────────────────────────────────────────
 //
-// The architect flagged that `backfillExplicitCanvasGroupsOnce` had
-// been silently re-running on every boot because the marker payload
-// was being JSON.parsed off the SystemSetting row instead of off its
-// `.value`. These three tests pin the corrected contract: only a
-// `status:"completed"` marker should short-circuit the run; anything
-// else (running / malformed / missing) must fall through and execute
-// the (idempotent) backfill.
+// Task #189 — `backfillExplicitCanvasGroupsOnce` claims its marker
+// atomically via INSERT … ON CONFLICT DO NOTHING (matching the
+// Task #179 pattern in `repairFalseCanvasPairingsOnce`). These
+// tests pin the contract:
+//
+//  * Any pre-existing marker row — `completed`, `running`, or
+//    even an unparseable payload — causes the claim to lose and
+//    the call to short-circuit with `{ skipped: true }`. We
+//    deliberately accept "stuck-running marker after a crash" as
+//    preferable to "every concurrent boot re-runs the backfill"
+//    (documented in the operations runbook in `replit.md`; the
+//    operator escape hatch is to delete the marker row by hand).
+//  * Two concurrent invocations against a clean marker must
+//    produce exactly one winner and one skip — never two runs.
 
 async function setMarker(value: string | null): Promise<void> {
   if (value === null) {
@@ -426,7 +433,12 @@ test("backfillExplicitCanvasGroupsOnce — completed marker short-circuits the r
   }
 });
 
-test("backfillExplicitCanvasGroupsOnce — non-completed marker (e.g. running) re-runs the idempotent backfill", async () => {
+test("backfillExplicitCanvasGroupsOnce — running marker also skips (atomic claim, crash safety)", async () => {
+  // Atomic-claim semantics (Task #189): any pre-existing marker row
+  // causes the INSERT … ON CONFLICT DO NOTHING claim to lose, so the
+  // call short-circuits. A `running` row means a previous boot crashed
+  // mid-backfill — the boot path does NOT auto-retry; the operator
+  // must delete the marker row to force a re-run.
   const clientId = await muteId();
   const orphan = await makeScreen({
     name: "marker-running",
@@ -436,22 +448,28 @@ test("backfillExplicitCanvasGroupsOnce — non-completed marker (e.g. running) r
   await setMarker(JSON.stringify({ status: "running", at: "2026-01-01" }));
   try {
     const result = await storage.backfillExplicitCanvasGroupsOnce();
-    assert.notEqual(
+    assert.equal(
       result.skipped,
       true,
-      "running marker must NOT short-circuit",
+      "running marker must short-circuit (crash-safety contract)",
     );
+    assert.equal(result.groupsCreated, 0);
+    assert.equal(result.screensStamped, 0);
     const reloaded = (await storage.getScreen(orphan.id))!;
-    assert.ok(
+    assert.equal(
       reloaded.canvasGroupId,
-      "screen must have been stamped on the rerun",
+      null,
+      "screen must remain unstamped — claim was lost, no work ran",
     );
   } finally {
     await setMarker(JSON.stringify({ status: "completed" }));
   }
 });
 
-test("backfillExplicitCanvasGroupsOnce — malformed marker payload re-runs (defensive default)", async () => {
+test("backfillExplicitCanvasGroupsOnce — malformed marker payload also skips (any row = lost claim)", async () => {
+  // The atomic claim cares about row existence, not payload validity.
+  // An unparseable payload still represents a previous claim, so the
+  // current call must short-circuit just like for `running`.
   const clientId = await muteId();
   const orphan = await makeScreen({
     name: "marker-malformed",
@@ -461,15 +479,66 @@ test("backfillExplicitCanvasGroupsOnce — malformed marker payload re-runs (def
   await setMarker("this-is-not-json");
   try {
     const result = await storage.backfillExplicitCanvasGroupsOnce();
-    assert.notEqual(
+    assert.equal(
       result.skipped,
       true,
-      "malformed marker must NOT short-circuit (idempotent re-run is safe)",
+      "malformed marker still represents a prior claim — must skip",
     );
+    assert.equal(result.groupsCreated, 0);
+    assert.equal(result.screensStamped, 0);
+    const reloaded = (await storage.getScreen(orphan.id))!;
+    assert.equal(
+      reloaded.canvasGroupId,
+      null,
+      "screen must remain unstamped — claim was lost, no work ran",
+    );
+  } finally {
+    await setMarker(JSON.stringify({ status: "completed" }));
+  }
+});
+
+test("backfillExplicitCanvasGroupsOnce — two concurrent invocations: exactly one wins", async () => {
+  // Concurrency contract (Task #189): with no pre-existing marker,
+  // two simultaneous boots must produce exactly one winner (runs the
+  // backfill, returns skipped=false) and one loser (returns
+  // skipped=true and does NOT insert any canvas_groups rows). The
+  // previous read-then-stamp implementation allowed both to win and
+  // produce duplicate groups; the atomic INSERT … ON CONFLICT DO
+  // NOTHING claim closes that race.
+  const clientId = await muteId();
+  const orphan = await makeScreen({
+    name: "marker-concurrent",
+    clientId,
+    canvasGroupId: null,
+  });
+  await setMarker(null);
+  try {
+    const [a, b] = await Promise.all([
+      storage.backfillExplicitCanvasGroupsOnce(),
+      storage.backfillExplicitCanvasGroupsOnce(),
+    ]);
+    const winners = [a, b].filter((r) => r.skipped === false);
+    const losers = [a, b].filter((r) => r.skipped === true);
+    assert.equal(winners.length, 1, "exactly one invocation must win the claim");
+    assert.equal(losers.length, 1, "exactly one invocation must skip");
+    assert.equal(losers[0].groupsCreated, 0);
+    assert.equal(losers[0].screensStamped, 0);
+    // The winner stamped the orphan screen into a per-screen group.
     const reloaded = (await storage.getScreen(orphan.id))!;
     assert.ok(
       reloaded.canvasGroupId,
-      "screen must have been stamped despite the unparseable marker",
+      "screen must have been stamped by the winning invocation",
+    );
+    // And only ONE canvas_groups row for this orphan exists — no
+    // duplicates from a second run.
+    const allGroups = await storage.getCanvasGroups();
+    const orphanGroups = allGroups.filter(
+      (g) => g.clientId === clientId && g.canvasWidth === 3840 && g.canvasHeight === 1080,
+    );
+    assert.equal(
+      orphanGroups.length,
+      1,
+      "exactly one canvas_groups row must exist for the orphan — no duplicates",
     );
   } finally {
     await setMarker(JSON.stringify({ status: "completed" }));
