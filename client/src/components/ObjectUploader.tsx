@@ -61,8 +61,8 @@ export function ObjectUploader({
         withCredentials: true,
         timeout: 300000,
       })
-      .on("complete", (result) => {
-        onCompleteRef.current?.(result);
+      .on("complete", (result: UploadResult<{ clientId: string }, Record<string, never>>) => {
+        onCompleteRef.current?.(result as unknown as UploadResult<Record<string, unknown>, Record<string, unknown>>);
       })
       .on("error", (error) => {
         onErrorRef.current?.(error);

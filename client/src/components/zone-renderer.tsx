@@ -3563,7 +3563,7 @@ function NewsWidget({
 
           setNews(prev => {
             if (prev.length === 0) {
-              const titles = new Set(incoming.map((i: { title: string }) => i.title));
+              const titles = new Set<string>(incoming.map((i: { title: string }) => i.title));
               knownTitlesRef.current = titles;
               return incoming;
             }

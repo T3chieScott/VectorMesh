@@ -753,14 +753,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createEvent(data: InsertEvent): Promise<Event> {
-    const [event] = await db.insert(events).values(data).returning();
+    const values: typeof events.$inferInsert = data as typeof events.$inferInsert;
+    const [event] = await db.insert(events).values(values).returning();
     return event;
   }
 
   async updateEvent(id: string, data: Partial<InsertEvent>): Promise<Event | undefined> {
+    const patch: Partial<typeof events.$inferInsert> = { ...data, updatedAt: new Date() } as Partial<typeof events.$inferInsert>;
     const [event] = await db
       .update(events)
-      .set({ ...data, updatedAt: new Date() })
+      .set(patch)
       .where(eq(events.id, id))
       .returning();
     return event;
@@ -1451,7 +1453,7 @@ export class DatabaseStorage implements IStorage {
           throw err;
         }
         // Lost the probe-vs-write race; mint a fresh code and retry.
-        log(
+        console.log(
           `[canvas-pairing] ${label}: pairing-code collision on attempt ${attempt}, retrying`,
         );
       }
@@ -1690,7 +1692,7 @@ export class DatabaseStorage implements IStorage {
           // unlikely (~2.1B codespace) and bubble up to roll back the
           // whole transaction so the wall stays consistent.
           if (!isPairingCodeUniqueViolation(err)) throw err;
-          log(
+          console.log(
             `[canvas-pairing] rotateScreensPairingIdentities: pairing-code collision on ${screenId}, retrying`,
           );
           const retryCode = await this.generateUniquePairingCode();
@@ -2129,14 +2131,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createLayoutTemplate(data: InsertLayoutTemplate): Promise<LayoutTemplate> {
-    const [template] = await db.insert(layoutTemplates).values(data).returning();
+    const values: typeof layoutTemplates.$inferInsert = data as typeof layoutTemplates.$inferInsert;
+    const [template] = await db.insert(layoutTemplates).values(values).returning();
     return template;
   }
 
   async updateLayoutTemplate(id: string, data: Partial<InsertLayoutTemplate>): Promise<LayoutTemplate | undefined> {
+    const patch: Partial<typeof layoutTemplates.$inferInsert> = { ...data, updatedAt: new Date() } as Partial<typeof layoutTemplates.$inferInsert>;
     const [template] = await db
       .update(layoutTemplates)
-      .set({ ...data, updatedAt: new Date() })
+      .set(patch)
       .where(eq(layoutTemplates.id, id))
       .returning();
     return template;
@@ -2298,14 +2302,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createScheduleBlock(data: InsertScheduleBlock): Promise<ScheduleBlock> {
-    const [block] = await db.insert(scheduleBlocks).values(data).returning();
+    const values: typeof scheduleBlocks.$inferInsert = data as typeof scheduleBlocks.$inferInsert;
+    const [block] = await db.insert(scheduleBlocks).values(values).returning();
     return block;
   }
 
   async updateScheduleBlock(id: string, data: Partial<InsertScheduleBlock>): Promise<ScheduleBlock | undefined> {
+    const patch: Partial<typeof scheduleBlocks.$inferInsert> = data as Partial<typeof scheduleBlocks.$inferInsert>;
     const [block] = await db
       .update(scheduleBlocks)
-      .set(data)
+      .set(patch)
       .where(eq(scheduleBlocks.id, id))
       .returning();
     return block;
@@ -2338,14 +2344,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createScreenPreset(data: InsertScreenPreset): Promise<ScreenPreset> {
-    const [preset] = await db.insert(screenPresets).values(data).returning();
+    const values: typeof screenPresets.$inferInsert = data as typeof screenPresets.$inferInsert;
+    const [preset] = await db.insert(screenPresets).values(values).returning();
     return preset;
   }
 
   async updateScreenPreset(id: string, data: Partial<InsertScreenPreset>): Promise<ScreenPreset | undefined> {
+    const patch: Partial<typeof screenPresets.$inferInsert> = data as Partial<typeof screenPresets.$inferInsert>;
     const [preset] = await db
       .update(screenPresets)
-      .set(data)
+      .set(patch)
       .where(eq(screenPresets.id, id))
       .returning();
     return preset;
@@ -2380,14 +2388,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createLiveOverride(data: InsertLiveOverride): Promise<LiveOverride> {
-    const [override] = await db.insert(liveOverrides).values(data).returning();
+    const values: typeof liveOverrides.$inferInsert = data as typeof liveOverrides.$inferInsert;
+    const [override] = await db.insert(liveOverrides).values(values).returning();
     return override;
   }
 
   async updateLiveOverride(id: string, data: Partial<InsertLiveOverride>): Promise<LiveOverride | undefined> {
+    const patch: Partial<typeof liveOverrides.$inferInsert> = data as Partial<typeof liveOverrides.$inferInsert>;
     const [override] = await db
       .update(liveOverrides)
-      .set(data)
+      .set(patch)
       .where(eq(liveOverrides.id, id))
       .returning();
     return override;

@@ -2982,7 +2982,7 @@ function ZoneEditorDialog({
                             variant="outline"
                             size="icon"
                             disabled={isGeocoding || !field.value?.trim()}
-                            onClick={() => doGeocodeSearch(field.value, "weather")}
+                            onClick={() => doGeocodeSearch(field.value ?? "", "weather")}
                             data-testid="button-geocode"
                           >
                             {isGeocoding && geocodeTarget === "weather" ? (
@@ -4054,7 +4054,7 @@ function ZoneEditorDialog({
                                 variant="outline"
                                 size="icon"
                                 disabled={isGeocoding || !field.value?.trim()}
-                                onClick={() => doGeocodeSearch(field.value, "qr")}
+                                onClick={() => doGeocodeSearch(field.value ?? "", "qr")}
                                 data-testid="button-qr-location-geocode"
                               >
                                 {isGeocoding && geocodeTarget === "qr" ? (
@@ -6405,7 +6405,7 @@ function ZoneEditorDialog({
                             variant="outline"
                             size="icon"
                             disabled={isGeocoding || !field.value?.trim()}
-                            onClick={() => doGeocodeSearch(field.value, "forecast")}
+                            onClick={() => doGeocodeSearch(field.value ?? "", "forecast")}
                             data-testid="button-forecast-geocode"
                           >
                             {isGeocoding && geocodeTarget === "forecast" ? (
@@ -8668,7 +8668,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                     deleteMutation.mutate();
                   }
                 }}
-                disabled={deleteMutation.isPending || layout.locked}
+                disabled={deleteMutation.isPending || (layout.locked ?? false)}
                 data-testid={`button-delete-layout-${layout.id}`}
               >
                 <Trash2 className="mr-2 h-4 w-4" />
@@ -9524,7 +9524,7 @@ function LayoutEditorPanel({
               <DropdownMenuItem 
                 className="text-destructive"
                 onClick={() => deleteMutation.mutate()}
-                disabled={layout.locked}
+                disabled={layout.locked ?? false}
               >
                 <Trash2 className="mr-2 h-4 w-4" />
                 Delete

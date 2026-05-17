@@ -184,10 +184,10 @@ function ConfigEditor({
     const payload = toApiPayload(watched, clientId);
     return {
       id: initial?.id ?? "preview",
-      clientId,
       createdAt: initial?.createdAt ?? new Date(),
       updatedAt: initial?.updatedAt ?? new Date(),
       ...payload,
+      clientId,
       statusFilter: watched.statusFilter as AgendaWidgetConfig["statusFilter"],
     };
   }, [watched, clientId, initial]);

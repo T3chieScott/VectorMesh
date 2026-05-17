@@ -244,7 +244,7 @@ function ClientCard({ client, events }: { client: Client; events: Event[] }) {
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onSelect={() => deleteMutation.mutate()}
-              disabled={client.locked}
+              disabled={client.locked ?? false}
             >
               <Trash2 className="mr-2 h-4 w-4" />
               Delete

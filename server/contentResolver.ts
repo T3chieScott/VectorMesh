@@ -27,6 +27,7 @@ export type ContentResolveOutcomeSource =
 export type BlockDecision =
   | "matched"
   | "matched-block-fallback-playlist"
+  | "matched-block-fallback-agenda"
   | "target-mismatch"
   | "outside-date-range"
   | "wrong-day-of-week"

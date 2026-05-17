@@ -6,7 +6,7 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
-import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema, insertCanvasGroupSchema, insertAgendaItemSchema, insertAgendaWidgetConfigSchema, type InsertScreenEventBooking, type TimeRule, type ScheduleTarget, type InsertAgendaItem } from "@shared/schema";
+import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema, insertCanvasGroupSchema, insertAgendaItemSchema, insertAgendaWidgetConfigSchema, type InsertScreenEventBooking, type TimeRule, type ScheduleTarget, type InsertAgendaItem, type InsertLayoutTemplate } from "@shared/schema";
 import { parseAgendaCsv } from "@shared/agenda-csv";
 import { resolveAgendaItems } from "@shared/agenda-resolver";
 import { derivePlaybackStatus } from "@shared/playback-derivation";
@@ -1474,7 +1474,9 @@ export async function registerRoutes(
     try {
       const all = await storage.getCanvasGroups();
       const allowed = getAllowedClientIds(req);
-      let filtered = allowed ? all.filter((g) => allowed.includes(g.clientId)) : all;
+      let filtered = allowed
+        ? all.filter((g) => g.clientId !== null && allowed.includes(g.clientId))
+        : all;
       const clientId = getQueryString(req, "clientId", res);
       if (clientId === null) return;
       if (clientId) {
@@ -1494,7 +1496,7 @@ export async function registerRoutes(
     try {
       const group = await storage.getCanvasGroup(getPathParam(req, "id"));
       if (!group) return res.status(404).json({ error: "Canvas group not found" });
-      if (!canAccessClient(req, group.clientId)) {
+      if (!canAccessClient(req, group.clientId ?? "")) {
         return res.status(403).json({ error: "Access denied" });
       }
       res.json(group);
@@ -1507,7 +1509,7 @@ export async function registerRoutes(
   app.post("/api/canvas-groups", requireAuth, loadUserContext, async (req, res) => {
     try {
       const data = insertCanvasGroupSchema.parse(req.body);
-      if (!canAccessClient(req, data.clientId)) {
+      if (!canAccessClient(req, data.clientId ?? "")) {
         return res.status(403).json({ error: "Access denied to requested site" });
       }
       const created = await storage.createCanvasGroup(data);
@@ -1530,7 +1532,7 @@ export async function registerRoutes(
       const id = getPathParam(req, "id");
       const existing = await storage.getCanvasGroup(id);
       if (!existing) return res.status(404).json({ error: "Canvas group not found" });
-      if (!canAccessClient(req, existing.clientId)) {
+      if (!canAccessClient(req, existing.clientId ?? "")) {
         return res.status(403).json({ error: "Access denied" });
       }
       const data = insertCanvasGroupSchema.partial().parse(req.body);
@@ -1579,7 +1581,7 @@ export async function registerRoutes(
       const id = getPathParam(req, "id");
       const existing = await storage.getCanvasGroup(id);
       if (!existing) return res.status(404).json({ error: "Canvas group not found" });
-      if (!canAccessClient(req, existing.clientId)) {
+      if (!canAccessClient(req, existing.clientId ?? "")) {
         return res.status(403).json({ error: "Access denied" });
       }
       // storage.deleteCanvasGroup returns false if any screen still
@@ -2082,6 +2084,9 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Thumbnails can only be generated for video assets" });
       }
 
+      if (!asset.clientId) {
+        return res.status(400).json({ error: "Asset is not assigned to a site" });
+      }
       const thumbnailPath = await generateVideoThumbnail(asset.originalPath, asset.clientId);
       if (!thumbnailPath) {
         return res.status(500).json({ error: "Failed to generate thumbnail" });
@@ -2282,7 +2287,7 @@ export async function registerRoutes(
         customWidth: source.customWidth,
         customHeight: source.customHeight,
         zones: source.zones,
-        profileOverrides: source.profileOverrides,
+        profileOverrides: source.profileOverrides as InsertLayoutTemplate["profileOverrides"],
       });
       logAudit(req, "copy", "layout", copy.id, { sourceId: source.id, targetClientId, name: copy.name });
       res.status(201).json(copy);
@@ -2980,7 +2985,7 @@ export async function registerRoutes(
 
   app.post("/api/schedule-blocks/migrate-to-series", requireAuth, requireAdmin, async (req, res) => {
     try {
-      const { v4: uuidv4 } = await import("uuid");
+      const uuidv4 = () => crypto.randomUUID();
       const allBlocks = await storage.getAllScheduleBlocks();
       let blocksSplit = 0;
       let blocksCreated = 0;
@@ -3540,7 +3545,10 @@ export async function registerRoutes(
       if (!data.screenId && !data.groupId) {
         return res.status(400).json({ error: "Either screenId or groupId is required" });
       }
-      const clientId = await resolvePresetClientId(data);
+      const clientId = await resolvePresetClientId({
+        screenId: data.screenId ?? null,
+        groupId: data.groupId ?? null,
+      });
       if (clientId && !canAccessClient(req, clientId)) {
         return res.status(403).json({ error: "Access denied" });
       }
@@ -4268,7 +4276,19 @@ export async function registerRoutes(
         typeof screen.canvasHeight === "number"
       ) {
         const owner = canvasMembers[0];
-        const tiles: NonNullable<typeof canvasPayload>["tiles"] = [];
+        type CanvasTileEntry = {
+          screenId: string;
+          name: string;
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+          layout: any;
+          zoneSources: any[];
+          liveOverride: any;
+          profile: any;
+        };
+        const tiles: CanvasTileEntry[] = [];
         for (const member of canvasMembers) {
           // Reuse the seed's already-resolved content when a tile id
           // matches — saves a redundant resolveScreenContent for the
@@ -4687,7 +4707,7 @@ export async function registerRoutes(
         const filtered = usersWithSites.filter(u =>
           u.role === "admin" || u.role === "account_manager"
             ? false
-            : u.sites.length > 0 && u.sites.some(s => allowed.includes(s.clientId))
+            : u.sites.length > 0 && u.sites.some((s: { clientId: string }) => allowed.includes(s.clientId))
         );
         return res.json(filtered);
       }
@@ -4934,7 +4954,7 @@ export async function registerRoutes(
     try {
       await storage.clearAuditLogs();
       await storage.createAuditLog({
-        userId: req.user!.id,
+        userId: (req as Request & { dbUser?: { id: string } }).dbUser!.id,
         action: "delete",
         entityType: "audit_log",
         entityId: null,
