@@ -143,7 +143,7 @@ const blockFormSchema = z.object({
 
 type BlockFormValues = z.infer<typeof blockFormSchema>;
 
-function BlockEditorDialog({
+export function BlockEditorDialog({
   versionId,
   versionStatus,
   programmeId,

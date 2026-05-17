@@ -271,55 +271,16 @@ test("__TEST_S214__ block with neither layout nor agendaConfigId nor fallback pl
 
 // ==================== UI mutual-exclusivity rules ====================
 //
-// There is no React testing harness wired up in this project (no
-// jsdom / @testing-library), so we lock down the BlockEditorDialog
-// rules by asserting on the JSX source. This is intentionally narrow:
-// each assertion targets a single committed line, so a refactor that
-// preserves the rule wording will still pass, and one that drops the
-// rule will fail loudly.
+// The original Task #214 file asserted on the JSX source text of
+// BlockEditorDialog. Task #223 replaces that with a real React render
+// in tests/block-editor-pickers.test.tsx; only the save-payload rule
+// is kept here as a thin smoke check because it is the contract
+// between the dialog and the resolver branch covered above.
 
 const PROGRAMMES_SRC = readFileSync(
   new URL("../client/src/pages/programmes.tsx", import.meta.url),
   "utf8",
 );
-
-test("__TEST_S214__ UI rule: picking a layout clears the agenda selection", () => {
-  // Inside the useEffect that runs on selectedLayoutId change.
-  assert.match(
-    PROGRAMMES_SRC,
-    /if \(selectedLayout && agendaConfigId\) \{\s*setAgendaConfigId\(""\);\s*\}/,
-    "expected useEffect to clear agendaConfigId when a layout becomes selected",
-  );
-});
-
-test("__TEST_S214__ UI rule: picking an agenda disables the fallback playlist picker", () => {
-  // The fallback playlist <Select> must be disabled while an agenda
-  // config is selected, and choosing an agenda must clear any
-  // already-picked fallback playlist.
-  assert.match(
-    PROGRAMMES_SRC,
-    /data-testid="select-fallback-playlist"[\s\S]{0,400}disabled=\{!!agendaConfigId\}|disabled=\{!!agendaConfigId\}[\s\S]{0,400}data-testid="select-fallback-playlist"/,
-    "fallback playlist <Select> must carry disabled={!!agendaConfigId}",
-  );
-  assert.match(
-    PROGRAMMES_SRC,
-    /setAgendaConfigId\(next\);\s*if \(next && fallbackPlaylistId\) setFallbackPlaylistId\(""\);/,
-    "picking an agenda must also clear any pre-existing fallback playlist",
-  );
-});
-
-test("__TEST_S214__ UI rule: picking a fallback playlist disables the agenda picker (reverse direction)", () => {
-  assert.match(
-    PROGRAMMES_SRC,
-    /data-testid="select-block-agenda-config"[\s\S]{0,400}disabled=\{!!fallbackPlaylistId\}|disabled=\{!!fallbackPlaylistId\}[\s\S]{0,400}data-testid="select-block-agenda-config"/,
-    "agenda <Select> must carry disabled={!!fallbackPlaylistId}",
-  );
-  assert.match(
-    PROGRAMMES_SRC,
-    /setFallbackPlaylistId\(next\);\s*if \(next && agendaConfigId\) setAgendaConfigId\(""\);/,
-    "picking a fallback playlist must also clear any pre-existing agenda",
-  );
-});
 
 test("__TEST_S214__ UI rule: agendaConfigId is only sent on save when no layout is picked", () => {
   // The save payload must null out agendaConfigId when a layout is
