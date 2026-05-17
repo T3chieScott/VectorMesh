@@ -25,7 +25,17 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        // On Replit the Playwright browser bundle isn't downloaded into
+        // ~/.cache/ms-playwright; instead the system Chromium is exposed
+        // via REPLIT_PLAYWRIGHT_CHROMIUM_EXECUTABLE. Honour it so the
+        // tests run both locally (where Playwright manages its own
+        // browsers) and inside Replit (where it doesn't).
+        launchOptions: process.env.REPLIT_PLAYWRIGHT_CHROMIUM_EXECUTABLE
+          ? { executablePath: process.env.REPLIT_PLAYWRIGHT_CHROMIUM_EXECUTABLE }
+          : {},
+      },
     },
   ],
 });
