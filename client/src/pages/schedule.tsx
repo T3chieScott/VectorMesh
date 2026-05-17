@@ -336,7 +336,11 @@ function getBlockIssues(
     issues.push({ kind: "missing-layout", message: "The layout this block uses no longer exists." });
   }
 
-  const hasContent = !!block.layoutTemplateId || summary.zoneMappings.length > 0 || !!summary.fallbackPlaylistName;
+  const hasContent =
+    !!block.layoutTemplateId ||
+    !!block.agendaConfigId ||
+    summary.zoneMappings.length > 0 ||
+    !!summary.fallbackPlaylistName;
   if (!hasContent) {
     issues.push({ kind: "no-content", message: "No layout or playlist set on this block — nothing will play." });
   }

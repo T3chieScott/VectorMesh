@@ -757,6 +757,7 @@ function BlockEditorDialog({
 function ScheduleBlockRow({
   block,
   layout,
+  agendaConfig,
   screens,
   screenGroups,
   onEdit,
@@ -769,6 +770,7 @@ function ScheduleBlockRow({
 }: {
   block: ScheduleBlock;
   layout?: LayoutTemplate;
+  agendaConfig?: AgendaWidgetConfig;
   screens: Screen[];
   screenGroups: ScreenGroup[];
   onEdit: () => void;
@@ -823,6 +825,9 @@ function ScheduleBlockRow({
               </span>
               <span>• P{block.priority}</span>
               {layout && <span>• {layout.name}</span>}
+              {!layout && agendaConfig && (
+                <span data-testid={`text-block-agenda-${block.id}`}>• Agenda: {agendaConfig.name}</span>
+              )}
             </div>
           </div>
         </div>
@@ -906,6 +911,15 @@ function ScheduleBlocksSection({
 
   const layoutMap = new Map(layouts.map((l) => [l.id, l]));
 
+  // Task #213 — surface the agenda name on rows for blocks that
+  // target an agenda config directly (no layout).
+  const agendaConfigsQuery = useSiteFilteredQuery<AgendaWidgetConfig[]>("/api/agenda/configs");
+  const { data: agendaConfigs = [] } = useQuery<AgendaWidgetConfig[]>({
+    ...agendaConfigsQuery,
+    enabled: blocksOpen,
+  });
+  const agendaConfigMap = new Map(agendaConfigs.map((c) => [c.id, c]));
+
   const handleAddBlock = () => {
     setEditingBlock(undefined);
     setBlockDialogOpen(true);
@@ -962,6 +976,7 @@ function ScheduleBlocksSection({
                       key={block.id}
                       block={block}
                       layout={block.layoutTemplateId ? layoutMap.get(block.layoutTemplateId) : undefined}
+                      agendaConfig={block.agendaConfigId ? agendaConfigMap.get(block.agendaConfigId) : undefined}
                       screens={screens}
                       screenGroups={screenGroups}
                       onEdit={() => handleEditBlock(block)}
