@@ -118,6 +118,15 @@ test("scale/gap at 1920×1080 normal exactly match the legacy pixel values", () 
   assert.equal(resolveAgendaGapPx("normal", 1920, 1080), 12);
 });
 
+test("scale/gap at 1080×1920 portrait normal also match the legacy pixel values", () => {
+  // Architect-requested parity check: a portrait 1080×1920 screen has
+  // min(1080,1920) === 1080, so the same calibration must hold — an
+  // operator rotating a landscape screen to portrait should not see
+  // their typography jump. Same min-dim, same px.
+  assert.equal(resolveAgendaFontPx("normal", 1080, 1920), 18);
+  assert.equal(resolveAgendaGapPx("normal", 1080, 1920), 12);
+});
+
 test("scale/gap respond to container size (smaller zones → smaller text)", () => {
   // Half-size zone (e.g. 960×540 inside a 1080p layout) → half the
   // resolved font/gap.

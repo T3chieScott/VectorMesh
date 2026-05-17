@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { pickAgendaLayout } from "@shared/agenda-resolver";
+import { AgendaConfigZoneWidget } from "@/components/agenda/AgendaConfigZoneWidget";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -806,13 +808,59 @@ const AGENDA_LAYOUT_MODE_LABELS: Record<string, string> = {
   room_door: "Room door",
 };
 
-function AgendaConfigPickerSection({ form }: { form: any }) {
+function AgendaConfigPickerSection({
+  form,
+  layout,
+}: {
+  form: any;
+  layout?: LayoutTemplate;
+}) {
   const agendaConfigsQuery = useSiteFilteredQuery<AgendaWidgetConfig[]>("/api/agenda/configs");
   const { data: configs, isLoading } = useQuery<AgendaWidgetConfig[]>({
     ...agendaConfigsQuery,
   });
   const selectedId = form.watch("agendaConfigId") as string | undefined;
   const selected = (configs || []).find((c) => c.id === selectedId);
+
+  // Compute the zone's effective pixel dimensions inside the current
+  // layout. zone width/height are stored as percentages of the
+  // layout's pixel canvas, so we multiply through to get a real
+  // aspect ratio the agenda resolver can reason about.
+  const zoneWidthPct = Number(form.watch("width")) || 0;
+  const zoneHeightPct = Number(form.watch("height")) || 0;
+  const layoutPx = layout
+    ? getLayoutPixelDimensions(layout)
+    : { width: 1920, height: 1080 };
+  const zoneWidthPx = Math.max(1, Math.round((zoneWidthPct / 100) * layoutPx.width));
+  const zoneHeightPx = Math.max(1, Math.round((zoneHeightPct / 100) * layoutPx.height));
+  const zoneRatio = zoneWidthPx / zoneHeightPx;
+
+  // Resolved auto-pick variant given THIS zone — surfaced to operators
+  // when the chosen agenda design is layoutMode='auto'.
+  const resolvedVariant = selected
+    ? pickAgendaLayout(
+        selected.layoutMode,
+        zoneWidthPx,
+        zoneHeightPx,
+        selected.displayMode,
+      )
+    : null;
+  const isAuto = selected?.layoutMode === "auto";
+
+  // Live-preview thumbnail. Sized to the zone's aspect ratio so the
+  // operator sees roughly what will render. Capped at 320×320 so the
+  // dialog doesn't grow unbounded for huge zones.
+  const previewMaxW = 320;
+  const previewMaxH = 200;
+  let previewW = previewMaxW;
+  let previewH = Math.round(previewMaxW / Math.max(0.0001, zoneRatio));
+  if (previewH > previewMaxH) {
+    previewH = previewMaxH;
+    previewW = Math.round(previewMaxH * zoneRatio);
+  }
+  previewW = Math.max(80, Math.min(previewMaxW, previewW));
+  previewH = Math.max(60, Math.min(previewMaxH, previewH));
+
   return (
     <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
       <div className="flex items-center gap-2 text-sm font-medium">
@@ -862,8 +910,79 @@ function AgendaConfigPickerSection({ form }: { form: any }) {
                 <Badge variant="outline" data-testid="badge-agenda-theme">
                   {selected.theme === "light" ? "Light" : "Dark"}
                 </Badge>
+                {isAuto && resolvedVariant && (
+                  <Badge
+                    variant="default"
+                    data-testid="badge-agenda-auto-resolved"
+                    title={`Auto-picked for ${zoneWidthPx}×${zoneHeightPx}px (ratio ${zoneRatio.toFixed(2)})`}
+                  >
+                    Auto → {AGENDA_LAYOUT_MODE_LABELS[resolvedVariant] ?? resolvedVariant}
+                  </Badge>
+                )}
               </div>
             )}
+
+            {/* Auto-layout breakpoint disclosure — only shown when the
+                selected design is layoutMode='auto', since that is the
+                only case where the variant depends on this zone's
+                dimensions. Surfaces the resolver's thresholds so the
+                operator can see WHY a particular variant was picked
+                and what would tip it into another. */}
+            {selected && isAuto && (
+              <div
+                className="mt-2 rounded-md border bg-background/60 p-3 text-xs space-y-1"
+                data-testid="agenda-auto-breakpoints"
+              >
+                <div className="font-medium text-foreground">
+                  Auto-layout breakpoints for this zone
+                </div>
+                <div className="text-muted-foreground">
+                  Zone aspect ratio: <span className="font-mono">{zoneRatio.toFixed(2)}</span>
+                  {" "}({zoneWidthPx}×{zoneHeightPx}px in a {layoutPx.width}×{layoutPx.height}px canvas)
+                </div>
+                <ul className="list-disc pl-4 text-muted-foreground space-y-0.5">
+                  {selected.displayMode === "room_focus" ? (
+                    <li>Display mode "Room focus" always renders the <b>Room door</b> variant.</li>
+                  ) : selected.displayMode === "now_next" ? (
+                    <>
+                      <li>Ratio &lt; 0.80 → <b>Totem</b></li>
+                      <li>Ratio ≥ 0.80 → <b>Landscape</b></li>
+                    </>
+                  ) : (
+                    <>
+                      <li>Ratio ≥ 3.00 → <b>Ultrawide</b></li>
+                      <li>Ratio ≥ 1.40 → <b>Landscape</b></li>
+                      <li>Ratio ≤ 0.70 → <b>Portrait</b></li>
+                      <li>Otherwise → <b>Landscape</b></li>
+                    </>
+                  )}
+                </ul>
+                {resolvedVariant && (
+                  <div data-testid="text-agenda-auto-resolved-variant">
+                    This zone will render as:{" "}
+                    <b>{AGENDA_LAYOUT_MODE_LABELS[resolvedVariant] ?? resolvedVariant}</b>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Live preview — embeds the SAME AgendaConfigZoneWidget the
+                live zone uses, so what you see here is what renders on
+                the player (including the new container-relative font
+                scaling). Sized to the zone's actual aspect ratio. */}
+            {selected && (
+              <div className="mt-3 space-y-1">
+                <div className="text-xs text-muted-foreground">Preview</div>
+                <div
+                  className="rounded-md border overflow-hidden bg-slate-950"
+                  style={{ width: previewW, height: previewH }}
+                  data-testid={`agenda-config-preview-${selected.id}`}
+                >
+                  <AgendaConfigZoneWidget configId={selected.id} />
+                </div>
+              </div>
+            )}
+
             <p className="text-xs text-muted-foreground">
               The selected agenda renders inside this zone exactly as it does at{" "}
               <code>/display/agenda/&lt;id&gt;</code>. Fonts and spacing scale to the zone size.
@@ -7389,7 +7508,7 @@ function ZoneEditorDialog({
             )}
 
             {form.watch("type") === "agenda" && (
-              <AgendaConfigPickerSection form={form} />
+              <AgendaConfigPickerSection form={form} layout={layout} />
             )}
 
             {form.watch("type") === "webrtc_stream" && (
