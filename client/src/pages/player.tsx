@@ -801,8 +801,26 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
 
   const layout = isLayoutRotation ? (activeRotationLayout || content?.layout || null) : (content?.layout || null);
   const isFallbackPlaylist = !layout && content?.zoneSources?.some(zs => zs.zoneId === "__fallback__" && zs.type === "playlist");
+  // Task #209 — programme block targets an agenda widget config
+  // directly (no layout). The content resolver emits a synthetic
+  // `{zoneId:"__fallback__", type:"agenda", agendaConfigId}` source
+  // and the player wraps it in a fullscreen agenda zone.
+  const isFallbackAgenda = !layout && !isFallbackPlaylist && content?.zoneSources?.some(zs => zs.zoneId === "__fallback__" && zs.type === "agenda" && zs.agendaConfigId);
   const rawZones: LayoutZone[] = useMemo(() => {
     if (layout) return (layout.zones as LayoutZone[]) || [];
+    if (isFallbackAgenda) {
+      const source = content!.zoneSources!.find(zs => zs.zoneId === "__fallback__" && zs.type === "agenda");
+      if (source?.agendaConfigId) {
+        return [{
+          id: "__fallback__",
+          name: "Agenda",
+          type: "agenda",
+          x: 0, y: 0, width: 100, height: 100,
+          zIndex: 1,
+          agendaConfigId: source.agendaConfigId,
+        }] as LayoutZone[];
+      }
+    }
     if (isFallbackPlaylist) {
       const source = content!.zoneSources!.find(zs => zs.zoneId === "__fallback__");
       if (source?.playlistId) {
@@ -827,7 +845,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       }
     }
     return [];
-  }, [layout, isFallbackPlaylist, content?.zoneSources, content?.playlistItems]);
+  }, [layout, isFallbackPlaylist, isFallbackAgenda, content?.zoneSources, content?.playlistItems]);
 
   useEffect(() => {
     if (!isLayoutRotation || layoutRotationItems.length <= 1) return;
@@ -1414,7 +1432,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     );
   }
 
-  if (!layout && !isFallbackPlaylist) {
+  if (!layout && !isFallbackPlaylist && !isFallbackAgenda) {
     const hideMessage = !!content.screen?.hideNoContentMessage;
     const liveBannerOverlay = content.liveOverride && content.screen?.showLiveBanner ? (
       <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white px-3 py-1 flex items-center justify-center gap-2 text-sm font-medium">

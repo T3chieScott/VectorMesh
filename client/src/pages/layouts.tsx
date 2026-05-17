@@ -132,7 +132,7 @@ import {
   MonitorPlay,
   Wifi,
 } from "lucide-react";
-import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client } from "@shared/schema";
+import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client, AgendaWidgetConfig } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { ZoneRenderer } from "@/components/zone-renderer";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -503,11 +503,12 @@ const zoneTypeLabels: Record<string, string> = {
   aircraft_radar: "Aircraft Overhead Radar",
   youtube_live: "YouTube Live",
   webrtc_stream: "WebRTC Stream (ultra-low latency)",
+  agenda: "Agenda Display",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar", "youtube_live", "webrtc_stream"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar", "youtube_live", "webrtc_stream", "agenda"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(0.01).max(100),
@@ -748,6 +749,7 @@ const zoneFormSchema = z.object({
   scheduleStartHour: z.number().min(0).max(23).optional(),
   scheduleEndHour: z.number().min(1).max(24).optional(),
   scheduleHeaderText: z.string().optional(),
+  agendaConfigId: z.string().optional(),
 }).refine((data) => {
   // Require lat/lng for weather zones
   if (data.type === "weather") {
@@ -781,6 +783,52 @@ const zoneFormSchema = z.object({
 type ZoneFormValues = z.infer<typeof zoneFormSchema>;
 
 // Component for picking multiple media items for montage
+// Picker UI shown inside the zone editor when the operator picks
+// the "Agenda Display" zone type. Lists agenda widget configs for
+// the active site (or all sites for admins) and binds the chosen id
+// to the zone's `agendaConfigId` field.
+function AgendaConfigPickerSection({ form }: { form: any }) {
+  const agendaConfigsQuery = useSiteFilteredQuery<AgendaWidgetConfig[]>("/api/agenda/configs");
+  const { data: configs, isLoading } = useQuery<AgendaWidgetConfig[]>({
+    ...agendaConfigsQuery,
+  });
+  return (
+    <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <Calendar className="h-4 w-4" />
+        Agenda Display Settings
+      </div>
+      <FormField
+        control={form.control}
+        name="agendaConfigId"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Agenda Config</FormLabel>
+            <Select onValueChange={field.onChange} value={field.value || ""}>
+              <FormControl>
+                <SelectTrigger data-testid="select-agenda-config">
+                  <SelectValue placeholder={isLoading ? "Loading…" : "Select an agenda"} />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent>
+                {(configs || []).map((cfg) => (
+                  <SelectItem key={cfg.id} value={cfg.id}>
+                    {cfg.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              The selected agenda is rendered inside this zone the same way it appears at <code>/display/agenda/&lt;id&gt;</code>.
+            </p>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+    </div>
+  );
+}
+
 function MontageMediaPicker({
   selectedIds,
   onSelectionChange,
@@ -1581,6 +1629,7 @@ function ZoneEditorDialog({
       scheduleStartHour: 8,
       scheduleEndHour: 18,
       scheduleHeaderText: "",
+      agendaConfigId: "",
     },
   });
 
@@ -1809,6 +1858,7 @@ function ZoneEditorDialog({
           scheduleStartHour: zone.scheduleStartHour ?? 8,
           scheduleEndHour: zone.scheduleEndHour ?? 18,
           scheduleHeaderText: zone.scheduleHeaderText || "",
+          agendaConfigId: zone.agendaConfigId || "",
         });
       } else {
         form.reset({
@@ -2028,6 +2078,7 @@ function ZoneEditorDialog({
           scheduleStartHour: 8,
           scheduleEndHour: 18,
           scheduleHeaderText: "",
+          agendaConfigId: "",
         });
       }
     }
@@ -7286,6 +7337,10 @@ function ZoneEditorDialog({
                   )}
                 />
               </div>
+            )}
+
+            {form.watch("type") === "agenda" && (
+              <AgendaConfigPickerSection form={form} />
             )}
 
             {form.watch("type") === "webrtc_stream" && (

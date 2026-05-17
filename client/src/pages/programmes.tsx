@@ -99,7 +99,7 @@ import {
   Monitor,
   AlertTriangle,
 } from "lucide-react";
-import type { Programme, Event, ProgrammeVersion, ScheduleBlock, LayoutTemplate, Playlist, Screen, ScreenGroup, TimeRule, ScheduleTarget, ZoneSource } from "@shared/schema";
+import type { Programme, Event, ProgrammeVersion, ScheduleBlock, LayoutTemplate, Playlist, Screen, ScreenGroup, TimeRule, ScheduleTarget, ZoneSource, AgendaWidgetConfig } from "@shared/schema";
 import { ProgrammeBlocksContextMenu } from "@/components/programme-blocks-context-menu";
 
 const programmeFormSchema = z.object({
@@ -214,6 +214,15 @@ function BlockEditorDialog({
 
   const [zoneMappings, setZoneMappings] = useState<Record<string, string>>({});
   const [fallbackPlaylistId, setFallbackPlaylistId] = useState<string>("");
+  // Task #209 — block can target an agenda widget config directly
+  // (mutually exclusive with a layout / fallback playlist). The
+  // resolver synthesises a fullscreen agenda zone source when this
+  // is set and no layout is chosen.
+  const [agendaConfigId, setAgendaConfigId] = useState<string>("");
+  const agendaConfigsQuery = useSiteFilteredQuery<AgendaWidgetConfig[]>("/api/agenda/configs");
+  const { data: agendaConfigs = [] } = useQuery<AgendaWidgetConfig[]>({
+    ...agendaConfigsQuery,
+  });
 
   useEffect(() => {
     if (open) {
@@ -226,6 +235,7 @@ function BlockEditorDialog({
       setZoneMappings(mappings);
       const fbSource = (block?.zoneSources as ZoneSource[] | undefined)?.find(zs => zs.zoneId === "__fallback__");
       setFallbackPlaylistId(fbSource?.playlistId || "");
+      setAgendaConfigId(((block as { agendaConfigId?: string | null } | undefined)?.agendaConfigId) || "");
     }
   }, [open, block]);
 
@@ -245,6 +255,9 @@ function BlockEditorDialog({
     });
     if (selectedLayout && fallbackPlaylistId) {
       setFallbackPlaylistId("");
+    }
+    if (selectedLayout && agendaConfigId) {
+      setAgendaConfigId("");
     }
   }, [selectedLayoutId]);
 
@@ -287,6 +300,9 @@ function BlockEditorDialog({
         name: data.name,
         priority: data.priority,
         layoutTemplateId: data.layoutTemplateId === "none" || !data.layoutTemplateId ? null : data.layoutTemplateId,
+        agendaConfigId: !data.layoutTemplateId || data.layoutTemplateId === "none"
+          ? (agendaConfigId || null)
+          : null,
         timeRules,
         targets,
         zoneSources,
@@ -610,7 +626,12 @@ function BlockEditorDialog({
                 <p className="text-xs text-muted-foreground">Without a layout, select a playlist to play fullscreen on target screens.</p>
                 <Select
                   value={fallbackPlaylistId || "none"}
-                  onValueChange={(v) => setFallbackPlaylistId(v === "none" ? "" : v)}
+                  onValueChange={(v) => {
+                    const next = v === "none" ? "" : v;
+                    setFallbackPlaylistId(next);
+                    if (next && agendaConfigId) setAgendaConfigId("");
+                  }}
+                  disabled={!!agendaConfigId}
                 >
                   <SelectTrigger data-testid="select-fallback-playlist">
                     <SelectValue placeholder="Select a playlist" />
@@ -620,6 +641,39 @@ function BlockEditorDialog({
                     {playlists.map((pl) => (
                       <SelectItem key={pl.id} value={pl.id}>
                         {pl.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {!selectedLayout && (
+              <div className="p-3 rounded-lg border bg-muted/30 space-y-3">
+                <div className="flex items-center gap-2 text-sm">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <span className="font-medium">Agenda Display</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Or, target a saved agenda widget config directly. The player renders it fullscreen — no layout needed.
+                </p>
+                <Select
+                  value={agendaConfigId || "none"}
+                  onValueChange={(v) => {
+                    const next = v === "none" ? "" : v;
+                    setAgendaConfigId(next);
+                    if (next && fallbackPlaylistId) setFallbackPlaylistId("");
+                  }}
+                  disabled={!!fallbackPlaylistId}
+                >
+                  <SelectTrigger data-testid="select-block-agenda-config">
+                    <SelectValue placeholder="Select an agenda" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No agenda</SelectItem>
+                    {agendaConfigs.map((cfg) => (
+                      <SelectItem key={cfg.id} value={cfg.id}>
+                        {cfg.name}
                       </SelectItem>
                     ))}
                   </SelectContent>

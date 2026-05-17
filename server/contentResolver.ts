@@ -540,6 +540,36 @@ export async function resolveScreenContent(
         continue;
       }
 
+      // Task #209 — block targets an agenda widget config directly.
+      // Synthesise a fullscreen "__fallback__" agenda zone source so
+      // the player renders <AgendaDisplayWidget> inline without the
+      // operator having to build a one-zone layout for it.
+      const blockAgendaConfigId = (block as { agendaConfigId?: string | null })
+        .agendaConfigId;
+      if (blockAgendaConfigId) {
+        activeZoneSources = [
+          {
+            zoneId: "__fallback__",
+            type: "agenda",
+            agendaConfigId: blockAgendaConfigId,
+          },
+        ];
+        outcomeSource = "block";
+        outcomeBlock = { id: block.id, name: block.name };
+        chosen = true;
+        trace.push({
+          kind: "block-evaluated",
+          blockId: block.id,
+          blockName: block.name,
+          priority: block.priority ?? 0,
+          layoutTemplateId: null,
+          layoutName: null,
+          decision: "matched-block-fallback-agenda",
+          detail: `Matched. Block has no layout but targets agenda config ${blockAgendaConfigId} directly.`,
+        });
+        continue;
+      }
+
       trace.push({
         kind: "block-evaluated",
         blockId: block.id,

@@ -45,6 +45,7 @@ import {
   Wifi,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
+import { AgendaConfigZoneWidget } from "./agenda/AgendaConfigZoneWidget";
 // `useSyncedSecondTick` was removed from this file when ClockWidget
 // moved to ./widgets/clock-widget.tsx. CountdownWidget still uses
 // `usePlayerClock` directly here.
@@ -5796,6 +5797,10 @@ export function ZoneRenderer({
             url={zone.youtubeUrl}
             mute={zone.youtubeMute}
           />
+        );
+      case "agenda":
+        return (
+          <AgendaConfigZoneWidget configId={zone.agendaConfigId || ""} />
         );
       case "webrtc_stream": {
         const webrtcFullUrl = zone.webrtcSignallingUrl && zone.webrtcStreamKey

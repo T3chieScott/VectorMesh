@@ -13,7 +13,7 @@ export const screenTypeEnum = pgEnum("screen_type", ["standard", "led_wall"]);
 export const orientationEnum = pgEnum("orientation", ["landscape", "portrait"]);
 export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "gif"]);
 export const programmeStatusEnum = pgEnum("programme_status", ["draft", "published"]);
-export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar", "youtube_live", "webrtc_stream"]);
+export const zoneTypeEnum = pgEnum("zone_type", ["media", "ticker", "clock", "logo", "html", "weather", "news", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar", "youtube_live", "webrtc_stream", "agenda"]);
 export const scaleModeEnum = pgEnum("scale_mode", ["contain", "cover"]);
 
 // ============ CLIENTS ============
@@ -393,7 +393,7 @@ export type LayoutTemplate = typeof layoutTemplates.$inferSelect;
 export interface LayoutZone {
   id: string;
   name: string;
-  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown" | "shape" | "schedule" | "media_player" | "football_table" | "premier_league_fixtures" | "heathrow_arrivals" | "heathrow_departures" | "weather_forecast" | "spacex_launch" | "earthquakes" | "aircraft_radar" | "youtube_live" | "webrtc_stream";
+  type: "media" | "ticker" | "clock" | "logo" | "html" | "weather" | "news" | "text" | "shader" | "montage" | "qrcode" | "countdown" | "shape" | "schedule" | "media_player" | "football_table" | "premier_league_fixtures" | "heathrow_arrivals" | "heathrow_departures" | "weather_forecast" | "spacex_launch" | "earthquakes" | "aircraft_radar" | "youtube_live" | "webrtc_stream" | "agenda";
   x: number;
   y: number;
   width: number;
@@ -648,6 +648,10 @@ export interface LayoutZone {
   scheduleHeaderText?: string;
   // Heathrow flights widget configuration
   heathrowPageInterval?: number; // seconds between page rotations (default 10)
+  // Agenda widget configuration — references an agenda_widget_configs row
+  // and renders the same AgendaDisplayWidget that powers the public
+  // /display/agenda/:configId page, but inline inside a layout zone.
+  agendaConfigId?: string;
 }
 
 // ============ PROGRAMMES ============
@@ -699,6 +703,13 @@ export const scheduleBlocks = pgTable("schedule_blocks", {
   name: text("name").notNull(),
   priority: integer("priority").default(0),
   layoutTemplateId: varchar("layout_template_id").references(() => layoutTemplates.id, { onDelete: "set null" }),
+  // Task #209 — programme blocks can target a saved agenda widget
+  // config directly instead of (or alongside) a layout. When set
+  // and `layoutTemplateId` is null, the player content resolver
+  // returns a synthetic fullscreen agenda zone source so the player
+  // renders the AgendaDisplayWidget without the operator having to
+  // build a one-zone layout or paste the public /display/agenda URL.
+  agendaConfigId: varchar("agenda_config_id").references(() => agendaWidgetConfigs.id, { onDelete: "set null" }),
   targets: jsonb("targets").$type<ScheduleTarget[]>(),
   timeRules: jsonb("time_rules").$type<TimeRule[]>(),
   zoneSources: jsonb("zone_sources").$type<ZoneSource[]>(),
@@ -731,12 +742,17 @@ export interface TimeRule {
 
 export interface ZoneSource {
   zoneId: string;
-  type: "playlist" | "widget";
+  type: "playlist" | "widget" | "agenda";
   playlistId?: string;
   mediaAssetIds?: string[];
   widgetType?: "weather" | "clock" | "date" | "html";
   widgetConfig?: Record<string, unknown>;
   rotationInterval?: number;
+  // Task #209 — when type === "agenda" this references an
+  // agenda_widget_configs row. The player renders an inline
+  // AgendaDisplayWidget for any zone (or the synthetic
+  // "__fallback__" zone) carrying this source.
+  agendaConfigId?: string;
 }
 
 // ============ PLAYLISTS ============
@@ -1183,7 +1199,7 @@ export interface PlayerContentResponse {
   playlists: Playlist[];
   playlistItems: Record<string, PlaylistItem[]>;
   layoutTemplates?: Record<string, LayoutTemplate>;
-  zoneSources?: Array<{ zoneId: string; type: string; playlistId?: string }>;
+  zoneSources?: Array<{ zoneId: string; type: string; playlistId?: string; agendaConfigId?: string }>;
   liveOverride: LiveOverride | null;
   event: Event | null;
   client?: Client | null;
