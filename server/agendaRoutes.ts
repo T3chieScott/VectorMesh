@@ -487,11 +487,14 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         showCurrentTime: config.showCurrentTime,
         showEventName: config.showEventName,
         // Task #231 — typography & role-colour overrides (all nullable).
-        fontFamily: config.fontFamily,
-        titleColor: config.titleColor,
-        bodyColor: config.bodyColor,
-        timeColor: config.timeColor,
-        statusColor: config.statusColor,
+        // Coerce undefined → null so the keys are always present in the
+        // public payload, matching PUBLIC_AGENDA_CONFIG_FIELDS exactly
+        // (JSON.stringify silently drops undefined-valued keys).
+        fontFamily: config.fontFamily ?? null,
+        titleColor: config.titleColor ?? null,
+        bodyColor: config.bodyColor ?? null,
+        timeColor: config.timeColor ?? null,
+        statusColor: config.statusColor ?? null,
       };
       const publicItems = items.map((it) => ({
         id: it.id,
