@@ -9,6 +9,7 @@ import {
   PUBLIC_AGENDA_ITEM_FIELDS,
   type AgendaRoutesStorage,
 } from "../server/agendaRoutes";
+import { AGENDA_CSV_HEADER } from "../shared/agenda-csv";
 import type {
   AgendaItem,
   AgendaWidgetConfig,
@@ -468,6 +469,160 @@ test("GET /api/agenda/display/:configId — public payload never leaks internal 
 
     // Client block: just name + timezone (no id, no contact info).
     assert.deepEqual(Object.keys(body.client ?? {}).sort(), ["name", "timezone"]);
+  } finally {
+    await srv.close();
+  }
+});
+
+// ============ Task #215 — POST /api/agenda/import tenant scoping ============
+//
+// Task #211 covered the agenda GET/POST/PATCH/DELETE routes and the
+// public display endpoint, but the bulk CSV import endpoint was not
+// exercised. A regression where a site-A user could import (or worse,
+// replace) site-B items would be silent until someone noticed missing
+// data, so we lock the boundary in with HTTP-level tests against the
+// extracted router + a stub storage.
+
+test("POST /api/agenda/import — site A user cannot import into site B (403)", async () => {
+  const existingB = makeItem({
+    id: "iB-existing",
+    clientId: "siteB",
+    startsAt: new Date("2026-06-01T09:00:00Z"),
+    endsAt: new Date("2026-06-01T10:00:00Z"),
+    title: "Site B keynote",
+  });
+  const storage = makeFakeStorage({ items: [existingB] });
+  const srv = await startTestServer({
+    storage,
+    user: { role: "site_user", allowedClientIds: ["siteA"] },
+  });
+  try {
+    const csv = [
+      AGENDA_CSV_HEADER,
+      `Injected,,Main Hall,,,2026-06-01T11:00:00Z,2026-06-01T12:00:00Z,scheduled,`,
+    ].join("\n");
+    const res = await fetch(`${srv.base}/api/agenda/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteB", csv, replace: true }),
+    });
+    assert.equal(res.status, 403);
+    // Site B's existing row must still be present — neither the replace
+    // path nor the insert path may have run.
+    assert.equal(storage.items.length, 1);
+    assert.equal(storage.items[0].id, "iB-existing");
+    assert.equal(storage.items[0].clientId, "siteB");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("POST /api/agenda/import — replace=true only wipes the target site, never other sites", async () => {
+  const start = new Date("2026-06-01T09:00:00Z");
+  const end = new Date("2026-06-01T10:00:00Z");
+  const oldA = makeItem({ id: "iA-old", clientId: "siteA", startsAt: start, endsAt: end, title: "Old A" });
+  const keepB1 = makeItem({ id: "iB-1", clientId: "siteB", startsAt: start, endsAt: end, title: "B one" });
+  const keepB2 = makeItem({ id: "iB-2", clientId: "siteB", startsAt: start, endsAt: end, title: "B two" });
+  const storage = makeFakeStorage({ items: [oldA, keepB1, keepB2] });
+  // Admin user — verifies that even an unconstrained import targeting
+  // siteA leaves siteB rows untouched (i.e. the wipe is scoped by
+  // clientId, not global).
+  const srv = await startTestServer({
+    storage,
+    user: { role: "admin", allowedClientIds: null },
+  });
+  try {
+    const csv = [
+      AGENDA_CSV_HEADER,
+      `New A,,Hall A,,,2026-06-02T09:00:00Z,2026-06-02T10:00:00Z,scheduled,`,
+      `New A 2,,Hall A,,,2026-06-02T10:30:00Z,2026-06-02T11:30:00Z,scheduled,`,
+    ].join("\n");
+    const res = await fetch(`${srv.base}/api/agenda/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteA", csv, replace: true }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { inserted: number };
+    assert.equal(body.inserted, 2);
+
+    // Site A: old row gone, two new rows present.
+    const aRows = storage.items.filter((i) => i.clientId === "siteA");
+    assert.equal(aRows.length, 2);
+    assert.deepEqual(aRows.map((r) => r.title).sort(), ["New A", "New A 2"]);
+    assert.equal(aRows.find((r) => r.id === "iA-old"), undefined);
+
+    // Site B: both original rows untouched.
+    const bRows = storage.items.filter((i) => i.clientId === "siteB");
+    assert.equal(bRows.length, 2);
+    assert.deepEqual(bRows.map((r) => r.id).sort(), ["iB-1", "iB-2"]);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("POST /api/agenda/import — malformed CSV returns 400 with per-row errors and inserts no rows", async () => {
+  const storage = makeFakeStorage({});
+  const srv = await startTestServer({
+    storage,
+    user: { role: "site_user", allowedClientIds: ["siteA"] },
+  });
+  try {
+    const csv = [
+      AGENDA_CSV_HEADER,
+      // Row 1: valid.
+      `Good,,Main Hall,,,2026-06-01T09:00:00Z,2026-06-01T10:00:00Z,scheduled,`,
+      // Row 2: missing title — parser flags this as an error.
+      `,,Main Hall,,,2026-06-01T10:30:00Z,2026-06-01T11:30:00Z,scheduled,`,
+    ].join("\n");
+    const res = await fetch(`${srv.base}/api/agenda/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteA", csv, replace: false }),
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as {
+      error: string;
+      results: Array<{ status: "ok" | "error" }>;
+    };
+    assert.equal(body.error, "csv_parse_error");
+    assert.ok(Array.isArray(body.results), "per-row results must be returned");
+    assert.ok(
+      body.results.some((r) => r.status === "error"),
+      "at least one row must be reported as error",
+    );
+    // Transactional: nothing was inserted — not even the valid row.
+    assert.equal(storage.items.length, 0, "no rows must be inserted when any row fails to parse");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("POST /api/agenda/import — malformed CSV with replace=true does NOT delete existing rows", async () => {
+  // The transactional guarantee must extend to the destructive replace
+  // path: if parsing fails, the existing rows for the target site stay.
+  const start = new Date("2026-06-01T09:00:00Z");
+  const end = new Date("2026-06-01T10:00:00Z");
+  const existingA = makeItem({ id: "iA-keep", clientId: "siteA", startsAt: start, endsAt: end, title: "Keep me" });
+  const storage = makeFakeStorage({ items: [existingA] });
+  const srv = await startTestServer({
+    storage,
+    user: { role: "site_user", allowedClientIds: ["siteA"] },
+  });
+  try {
+    const csv = [
+      AGENDA_CSV_HEADER,
+      // Missing title — parser reports an error before any insert/delete.
+      `,,Main Hall,,,2026-06-01T10:30:00Z,2026-06-01T11:30:00Z,scheduled,`,
+    ].join("\n");
+    const res = await fetch(`${srv.base}/api/agenda/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteA", csv, replace: true }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(storage.items.length, 1, "existing row must survive a failed replace-import");
+    assert.equal(storage.items[0].id, "iA-keep");
   } finally {
     await srv.close();
   }
