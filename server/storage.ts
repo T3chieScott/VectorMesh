@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { log } from "./index";
 import { eq, and, asc, desc, gte, lte, lt, inArray, isNotNull, sql, count } from "drizzle-orm";
 import {
   clients,
@@ -1453,7 +1454,7 @@ export class DatabaseStorage implements IStorage {
           throw err;
         }
         // Lost the probe-vs-write race; mint a fresh code and retry.
-        console.log(
+        log(
           `[canvas-pairing] ${label}: pairing-code collision on attempt ${attempt}, retrying`,
         );
       }
@@ -1692,7 +1693,7 @@ export class DatabaseStorage implements IStorage {
           // unlikely (~2.1B codespace) and bubble up to roll back the
           // whole transaction so the wall stays consistent.
           if (!isPairingCodeUniqueViolation(err)) throw err;
-          console.log(
+          log(
             `[canvas-pairing] rotateScreensPairingIdentities: pairing-code collision on ${screenId}, retrying`,
           );
           const retryCode = await this.generateUniquePairingCode();

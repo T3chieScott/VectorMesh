@@ -13,7 +13,7 @@ interface ObjectUploaderProps {
   maxFileSize?: number;
   clientId: string;
   onComplete?: (
-    result: UploadResult<Record<string, unknown>, Record<string, unknown>>
+    result: UploadResult<{ clientId: string }, Record<string, never>>
   ) => void;
   onError?: (error: Error) => void;
   buttonClassName?: string;
@@ -61,8 +61,8 @@ export function ObjectUploader({
         withCredentials: true,
         timeout: 300000,
       })
-      .on("complete", (result: UploadResult<{ clientId: string }, Record<string, never>>) => {
-        onCompleteRef.current?.(result as unknown as UploadResult<Record<string, unknown>, Record<string, unknown>>);
+      .on("complete", (result) => {
+        onCompleteRef.current?.(result);
       })
       .on("error", (error) => {
         onErrorRef.current?.(error);
