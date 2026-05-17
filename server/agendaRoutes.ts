@@ -98,6 +98,13 @@ export const PUBLIC_AGENDA_CONFIG_FIELDS = [
   "showStatus",
   "showCurrentTime",
   "showEventName",
+  // Task #231 — optional typography & role-colour overrides. All
+  // nullable; widget renders identically when they are null.
+  "fontFamily",
+  "titleColor",
+  "bodyColor",
+  "timeColor",
+  "statusColor",
 ] as const;
 
 export const PUBLIC_AGENDA_ITEM_FIELDS = [
@@ -479,6 +486,12 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         showStatus: config.showStatus,
         showCurrentTime: config.showCurrentTime,
         showEventName: config.showEventName,
+        // Task #231 — typography & role-colour overrides (all nullable).
+        fontFamily: config.fontFamily,
+        titleColor: config.titleColor,
+        bodyColor: config.bodyColor,
+        timeColor: config.timeColor,
+        statusColor: config.statusColor,
       };
       const publicItems = items.map((it) => ({
         id: it.id,

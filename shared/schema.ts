@@ -1178,6 +1178,46 @@ export type AgendaDensity = (typeof AGENDA_DENSITIES)[number];
 export const AGENDA_THEMES = ["dark", "light"] as const;
 export type AgendaTheme = (typeof AGENDA_THEMES)[number];
 
+// Curated system / web-safe font stacks for the agenda widget.
+// We store just the KEY in the DB so we can adjust the underlying
+// stack later without rewriting rows. `null` / undefined falls back
+// to the built-in default (Inter).
+export const AGENDA_FONT_FAMILIES = [
+  "system",
+  "inter",
+  "sans",
+  "serif",
+  "times",
+  "mono",
+] as const;
+export type AgendaFontFamily = (typeof AGENDA_FONT_FAMILIES)[number];
+
+export const AGENDA_FONT_FAMILY_STACKS: Record<AgendaFontFamily, string> = {
+  system: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+  inter: 'Inter, system-ui, sans-serif',
+  sans: 'Helvetica, Arial, sans-serif',
+  serif: 'Georgia, "Times New Roman", serif',
+  times: '"Times New Roman", Times, serif',
+  mono: '"SF Mono", Menlo, Consolas, "Courier New", monospace',
+};
+
+export const AGENDA_FONT_FAMILY_LABELS: Record<AgendaFontFamily, string> = {
+  system: "System default",
+  inter: "Inter",
+  sans: "Helvetica / Arial",
+  serif: "Georgia",
+  times: "Times New Roman",
+  mono: "Monospace",
+};
+
+// Default font stack when no fontFamily is selected on a config
+// (preserves the original hardcoded look).
+export const AGENDA_DEFAULT_FONT_STACK = AGENDA_FONT_FAMILY_STACKS.inter;
+
+// Hex-colour validator reused by all four nullable role colours.
+// Accepts `#rgb` or `#rrggbb`, case-insensitive.
+const HEX_COLOUR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
 export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
@@ -1197,6 +1237,15 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   density: text("density").notNull().default("normal"),
   theme: text("theme").notNull().default("dark"),
   accentColor: text("accent_color").notNull().default("#0ea5e9"),
+  // Optional typography & role-colour overrides. All nullable so
+  // existing rows render identically (fall back to theme defaults
+  // + the built-in Inter stack). See AGENDA_FONT_FAMILY_STACKS for
+  // the curated key → CSS stack mapping.
+  fontFamily: text("font_family"),
+  titleColor: text("title_color"),
+  bodyColor: text("body_color"),
+  timeColor: text("time_color"),
+  statusColor: text("status_color"),
   backgroundUrl: text("background_url"),
   eventName: text("event_name"),
   showDescription: boolean("show_description").notNull().default(true),
@@ -1230,6 +1279,11 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
     trackFilter: z.array(z.string()).default([]),
     statusFilter: z.array(z.enum(AGENDA_STATUSES)).default([]),
     accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#0ea5e9"),
+    fontFamily: z.enum(AGENDA_FONT_FAMILIES).nullable().optional(),
+    titleColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
+    bodyColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
+    timeColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
+    statusColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
   });
 export type InsertAgendaWidgetConfig = z.infer<typeof insertAgendaWidgetConfigSchema>;
 export type AgendaWidgetConfig = typeof agendaWidgetConfigs.$inferSelect;

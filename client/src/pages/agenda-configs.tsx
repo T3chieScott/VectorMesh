@@ -24,6 +24,8 @@ import {
   AGENDA_DENSITIES,
   AGENDA_THEMES,
   AGENDA_STATUSES,
+  AGENDA_FONT_FAMILIES,
+  AGENDA_FONT_FAMILY_LABELS,
   type AgendaItem,
   type AgendaWidgetConfig,
 } from "@shared/schema";
@@ -85,6 +87,12 @@ const configFormSchema = z.object({
   density: z.enum(AGENDA_DENSITIES),
   theme: z.enum(AGENDA_THEMES),
   accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Must be hex like #0ea5e9"),
+  // Empty string means "use theme default". When set, must be valid hex.
+  fontFamily: z.union([z.enum(AGENDA_FONT_FAMILIES), z.literal("")]).optional(),
+  titleColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
+  bodyColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
+  timeColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
+  statusColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
   eventName: z.string().optional(),
   backgroundUrl: z.string().optional(),
   roomFilter: z.string().optional(),
@@ -112,6 +120,11 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     density: (c?.density as ConfigFormValues["density"]) ?? "normal",
     theme: (c?.theme as ConfigFormValues["theme"]) ?? "dark",
     accentColor: c?.accentColor ?? "#0ea5e9",
+    fontFamily: (c?.fontFamily as ConfigFormValues["fontFamily"]) ?? "",
+    titleColor: c?.titleColor ?? "",
+    bodyColor: c?.bodyColor ?? "",
+    timeColor: c?.timeColor ?? "",
+    statusColor: c?.statusColor ?? "",
     eventName: c?.eventName ?? "",
     backgroundUrl: c?.backgroundUrl ?? "",
     roomFilter: (c?.roomFilter ?? []).join(", "),
@@ -140,6 +153,11 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     density: values.density,
     theme: values.theme,
     accentColor: values.accentColor,
+    fontFamily: values.fontFamily ? values.fontFamily : null,
+    titleColor: values.titleColor ? values.titleColor : null,
+    bodyColor: values.bodyColor ? values.bodyColor : null,
+    timeColor: values.timeColor ? values.timeColor : null,
+    statusColor: values.statusColor ? values.statusColor : null,
     eventName: values.eventName || null,
     backgroundUrl: values.backgroundUrl || null,
     roomFilter: values.roomFilter ? values.roomFilter.split(",").map((s) => s.trim()).filter(Boolean) : [],
@@ -283,6 +301,80 @@ function ConfigEditor({
               <FormField control={form.control} name="accentColor" render={({ field }) => (
                 <FormItem><FormLabel>Accent colour</FormLabel><FormControl><Input type="color" {...field} className="h-9" data-testid="input-accent-color" /></FormControl><FormMessage /></FormItem>
               )} />
+
+              {/* Typography & colours — all optional overrides. Empty
+                  font family / blank colour = "use theme default" so
+                  existing configs render identically. */}
+              <div className="rounded-md border px-3 py-3 space-y-3">
+                <Label className="text-sm font-semibold">Typography &amp; colours</Label>
+                <FormField control={form.control} name="fontFamily" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs">Font family</FormLabel>
+                    <Select value={field.value ?? ""} onValueChange={(v) => field.onChange(v === "__default__" ? "" : v)}>
+                      <FormControl><SelectTrigger data-testid="select-font-family"><SelectValue placeholder="Theme default (Inter)" /></SelectTrigger></FormControl>
+                      <SelectContent>
+                        <SelectItem value="__default__">Theme default (Inter)</SelectItem>
+                        {AGENDA_FONT_FAMILIES.map((f) => (
+                          <SelectItem key={f} value={f}>{AGENDA_FONT_FAMILY_LABELS[f]}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FormItem>
+                )} />
+                {(
+                  [
+                    { key: "titleColor", label: "Title colour", help: "Event name + section headings" },
+                    { key: "bodyColor", label: "Body colour", help: "Sessions, descriptions, room, presenter" },
+                    { key: "timeColor", label: "Time colour", help: "Times and the wall clock" },
+                    { key: "statusColor", label: "Status text colour", help: "Live / next / delayed badges" },
+                  ] as const
+                ).map(({ key, label, help }) => (
+                  <FormField
+                    key={key}
+                    control={form.control}
+                    name={key}
+                    render={({ field }) => {
+                      const value = (field.value ?? "") as string;
+                      const isSet = value !== "";
+                      return (
+                        <FormItem>
+                          <FormLabel className="text-xs">{label}</FormLabel>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="color"
+                              value={isSet ? value : "#888888"}
+                              onChange={(e) => field.onChange(e.target.value)}
+                              className="h-9 w-9 rounded border bg-transparent cursor-pointer"
+                              data-testid={`input-${key}-swatch`}
+                              aria-label={`${label} swatch`}
+                            />
+                            <Input
+                              {...field}
+                              value={value}
+                              placeholder="theme default"
+                              className="h-9 flex-1 font-mono text-xs"
+                              data-testid={`input-${key}-hex`}
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => field.onChange("")}
+                              disabled={!isSet}
+                              data-testid={`button-clear-${key}`}
+                            >
+                              Clear
+                            </Button>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground">{help}</p>
+                          <FormMessage />
+                        </FormItem>
+                      );
+                    }}
+                  />
+                ))}
+              </div>
+
               <FormField control={form.control} name="backgroundUrl" render={({ field }) => (
                 <FormItem><FormLabel>Background image URL</FormLabel><FormControl><Input placeholder="https://…" {...field} /></FormControl></FormItem>
               )} />

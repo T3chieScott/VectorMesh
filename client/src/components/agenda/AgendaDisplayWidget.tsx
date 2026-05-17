@@ -5,12 +5,45 @@ import type {
   AgendaStatus,
   AgendaDisplayMode,
   AgendaLayoutMode,
+  AgendaFontFamily,
+} from "@shared/schema";
+import {
+  AGENDA_FONT_FAMILY_STACKS,
+  AGENDA_DEFAULT_FONT_STACK,
 } from "@shared/schema";
 import {
   pickAgendaLayout,
   paginate,
   splitCurrentNext,
 } from "@shared/agenda-resolver";
+
+// Resolved role colours, with `undefined` meaning "fall back to the
+// theme default" so existing configs render identically. Threaded
+// through every layout / row component so a single source of truth
+// drives both the live admin preview and the player.
+interface RoleColors {
+  title?: string;
+  body?: string;
+  time?: string;
+  status?: string;
+}
+
+function resolveRoleColors(config: AgendaWidgetConfig): RoleColors {
+  return {
+    title: config.titleColor ?? undefined,
+    body: config.bodyColor ?? undefined,
+    time: config.timeColor ?? undefined,
+    status: config.statusColor ?? undefined,
+  };
+}
+
+function resolveFontStack(config: AgendaWidgetConfig): string {
+  const key = config.fontFamily as AgendaFontFamily | null | undefined;
+  if (key && key in AGENDA_FONT_FAMILY_STACKS) {
+    return AGENDA_FONT_FAMILY_STACKS[key];
+  }
+  return AGENDA_DEFAULT_FONT_STACK;
+}
 
 // Single reusable widget for both the live admin preview and the
 // public chromeless /display/agenda/:configId page. Caller passes
@@ -79,11 +112,23 @@ function formatNow(tz: string | null | undefined, now: Date): string {
   }).format(now);
 }
 
-function StatusBadge({ status, scale }: { status: AgendaStatus; scale: number }) {
+function StatusBadge({
+  status,
+  scale,
+  override,
+}: {
+  status: AgendaStatus;
+  scale: number;
+  override?: string;
+}) {
+  // statusColor overrides only the foreground text — the per-status
+  // background tint stays so "live now" still reads green-ish etc.
+  const style: React.CSSProperties = { fontSize: scale * 0.6 };
+  if (override) style.color = override;
   return (
     <span
       className={`inline-flex items-center rounded-md border px-2 py-0.5 font-semibold uppercase tracking-wide ${STATUS_COLOR[status]}`}
-      style={{ fontSize: scale * 0.6 }}
+      style={style}
       data-testid={`agenda-status-${status}`}
     >
       {STATUS_LABELS[status]}
@@ -105,6 +150,7 @@ function AgendaRow({
   scale,
   isCurrent,
   accentColor,
+  roleColors,
 }: {
   item: AgendaItem;
   config: AgendaWidgetConfig;
@@ -112,7 +158,10 @@ function AgendaRow({
   scale: number;
   isCurrent?: boolean;
   accentColor?: string;
+  roleColors?: RoleColors;
 }) {
+  const timeStyle = roleColors?.time ? { color: roleColors.time } : undefined;
+  const bodyStyle = roleColors?.body ? { color: roleColors.body } : undefined;
   // When the operator picks "now_next" mode, the currently-running
   // session is rendered with a strong accent ring + brighter bg in
   // every layout, so audiences can tell at a glance which session
@@ -131,10 +180,18 @@ function AgendaRow({
       data-current={isCurrent ? "true" : undefined}
     >
       <div className="flex flex-col items-center min-w-[6.5em] border-r border-white/10 pr-4">
-        <span className="font-mono font-bold" style={{ fontSize: scale * 1.15 }}>
+        <span
+          className="font-mono font-bold"
+          style={{ fontSize: scale * 1.15, ...timeStyle }}
+          data-testid={`agenda-time-start-${item.id}`}
+        >
           {formatTime(item.startsAt, tz)}
         </span>
-        <span className="font-mono opacity-60" style={{ fontSize: scale * 0.75 }}>
+        <span
+          className="font-mono opacity-60"
+          style={{ fontSize: scale * 0.75, ...timeStyle }}
+          data-testid={`agenda-time-end-${item.id}`}
+        >
           {formatTime(item.endsAt, tz)}
         </span>
       </div>
@@ -142,15 +199,21 @@ function AgendaRow({
         <div className="flex items-center gap-2 flex-wrap">
           <h3
             className="font-semibold leading-tight truncate"
-            style={{ fontSize: scale * 1.15 }}
+            style={{ fontSize: scale * 1.15, ...bodyStyle }}
             data-testid={`agenda-title-${item.id}`}
           >
             {item.title}
           </h3>
-          {config.showStatus && <StatusBadge status={item.status as AgendaStatus} scale={scale} />}
+          {config.showStatus && (
+            <StatusBadge
+              status={item.status as AgendaStatus}
+              scale={scale}
+              override={roleColors?.status}
+            />
+          )}
         </div>
         {(config.showRoom && item.room) || (item.track) || (config.showPresenter && item.presenter) ? (
-          <div className="mt-1 flex flex-wrap gap-3 opacity-80" style={{ fontSize: scale * 0.75 }}>
+          <div className="mt-1 flex flex-wrap gap-3 opacity-80" style={{ fontSize: scale * 0.75, ...bodyStyle }}>
             {config.showRoom && item.room && (
               <span data-testid={`agenda-room-${item.id}`}>📍 {item.room}</span>
             )}
@@ -159,14 +222,14 @@ function AgendaRow({
           </div>
         ) : null}
         {config.showDescription && item.description && (
-          <p className="mt-1 opacity-75 line-clamp-2" style={{ fontSize: scale * 0.8 }}>
+          <p className="mt-1 opacity-75 line-clamp-2" style={{ fontSize: scale * 0.8, ...bodyStyle }}>
             {item.description}
           </p>
         )}
         {item.statusMessage && item.status !== "scheduled" && (
           <p
             className="mt-1 italic opacity-90"
-            style={{ fontSize: scale * 0.75 }}
+            style={{ fontSize: scale * 0.75, ...bodyStyle }}
             data-testid={`agenda-status-msg-${item.id}`}
           >
             {item.statusMessage}
@@ -186,9 +249,10 @@ interface RowGridProps {
   scale: number;
   now: Date;
   highlightCurrent: boolean;
+  roleColors: RoleColors;
 }
 
-function LandscapeGrid({ pageItems, config, tz, scale, now, highlightCurrent }: RowGridProps) {
+function LandscapeGrid({ pageItems, config, tz, scale, now, highlightCurrent, roleColors }: RowGridProps) {
   return (
     <div className="flex-1 grid grid-cols-2 gap-3 overflow-hidden">
       {pageItems.map((it) => (
@@ -200,13 +264,14 @@ function LandscapeGrid({ pageItems, config, tz, scale, now, highlightCurrent }: 
           scale={scale}
           isCurrent={highlightCurrent && isCurrentlyRunning(it, now)}
           accentColor={config.accentColor}
+          roleColors={roleColors}
         />
       ))}
     </div>
   );
 }
 
-function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent }: RowGridProps) {
+function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, roleColors }: RowGridProps) {
   return (
     <div className="flex-1 flex flex-col gap-3 overflow-hidden">
       {pageItems.map((it) => (
@@ -218,13 +283,14 @@ function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent }: 
           scale={scale}
           isCurrent={highlightCurrent && isCurrentlyRunning(it, now)}
           accentColor={config.accentColor}
+          roleColors={roleColors}
         />
       ))}
     </div>
   );
 }
 
-function UltraWideGrid({ pageItems, config, tz, scale, now, highlightCurrent }: RowGridProps) {
+function UltraWideGrid({ pageItems, config, tz, scale, now, highlightCurrent, roleColors }: RowGridProps) {
   return (
     <div className="flex-1 grid grid-cols-3 xl:grid-cols-4 gap-3 overflow-hidden">
       {pageItems.map((it) => (
@@ -236,6 +302,7 @@ function UltraWideGrid({ pageItems, config, tz, scale, now, highlightCurrent }: 
           scale={scale}
           isCurrent={highlightCurrent && isCurrentlyRunning(it, now)}
           accentColor={config.accentColor}
+          roleColors={roleColors}
         />
       ))}
     </div>
@@ -248,29 +315,33 @@ function TotemNowNext({
   tz,
   scale,
   now,
+  roleColors,
 }: {
   items: AgendaItem[];
   config: AgendaWidgetConfig;
   tz: string | null | undefined;
   scale: number;
   now: Date;
+  roleColors: RoleColors;
 }) {
   const { current, upcoming } = splitCurrentNext(items, now);
   const cur = current[0];
   const next = upcoming.slice(0, 4);
+  const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
+  const bodyStyle = roleColors.body ? { color: roleColors.body } : undefined;
   return (
     <div className="flex-1 flex flex-col gap-6 overflow-hidden">
       <section>
         <h2
           className="font-semibold opacity-70 uppercase tracking-wider mb-2"
-          style={{ fontSize: scale * 0.8 }}
+          style={{ fontSize: scale * 0.8, ...titleStyle }}
         >
           Now
         </h2>
         {cur ? (
-          <AgendaRow item={cur} config={config} tz={tz} scale={scale * 1.3} />
+          <AgendaRow item={cur} config={config} tz={tz} scale={scale * 1.3} roleColors={roleColors} />
         ) : (
-          <p className="opacity-60" style={{ fontSize: scale }}>
+          <p className="opacity-60" style={{ fontSize: scale, ...bodyStyle }}>
             No session in progress.
           </p>
         )}
@@ -278,18 +349,18 @@ function TotemNowNext({
       <section className="flex-1 overflow-hidden">
         <h2
           className="font-semibold opacity-70 uppercase tracking-wider mb-2"
-          style={{ fontSize: scale * 0.8 }}
+          style={{ fontSize: scale * 0.8, ...titleStyle }}
         >
           Next
         </h2>
         <div className="flex flex-col gap-2">
           {next.length === 0 && (
-            <p className="opacity-60" style={{ fontSize: scale }}>
+            <p className="opacity-60" style={{ fontSize: scale, ...bodyStyle }}>
               Nothing else scheduled.
             </p>
           )}
           {next.map((it) => (
-            <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} />
+            <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} roleColors={roleColors} />
           ))}
         </div>
       </section>
@@ -303,60 +374,65 @@ function RoomDoor({
   tz,
   scale,
   now,
+  roleColors,
 }: {
   items: AgendaItem[];
   config: AgendaWidgetConfig;
   tz: string | null | undefined;
   scale: number;
   now: Date;
+  roleColors: RoleColors;
 }) {
   const { current, upcoming } = splitCurrentNext(items, now);
   const cur = current[0];
   const next = upcoming[0];
   const roomName = cur?.room || next?.room || config.roomFilter?.[0] || "Room";
+  const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
+  const bodyStyle = roleColors.body ? { color: roleColors.body } : undefined;
+  const timeStyle = roleColors.time ? { color: roleColors.time } : undefined;
   return (
     <div className="flex-1 flex flex-col justify-center gap-8 text-center px-8">
       <div>
-        <p className="opacity-70 uppercase tracking-widest" style={{ fontSize: scale }}>
+        <p className="opacity-70 uppercase tracking-widest" style={{ fontSize: scale, ...titleStyle }}>
           {roomName}
         </p>
         {cur ? (
           <>
-            <p className="font-mono opacity-80 mt-4" style={{ fontSize: scale * 1.6 }}>
+            <p className="font-mono opacity-80 mt-4" style={{ fontSize: scale * 1.6, ...timeStyle }}>
               {formatTime(cur.startsAt, tz)} – {formatTime(cur.endsAt, tz)}
             </p>
-            <h1 className="font-bold mt-3 leading-tight" style={{ fontSize: scale * 3 }}>
+            <h1 className="font-bold mt-3 leading-tight" style={{ fontSize: scale * 3, ...titleStyle }}>
               {cur.title}
             </h1>
             {cur.presenter && (
-              <p className="mt-3 opacity-80" style={{ fontSize: scale * 1.3 }}>
+              <p className="mt-3 opacity-80" style={{ fontSize: scale * 1.3, ...bodyStyle }}>
                 {cur.presenter}
               </p>
             )}
             <div className="mt-4 inline-block">
-              <StatusBadge status={cur.status as AgendaStatus} scale={scale * 1.4} />
+              <StatusBadge status={cur.status as AgendaStatus} scale={scale * 1.4} override={roleColors.status} />
             </div>
             {cur.statusMessage && (
-              <p className="mt-3 italic opacity-80" style={{ fontSize: scale }}>
+              <p className="mt-3 italic opacity-80" style={{ fontSize: scale, ...bodyStyle }}>
                 {cur.statusMessage}
               </p>
             )}
           </>
         ) : (
-          <p className="opacity-60 mt-6" style={{ fontSize: scale * 1.4 }}>
+          <p className="opacity-60 mt-6" style={{ fontSize: scale * 1.4, ...bodyStyle }}>
             No session in this room right now.
           </p>
         )}
       </div>
       {next && (
         <div className="border-t border-white/10 pt-6">
-          <p className="opacity-60 uppercase tracking-widest" style={{ fontSize: scale * 0.8 }}>
+          <p className="opacity-60 uppercase tracking-widest" style={{ fontSize: scale * 0.8, ...titleStyle }}>
             Up next
           </p>
-          <p className="font-mono opacity-80 mt-2" style={{ fontSize: scale * 1.1 }}>
+          <p className="font-mono opacity-80 mt-2" style={{ fontSize: scale * 1.1, ...timeStyle }}>
             {formatTime(next.startsAt, tz)}
           </p>
-          <p className="font-semibold mt-1" style={{ fontSize: scale * 1.4 }}>
+          <p className="font-semibold mt-1" style={{ fontSize: scale * 1.4, ...bodyStyle }}>
             {next.title}
           </p>
         </div>
@@ -461,6 +537,12 @@ export function AgendaDisplayWidget({
       }
     : {};
 
+  const roleColors = resolveRoleColors(config);
+  const fontStack = resolveFontStack(config);
+  const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
+  const timeStyle = roleColors.time ? { color: roleColors.time } : undefined;
+  const bodyStyle = roleColors.body ? { color: roleColors.body } : undefined;
+
   return (
     <div
       ref={containerRef}
@@ -469,7 +551,7 @@ export function AgendaDisplayWidget({
         ...bgStyle,
         padding: gap * 2,
         gap,
-        fontFamily: "Inter, system-ui, sans-serif",
+        fontFamily: fontStack,
       }}
       data-testid="agenda-display-root"
       data-layout={layout}
@@ -484,11 +566,15 @@ export function AgendaDisplayWidget({
       <header className="flex items-center justify-between" style={{ paddingBottom: gap / 2 }}>
         <div className="flex flex-col">
           {config.showEventName && (config.eventName || config.name) && (
-            <h1 className="font-bold leading-none" style={{ fontSize: scale * 1.5 }}>
+            <h1
+              className="font-bold leading-none"
+              style={{ fontSize: scale * 1.5, ...titleStyle }}
+              data-testid="agenda-event-title"
+            >
               {config.eventName || config.name}
             </h1>
           )}
-          <p className="opacity-60 mt-1" style={{ fontSize: scale * 0.8 }}>
+          <p className="opacity-60 mt-1" style={{ fontSize: scale * 0.8, ...bodyStyle }}>
             {layout === "room_door" || layout === "totem"
               ? "Agenda"
               : `${items.length} session${items.length === 1 ? "" : "s"}${pages.length > 1 ? ` · page ${pageIndex + 1}/${pages.length}` : ""}`}
@@ -497,7 +583,7 @@ export function AgendaDisplayWidget({
         {config.showCurrentTime && (
           <p
             className="font-mono opacity-80"
-            style={{ fontSize: scale * 1.3 }}
+            style={{ fontSize: scale * 1.3, ...timeStyle }}
             data-testid="agenda-clock"
           >
             {formatNow(timezone, now)}
@@ -507,19 +593,19 @@ export function AgendaDisplayWidget({
 
       {/* Body */}
       {items.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center opacity-60" style={{ fontSize: scale }}>
+        <div className="flex-1 flex items-center justify-center opacity-60" style={{ fontSize: scale, ...bodyStyle }}>
           No agenda items match this display right now.
         </div>
       ) : layout === "ultrawide" ? (
-        <UltraWideGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} />
+        <UltraWideGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} />
       ) : layout === "portrait" ? (
-        <PortraitCards pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} />
+        <PortraitCards pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} />
       ) : layout === "totem" ? (
-        <TotemNowNext items={items} config={config} tz={timezone} scale={scale} now={now} />
+        <TotemNowNext items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} />
       ) : layout === "room_door" ? (
-        <RoomDoor items={items} config={config} tz={timezone} scale={scale} now={now} />
+        <RoomDoor items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} />
       ) : (
-        <LandscapeGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} />
+        <LandscapeGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} />
       )}
     </div>
   );
