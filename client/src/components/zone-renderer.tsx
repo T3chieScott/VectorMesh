@@ -780,6 +780,7 @@ function TextWidget({
         alignItems: verticalAlignMap[verticalAlign] || "center",
         fontSize: `${resolvedSize}px`,
         textAlign: align as "left" | "center" | "right",
+        whiteSpace: "pre-wrap",
       }}
     >
       {resolvePlayerVariables(content || "Sample text content", ctx)}
