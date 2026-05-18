@@ -8,6 +8,7 @@ import type {
   AgendaWidgetConfig,
   AgendaLayoutMode,
 } from "./schema";
+import { getWallPartsInTz } from "./timezone-utils";
 
 export interface AgendaResolveInput {
   items: AgendaItem[];
@@ -20,6 +21,26 @@ export interface AgendaResolveInput {
     | "timeWindowMinutes"
   >;
   now: Date;
+  /**
+   * IANA timezone used for tz-local calendar-day comparisons
+   * (today_tomorrow mode). Defaults to the runtime tz when omitted,
+   * which is fine for unit tests but should always be passed for
+   * production resolves so today-vs-tomorrow honours the site tz.
+   */
+  tz?: string | null;
+}
+
+/**
+ * yyyy-mm-dd key for the calendar day that `instant` falls on in `tz`.
+ * Used by today_tomorrow mode and the widget header so both agree on
+ * which day they're showing.
+ */
+export function tzCalendarDayKey(instant: Date, tz: string | null | undefined): string {
+  if (tz) {
+    const p = getWallPartsInTz(instant, tz);
+    return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+  }
+  return `${instant.getUTCFullYear()}-${String(instant.getUTCMonth() + 1).padStart(2, "0")}-${String(instant.getUTCDate()).padStart(2, "0")}`;
 }
 
 /**
@@ -89,6 +110,38 @@ export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
     if (ra !== 0) return ra;
     return a.title.localeCompare(b.title);
   });
+
+  // today_tomorrow mode (Task #240): show only items whose startsAt
+  // falls on today's tz-local calendar day. Once today has nothing
+  // left to show (no item ending after the trailing window cutoff),
+  // auto-roll to tomorrow's items so the board never goes blank
+  // overnight. The trailing-window drop above still applies in both
+  // cases (so a "today" item that ended 30 min ago is gone exactly
+  // like in full mode).
+  if (input.config.displayMode === "today_tomorrow") {
+    const todayKey = tzCalendarDayKey(now, input.tz);
+    const todayItems = filtered.filter(
+      (it) => tzCalendarDayKey(new Date(it.startsAt), input.tz) === todayKey,
+    );
+    const todayStillRelevant = todayItems.some(
+      (it) => new Date(it.endsAt).getTime() > nowMs - trailingMs,
+    );
+    if (todayStillRelevant) return todayItems;
+    // Auto-roll: take items on the next calendar day after today
+    // (in tz). We pick the earliest such day so an event with a
+    // gap day (e.g. today is Tue, next session is Thu) still shows
+    // Thu's items rather than appearing blank.
+    const futureDays = new Set<string>();
+    for (const it of filtered) {
+      const k = tzCalendarDayKey(new Date(it.startsAt), input.tz);
+      if (k > todayKey) futureDays.add(k);
+    }
+    if (futureDays.size === 0) return [];
+    const nextDayKey = Array.from(futureDays).sort()[0];
+    return filtered.filter(
+      (it) => tzCalendarDayKey(new Date(it.startsAt), input.tz) === nextDayKey,
+    );
+  }
 
   // now_next mode: keep only the currently-running session(s) and the
   // immediate next-up per room. Applied here (not just in the totem

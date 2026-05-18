@@ -17,6 +17,30 @@ import {
   splitCurrentNext,
 } from "@shared/agenda-resolver";
 
+// Task #240 — long-form weekday / date formatters used by the optional
+// "Show day name" / "Show date" header chunks. Reflects the *displayed*
+// day, which equals the day of the first resolved item when present so
+// the today_tomorrow auto-roll leaves header and body in agreement.
+// When the caller doesn't pass a tz (orphan client / preview without
+// site context), fall back to UTC so header day/date stays consistent
+// with the resolver's tzCalendarDayKey() bucketing — otherwise the
+// header would show the browser's local day while the body shows the
+// UTC day, splitting the today_tomorrow auto-roll across two calendars.
+function formatWeekday(d: Date, tz: string | null | undefined): string {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "long",
+    timeZone: tz || "UTC",
+  }).format(d);
+}
+function formatLongDate(d: Date, tz: string | null | undefined): string {
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: tz || "UTC",
+  }).format(d);
+}
+
 // Resolved role colours, with `undefined` meaning "fall back to the
 // theme default" so existing configs render identically. Threaded
 // through every layout / row component so a single source of truth
@@ -624,14 +648,53 @@ export function AgendaDisplayWidget({
               : `${items.length} session${items.length === 1 ? "" : "s"}${pages.length > 1 ? ` · page ${pageIndex + 1}/${pages.length}` : ""}`}
           </p>
         </div>
-        {config.showCurrentTime && (
-          <p
-            className="font-mono opacity-80"
-            style={{ fontSize: scale * 1.3, ...timeStyle }}
-            data-testid="agenda-clock"
-          >
-            {formatNow(timezone, now)}
-          </p>
+        {(config.showCurrentTime || config.showDayName || config.showDate) && (
+          (() => {
+            // Task #240 — the displayed day equals the day of the first
+            // resolved item (so today_tomorrow auto-roll shows tomorrow's
+            // weekday/date alongside tomorrow's sessions). Falls back to
+            // "now" when the list is empty.
+            const headerDay =
+              items.length > 0 ? new Date(items[0].startsAt) : now;
+            return (
+              <div
+                className="flex flex-col items-end opacity-80"
+                style={{ ...timeStyle }}
+                data-testid="agenda-header-meta"
+              >
+                {(config.showDayName || config.showDate) && (
+                  <p
+                    className="leading-tight"
+                    style={{ fontSize: scale * 0.9 }}
+                    data-testid="agenda-day-date"
+                  >
+                    {config.showDayName && (
+                      <span data-testid="agenda-day-name">
+                        {formatWeekday(headerDay, timezone)}
+                      </span>
+                    )}
+                    {config.showDayName && config.showDate && (
+                      <span className="opacity-50 mx-2">·</span>
+                    )}
+                    {config.showDate && (
+                      <span data-testid="agenda-date">
+                        {formatLongDate(headerDay, timezone)}
+                      </span>
+                    )}
+                  </p>
+                )}
+                {config.showCurrentTime && (
+                  <p
+                    className="font-mono"
+                    style={{ fontSize: scale * 1.3, ...timeStyle }}
+                    data-testid="agenda-clock"
+                  >
+                    {formatNow(timezone, now)}
+                  </p>
+                )}
+              </div>
+            );
+          })()
         )}
       </header>
 

@@ -2906,7 +2906,15 @@ export class DatabaseStorage implements IStorage {
     if (!config) return undefined;
     const pool = await this.getAgendaItems(config.clientId);
     const { resolveAgendaItems } = await import("@shared/agenda-resolver");
-    const items = resolveAgendaItems({ items: pool, config, now });
+    // Task #240 — pass the client's tz so today_tomorrow mode buckets
+    // items by the site's local calendar day, not the server's UTC day.
+    const client = await this.getClient(config.clientId);
+    const items = resolveAgendaItems({
+      items: pool,
+      config,
+      now,
+      tz: client?.timezone ?? null,
+    });
     return { config, items };
   }
 }

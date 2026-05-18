@@ -98,6 +98,8 @@ export const PUBLIC_AGENDA_CONFIG_FIELDS = [
   "showStatus",
   "showCurrentTime",
   "showEventName",
+  "showDayName",
+  "showDate",
   // Task #231 — optional typography & role-colour overrides. All
   // nullable; widget renders identically when they are null.
   "fontFamily",
@@ -486,6 +488,11 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         showStatus: config.showStatus,
         showCurrentTime: config.showCurrentTime,
         showEventName: config.showEventName,
+        // Coerce ?? false so the keys are always present in the public
+        // payload contract (JSON.stringify drops undefined-valued keys
+        // and PUBLIC_AGENDA_CONFIG_FIELDS asserts both are emitted).
+        showDayName: config.showDayName ?? false,
+        showDate: config.showDate ?? false,
         // Task #231 — typography & role-colour overrides (all nullable).
         // Coerce undefined → null so the keys are always present in the
         // public payload, matching PUBLIC_AGENDA_CONFIG_FIELDS exactly

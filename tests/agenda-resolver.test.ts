@@ -5,6 +5,7 @@ import {
   splitCurrentNext,
   pickAgendaLayout,
   paginate,
+  tzCalendarDayKey,
 } from "../shared/agenda-resolver";
 import type { AgendaItem, AgendaWidgetConfig } from "../shared/schema";
 
@@ -55,6 +56,8 @@ function cfg(over: Partial<AgendaWidgetConfig> = {}): AgendaWidgetConfig {
     showStatus: true,
     showCurrentTime: true,
     showEventName: true,
+    showDayName: false,
+    showDate: false,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...over,
@@ -119,6 +122,42 @@ test("resolveAgendaItems now_next mode keeps current + one upcoming per room", (
   ];
   const got = resolveAgendaItems({ items, config: cfg({ displayMode: "now_next" }), now: NOW });
   assert.deepEqual(got.map((i) => i.id), ["live_main", "live_b", "next_main", "next_b"]);
+});
+
+test("today_tomorrow keeps only today's items while today still has live/upcoming", () => {
+  const items = [
+    item({ id: "today_am", startsAt: new Date("2026-06-01T11:30:00Z"), endsAt: new Date("2026-06-01T12:30:00Z") }),
+    item({ id: "today_pm", startsAt: new Date("2026-06-01T15:00:00Z"), endsAt: new Date("2026-06-01T16:00:00Z") }),
+    item({ id: "tomorrow", startsAt: new Date("2026-06-02T09:00:00Z"), endsAt: new Date("2026-06-02T10:00:00Z") }),
+  ];
+  const got = resolveAgendaItems({ items, config: cfg({ displayMode: "today_tomorrow" }), now: NOW, tz: "UTC" });
+  assert.deepEqual(got.map((i) => i.id), ["today_am", "today_pm"]);
+});
+
+test("today_tomorrow auto-rolls to next available day once today is exhausted", () => {
+  const lateNow = new Date("2026-06-01T23:30:00Z");
+  const items = [
+    item({ id: "today_done", startsAt: new Date("2026-06-01T09:00:00Z"), endsAt: new Date("2026-06-01T10:00:00Z") }),
+    item({ id: "skip_day", startsAt: new Date("2026-06-03T09:00:00Z"), endsAt: new Date("2026-06-03T10:00:00Z") }),
+    item({ id: "later", startsAt: new Date("2026-06-04T09:00:00Z"), endsAt: new Date("2026-06-04T10:00:00Z") }),
+  ];
+  const got = resolveAgendaItems({ items, config: cfg({ displayMode: "today_tomorrow" }), now: lateNow, tz: "UTC" });
+  assert.deepEqual(got.map((i) => i.id), ["skip_day"]);
+});
+
+test("today_tomorrow buckets by tz-local calendar day, not UTC", () => {
+  const earlyMorningUtc = new Date("2026-06-02T03:00:00Z");
+  const items = [
+    item({ id: "hnl_today_evening", startsAt: new Date("2026-06-02T04:00:00Z"), endsAt: new Date("2026-06-02T05:00:00Z") }),
+    item({ id: "hnl_tomorrow", startsAt: new Date("2026-06-02T20:00:00Z"), endsAt: new Date("2026-06-02T21:00:00Z") }),
+  ];
+  const got = resolveAgendaItems({ items, config: cfg({ displayMode: "today_tomorrow" }), now: earlyMorningUtc, tz: "Pacific/Honolulu" });
+  assert.deepEqual(got.map((i) => i.id), ["hnl_today_evening"]);
+});
+
+test("tzCalendarDayKey returns YYYY-MM-DD in the given tz", () => {
+  assert.equal(tzCalendarDayKey(new Date("2026-05-31T23:30:00Z"), "Asia/Tokyo"), "2026-06-01");
+  assert.equal(tzCalendarDayKey(new Date("2026-05-31T23:30:00Z"), "UTC"), "2026-05-31");
 });
 
 test("resolveAgendaItems sorts by start asc", () => {

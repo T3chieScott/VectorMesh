@@ -1151,13 +1151,26 @@ export type AgendaSyncConfig = typeof agendaSyncConfigs.$inferSelect;
 // here so an operator can publish many specialised slices of the
 // same agenda pool without duplicating items.
 export const AGENDA_DISPLAY_MODES = [
-  "full",        // every matching item
-  "room",        // filter by rooms[]
-  "now_next",    // currently-running + next upcoming (single column)
-  "room_focus",  // single-room now/next, large
-  "alert",       // delayed/cancelled/moved only
+  "full",            // every matching item
+  "room",            // filter by rooms[]
+  "now_next",        // currently-running + next upcoming (single column)
+  "room_focus",      // single-room now/next, large
+  "alert",           // delayed/cancelled/moved only
+  "today_tomorrow",  // today only; auto-rolls to tomorrow once today's last
+                     // session has ended (Task #240)
 ] as const;
 export type AgendaDisplayMode = (typeof AGENDA_DISPLAY_MODES)[number];
+
+// Operator-facing labels for the display-mode picker. The raw enum
+// keys (e.g. "now_next") are not what we want to show in the UI.
+export const AGENDA_DISPLAY_MODE_LABELS: Record<AgendaDisplayMode, string> = {
+  full: "Full agenda",
+  room: "Filter by rooms",
+  now_next: "Now / next",
+  room_focus: "Single-room focus",
+  alert: "Alerts only (delayed / cancelled / moved)",
+  today_tomorrow: "Today / tomorrow (auto-roll)",
+};
 
 export const AGENDA_LAYOUT_MODES = [
   "auto",
@@ -1254,6 +1267,10 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   showStatus: boolean("show_status").notNull().default(true),
   showCurrentTime: boolean("show_current_time").notNull().default(true),
   showEventName: boolean("show_event_name").notNull().default(true),
+  // Task #240 — optional day-name / date header chunks. Default off so
+  // existing configs render identically after migration.
+  showDayName: boolean("show_day_name").notNull().default(false),
+  showDate: boolean("show_date").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

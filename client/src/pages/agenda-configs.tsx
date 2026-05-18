@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Pencil, Plus, Trash2, ExternalLink, Copy, SlidersHorizontal } from "lucide-react";
 import {
   AGENDA_DISPLAY_MODES,
+  AGENDA_DISPLAY_MODE_LABELS,
   AGENDA_LAYOUT_MODES,
   AGENDA_FONT_SCALES,
   AGENDA_DENSITIES,
@@ -108,6 +109,8 @@ const configFormSchema = z.object({
   showStatus: z.boolean(),
   showCurrentTime: z.boolean(),
   showEventName: z.boolean(),
+  showDayName: z.boolean(),
+  showDate: z.boolean(),
 });
 type ConfigFormValues = z.infer<typeof configFormSchema>;
 
@@ -140,6 +143,8 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     showStatus: c?.showStatus ?? true,
     showCurrentTime: c?.showCurrentTime ?? true,
     showEventName: c?.showEventName ?? true,
+    showDayName: c?.showDayName ?? false,
+    showDate: c?.showDate ?? false,
   };
 }
 
@@ -173,6 +178,8 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     showStatus: values.showStatus,
     showCurrentTime: values.showCurrentTime,
     showEventName: values.showEventName,
+    showDayName: values.showDayName,
+    showDate: values.showDate,
   };
 }
 
@@ -181,12 +188,14 @@ function ConfigEditor({
   onOpenChange,
   initial,
   clientId,
+  clientTimezone,
   items,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   initial?: AgendaWidgetConfig;
   clientId: string;
+  clientTimezone: string | null;
   items: AgendaItem[];
 }) {
   const { toast } = useToast();
@@ -219,8 +228,8 @@ function ConfigEditor({
   const usingSampleData = items.length === 0;
 
   const previewItems = useMemo(
-    () => resolveAgendaItems({ items: effectiveItems, config: previewConfig, now: new Date() }),
-    [effectiveItems, previewConfig],
+    () => resolveAgendaItems({ items: effectiveItems, config: previewConfig, now: new Date(), tz: clientTimezone }),
+    [effectiveItems, previewConfig, clientTimezone],
   );
 
   const mutation = useMutation({
@@ -259,7 +268,7 @@ function ConfigEditor({
                   <FormItem><FormLabel>Mode</FormLabel>
                     <Select value={field.value} onValueChange={field.onChange}>
                       <FormControl><SelectTrigger data-testid="select-display-mode"><SelectValue /></SelectTrigger></FormControl>
-                      <SelectContent>{AGENDA_DISPLAY_MODES.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+                      <SelectContent>{AGENDA_DISPLAY_MODES.map((m) => <SelectItem key={m} value={m}>{AGENDA_DISPLAY_MODE_LABELS[m]}</SelectItem>)}</SelectContent>
                     </Select>
                   </FormItem>
                 )} />
@@ -423,11 +432,20 @@ function ConfigEditor({
               )} />
 
               <div className="grid grid-cols-2 gap-2">
-                {(["showEventName", "showCurrentTime", "showRoom", "showPresenter", "showDescription", "showStatus"] as const).map((k) => (
+                {([
+                  ["showEventName", "Event name"],
+                  ["showCurrentTime", "Current time"],
+                  ["showDayName", "Day name"],
+                  ["showDate", "Date"],
+                  ["showRoom", "Room"],
+                  ["showPresenter", "Presenter"],
+                  ["showDescription", "Description"],
+                  ["showStatus", "Status"],
+                ] as const).map(([k, label]) => (
                   <FormField key={k} control={form.control} name={k} render={({ field }) => (
                     <FormItem className="flex items-center justify-between rounded-md border px-3 py-2">
-                      <FormLabel className="m-0 capitalize">{k.replace(/^show/, "")}</FormLabel>
-                      <FormControl><Switch checked={field.value} onCheckedChange={field.onChange} /></FormControl>
+                      <FormLabel className="m-0">{label}</FormLabel>
+                      <FormControl><Switch checked={field.value} onCheckedChange={field.onChange} data-testid={`switch-${k}`} /></FormControl>
                     </FormItem>
                   )} />
                 ))}
@@ -469,6 +487,7 @@ function ConfigEditor({
                   items={previewItems}
                   width={dims.w}
                   height={dims.h}
+                  timezone={clientTimezone ?? undefined}
                 />
               </div>
             </div>
@@ -596,7 +615,7 @@ export default function AgendaConfigsPage() {
       )}
 
       {creating && (
-        <ConfigEditor open={creating} onOpenChange={setCreating} clientId={selectedClientId} items={items} />
+        <ConfigEditor open={creating} onOpenChange={setCreating} clientId={selectedClientId} clientTimezone={selectedClient?.timezone ?? null} items={items} />
       )}
       {editing && (
         <ConfigEditor
@@ -604,6 +623,7 @@ export default function AgendaConfigsPage() {
           onOpenChange={(o) => { if (!o) setEditing(null); }}
           initial={editing}
           clientId={selectedClientId}
+          clientTimezone={selectedClient?.timezone ?? null}
           items={items}
         />
       )}
