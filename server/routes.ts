@@ -38,6 +38,7 @@ import { buildContentTraceHandler } from "./contentTraceHandler";
 import { buildBulkBookingsHandler, type BulkBookingResult } from "./bulkBookingsHandler";
 import { buildBulkBlocksHandler, type BulkBlockResult } from "./bulkBlocksHandler";
 import { resolveSimulatorContent } from "./simulatorContent";
+import { filterMediaAssetsForScreen } from "./playerMediaFilter";
 import {
   applyGlobalHideOverride,
   parseGlobalHideValue,
@@ -4165,7 +4166,19 @@ export async function registerRoutes(
       const profile = screen.displayProfileId 
         ? await storage.getDisplayProfile(screen.displayProfileId) 
         : null;
-      const mediaAssets = await storage.getMediaAssets();
+      // Task #239: site-scope the media payload via filterMediaAssetsForScreen.
+      // Previously the route shipped every asset in the DB which, combined
+      // with the zone-renderer's `mediaId ? filter : media` fallback, leaked
+      // other sites' uploads onto Site A's screens.
+      const allMediaAssets = await storage.getMediaAssets();
+      const mediaShares = screen.clientId
+        ? await storage.getMediaSharesForClient(screen.clientId)
+        : [];
+      const mediaAssets = filterMediaAssetsForScreen(
+        allMediaAssets,
+        screen.clientId,
+        mediaShares,
+      );
       const allPlaylists = await storage.getPlaylists();
       const playlistItemsMap: Record<string, any[]> = {};
       const layoutTemplatesMap: Record<string, any> = {};

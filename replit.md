@@ -100,6 +100,29 @@ The next boot will re-claim the marker and run the backfill. The
 backfill only touches screens with `canvasGroupId IS NULL`, so
 re-running on a healthy (fully-stamped) DB is a safe no-op.
 
+### Player media payload — per-screen site scope (Task #239)
+
+`GET /api/player/:screenId/content` site-scopes `content.media` through
+`server/playerMediaFilter.ts → filterMediaAssetsForScreen()`. The
+response only contains media assets that are either owned by the
+screen's `clientId` or explicitly shared with that client via the
+`media_shares` table — mirroring the admin `GET /api/media` filter. A
+screen with no `clientId` (orphan row) gets an empty list, never the
+whole estate.
+
+This invariant matters because the player's zone-renderer falls back
+to `zone.mediaId ? filter : media` for media zones with no specific
+asset selected. Without server-side scoping, that fallback rotated
+through every uploaded file across all clients — a cross-tenant data
+leak. Don't reintroduce an unfiltered `storage.getMediaAssets()` call
+in any player-facing endpoint.
+
+Defensive client check: `client/src/components/zone-renderer.tsx`
+logs a one-shot `[player-content]` warning when a media zone's
+`mediaId` references an asset that isn't in the site-scoped payload
+(stale cross-site reference or since-deleted asset), instead of
+silently rendering empty.
+
 ## External Dependencies
 
 ### Database

@@ -5425,6 +5425,10 @@ function MediaPlayerWidget({
   );
 }
 
+// Task #239 — module-level dedupe set so we only warn once per
+// (zone,mediaId) for the lifetime of the player tab.
+const warnedMissingMediaIds = new Set<string>();
+
 export interface ZoneRendererProps {
   zone: LayoutZone;
   media?: MediaAsset[];
@@ -5462,6 +5466,21 @@ export function ZoneRenderer({
   const renderContent = () => {
     switch (zone.type) {
       case "media": {
+        // Task #239 — belt-and-braces. The server already site-scopes
+        // `media`, so if zone.mediaId references an asset that isn't in
+        // the payload it's almost certainly a stale cross-site reference
+        // (copy/pasted layout) or a since-deleted asset. Surface it as a
+        // single console warning per (zone,mediaId) so QA/devs notice
+        // instead of silently rendering nothing.
+        if (zone.mediaId && !media.some(m => m.id === zone.mediaId)) {
+          const warnKey = `${zone.id}:${zone.mediaId}`;
+          if (!warnedMissingMediaIds.has(warnKey)) {
+            warnedMissingMediaIds.add(warnKey);
+            console.warn(
+              `[player-content] media zone "${zone.id}" references media id "${zone.mediaId}" which is not in this screen's site-scoped payload; rendering empty.`,
+            );
+          }
+        }
         const zoneMedia = zone.mediaId 
           ? media.filter(m => m.id === zone.mediaId)
           : media;
