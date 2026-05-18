@@ -134,15 +134,61 @@ test("today_tomorrow keeps only today's items while today still has live/upcomin
   assert.deepEqual(got.map((i) => i.id), ["today_am", "today_pm"]);
 });
 
-test("today_tomorrow auto-rolls to next available day once today is exhausted", () => {
+test("today_tomorrow auto-rolls to tomorrow's items once today is exhausted", () => {
   const lateNow = new Date("2026-06-01T23:30:00Z");
   const items = [
     item({ id: "today_done", startsAt: new Date("2026-06-01T09:00:00Z"), endsAt: new Date("2026-06-01T10:00:00Z") }),
-    item({ id: "skip_day", startsAt: new Date("2026-06-03T09:00:00Z"), endsAt: new Date("2026-06-03T10:00:00Z") }),
+    item({ id: "tomorrow", startsAt: new Date("2026-06-02T09:00:00Z"), endsAt: new Date("2026-06-02T10:00:00Z") }),
     item({ id: "later", startsAt: new Date("2026-06-04T09:00:00Z"), endsAt: new Date("2026-06-04T10:00:00Z") }),
   ];
   const got = resolveAgendaItems({ items, config: cfg({ displayMode: "today_tomorrow" }), now: lateNow, tz: "UTC" });
-  assert.deepEqual(got.map((i) => i.id), ["skip_day"]);
+  assert.deepEqual(got.map((i) => i.id), ["tomorrow"]);
+});
+
+test("today_tomorrow stays empty when today is exhausted and tomorrow has no sessions", () => {
+  const lateNow = new Date("2026-06-01T23:30:00Z");
+  const items = [
+    item({ id: "today_done", startsAt: new Date("2026-06-01T09:00:00Z"), endsAt: new Date("2026-06-01T10:00:00Z") }),
+    // Skip-day: nothing scheduled on Jun 2; next session not until Jun 4.
+    item({ id: "much_later", startsAt: new Date("2026-06-04T09:00:00Z"), endsAt: new Date("2026-06-04T10:00:00Z") }),
+  ];
+  const got = resolveAgendaItems({ items, config: cfg({ displayMode: "today_tomorrow" }), now: lateNow, tz: "UTC" });
+  assert.deepEqual(got, []);
+});
+
+test("today_tomorrow respects DST spring-forward in Europe/London when rolling to tomorrow", () => {
+  // BST starts 2026-03-29 01:00 UTC (clocks jump 01:00→02:00 local).
+  // "Now" is 23:30 UTC on Mar 28 → 23:30 local in London (still GMT).
+  // Today's only session has already ended; auto-roll must pick Mar 29 local,
+  // not Mar 30 (which would be the case if naive UTC arithmetic skewed
+  // by the lost hour pushed "tomorrow" into the wrong bucket).
+  const lateNow = new Date("2026-03-28T23:30:00Z");
+  const items = [
+    item({ id: "sat_done", startsAt: new Date("2026-03-28T18:00:00Z"), endsAt: new Date("2026-03-28T19:00:00Z") }),
+    // Sunday Mar 29 10:00 BST = 09:00 UTC
+    item({ id: "sun_bst_morning", startsAt: new Date("2026-03-29T09:00:00Z"), endsAt: new Date("2026-03-29T10:00:00Z") }),
+    item({ id: "mon_later", startsAt: new Date("2026-03-30T09:00:00Z"), endsAt: new Date("2026-03-30T10:00:00Z") }),
+  ];
+  const got = resolveAgendaItems({ items, config: cfg({ displayMode: "today_tomorrow" }), now: lateNow, tz: "Europe/London" });
+  assert.deepEqual(got.map((i) => i.id), ["sun_bst_morning"]);
+});
+
+test("today_tomorrow respects DST fall-back in America/Los_Angeles when bucketing today", () => {
+  // PDT→PST ends 2026-11-01 09:00 UTC (clocks fall back 02:00→01:00 local).
+  // "Now" is 06:00 UTC Nov 1 → 23:00 local Oct 31 (still PDT).
+  // Two events on Nov 1 local must bucket into "tomorrow", not "today".
+  const now = new Date("2026-11-01T06:00:00Z");
+  const items = [
+    // Oct 31 22:50 PDT = Nov 1 05:50 UTC (today local, still inside
+    // the 15-min trailing window relative to now=06:00 UTC).
+    item({ id: "sat_late", startsAt: new Date("2026-11-01T05:00:00Z"), endsAt: new Date("2026-11-01T05:50:00Z") }),
+    // Nov 1 10:00 PST = Nov 1 18:00 UTC (tomorrow local)
+    item({ id: "sun_morning", startsAt: new Date("2026-11-01T18:00:00Z"), endsAt: new Date("2026-11-01T19:00:00Z") }),
+  ];
+  const got = resolveAgendaItems({ items, config: cfg({ displayMode: "today_tomorrow" }), now, tz: "America/Los_Angeles" });
+  // Today (Oct 31 PDT) still has an in-progress/recent session, so we
+  // return today's only item and don't roll forward yet.
+  assert.deepEqual(got.map((i) => i.id), ["sat_late"]);
 });
 
 test("today_tomorrow buckets by tz-local calendar day, not UTC", () => {

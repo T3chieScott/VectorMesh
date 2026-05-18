@@ -127,19 +127,18 @@ export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
       (it) => new Date(it.endsAt).getTime() > nowMs - trailingMs,
     );
     if (todayStillRelevant) return todayItems;
-    // Auto-roll: take items on the next calendar day after today
-    // (in tz). We pick the earliest such day so an event with a
-    // gap day (e.g. today is Tue, next session is Thu) still shows
-    // Thu's items rather than appearing blank.
-    const futureDays = new Set<string>();
-    for (const it of filtered) {
-      const k = tzCalendarDayKey(new Date(it.startsAt), input.tz);
-      if (k > todayKey) futureDays.add(k);
-    }
-    if (futureDays.size === 0) return [];
-    const nextDayKey = Array.from(futureDays).sort()[0];
+    // Auto-roll to *tomorrow's* tz-local calendar day once today is
+    // exhausted (per spec). We deliberately do not jump further than
+    // tomorrow — if tomorrow has no sessions the board stays empty
+    // (operators should configure a fallback layout/playlist for that).
+    // Tomorrow's key is computed by parsing todayKey (YYYY-MM-DD) and
+    // incrementing the calendar day — DST-safe because we never do
+    // hour arithmetic across the transition.
+    const [ty, tm, td] = todayKey.split("-").map(Number);
+    const t = new Date(Date.UTC(ty, tm - 1, td + 1));
+    const tomorrowKey = `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(t.getUTCDate()).padStart(2, "0")}`;
     return filtered.filter(
-      (it) => tzCalendarDayKey(new Date(it.startsAt), input.tz) === nextDayKey,
+      (it) => tzCalendarDayKey(new Date(it.startsAt), input.tz) === tomorrowKey,
     );
   }
 

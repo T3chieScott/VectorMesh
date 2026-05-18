@@ -62,6 +62,8 @@ function buildConfig(over: Partial<AgendaWidgetConfig> = {}): AgendaWidgetConfig
     showPresenter: true,
     showRoom: true,
     showStatus: true,
+    showDayName: false,
+    showDate: false,
     maxItemsPerPage: 8,
     pageRotationSeconds: 30,
     timeWindowMinutes: null,
@@ -271,4 +273,51 @@ test("renderer: statusColor overrides badge text colour, keeps per-status tint b
   // Per-status tint class survives (background semantic stays).
   assert.match(badge, /bg-emerald-/, "expected emerald background tint for in_progress badge");
   assert.match(badge, /border-emerald-/);
+});
+
+// ---------- 4. Task #240 — day/date header chunks ---------------------
+
+test("renderer: agenda-day-date is omitted when both showDayName and showDate are false", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(AgendaDisplayWidget, {
+      config: buildConfig({ showDayName: false, showDate: false }),
+      items: [buildItem({ id: "row", startsAt: new Date("2026-06-15T09:00:00Z"), endsAt: new Date("2026-06-15T10:00:00Z") })],
+      width: 1920,
+      height: 1080,
+      timezone: "UTC",
+    }),
+  );
+  assert.equal(attrOn(html, "agenda-day-date").length, 0, "header day/date block should be absent by default");
+});
+
+test("renderer: showDayName renders the weekday derived from the first item's startsAt in the given tz", () => {
+  // 2026-06-15 09:00 UTC = Monday. In London (BST, UTC+1) it's still Monday.
+  const html = renderToStaticMarkup(
+    React.createElement(AgendaDisplayWidget, {
+      config: buildConfig({ showDayName: true, showDate: false }),
+      items: [buildItem({ id: "row", startsAt: new Date("2026-06-15T09:00:00Z"), endsAt: new Date("2026-06-15T10:00:00Z") })],
+      width: 1920,
+      height: 1080,
+      timezone: "Europe/London",
+    }),
+  );
+  assert.ok(attrOn(html, "agenda-day-name").length > 0, "day-name chunk should render");
+  assert.match(html, />Monday</, "weekday should be Monday");
+  // Date chunk should not be rendered when only showDayName is on.
+  assert.equal(attrOn(html, "agenda-date").length, 0);
+});
+
+test("renderer: showDate renders a long-form date in the given tz", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(AgendaDisplayWidget, {
+      config: buildConfig({ showDayName: false, showDate: true }),
+      items: [buildItem({ id: "row", startsAt: new Date("2026-06-15T09:00:00Z"), endsAt: new Date("2026-06-15T10:00:00Z") })],
+      width: 1920,
+      height: 1080,
+      timezone: "Europe/London",
+    }),
+  );
+  assert.ok(attrOn(html, "agenda-date").length > 0, "date chunk should render");
+  assert.match(html, /June/, "long-form month name should be rendered");
+  assert.match(html, /2026/, "year should be rendered");
 });
