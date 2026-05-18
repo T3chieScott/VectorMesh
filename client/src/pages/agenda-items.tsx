@@ -18,7 +18,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Pencil, Trash2, Upload, Download, Calendar, FileText, RefreshCw, AlertTriangle, CheckCircle2, Link2 } from "lucide-react";
 import { AGENDA_STATUSES, AGENDA_SYNC_SOURCE_TYPES, type AgendaItem, type AgendaSyncConfig } from "@shared/schema";
-import { serializeAgendaCsv, AGENDA_CSV_HEADER } from "@shared/agenda-csv";
+import { serializeAgendaCsv, AGENDA_CSV_HEADER, buildAgendaCsvSample } from "@shared/agenda-csv";
 
 const itemFormSchema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -209,6 +209,9 @@ function CsvImportDialog({ open, onOpenChange, clientId }: { open: boolean; onOp
         <p className="text-sm text-muted-foreground">
           One row per item. Header line: <code className="text-xs">{AGENDA_CSV_HEADER}</code>
         </p>
+        <p className="text-xs text-muted-foreground" data-testid="text-sample-hint">
+          New to the format? Download a sample to use as a starting point.
+        </p>
         <div className="flex items-center gap-2">
           <Button asChild variant="outline" size="sm" data-testid="button-csv-file-upload">
             <label className="cursor-pointer">
@@ -222,6 +225,27 @@ function CsvImportDialog({ open, onOpenChange, clientId }: { open: boolean; onOp
                 data-testid="input-csv-file"
               />
             </label>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="button-csv-download-sample"
+            onClick={() => {
+              const sample = buildAgendaCsvSample(new Date());
+              const blob = new Blob([sample], { type: "text/csv;charset=utf-8" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "agenda-sample.csv";
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+            }}
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Download sample
           </Button>
           <span className="text-xs text-muted-foreground">or paste below:</span>
         </div>

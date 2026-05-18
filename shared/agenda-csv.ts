@@ -151,6 +151,71 @@ function csvEscape(v: string | null | undefined): string {
   return v;
 }
 
+// Builds a ready-to-edit sample CSV (header + a few realistic example
+// rows) used by the import dialog's "Download sample" button. Dates
+// are computed relative to `now` so the sample is always "fresh" — the
+// example sessions land two days in the future, regardless of when the
+// operator downloads it. Re-importing the unmodified sample is
+// guaranteed to round-trip cleanly through `parseAgendaCsv`.
+export function buildAgendaCsvSample(now: Date): string {
+  // Day starts at 09:00 UTC, two days from now.
+  const base = new Date(now);
+  base.setUTCDate(base.getUTCDate() + 2);
+  base.setUTCHours(9, 0, 0, 0);
+  const at = (minutesFromBase: number): Date =>
+    new Date(base.getTime() + minutesFromBase * 60_000);
+  return serializeAgendaCsv([
+    {
+      // Required-fields-only row (every optional column blank).
+      title: "Opening Keynote",
+      description: null,
+      room: "Main Hall",
+      track: null,
+      presenter: null,
+      startsAt: at(0),
+      endsAt: at(45),
+      status: "scheduled",
+      statusMessage: null,
+    },
+    {
+      // All optional fields filled.
+      title: "AI in Practice",
+      description: "Hands-on session with live demos and Q&A.",
+      room: "Room 101",
+      track: "Workshop",
+      presenter: "Dr. Sam Lee",
+      startsAt: at(60),
+      endsAt: at(150),
+      status: "scheduled",
+      statusMessage: null,
+    },
+    {
+      // Comma inside the title — exercises the quoting rule.
+      title: "Coffee, Tea & Networking",
+      description: null,
+      room: "Atrium",
+      track: null,
+      presenter: null,
+      startsAt: at(150),
+      endsAt: at(180),
+      status: "scheduled",
+      statusMessage: null,
+    },
+    {
+      // Non-default status + status message.
+      title: "Closing Panel",
+      description: "Wrap-up discussion with all speakers.",
+      room: "Main Hall",
+      track: "Plenary",
+      presenter: "Jane Smith",
+      startsAt: at(360),
+      endsAt: at(420),
+      status: "delayed",
+      statusMessage: "Running 10 minutes late",
+    },
+  ]);
+}
+
 export function serializeAgendaCsv(
   items: Array<{
     title: string;
