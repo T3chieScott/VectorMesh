@@ -60,6 +60,51 @@ interface ParsedUpstream {
   data: Omit<InsertAgendaItem, "clientId" | "externalSyncConfigId">;
 }
 
+/**
+ * Rewrite a Google Sheets URL into its CSV-export form.
+ *
+ * Operators almost always paste the URL from the browser address bar
+ * (e.g. ".../edit?gid=997501812#gid=997501812" or ".../edit?usp=sharing"),
+ * which serves the HTML editor, not CSV. Fetching those URLs returns
+ * HTML that the parser then treats as garbage rows — which is why
+ * syncs were reporting `ok:true` with `totalUpstream:0` and a wall of
+ * "Invalid startsAt or endsAt" warnings.
+ *
+ * Strategy:
+ *   - If the URL matches `docs.google.com/spreadsheets/d/{id}/...`,
+ *     extract the spreadsheet id, pull the gid from `?gid=` or
+ *     `#gid=` if present, and emit
+ *     `https://docs.google.com/spreadsheets/d/{id}/export?format=csv[&gid={gid}]`.
+ *   - Anything that isn't a recognised Google Sheets URL (or already
+ *     points at `/export`, `/pub`, or `gviz/tq`) is returned unchanged.
+ *
+ * Exported for unit tests.
+ */
+export function normalizeGoogleSheetsCsvUrl(rawUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return rawUrl;
+  }
+  if (!/(^|\.)docs\.google\.com$/i.test(parsed.hostname)) return rawUrl;
+  if (!/^\/spreadsheets\//i.test(parsed.pathname)) return rawUrl;
+  // Already a CSV / published / gviz export — leave it alone.
+  if (/\/(export|pub|gviz)\b/i.test(parsed.pathname)) return rawUrl;
+  const idMatch = parsed.pathname.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  if (!idMatch) return rawUrl;
+  const sheetId = idMatch[1];
+  // gid can live in `?gid=` or the `#gid=` fragment (browser address
+  // bar form). Prefer the query string when both are present.
+  let gid: string | null = parsed.searchParams.get("gid");
+  if (!gid && parsed.hash) {
+    const hashMatch = parsed.hash.match(/gid=([0-9]+)/);
+    if (hashMatch) gid = hashMatch[1];
+  }
+  const base = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
+  return gid ? `${base}&gid=${encodeURIComponent(gid)}` : base;
+}
+
 async function fetchSource(
   url: string,
   fetchImpl: typeof fetch,
@@ -131,7 +176,14 @@ export async function runAgendaSync(
     totalUpstream: 0,
   };
   try {
-    const text = await fetchSource(config.sourceUrl, fetchImpl, deps.safeFetchOptions);
+    // Rewrite browser-address-bar Google Sheets URLs (".../edit?gid=...")
+    // into the CSV-export form before fetching. Other source types
+    // (ICS) pass through unchanged.
+    const effectiveUrl =
+      config.sourceType === "google_sheets_csv"
+        ? normalizeGoogleSheetsCsvUrl(config.sourceUrl)
+        : config.sourceUrl;
+    const text = await fetchSource(effectiveUrl, fetchImpl, deps.safeFetchOptions);
     const { items: upstream, warnings } = parseUpstream(
       config.sourceType as AgendaSyncConfig["sourceType"],
       text,
