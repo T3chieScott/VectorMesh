@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
@@ -96,6 +96,7 @@ function ItemEditorDialog({
   open,
   onOpenChange,
   defaultType,
+  onSubmit,
 }: {
   playlistId: string;
   item?: PlaylistItem;
@@ -104,9 +105,11 @@ function ItemEditorDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultType?: "media" | "layout";
+  onSubmit?: (values: ItemFormValues) => void;
 }) {
   const { toast } = useToast();
   const isEditing = !!item;
+  const buffered = !!onSubmit;
   const initialType = item ? (item.layoutTemplateId ? "layout" : "media") : (defaultType || "media");
 
   const form = useForm<ItemFormValues>({
@@ -170,7 +173,15 @@ function ItemEditorDialog({
         </DialogHeader>
         <Form {...form}>
           <form
-            onSubmit={form.handleSubmit((data) => saveMutation.mutate(data))}
+            onSubmit={form.handleSubmit((data) => {
+              if (buffered) {
+                onSubmit!(data);
+                onOpenChange(false);
+                form.reset();
+              } else {
+                saveMutation.mutate(data);
+              }
+            })}
             className="space-y-4"
           >
             <FormField
@@ -321,8 +332,16 @@ function ItemEditorDialog({
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={saveMutation.isPending} data-testid="button-save-item">
-                {saveMutation.isPending ? "Saving..." : isEditing ? "Update" : "Add"}
+              <Button
+                type="submit"
+                disabled={!buffered && saveMutation.isPending}
+                data-testid="button-save-item"
+              >
+                {!buffered && saveMutation.isPending
+                  ? "Saving..."
+                  : isEditing
+                    ? "Update"
+                    : "Add"}
               </Button>
             </div>
           </form>
@@ -406,6 +425,16 @@ function SortablePlaylistItem({
   );
 }
 
+// Signature of an item used to detect unsaved changes against server data.
+// Order is captured separately by the array index.
+function itemSignature(i: PlaylistItem): string {
+  return [i.mediaAssetId ?? "", i.layoutTemplateId ?? "", i.duration ?? "null"].join("|");
+}
+
+function isTempId(id: string): boolean {
+  return id.startsWith("temp-");
+}
+
 function PlaylistItemsSection({
   playlist,
   mediaAssets,
@@ -426,7 +455,7 @@ function PlaylistItemsSection({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  const { data: items = [] } = useQuery<PlaylistItem[]>({
+  const { data: serverItems = [] } = useQuery<PlaylistItem[]>({
     queryKey: ["/api/playlists", playlist.id, "items"],
     queryFn: () => fetch(`/api/playlists/${playlist.id}/items`, { credentials: "include" }).then((r) => {
       if (!r.ok) throw new Error("Failed to fetch items");
@@ -435,55 +464,185 @@ function PlaylistItemsSection({
     enabled: itemsOpen,
   });
 
-  const sortedItems = useMemo(() => [...items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)), [items]);
+  const sortedServer = useMemo(
+    () => [...serverItems].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
+    [serverItems],
+  );
 
-  const deleteMutation = useMutation({
-    mutationFn: (itemId: string) => apiRequest("DELETE", `/api/playlist-items/${itemId}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/playlists", playlist.id, "items"] });
-      toast({ title: "Item deleted" });
-    },
-    onError: () => {
-      toast({ title: "Failed to delete item", variant: "destructive" });
-    },
-  });
+  // Local draft mirrors the server until the user makes a change.
+  // While `isDirty`, draft is preserved across server refetches so
+  // background invalidations don't clobber unsaved edits.
+  const [draftItems, setDraftItems] = useState<PlaylistItem[]>([]);
+  const [isDirty, setIsDirty] = useState(false);
 
-  const reorderMutation = useMutation({
-    mutationFn: async (itemIds: string[]) => {
-      return apiRequest("POST", `/api/playlists/${playlist.id}/reorder`, { itemIds });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/playlists", playlist.id, "items"] });
-    },
-    onError: () => {
-      toast({ title: "Failed to reorder items", variant: "destructive" });
-    },
-  });
+  useEffect(() => {
+    if (!isDirty) {
+      setDraftItems(sortedServer);
+    }
+  }, [sortedServer, isDirty]);
+
+  const markDirtyAnd = (next: PlaylistItem[]) => {
+    setDraftItems(next);
+    setIsDirty(true);
+  };
 
   const handleDragEnd = (event: DragEndEvent) => {
+    if (saveMutation.isPending) return;
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const oldIndex = sortedItems.findIndex(i => i.id === active.id);
-    const newIndex = sortedItems.findIndex(i => i.id === over.id);
+    const oldIndex = draftItems.findIndex(i => i.id === active.id);
+    const newIndex = draftItems.findIndex(i => i.id === over.id);
     if (oldIndex === -1 || newIndex === -1) return;
-    const reordered = arrayMove(sortedItems, oldIndex, newIndex);
-    reorderMutation.mutate(reordered.map(i => i.id));
+    markDirtyAnd(arrayMove(draftItems, oldIndex, newIndex));
   };
 
   const mediaMap = new Map(mediaAssets.map((m) => [m.id, m]));
-
   const layoutMap = new Map(layouts.map((l) => [l.id, l]));
 
   const handleAddItem = (type: "media" | "layout" = "media") => {
+    if (saveMutation.isPending) return;
     setEditingItem(undefined);
     setDefaultItemType(type);
     setItemDialogOpen(true);
   };
 
   const handleEditItem = (item: PlaylistItem) => {
+    if (saveMutation.isPending) return;
     setEditingItem(item);
     setItemDialogOpen(true);
   };
+
+  const handleItemDialogSubmit = (values: ItemFormValues) => {
+    if (editingItem) {
+      // Edit existing draft entry (server-backed or new) in place.
+      markDirtyAnd(
+        draftItems.map((it) =>
+          it.id === editingItem.id
+            ? {
+                ...it,
+                mediaAssetId: values.itemType === "media" ? values.mediaAssetId : null,
+                layoutTemplateId: values.itemType === "layout" ? values.layoutTemplateId! : null,
+                duration: values.duration ?? null,
+              }
+            : it,
+        ),
+      );
+    } else {
+      // Append new draft entry with a temp id; real id arrives on Save.
+      const tempId = `temp-${Math.random().toString(36).slice(2, 11)}`;
+      const newItem: PlaylistItem = {
+        id: tempId,
+        playlistId: playlist.id,
+        mediaAssetId: values.itemType === "media" ? values.mediaAssetId : null,
+        layoutTemplateId: values.itemType === "layout" ? values.layoutTemplateId! : null,
+        duration: values.duration ?? null,
+        order: draftItems.length,
+      };
+      markDirtyAnd([...draftItems, newItem]);
+    }
+  };
+
+  const handleRemove = (id: string) => {
+    if (saveMutation.isPending) return;
+    markDirtyAnd(draftItems.filter((i) => i.id !== id));
+  };
+
+  const handleCancel = () => {
+    setDraftItems(sortedServer);
+    setIsDirty(false);
+  };
+
+  // Snapshot of the draft array used to start the most recent save.
+  // We compare against the live `draftItems` on success so that any edits
+  // the user made *while* the save was in flight don't get silently
+  // cleared by `setIsDirty(false)`.
+  const saveSnapshotRef = useRef<PlaylistItem[] | null>(null);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      // Freeze the draft we're committing so concurrent edits can't change it.
+      saveSnapshotRef.current = draftItems;
+      const snapshot = draftItems;
+      const serverById = new Map(sortedServer.map((i) => [i.id, i]));
+      const draftRealIds = new Set(snapshot.filter((i) => !isTempId(i.id)).map((i) => i.id));
+
+      // 1) Deletes — server items no longer present in the draft.
+      const toDelete = sortedServer.filter((i) => !draftRealIds.has(i.id));
+      await Promise.all(
+        toDelete.map((i) => apiRequest("DELETE", `/api/playlist-items/${i.id}`)),
+      );
+
+      // 2) Patches — existing items whose field signature changed.
+      const toPatch = snapshot.filter((d) => {
+        if (isTempId(d.id)) return false;
+        const s = serverById.get(d.id);
+        return !!s && itemSignature(s) !== itemSignature(d);
+      });
+      await Promise.all(
+        toPatch.map((d) =>
+          apiRequest("PATCH", `/api/playlist-items/${d.id}`, {
+            mediaAssetId: d.mediaAssetId,
+            layoutTemplateId: d.layoutTemplateId,
+            duration: d.duration,
+          }),
+        ),
+      );
+
+      // 3) Creates — preserve draft order, capture real ids for reorder.
+      const finalIds: string[] = [];
+      for (const d of snapshot) {
+        if (isTempId(d.id)) {
+          const resp = await apiRequest("POST", `/api/playlists/${playlist.id}/items`, {
+            mediaAssetId: d.mediaAssetId,
+            layoutTemplateId: d.layoutTemplateId,
+            duration: d.duration,
+            order: finalIds.length,
+          });
+          const created = (await resp.json()) as PlaylistItem;
+          finalIds.push(created.id);
+        } else {
+          finalIds.push(d.id);
+        }
+      }
+
+      // 4) Reorder if order changed, items were added, or items were removed.
+      const serverOrderIds = sortedServer.map((i) => i.id);
+      const orderChanged =
+        finalIds.length !== serverOrderIds.length ||
+        finalIds.some((id, idx) => id !== serverOrderIds[idx]);
+      if (orderChanged && finalIds.length > 0) {
+        await apiRequest("POST", `/api/playlists/${playlist.id}/reorder`, { itemIds: finalIds });
+      }
+    },
+    onSuccess: () => {
+      // Only clear dirty if no edits happened during the in-flight save.
+      // Reference equality is enough: every draft mutation creates a new array.
+      const drifted = saveSnapshotRef.current !== draftItems;
+      saveSnapshotRef.current = null;
+      if (!drifted) {
+        setIsDirty(false);
+        toast({ title: "Playlist saved" });
+      } else {
+        toast({ title: "Playlist saved — you have new unsaved changes" });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/playlists", playlist.id, "items"] });
+    },
+    onError: (e) => {
+      saveSnapshotRef.current = null;
+      toast({
+        title: "Failed to save playlist",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+      // Surface authoritative server state so the user can decide whether
+      // to keep their draft and retry, or Cancel back to the server snapshot.
+      queryClient.invalidateQueries({ queryKey: ["/api/playlists", playlist.id, "items"] });
+    },
+  });
+
+  const isSaving = saveMutation.isPending;
+
+  const summaryCount = isDirty ? draftItems.length : sortedServer.length;
 
   return (
     <>
@@ -496,29 +655,64 @@ function PlaylistItemsSection({
           >
             <span className="flex items-center gap-2">
               <ListVideo className="h-4 w-4" />
-              Manage Items ({items.length})
+              Manage Items ({summaryCount})
+              {isDirty && (
+                <Badge variant="secondary" className="ml-1" data-testid={`badge-unsaved-${playlist.id}`}>
+                  Unsaved
+                </Badge>
+              )}
             </span>
             {itemsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="px-3 py-3 space-y-2 border-t bg-muted/20">
-            {sortedItems.length === 0 ? (
+            {isDirty && (
+              <div
+                className="sticky top-0 z-10 -mx-3 -mt-3 mb-1 flex items-center justify-between gap-2 border-b bg-amber-500/10 px-3 py-2 backdrop-blur"
+                data-testid={`bar-unsaved-${playlist.id}`}
+              >
+                <span className="flex items-center gap-2 text-xs font-medium text-amber-900 dark:text-amber-200">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  You have unsaved changes
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCancel}
+                    disabled={saveMutation.isPending}
+                    data-testid={`button-cancel-items-${playlist.id}`}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => saveMutation.mutate()}
+                    disabled={saveMutation.isPending}
+                    data-testid={`button-save-items-${playlist.id}`}
+                  >
+                    {saveMutation.isPending ? "Saving..." : "Save"}
+                  </Button>
+                </div>
+              </div>
+            )}
+            {draftItems.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-2">
                 No items yet. Add media or layouts to this playlist.
               </p>
             ) : (
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={sortedItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
+                <SortableContext items={draftItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
                   <div className="space-y-1">
-                    {sortedItems.map((item) => (
+                    {draftItems.map((item) => (
                       <SortablePlaylistItem
                         key={item.id}
                         item={item}
                         mediaAsset={item.mediaAssetId ? mediaMap.get(item.mediaAssetId) : undefined}
                         layoutTemplate={item.layoutTemplateId ? layoutMap.get(item.layoutTemplateId) : undefined}
                         onEdit={() => handleEditItem(item)}
-                        onDelete={() => deleteMutation.mutate(item.id)}
+                        onDelete={() => handleRemove(item.id)}
                       />
                     ))}
                   </div>
@@ -531,7 +725,7 @@ function PlaylistItemsSection({
                 size="sm"
                 className="flex-1"
                 onClick={() => handleAddItem("media")}
-                disabled={mediaAssets.length === 0}
+                disabled={mediaAssets.length === 0 || isSaving}
                 data-testid={`button-add-item-${playlist.id}`}
               >
                 <Plus className="mr-1 h-4 w-4" />
@@ -543,7 +737,7 @@ function PlaylistItemsSection({
                 size="sm"
                 className="flex-1"
                 onClick={() => handleAddItem("layout")}
-                disabled={layouts.length === 0}
+                disabled={layouts.length === 0 || isSaving}
                 data-testid={`button-add-layout-item-${playlist.id}`}
               >
                 <Plus className="mr-1 h-4 w-4" />
@@ -563,6 +757,7 @@ function PlaylistItemsSection({
         layouts={layouts}
         open={itemDialogOpen}
         defaultType={defaultItemType}
+        onSubmit={handleItemDialogSubmit}
         onOpenChange={(open) => {
           setItemDialogOpen(open);
           if (!open) setEditingItem(undefined);
