@@ -136,6 +136,7 @@ import {
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client, AgendaWidgetConfig } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
+import { resolveLayoutUploadClientId } from "@/lib/layoutUploadClientId";
 import { ZoneRenderer } from "@/components/zone-renderer";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -1463,6 +1464,7 @@ function ZoneEditorDialog({
   onZoneChange?: (updatedZone: LayoutZone, isNew: boolean) => void;
 }) {
   const { toast } = useToast();
+  const { selectedClientId, clients } = useSiteContext();
   const isEditing = !!zone;
   const [aircraftBoundsPickerOpen, setAircraftBoundsPickerOpen] = useState(false);
   const [isGeocoding, setIsGeocoding] = useState(false);
@@ -1534,11 +1536,21 @@ function ZoneEditorDialog({
     return (event?.colorPalette as Array<{ name: string; color: string }>) || [];
   }, [layout.eventId, events]);
 
-  const layoutClientId = useMemo(() => {
-    if (!layout.eventId) return "";
-    const event = events?.find(e => e.id === layout.eventId);
-    return event?.clientId || "";
-  }, [layout.eventId, events]);
+  // Task #243: resolve the client a media-zone upload should attach to.
+  // Falls back through layout → event → selected site → only-client so
+  // uploads work for standalone/template layouts, not just event-linked
+  // ones. `null` means there's no site context and Upload is disabled.
+  const layoutUploadClientId = useMemo(
+    () =>
+      resolveLayoutUploadClientId({
+        layout,
+        events,
+        selectedClientId,
+        clients,
+      }),
+    [layout, events, selectedClientId, clients],
+  );
+  const layoutClientId = layoutUploadClientId ?? "";
 
   const handleUploadComplete = async (result: any) => {
     if (result.successful?.length > 0) {
@@ -2760,21 +2772,43 @@ function ZoneEditorDialog({
                             ))}
                           </SelectContent>
                         </Select>
-                        <ObjectUploader
-                          maxNumberOfFiles={1}
-                          maxFileSize={104857600}
-                          clientId={layoutClientId}
-                          onComplete={handleUploadComplete}
-                          onError={() => {
-                            setIsUploading(false);
-                            toast({ title: "Upload failed", variant: "destructive" });
-                          }}
-                          buttonClassName={isUploading ? "opacity-50 pointer-events-none" : ""}
-                          buttonTestId="button-upload-media"
-                        >
-                          <Upload className="mr-2 h-4 w-4" />
-                          {isUploading ? "Uploading..." : "Upload"}
-                        </ObjectUploader>
+                        {layoutUploadClientId ? (
+                          <ObjectUploader
+                            maxNumberOfFiles={1}
+                            maxFileSize={104857600}
+                            clientId={layoutUploadClientId}
+                            onComplete={handleUploadComplete}
+                            onError={() => {
+                              setIsUploading(false);
+                              toast({ title: "Upload failed", variant: "destructive" });
+                            }}
+                            buttonClassName={isUploading ? "opacity-50 pointer-events-none" : ""}
+                            buttonTestId="button-upload-media"
+                          >
+                            <Upload className="mr-2 h-4 w-4" />
+                            {isUploading ? "Uploading..." : "Upload"}
+                          </ObjectUploader>
+                        ) : (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span tabIndex={0} data-testid="tooltip-upload-disabled">
+                                <ObjectUploader
+                                  maxNumberOfFiles={1}
+                                  maxFileSize={104857600}
+                                  clientId=""
+                                  disabled
+                                  buttonTestId="button-upload-media"
+                                >
+                                  <Upload className="mr-2 h-4 w-4" />
+                                  Upload
+                                </ObjectUploader>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs">
+                              Select a site first to upload media to this zone.
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
                       </div>
                       <FormDescription>
                         Select an existing image/video or upload a new one

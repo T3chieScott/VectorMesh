@@ -18,6 +18,7 @@ interface ObjectUploaderProps {
   onError?: (error: Error) => void;
   buttonClassName?: string;
   buttonTestId?: string;
+  disabled?: boolean;
   children: ReactNode;
 }
 
@@ -29,6 +30,7 @@ export function ObjectUploader({
   onError,
   buttonClassName,
   buttonTestId,
+  disabled = false,
   children,
 }: ObjectUploaderProps) {
   const [showModal, setShowModal] = useState(false);
@@ -95,6 +97,7 @@ export function ObjectUploader({
         onClick={() => setShowModal(true)}
         className={buttonClassName}
         data-testid={buttonTestId}
+        disabled={disabled}
       >
         {children}
       </Button>
