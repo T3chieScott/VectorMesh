@@ -69,12 +69,12 @@ outputType = "console"
 name = "test"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "TSX_TSCONFIG_PATH=tsconfig.test.json npx tsx --test tests/*.test.ts tests/*.test.tsx"
-
 [workflows.workflow.metadata]
 isValidation = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "TSX_TSCONFIG_PATH=tsconfig.test.json npx tsx --test --test-force-exit tests/*.test.ts tests/*.test.tsx"
 
 [agent]
 integrations = ["javascript_object_storage:2.0.0", "javascript_log_in_with_replit:2.0.0", "javascript_database:1.0.0"]
