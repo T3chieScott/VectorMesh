@@ -485,7 +485,7 @@ const zoneTypeLabels: Record<string, string> = {
   ticker: "Ticker (scrolling text)",
   clock: "Clock widget",
   logo: "Logo widget",
-  html: "HTML widget",
+  html: "Custom HTML + CSS snippet",
   weather: "Weather widget",
   news: "News (RSS feed)",
   text: "Text (static content)",
@@ -565,6 +565,8 @@ const zoneFormSchema = z.object({
   newsTextSize: z.number().min(12).max(72).optional(),
   // Text widget configuration
   textContent: z.string().optional(),
+  // HTML widget configuration (Task #244): reuses textContent for the HTML body.
+  htmlCss: z.string().optional(),
   textFontSize: z.union([z.number().min(12).max(120), z.enum(["small", "medium", "large", "xlarge"])]).optional(),
   // Ticker widget configuration
   tickerScrollSpeed: z.number().min(5).max(60).optional(),
@@ -1646,6 +1648,7 @@ function ZoneEditorDialog({
       webrtcStreamKey: "",
       webrtcMute: true,
       textContent: "",
+      htmlCss: "",
       textFontSize: 24,
       textAlign: "center",
       textVerticalAlign: "middle",
@@ -1872,6 +1875,7 @@ function ZoneEditorDialog({
           webrtcStreamKey: zone.webrtcStreamKey || "",
           webrtcMute: zone.webrtcMute !== false,
           textContent: zone.textContent || "",
+          htmlCss: zone.htmlCss || "",
           textFontSize: typeof zone.textFontSize === 'number' ? zone.textFontSize :
             (zone.textFontSize === 'small' ? 14 : zone.textFontSize === 'large' ? 36 : zone.textFontSize === 'xlarge' ? 48 : 24),
           textAlign: zone.textAlign || "center",
@@ -2095,6 +2099,7 @@ function ZoneEditorDialog({
           webrtcStreamKey: "",
           webrtcMute: true,
           textContent: "",
+          htmlCss: "",
           textFontSize: 24,
           textAlign: "center",
           textVerticalAlign: "middle",
@@ -3646,6 +3651,88 @@ function ZoneEditorDialog({
                       </FormItem>
                     )}
                   />
+                </div>
+              </div>
+            )}
+
+            {/* HTML Widget Configuration (Task #244) */}
+            {form.watch("type") === "html" && (
+              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Code className="h-4 w-4" />
+                  HTML + CSS Widget Settings
+                </div>
+                <FormField
+                  control={form.control}
+                  name="textContent"
+                  render={({ field }) => (
+                    <FormItem>
+                      <div className="flex items-center justify-between gap-2">
+                        <FormLabel>HTML</FormLabel>
+                        <VariableInsertMenu onInsert={(token) => field.onChange((field.value || "") + token)} />
+                      </div>
+                      <FormControl>
+                        <textarea
+                          placeholder={`<div class="card">\n  <h1>{{event_name}}</h1>\n  <p>Welcome to {{client_name}}</p>\n</div>`}
+                          className="w-full min-h-[160px] p-3 rounded-md border border-input bg-background font-mono text-sm resize-y"
+                          {...field}
+                          value={field.value || ""}
+                          data-testid="input-html-body"
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Custom HTML. Scripts are removed for security; use variables like {"{{event_name}}"} for dynamic content.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="htmlCss"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>CSS</FormLabel>
+                      <FormControl>
+                        <textarea
+                          placeholder={`.card {\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  justify-content: center;\n  height: 100%;\n  background: #1e293b;\n  color: white;\n}`}
+                          className="w-full min-h-[160px] p-3 rounded-md border border-input bg-background font-mono text-sm resize-y"
+                          {...field}
+                          value={field.value || ""}
+                          data-testid="input-html-css"
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Styles apply only inside this widget's sandbox — they never affect the rest of the app.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="space-y-2">
+                  <FormLabel>Live Preview</FormLabel>
+                  <div
+                    className="w-full h-48 rounded-md border border-input overflow-hidden bg-background"
+                    data-testid="preview-html-widget"
+                  >
+                    <ZoneRenderer
+                      zone={{
+                        id: "html-preview",
+                        name: "HTML Preview",
+                        type: "html",
+                        x: 0,
+                        y: 0,
+                        width: 100,
+                        height: 100,
+                        textContent: form.watch("textContent") || "",
+                        htmlCss: form.watch("htmlCss") || "",
+                      }}
+                      fillContainer={true}
+                    />
+                  </div>
+                  <FormDescription>
+                    Preview rendered inside the same sandboxed iframe used on real screens.
+                  </FormDescription>
                 </div>
               </div>
             )}

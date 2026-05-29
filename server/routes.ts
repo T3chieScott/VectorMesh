@@ -39,6 +39,7 @@ import { buildBulkBookingsHandler, type BulkBookingResult } from "./bulkBookings
 import { buildBulkBlocksHandler, type BulkBlockResult } from "./bulkBlocksHandler";
 import { resolveSimulatorContent } from "./simulatorContent";
 import { filterMediaAssetsForScreen } from "./playerMediaFilter";
+import { sanitizeHtmlZones } from "@shared/html-widget-sanitize";
 import {
   applyGlobalHideOverride,
   parseGlobalHideValue,
@@ -2200,7 +2201,14 @@ export async function registerRoutes(
         }
         filtered = filtered.filter(l => !l.clientId || l.clientId === clientId);
       }
-      res.json(filtered);
+      // Task #244: sanitise HTML-widget zone bodies on read so the layout
+      // editor and simulator (which both load layouts via this endpoint) see
+      // the same script-free payload a real player receives.
+      const sanitized = filtered.map((l) => ({
+        ...l,
+        zones: sanitizeHtmlZones(l.zones as any),
+      }));
+      res.json(sanitized);
     } catch (error) {
       console.error("Error fetching layouts:", error);
       res.status(500).json({ error: "Failed to fetch layouts" });
@@ -4329,7 +4337,9 @@ export async function registerRoutes(
             // rather than a NaN-sized box.
             width: memberProfile?.width ?? 0,
             height: memberProfile?.height ?? 0,
-            layout: memberResolved.layout,
+            layout: memberResolved.layout
+              ? { ...memberResolved.layout, zones: sanitizeHtmlZones(memberResolved.layout.zones as any) }
+              : memberResolved.layout,
             zoneSources: memberResolved.activeZoneSources,
             liveOverride: memberResolved.liveOverride,
             profile: memberProfile,
@@ -4352,11 +4362,24 @@ export async function registerRoutes(
       res.json({
         screen: screenForResponse,
         profile,
-        layout,
+        // Task #244: strip script vectors from HTML-widget zone bodies before
+        // the layout reaches a device (defence-in-depth behind the iframe
+        // sandbox). The stored row is untouched; only this response copy is.
+        layout: layout
+          ? { ...layout, zones: sanitizeHtmlZones(layout.zones as any) }
+          : layout,
         media: mediaAssets,
         playlists: allPlaylists,
         playlistItems: playlistItemsMap,
-        layoutTemplates: layoutTemplatesMap,
+        // Task #244: layout templates reached via playlist rotation are also a
+        // player-facing path — sanitise their HTML-widget zones too so every
+        // layout-bearing branch of this response is consistently stripped.
+        layoutTemplates: Object.fromEntries(
+          Object.entries(layoutTemplatesMap).map(([id, lt]) => [
+            id,
+            lt ? { ...lt, zones: sanitizeHtmlZones((lt as any).zones) } : lt,
+          ]),
+        ),
         zoneSources: activeZoneSources,
         liveOverride,
         event,

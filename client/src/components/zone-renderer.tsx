@@ -58,6 +58,10 @@ import {
   usePlayerVariableTick,
   type PlayerVariableContext,
 } from "@/lib/player-variables";
+import {
+  sanitizeWidgetHtml,
+  sanitizeWidgetCss,
+} from "@shared/html-widget-sanitize";
 
 export type { PlayerVariableContext } from "@/lib/player-variables";
 
@@ -788,17 +792,37 @@ function TextWidget({
   );
 }
 
-function HtmlWidget({ content, ctx }: { content?: string; ctx?: PlayerVariableContext }) {
-  const resolved = resolvePlayerVariables(content || "", ctx);
+function HtmlWidget({
+  content,
+  css,
+  ctx,
+}: {
+  content?: string;
+  css?: string;
+  ctx?: PlayerVariableContext;
+}) {
+  // Resolve {{player variables}} in the HTML body, then sanitise. The
+  // sandboxed iframe (allow-same-origin only, NO allow-scripts) is the real
+  // security boundary — sanitisation is defence-in-depth and also runs
+  // server-side before this content ever reaches a device.
+  const srcDoc = useMemo(() => {
+    const html = sanitizeWidgetHtml(resolvePlayerVariables(content || "", ctx));
+    const styles = sanitizeWidgetCss(css || "");
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;box-sizing:border-box;}
+*,*::before,*::after{box-sizing:inherit;}
+${styles}
+</style></head><body>${html}</body></html>`;
+  }, [content, css, ctx]);
+
   return (
-    <div className="h-full w-full flex items-center justify-center p-4 text-center">
-      <div className="space-y-2">
-        <Code className="h-8 w-8 mx-auto text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">
-          {resolved || "Custom HTML Zone"}
-        </p>
-      </div>
-    </div>
+    <iframe
+      title="HTML widget"
+      sandbox="allow-same-origin"
+      srcDoc={srcDoc}
+      className="block h-full w-full border-0"
+      data-testid="iframe-html-widget"
+    />
   );
 }
 
@@ -5511,7 +5535,7 @@ export function ZoneRenderer({
       case "logo":
         return <LogoWidget />;
       case "html":
-        return <HtmlWidget content={zone.textContent} ctx={ctx} />;
+        return <HtmlWidget content={zone.textContent} css={zone.htmlCss} ctx={ctx} />;
       case "weather":
         return (
           <WeatherWidget 

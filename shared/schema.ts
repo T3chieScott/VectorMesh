@@ -450,6 +450,10 @@ export interface LayoutZone {
   newsTextSize?: number;
   // Text widget configuration
   textContent?: string;
+  // HTML widget configuration (Task #244). The HTML body reuses `textContent`;
+  // `htmlCss` carries the scoped stylesheet. Both render inside a sandboxed
+  // iframe (no scripts) and are sanitised server-side before reaching players.
+  htmlCss?: string;
   textFontSize?: number | "small" | "medium" | "large" | "xlarge";  // Font size in pixels (default 24), legacy enum values converted to numeric
   // Ticker widget configuration
   tickerScrollSpeed?: number;  // Duration in seconds for one complete scroll cycle
