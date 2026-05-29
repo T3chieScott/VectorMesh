@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { log } from "./index";
+import { log } from "./log";
 import { eq, and, asc, desc, gte, lte, lt, inArray, isNotNull, sql, count } from "drizzle-orm";
 import {
   clients,
