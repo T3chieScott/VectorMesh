@@ -1120,6 +1120,15 @@ export const agendaSyncConfigs = pgTable("agenda_sync_configs", {
   lastError: text("last_error"),
   lastErrorAt: timestamp("last_error_at"),
   lastItemCount: integer("last_item_count"),
+  // Task #220 — alert when a feed has been failing for a while. The
+  // sync engine bumps `consecutiveFailureCount` on every failed pull
+  // and resets it to 0 on the next success. Once the count crosses the
+  // alert threshold we send a "feed failing" email to the site's alert
+  // recipients and flip `failureAlertSent` so we only notify once per
+  // outage. A subsequent successful sync sends a one-shot "recovered"
+  // email and clears the flag.
+  consecutiveFailureCount: integer("consecutive_failure_count").notNull().default(0),
+  failureAlertSent: boolean("failure_alert_sent").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1138,6 +1147,8 @@ export const insertAgendaSyncConfigSchema = createInsertSchema(agendaSyncConfigs
     lastError: true,
     lastErrorAt: true,
     lastItemCount: true,
+    consecutiveFailureCount: true,
+    failureAlertSent: true,
   })
   .extend({
     name: z.string().min(1, "Name is required"),

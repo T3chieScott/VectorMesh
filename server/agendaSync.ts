@@ -47,13 +47,46 @@ export interface AgendaSyncResult {
   parseWarnings?: string[];
 }
 
+/**
+ * Notification hook for persistent feed failures / recoveries (Task #220).
+ *
+ * The engine owns the *decision* (it tracks the consecutive-failure
+ * count and the one-shot "already alerted" flag on the config row);
+ * the alerter owns *delivery* — resolving the site's alert recipients
+ * and sending the email. Splitting it this way keeps runAgendaSync
+ * testable (tests inject a recording alerter) while the real
+ * implementation (server/routes.ts) reuses the same per-client alert
+ * routing as the screen-status alerts.
+ */
+export interface AgendaSyncAlerter {
+  /** A feed has just crossed the consecutive-failure threshold. */
+  notifyFeedFailing(
+    config: AgendaSyncConfig,
+    failureCount: number,
+    error: string,
+    erroredAt: Date,
+  ): Promise<void>;
+  /** A previously-alerting feed has synced successfully again. */
+  notifyFeedRecovered(config: AgendaSyncConfig): Promise<void>;
+}
+
 export interface AgendaSyncDeps {
   storage: AgendaSyncStorage;
   fetchImpl?: typeof fetch;
   now?: () => Date;
   /** Optional overrides forwarded to safeFetch (DNS lookup, caps). Used by tests. */
   safeFetchOptions?: Pick<SafeFetchOptions, "lookupImpl" | "maxBytes" | "timeoutMs">;
+  /** Delivers persistent-failure / recovery notifications (Task #220). */
+  alerter?: AgendaSyncAlerter;
+  /**
+   * Number of consecutive failed syncs before the first "feed failing"
+   * alert fires. Defaults to AGENDA_FAILURE_ALERT_THRESHOLD (3).
+   */
+  failureAlertThreshold?: number;
 }
+
+/** Consecutive failed syncs before a feed-failing alert is sent. */
+export const AGENDA_FAILURE_ALERT_THRESHOLD = 3;
 
 interface ParsedUpstream {
   externalId: string;
@@ -249,24 +282,60 @@ export async function runAgendaSync(
       result.removed++;
     }
 
+    // Task #220 — a successful sync clears the failure streak. If we'd
+    // previously alerted that this feed was failing, fire a one-shot
+    // "recovered" notification and reset the flag.
+    const wasAlerting = config.failureAlertSent === true;
     await deps.storage.updateAgendaSyncConfig(config.id, {
       lastSyncAt: now,
       lastSyncOk: true,
       lastError: null,
       lastErrorAt: null,
       lastItemCount: upstream.length,
+      consecutiveFailureCount: 0,
+      failureAlertSent: false,
     });
     result.ok = true;
+    if (wasAlerting && deps.alerter) {
+      try {
+        await deps.alerter.notifyFeedRecovered(config);
+      } catch (alertErr) {
+        console.error(
+          `[agenda-sync] recovery alert failed for config ${config.id}:`,
+          alertErr,
+        );
+      }
+    }
     return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     result.error = message;
+    // Task #220 — bump the consecutive-failure streak and decide whether
+    // this is the moment to notify. We alert exactly once per outage:
+    // the first failure that reaches the threshold while no alert has
+    // been sent yet flips `failureAlertSent`, which a later success
+    // resets.
+    const threshold = deps.failureAlertThreshold ?? AGENDA_FAILURE_ALERT_THRESHOLD;
+    const newCount = (config.consecutiveFailureCount ?? 0) + 1;
+    const shouldAlert = newCount >= threshold && config.failureAlertSent !== true;
     await deps.storage.updateAgendaSyncConfig(config.id, {
       lastSyncAt: now,
       lastSyncOk: false,
       lastError: message.slice(0, 500),
       lastErrorAt: now,
+      consecutiveFailureCount: newCount,
+      failureAlertSent: shouldAlert ? true : config.failureAlertSent === true,
     });
+    if (shouldAlert && deps.alerter) {
+      try {
+        await deps.alerter.notifyFeedFailing(config, newCount, message, now);
+      } catch (alertErr) {
+        console.error(
+          `[agenda-sync] failure alert failed for config ${config.id}:`,
+          alertErr,
+        );
+      }
+    }
     return result;
   }
 }

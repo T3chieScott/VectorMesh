@@ -221,6 +221,79 @@ export async function sendScreenOnlineAlert(
   return allSent;
 }
 
+export async function sendAgendaFeedFailingAlert(
+  recipients: string[],
+  feedName: string,
+  errorMessage: string | null,
+  failureCount: number,
+  lastErrorAt: Date | null
+): Promise<boolean> {
+  const appUrl = getAppUrl();
+  const lastErrorStr = lastErrorAt ? lastErrorAt.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "Unknown";
+  const errorStr = errorMessage || "Unknown error";
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+      <div style="text-align: center; margin-bottom: 32px;">
+        <h1 style="color: #1a3a5c; margin: 0;">
+          <span style="color: #1a3a5c;">Vector</span><span style="color: #0ea5e9;">Mesh</span>
+        </h1>
+      </div>
+      <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+        <h2 style="color: #dc2626; margin: 0 0 8px; font-size: 18px;">Agenda Feed Failing</h2>
+        <p style="color: #555; margin: 0; line-height: 1.6;">The agenda feed <strong>${feedName}</strong> has failed to sync <strong>${failureCount}</strong> times in a row. Scheduled sessions may be out of date on your displays.</p>
+      </div>
+      <div style="background: #f4f4f5; border-radius: 8px; padding: 20px; margin: 24px 0;">
+        <p style="margin: 0 0 8px; color: #555;"><strong>Feed:</strong> ${feedName}</p>
+        <p style="margin: 0 0 8px; color: #555;"><strong>Consecutive failures:</strong> ${failureCount}</p>
+        <p style="margin: 0 0 8px; color: #555;"><strong>Last error:</strong> ${errorStr}</p>
+        <p style="margin: 0; color: #555;"><strong>Last attempt:</strong> ${lastErrorStr}</p>
+      </div>
+      <div style="text-align: center; margin: 32px 0;">
+        <a href="${appUrl}/agenda" style="background: #0ea5e9; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">View Agenda</a>
+      </div>
+      <p style="color: #999; font-size: 12px; margin-top: 40px; border-top: 1px solid #e4e4e7; padding-top: 20px;">This is an automated alert from VectorMesh. You can manage alert settings in the VectorMesh settings page.</p>
+    </div>
+  `;
+
+  let allSent = true;
+  for (const to of recipients) {
+    const sent = await sendEmail(to, `VectorMesh Alert — Agenda Feed Failing: ${feedName}`, html);
+    if (!sent) allSent = false;
+  }
+  return allSent;
+}
+
+export async function sendAgendaFeedRecoveredAlert(
+  recipients: string[],
+  feedName: string
+): Promise<boolean> {
+  const appUrl = getAppUrl();
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+      <div style="text-align: center; margin-bottom: 32px;">
+        <h1 style="color: #1a3a5c; margin: 0;">
+          <span style="color: #1a3a5c;">Vector</span><span style="color: #0ea5e9;">Mesh</span>
+        </h1>
+      </div>
+      <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+        <h2 style="color: #16a34a; margin: 0 0 8px; font-size: 18px;">Agenda Feed Recovered</h2>
+        <p style="color: #555; margin: 0; line-height: 1.6;">The agenda feed <strong>${feedName}</strong> has synced successfully and is back to normal.</p>
+      </div>
+      <div style="text-align: center; margin: 32px 0;">
+        <a href="${appUrl}/agenda" style="background: #0ea5e9; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">View Agenda</a>
+      </div>
+      <p style="color: #999; font-size: 12px; margin-top: 40px; border-top: 1px solid #e4e4e7; padding-top: 20px;">This is an automated alert from VectorMesh. You can manage alert settings in the VectorMesh settings page.</p>
+    </div>
+  `;
+
+  let allSent = true;
+  for (const to of recipients) {
+    const sent = await sendEmail(to, `VectorMesh Alert — Agenda Feed Recovered: ${feedName}`, html);
+    if (!sent) allSent = false;
+  }
+  return allSent;
+}
+
 export async function sendTestAlert(
   recipients: string[]
 ): Promise<boolean> {

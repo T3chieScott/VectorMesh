@@ -27,6 +27,8 @@ function makeStubStorage(initial: AgendaItem[] = []) {
     lastError: null,
     lastErrorAt: null,
     lastItemCount: null,
+    consecutiveFailureCount: 0,
+    failureAlertSent: false,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -179,4 +181,109 @@ test("HTTP error is recorded on the config row, items untouched", async () => {
   assert.equal(s.items.length, before);
   assert.equal(s.config.lastSyncOk, false);
   assert.match(s.config.lastError ?? "", /503/);
+});
+
+// Task #220 — persistent-failure alerting.
+
+function makeRecordingAlerter() {
+  const failing: Array<{ name: string; count: number; error: string }> = [];
+  const recovered: string[] = [];
+  return {
+    failing,
+    recovered,
+    alerter: {
+      async notifyFeedFailing(config: AgendaSyncConfig, count: number, error: string) {
+        failing.push({ name: config.name, count, error });
+      },
+      async notifyFeedRecovered(config: AgendaSyncConfig) {
+        recovered.push(config.name);
+      },
+    },
+  };
+}
+
+test("consecutiveFailureCount climbs on each failure, alert fires once at threshold", async () => {
+  const s = makeStubStorage();
+  const a = makeRecordingAlerter();
+  const deps = {
+    storage: s.storage as any,
+    fetchImpl: mockFetch("", 503),
+    safeFetchOptions: safeOpts,
+    alerter: a.alerter,
+    failureAlertThreshold: 3,
+  };
+
+  await runAgendaSync(s.config, deps);
+  assert.equal(s.config.consecutiveFailureCount, 1);
+  assert.equal(s.config.failureAlertSent, false);
+  assert.equal(a.failing.length, 0);
+
+  await runAgendaSync(s.config, deps);
+  assert.equal(s.config.consecutiveFailureCount, 2);
+  assert.equal(a.failing.length, 0);
+
+  // Third failure reaches the threshold -> one alert.
+  await runAgendaSync(s.config, deps);
+  assert.equal(s.config.consecutiveFailureCount, 3);
+  assert.equal(s.config.failureAlertSent, true);
+  assert.equal(a.failing.length, 1);
+  assert.equal(a.failing[0].count, 3);
+
+  // Fourth failure: count keeps climbing but no second alert (one per outage).
+  await runAgendaSync(s.config, deps);
+  assert.equal(s.config.consecutiveFailureCount, 4);
+  assert.equal(a.failing.length, 1);
+});
+
+test("successful sync after alerting fires a one-shot recovery and resets counters", async () => {
+  const s = makeStubStorage();
+  const a = makeRecordingAlerter();
+  const failDeps = {
+    storage: s.storage as any,
+    fetchImpl: mockFetch("", 503),
+    safeFetchOptions: safeOpts,
+    alerter: a.alerter,
+    failureAlertThreshold: 2,
+  };
+  // Two failures -> threshold reached, alert sent.
+  await runAgendaSync(s.config, failDeps);
+  await runAgendaSync(s.config, failDeps);
+  assert.equal(s.config.failureAlertSent, true);
+  assert.equal(a.failing.length, 1);
+
+  // Recovery.
+  const r = await runAgendaSync(s.config, {
+    storage: s.storage as any,
+    fetchImpl: mockFetch(ICS_TWO),
+    safeFetchOptions: safeOpts,
+    alerter: a.alerter,
+    failureAlertThreshold: 2,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(s.config.consecutiveFailureCount, 0);
+  assert.equal(s.config.failureAlertSent, false);
+  assert.deepEqual(a.recovered, ["ICS test"]);
+});
+
+test("recovery alert does NOT fire if no failure alert was ever sent", async () => {
+  const s = makeStubStorage();
+  const a = makeRecordingAlerter();
+  // One failure (below threshold), then success.
+  await runAgendaSync(s.config, {
+    storage: s.storage as any,
+    fetchImpl: mockFetch("", 503),
+    safeFetchOptions: safeOpts,
+    alerter: a.alerter,
+    failureAlertThreshold: 3,
+  });
+  await runAgendaSync(s.config, {
+    storage: s.storage as any,
+    fetchImpl: mockFetch(ICS_TWO),
+    safeFetchOptions: safeOpts,
+    alerter: a.alerter,
+    failureAlertThreshold: 3,
+  });
+  assert.equal(a.failing.length, 0);
+  assert.equal(a.recovered.length, 0);
+  assert.equal(s.config.consecutiveFailureCount, 0);
 });

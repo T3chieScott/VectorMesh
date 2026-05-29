@@ -6,7 +6,7 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
-import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema, insertCanvasGroupSchema, insertAgendaItemSchema, insertAgendaWidgetConfigSchema, type InsertScreenEventBooking, type TimeRule, type ScheduleTarget, type InsertAgendaItem, type InsertLayoutTemplate } from "@shared/schema";
+import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema, insertCanvasGroupSchema, insertAgendaItemSchema, insertAgendaWidgetConfigSchema, type InsertScreenEventBooking, type TimeRule, type ScheduleTarget, type InsertAgendaItem, type InsertLayoutTemplate, type AgendaSyncConfig } from "@shared/schema";
 import { parseAgendaCsv } from "@shared/agenda-csv";
 import { resolveAgendaItems } from "@shared/agenda-resolver";
 import { derivePlaybackStatus } from "@shared/playback-derivation";
@@ -32,7 +32,7 @@ import os from "os";
 import fs from "fs";
 import * as fileStorage from "./fileStorage";
 import { find as findTimezone } from "geo-tz";
-import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert } from "./email";
+import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert, sendAgendaFeedFailingAlert, sendAgendaFeedRecoveredAlert } from "./email";
 import { resolveScreenContent, type ResolverDeps } from "./contentResolver";
 import { buildContentTraceHandler } from "./contentTraceHandler";
 import { buildBulkBookingsHandler, type BulkBookingResult } from "./bulkBookingsHandler";
@@ -937,9 +937,56 @@ export async function registerRoutes(
   // (server/agendaSync.ts) records ok / error state back on the
   // config row so the /agenda UI can surface failures.
   const AGENDA_SYNC_TICK_MS = 60_000;
+  // Task #220 — alerter that delivers persistent-failure / recovery
+  // notifications for agenda feeds. It reuses the same per-client alert
+  // routing as the screen-status alerts: recipients are taken from the
+  // site's `screen_offline` alert setting (the only alert audience the
+  // settings UI configures), so admins who opted in to screen alerts
+  // also get told when a feed goes dark — no extra configuration.
+  const resolveAgendaAlertRecipients = async (
+    clientId: string,
+  ): Promise<string[]> => {
+    try {
+      const setting = await storage.getAlertSetting("screen_offline", clientId);
+      if (!setting || !setting.enabled) return [];
+      return setting.recipients ?? [];
+    } catch (err) {
+      console.error("[agenda-sync] failed to resolve alert recipients:", err);
+      return [];
+    }
+  };
+  const agendaAlerter = {
+    async notifyFeedFailing(
+      config: AgendaSyncConfig,
+      failureCount: number,
+      error: string,
+      erroredAt: Date,
+    ) {
+      const recipients = await resolveAgendaAlertRecipients(config.clientId);
+      if (recipients.length === 0) return;
+      await sendAgendaFeedFailingAlert(
+        recipients,
+        config.name,
+        error,
+        failureCount,
+        erroredAt,
+      );
+      console.log(
+        `[agenda-sync] sent feed-failing alert for "${config.name}" (${failureCount} consecutive failures) to ${recipients.length} recipient(s)`,
+      );
+    },
+    async notifyFeedRecovered(config: AgendaSyncConfig) {
+      const recipients = await resolveAgendaAlertRecipients(config.clientId);
+      if (recipients.length === 0) return;
+      await sendAgendaFeedRecoveredAlert(recipients, config.name);
+      console.log(
+        `[agenda-sync] sent feed-recovered alert for "${config.name}" to ${recipients.length} recipient(s)`,
+      );
+    },
+  };
   const tickAgendaSync = async () => {
     try {
-      const { ran, results } = await runDueAgendaSyncs({ storage });
+      const { ran, results } = await runDueAgendaSyncs({ storage, alerter: agendaAlerter });
       if (ran > 0) {
         const failed = results.filter((r) => !r.result.ok).length;
         console.log(
