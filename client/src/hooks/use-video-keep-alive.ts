@@ -25,6 +25,27 @@ export interface VideoKeepAliveOptions {
    * cycles from the active layer.
    */
   enabled?: boolean;
+  /**
+   * Task #199 — desired `muted` state for the element. When set
+   * (the player passes `true` for every video unless an operator
+   * explicitly opts in to audio) the hook imperatively enforces
+   * `video.muted` and re-asserts it on every interaction.
+   *
+   * Why this matters: modern Chromium auto-pauses a *playing,
+   * unmuted* background <video> when another tab claims audio focus
+   * (e.g. a YouTube ad). A muted element never participates in audio
+   * focus arbitration, so it is never the one that gets paused. The
+   * watchdog would eventually recover the pause, but the player
+   * visibly stutters in the meantime — keeping the element muted
+   * pre-empts the pause entirely.
+   *
+   * It also defends against React's long-standing `muted`-attribute
+   * bug: the `muted` prop on a server-rendered/hydrated <video> is
+   * not always reflected onto the DOM property, leaving the element
+   * audibly unmuted. Asserting the property via the ref guarantees
+   * the intended state. Leave undefined to skip enforcement.
+   */
+  muted?: boolean;
 }
 
 export interface VmPlayerVideoStats {
@@ -111,6 +132,12 @@ export interface KeepAliveVideoLike {
   paused: boolean;
   ended: boolean;
   loop: boolean;
+  /**
+   * Optional so the node:test fakes (which don't model audio) keep
+   * working. When the real DOM element is passed it is always a
+   * boolean and `assertMuted` keeps it pinned.
+   */
+  muted?: boolean;
   play(): Promise<void> | void;
   addEventListener(type: string, listener: () => void): void;
   removeEventListener(type: string, listener: () => void): void;
@@ -133,6 +160,12 @@ export interface KeepAliveDeps {
   clearTimeoutFn?: (handle: unknown) => void;
   nowFn?: () => number;
   bump?: (key: keyof VmPlayerVideoStats) => void;
+  /**
+   * Task #199 — desired `muted` state to enforce on the element.
+   * Undefined skips enforcement (used by the existing fakes/tests
+   * that don't model audio). See `VideoKeepAliveOptions.muted`.
+   */
+  muted?: boolean;
 }
 
 /**
@@ -165,6 +198,26 @@ export function attachVideoKeepAlive(
   let failures = 0;
   let lastFailureAt = 0;
   let resumeTimer: unknown = null;
+
+  // Task #199 — pin the element to its intended muted state. A muted
+  // <video> never participates in Chromium's audio-focus arbitration,
+  // so it is never the element auto-paused when another tab grabs
+  // focus (e.g. a YouTube ad). Re-asserting on every interaction also
+  // works around React's `muted`-prop-not-reflected-to-property bug.
+  const enforceMuted = deps.muted;
+  const assertMuted = () => {
+    if (enforceMuted === undefined) return;
+    try {
+      if (video.muted !== enforceMuted) {
+        video.muted = enforceMuted;
+      }
+    } catch {
+      // Some environments (or the node:test fakes) may not allow
+      // assigning `muted` — never let it break the watchdog.
+    }
+  };
+  // Enforce immediately on attach, before any play() can fire.
+  assertMuted();
 
   const tryPlay = async (): Promise<boolean> => {
     if (cancelled) return false;
@@ -223,6 +276,10 @@ export function attachVideoKeepAlive(
 
   const onPause = () => {
     if (video.ended && !video.loop) return;
+    // If an audio-focus steal slipped through (element somehow ended
+    // up unmuted), re-mute before resuming so the next play() can't be
+    // paused again for the same reason.
+    assertMuted();
     scheduleResume();
   };
   const onStalled = () => {
@@ -246,6 +303,16 @@ export function attachVideoKeepAlive(
   };
   const onPlaying = () => {
     failures = 0;
+    // Re-assert at the moment playback (re)starts — the most likely
+    // point at which a stale unmuted state would otherwise cause the
+    // next audio-focus steal to pause us again.
+    assertMuted();
+  };
+  // `volumechange` fires when something flips `muted`. If a script,
+  // extension or an autoplay-policy quirk un-mutes the element, snap
+  // it straight back to the intended state.
+  const onVolumeChange = () => {
+    assertMuted();
   };
   const onVisibility = () => {
     if (!doc) return;
@@ -280,6 +347,11 @@ export function attachVideoKeepAlive(
   video.addEventListener("error", onError);
   video.addEventListener("suspend", onSuspend);
   video.addEventListener("playing", onPlaying);
+  // Only subscribe to volumechange when we're actually enforcing a
+  // muted state — otherwise it's dead weight.
+  if (enforceMuted !== undefined) {
+    video.addEventListener("volumechange", onVolumeChange);
+  }
   doc?.addEventListener("visibilitychange", onVisibility);
   win?.addEventListener("pageshow", onPageShow);
   win?.addEventListener("vm:player-wake", onPlayerWake);
@@ -292,6 +364,9 @@ export function attachVideoKeepAlive(
     video.removeEventListener("error", onError);
     video.removeEventListener("suspend", onSuspend);
     video.removeEventListener("playing", onPlaying);
+    if (enforceMuted !== undefined) {
+      video.removeEventListener("volumechange", onVolumeChange);
+    }
     doc?.removeEventListener("visibilitychange", onVisibility);
     win?.removeEventListener("pageshow", onPageShow);
     win?.removeEventListener("vm:player-wake", onPlayerWake);
@@ -303,11 +378,12 @@ export function useVideoKeepAlive(
   options: VideoKeepAliveOptions = {},
 ): void {
   const enabled = options.enabled ?? true;
+  const muted = options.muted;
 
   useEffect(() => {
     if (!enabled) return;
     const v = ref.current;
     if (!v) return;
-    return attachVideoKeepAlive(v as unknown as KeepAliveVideoLike);
-  }, [enabled, ref]);
+    return attachVideoKeepAlive(v as unknown as KeepAliveVideoLike, { muted });
+  }, [enabled, muted, ref]);
 }

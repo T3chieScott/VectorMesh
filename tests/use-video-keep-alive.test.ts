@@ -658,3 +658,135 @@ test(`${PREFIX} Task #197: post-reload first heartbeat picks up persisted reload
     },
   );
 });
+
+// ─── Task #199: muted enforcement ────────────────────────────────
+//
+// Modern Chromium auto-pauses a *playing, unmuted* background
+// <video> when another tab claims audio focus (e.g. a YouTube ad).
+// A muted element never participates in that arbitration, so the
+// player enforces `muted` on every player-side video unless an
+// operator explicitly opts in to audio. These tests pin that the
+// hook pins the property imperatively (defending against React's
+// muted-attribute bug) and snaps it back whenever it drifts.
+
+interface MutableFakeVideo extends FakeVideo {
+  muted: boolean;
+}
+
+function makeMutableFakeVideo(initialMuted: boolean): MutableFakeVideo {
+  const v = makeFakeVideo() as MutableFakeVideo;
+  v.muted = initialMuted;
+  return v;
+}
+
+test(`${PREFIX} Task #199: attach pins muted=true even if the element rendered unmuted`, () => {
+  // Models React's muted-attribute bug: the prop said muted but the
+  // DOM property came up false. attach must correct it immediately.
+  const video = makeMutableFakeVideo(false);
+  const { bump } = makeStats();
+  const timer = makeManualTimer();
+
+  const cleanup = attachVideoKeepAlive(video, {
+    doc: makeFakeTarget("visible"),
+    win: { addEventListener: () => {}, removeEventListener: () => {}, location: { reload: () => {} } },
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    bump,
+    muted: true,
+  });
+
+  assert.equal(video.muted, true, "attach must enforce the intended muted state");
+  cleanup();
+});
+
+test(`${PREFIX} Task #199: a volumechange that un-mutes is snapped back to muted`, () => {
+  const video = makeMutableFakeVideo(true);
+  const { bump } = makeStats();
+  const timer = makeManualTimer();
+
+  const cleanup = attachVideoKeepAlive(video, {
+    doc: makeFakeTarget("visible"),
+    win: { addEventListener: () => {}, removeEventListener: () => {}, location: { reload: () => {} } },
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    bump,
+    muted: true,
+  });
+
+  // Something un-mutes the element (script/extension/policy quirk).
+  video.muted = false;
+  video.fire("volumechange");
+  assert.equal(video.muted, true, "volumechange handler must re-mute the element");
+
+  cleanup();
+  // After cleanup the listener is gone — a drift stays uncorrected.
+  video.muted = false;
+  video.fire("volumechange");
+  assert.equal(video.muted, false, "volumechange listener must be detached on cleanup");
+});
+
+test(`${PREFIX} Task #199: a pause re-asserts muted before scheduling resume`, () => {
+  const video = makeMutableFakeVideo(true);
+  video.paused = false;
+  const { bump } = makeStats();
+  const timer = makeManualTimer();
+
+  const cleanup = attachVideoKeepAlive(video, {
+    doc: makeFakeTarget("visible"),
+    win: { addEventListener: () => {}, removeEventListener: () => {}, location: { reload: () => {} } },
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    bump,
+    muted: true,
+  });
+
+  // An audio-focus steal slipped through: element unmuted + paused.
+  video.muted = false;
+  video.paused = true;
+  video.fire("pause");
+  assert.equal(video.muted, true, "pause handler must re-mute before resuming");
+
+  cleanup();
+});
+
+test(`${PREFIX} Task #199: opt-in audio (muted=false) is respected and never force-muted`, () => {
+  const video = makeMutableFakeVideo(false);
+  const { bump } = makeStats();
+  const timer = makeManualTimer();
+
+  const cleanup = attachVideoKeepAlive(video, {
+    doc: makeFakeTarget("visible"),
+    win: { addEventListener: () => {}, removeEventListener: () => {}, location: { reload: () => {} } },
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    bump,
+    muted: false,
+  });
+
+  assert.equal(video.muted, false, "opt-in audio must not be force-muted on attach");
+  video.fire("volumechange");
+  assert.equal(video.muted, false, "opt-in audio must stay unmuted on volumechange");
+
+  cleanup();
+});
+
+test(`${PREFIX} Task #199: with no muted option the property is left untouched (legacy behaviour)`, () => {
+  const video = makeMutableFakeVideo(false);
+  const { bump } = makeStats();
+  const timer = makeManualTimer();
+
+  const cleanup = attachVideoKeepAlive(video, {
+    doc: makeFakeTarget("visible"),
+    win: { addEventListener: () => {}, removeEventListener: () => {}, location: { reload: () => {} } },
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    bump,
+    // no `muted` — enforcement is skipped entirely.
+  });
+
+  assert.equal(video.muted, false, "no muted option means no enforcement");
+  // No volumechange listener should have been registered.
+  assert.equal(video.listeners["volumechange"]?.length ?? 0, 0, "volumechange must not be subscribed when muted is undefined");
+
+  cleanup();
+});

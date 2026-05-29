@@ -3205,6 +3205,22 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
     return destroy;
   }, [connect, destroy]);
 
+  // Task #199 — enforce the muted property imperatively. React's
+  // `muted` prop is not reliably reflected onto the DOM property, and
+  // an unmuted live stream gets auto-paused by Chromium whenever
+  // another tab grabs audio focus (e.g. a YouTube ad). Operators opt
+  // in to audio via `mute={false}`; otherwise the element stays muted.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.muted = mute;
+    const onVolumeChange = () => {
+      if (v.muted !== mute) v.muted = mute;
+    };
+    v.addEventListener("volumechange", onVolumeChange);
+    return () => v.removeEventListener("volumechange", onVolumeChange);
+  }, [mute]);
+
   if (!url) {
     return (
       <div className="h-full w-full bg-black/90 flex flex-col items-center justify-center gap-2 text-white/60">
@@ -3736,13 +3752,23 @@ function MediaWidget({
 // Task #196 — small <video> wrapper that owns its own ref and
 // wires the keep-alive watchdog. Centralised so every player-side
 // <video> gets the same auto-resume behaviour.
+//
+// Task #199 — every player-side <video> is muted by default. A muted
+// element never participates in Chromium's audio-focus arbitration,
+// so it is never auto-paused when another tab claims audio focus
+// (e.g. a YouTube ad). An operator must opt in explicitly by passing
+// `muted={false}`. The keep-alive hook also enforces the property
+// imperatively to defend against React's `muted`-attribute bug.
 function KeepAliveVideo({
   keepAliveEnabled,
+  muted,
   ...props
 }: React.VideoHTMLAttributes<HTMLVideoElement> & { keepAliveEnabled?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
-  useVideoKeepAlive(ref, { enabled: keepAliveEnabled ?? true });
-  return <video ref={ref} {...props} />;
+  // Default to muted unless the caller explicitly opts in to audio.
+  const isMuted = muted ?? true;
+  useVideoKeepAlive(ref, { enabled: keepAliveEnabled ?? true, muted: isMuted });
+  return <video ref={ref} {...props} muted={isMuted} />;
 }
 
 function MontageWidget({
