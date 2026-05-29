@@ -34,7 +34,7 @@ import {
   ListVideo,
   X,
 } from "lucide-react";
-import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem } from "@shared/schema";
+import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem, AgendaWidgetConfig } from "@shared/schema";
 import { ZoneRenderer, zoneTypeIcons, getAspectRatioDimensions, getZoneFingerprint, type PlayerVariableContext } from "@/components/zone-renderer";
 
 interface SimulatorState {
@@ -382,6 +382,7 @@ export default function SimulatorPage() {
   const [mediaIndex, setMediaIndex] = useState(0);
   const [zoneMediaIndices, setZoneMediaIndices] = useState<Record<string, number>>({});
   const [zonePlaylistAssignments, setZonePlaylistAssignments] = useState<Record<string, string>>({});
+  const [zoneAgendaAssignments, setZoneAgendaAssignments] = useState<Record<string, string>>({});
   const [previewPlaylistId, setPreviewPlaylistId] = useState<string>(initialPlaylistId);
   const [mediaPlayerSkipNonce, setMediaPlayerSkipNonce] = useState(0);
   const [state, setState] = useState<SimulatorState>({
@@ -399,6 +400,7 @@ export default function SimulatorPage() {
   const overridesQ = useSiteFilteredQuery<LiveOverride[]>("/api/live-overrides");
   const playlistsQ = useSiteFilteredQuery<Playlist[]>("/api/playlists");
   const profilesQ = useSiteFilteredQuery<DisplayProfile[]>("/api/display-profiles");
+  const agendaConfigsQ = useSiteFilteredQuery<AgendaWidgetConfig[]>("/api/agenda/configs");
 
   const { data: screens = [], isLoading: screensLoading } = useQuery<Screen[]>(screensQ);
 
@@ -420,6 +422,8 @@ export default function SimulatorPage() {
   });
 
   const { data: playlists = [] } = useQuery<Playlist[]>(playlistsQ);
+
+  const { data: agendaConfigs = [] } = useQuery<AgendaWidgetConfig[]>(agendaConfigsQ);
 
   const { data: resolvedContent } = useQuery<ResolvedContent>({
     queryKey: ["/api/simulator", selectedScreenId, "content"],
@@ -564,6 +568,26 @@ export default function SimulatorPage() {
   const selectedLayout = effectiveLayoutId
     ? layouts.find((l) => l.id === effectiveLayoutId) || null
     : null;
+
+  // Apply any operator-chosen agenda config overrides from the zone
+  // legend so the simulator can preview alternative agenda content
+  // without editing the layout itself.
+  const selectedLayoutForDisplay = useMemo(() => {
+    if (!selectedLayout) return null;
+    const zones = (selectedLayout.zones as LayoutZone[]) || [];
+    const hasOverride = zones.some(
+      (z) => z.type === "agenda" && zoneAgendaAssignments[z.id],
+    );
+    if (!hasOverride) return selectedLayout;
+    return {
+      ...selectedLayout,
+      zones: zones.map((z) =>
+        z.type === "agenda" && zoneAgendaAssignments[z.id]
+          ? { ...z, agendaConfigId: zoneAgendaAssignments[z.id] }
+          : z,
+      ),
+    } as LayoutTemplate;
+  }, [selectedLayout, zoneAgendaAssignments]);
 
   const layoutSourceLabel = isAutoMode && resolvedContent
     ? resolvedContent.layoutSource === "live_override" ? "Live Override"
@@ -1135,7 +1159,7 @@ export default function SimulatorPage() {
                       : previewSyntheticZone
                         ? ({ zones: [previewSyntheticZone], aspectRatio: "16:9", name: previewPlaylist?.name || "Playlist Preview" } as LayoutTemplate)
                         : null)
-                    : (selectedLayout || null)}
+                    : (selectedLayoutForDisplay || null)}
                   state={state}
                   liveOverride={isPlaylistPreview ? null : (activeLiveOverride || null)}
                   getZoneMedia={getZoneMedia}
@@ -1214,6 +1238,49 @@ export default function SimulatorPage() {
                         )}
                       </div>
                     )}
+                    {zone.type === "agenda" && (() => {
+                      const overrideId = zoneAgendaAssignments[zone.id];
+                      const effectiveConfigId = overrideId || zone.agendaConfigId || "";
+                      const effectiveConfig = agendaConfigs.find((c) => c.id === effectiveConfigId);
+                      const selectValue = effectiveConfigId || "none";
+                      return (
+                        <div className="space-y-1.5">
+                          <div className="text-xs text-muted-foreground" data-testid={`text-zone-agenda-config-${zone.id}`}>
+                            Agenda: <span className="font-medium text-foreground">{effectiveConfig?.name || "None selected"}</span>
+                            {overrideId && (
+                              <Badge variant="outline" className="ml-1 text-[10px] font-normal">preview</Badge>
+                            )}
+                          </div>
+                          <Label className="text-xs">Agenda Config</Label>
+                          <Select
+                            value={selectValue}
+                            onValueChange={(value) =>
+                              setZoneAgendaAssignments((prev) => {
+                                const next = { ...prev };
+                                if (value === "none" || value === (zone.agendaConfigId || "none")) {
+                                  delete next[zone.id];
+                                } else {
+                                  next[zone.id] = value;
+                                }
+                                return next;
+                              })
+                            }
+                          >
+                            <SelectTrigger className="h-8 text-xs" data-testid={`select-zone-agenda-${zone.id}`}>
+                              <SelectValue placeholder="Select agenda config" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">None</SelectItem>
+                              {agendaConfigs.map((cfg) => (
+                                <SelectItem key={cfg.id} value={cfg.id}>
+                                  {cfg.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
