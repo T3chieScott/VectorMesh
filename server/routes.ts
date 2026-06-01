@@ -1537,14 +1537,18 @@ export async function registerRoutes(
   app.post(
     "/api/screens/:id/regenerate-pairing",
     requireAuth,
-    buildScreenRegeneratePairingHandler(storage, logAudit),
+    loadUserContext,
+    buildScreenRegeneratePairingHandler(storage, logAudit, canAccessClient),
   );
 
-  app.post("/api/screens/:id/refresh", requireAuth, async (req, res) => {
+  app.post("/api/screens/:id/refresh", requireAuth, loadUserContext, async (req, res) => {
     try {
       const screen = await storage.getScreen(getPathParam(req, "id"));
       if (!screen) {
         return res.status(404).json({ error: "Screen not found" });
+      }
+      if (screen.clientId && !canAccessClient(req, screen.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
       }
       pendingPlayerRefreshes.set(screen.id, Date.now());
       logAudit(req, "refresh", "screen", screen.id, { name: screen.name });
@@ -1572,11 +1576,14 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/screens/:id/unpair", requireAuth, async (req, res) => {
+  app.post("/api/screens/:id/unpair", requireAuth, loadUserContext, async (req, res) => {
     try {
       const seed = await storage.getScreen(getPathParam(req, "id"));
       if (!seed) {
         return res.status(404).json({ error: "Screen not found" });
+      }
+      if (seed.clientId && !canAccessClient(req, seed.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
       }
       // Task #180: pairing codes are unique per-screen (DB-level UNIQUE).
       // Unpairing any wall tile clears the whole wall — each member
@@ -1619,12 +1626,15 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/screens/:id", requireAuth, async (req, res) => {
+  app.delete("/api/screens/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
       const id = getPathParam(req, "id");
       const existing = await storage.getScreen(id);
       if (!existing) {
         return res.status(404).json({ error: "Screen not found" });
+      }
+      if (existing.clientId && !canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
       }
       if (existing.locked) {
         return res.status(403).json({ error: "This screen is locked and cannot be deleted. Unlock it first." });
@@ -2083,16 +2093,46 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/programme-versions/:versionId/blocks", requireAuth, async (req, res) => {
+  // Task #257: a schedule block is site-scoped through its programme
+  // version → programme → event → clientId chain. Returns
+  // "notfound" when the version/programme can't be resolved, `false`
+  // when the caller can't access the owning site, `true` otherwise.
+  // Mirrors authorizeProgrammeMutation: a missing event is treated as
+  // accessible (consistent with the programme routes).
+  async function canAccessScheduleBlockVersion(
+    req: Request,
+    versionId: string,
+  ): Promise<boolean | "notfound"> {
+    const version = await storage.getProgrammeVersion(versionId);
+    if (!version) return "notfound";
+    const programme = await storage.getProgramme(version.programmeId);
+    if (!programme) return "notfound";
+    const event = await storage.getEvent(programme.eventId);
+    if (event && !canAccessClient(req, event.clientId)) return false;
+    return true;
+  }
+
+  app.post("/api/programme-versions/:versionId/blocks", requireAuth, loadUserContext, async (req, res) => {
     try {
+      const versionId = getPathParam(req, "versionId");
+      const access = await canAccessScheduleBlockVersion(req, versionId);
+      if (access === "notfound") {
+        return res.status(404).json({ error: "Programme version not found" });
+      }
+      if (!access) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const data = insertScheduleBlockSchema.parse({
         ...req.body,
-        programmeVersionId: getPathParam(req, "versionId"),
+        programmeVersionId: versionId,
       });
       const block = await storage.createScheduleBlock(data);
-      refreshScreensForVersion(getPathParam(req, "versionId"));
+      refreshScreensForVersion(versionId);
       res.status(201).json(block);
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
       console.error("Error creating schedule block:", error);
       res.status(500).json({ error: "Failed to create schedule block" });
     }
@@ -2148,9 +2188,29 @@ export async function registerRoutes(
     ),
   );
 
-  app.patch("/api/schedule-blocks/:id", requireAuth, async (req, res) => {
+  app.patch("/api/schedule-blocks/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
+      const existing = await storage.getScheduleBlock(getPathParam(req, "id"));
+      if (!existing) {
+        return res.status(404).json({ error: "Schedule block not found" });
+      }
+      const access = await canAccessScheduleBlockVersion(req, existing.programmeVersionId);
+      if (!access || access === "notfound") {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const data = insertScheduleBlockSchema.partial().parse(req.body);
+      // Task #257: programmeVersionId is patchable, so a PATCH can move
+      // a block into another site's programme version. Reject the move
+      // unless the caller can access the target version's owning site.
+      if (data.programmeVersionId && data.programmeVersionId !== existing.programmeVersionId) {
+        const targetAccess = await canAccessScheduleBlockVersion(req, data.programmeVersionId);
+        if (targetAccess === "notfound") {
+          return res.status(404).json({ error: "Target programme version not found" });
+        }
+        if (!targetAccess) {
+          return res.status(403).json({ error: "Access denied to target site" });
+        }
+      }
       const block = await storage.updateScheduleBlock(getPathParam(req, "id"), data);
       if (!block) {
         return res.status(404).json({ error: "Schedule block not found" });
@@ -2158,19 +2218,29 @@ export async function registerRoutes(
       refreshScreensForVersion(block.programmeVersionId);
       res.json(block);
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
       console.error("Error updating schedule block:", error);
       res.status(500).json({ error: "Failed to update schedule block" });
     }
   });
 
-  app.delete("/api/schedule-blocks/:id", requireAuth, async (req, res) => {
+  app.delete("/api/schedule-blocks/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
       const existing = await storage.getScheduleBlock(getPathParam(req, "id"));
+      if (!existing) {
+        return res.status(404).json({ error: "Schedule block not found" });
+      }
+      const access = await canAccessScheduleBlockVersion(req, existing.programmeVersionId);
+      if (!access || access === "notfound") {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const deleted = await storage.deleteScheduleBlock(getPathParam(req, "id"));
       if (!deleted) {
         return res.status(404).json({ error: "Schedule block not found" });
       }
-      if (existing) refreshScreensForVersion(existing.programmeVersionId);
+      refreshScreensForVersion(existing.programmeVersionId);
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting schedule block:", error);
@@ -2178,15 +2248,28 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/schedule-blocks/series/:seriesId", requireAuth, async (req, res) => {
+  app.delete("/api/schedule-blocks/series/:seriesId", requireAuth, loadUserContext, async (req, res) => {
     try {
       const seriesBlocks = await storage.getScheduleBlocksBySeries(getPathParam(req, "seriesId"));
       if (seriesBlocks.length === 0) {
         return res.status(404).json({ error: "Series not found" });
       }
+      // Task #257: a series can in principle span multiple programme
+      // versions (and therefore multiple sites). Authorize EVERY distinct
+      // version the series touches before deleting any of them, so a
+      // caller authorized for one site can't delete blocks owned by
+      // another via a shared seriesId.
+      const versionIds = Array.from(new Set(seriesBlocks.map(b => b.programmeVersionId)));
+      for (const versionId of versionIds) {
+        const access = await canAccessScheduleBlockVersion(req, versionId);
+        if (!access || access === "notfound") {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
       const count = await storage.deleteScheduleBlocksBySeries(getPathParam(req, "seriesId"));
-      const versionId = seriesBlocks[0].programmeVersionId;
-      refreshScreensForVersion(versionId);
+      for (const versionId of versionIds) {
+        refreshScreensForVersion(versionId);
+      }
       res.json({ deleted: count });
     } catch (error) {
       console.error("Error deleting series:", error);
@@ -2669,14 +2752,33 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/live-overrides/:id", requireAuth, async (req, res) => {
+  app.patch("/api/live-overrides/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
+      const existing = await storage.getLiveOverride(getPathParam(req, "id"));
+      if (!existing) {
+        return res.status(404).json({ error: "Live override not found" });
+      }
+      // Task #257: a live override is site-scoped through its eventId
+      // (when set). Reject callers that can't access the owning event's
+      // site, and reject moving the override onto another site's event.
+      if (existing.eventId) {
+        const event = await storage.getEvent(existing.eventId);
+        if (event && !canAccessClient(req, event.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
       const body = {
         ...req.body,
         ...(req.body.startTime && { startTime: new Date(req.body.startTime) }),
         ...(req.body.endTime && { endTime: new Date(req.body.endTime) }),
       };
       const data = insertLiveOverrideSchema.partial().parse(body);
+      if (data.eventId && data.eventId !== existing.eventId) {
+        const targetEvent = await storage.getEvent(data.eventId);
+        if (targetEvent && !canAccessClient(req, targetEvent.clientId)) {
+          return res.status(403).json({ error: "Access denied to target site" });
+        }
+      }
       const override = await storage.updateLiveOverride(getPathParam(req, "id"), data);
       if (!override) {
         return res.status(404).json({ error: "Live override not found" });
@@ -2692,8 +2794,18 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/live-overrides/:id", requireAuth, async (req, res) => {
+  app.delete("/api/live-overrides/:id", requireAuth, loadUserContext, async (req, res) => {
     try {
+      const existing = await storage.getLiveOverride(getPathParam(req, "id"));
+      if (!existing) {
+        return res.status(404).json({ error: "Live override not found" });
+      }
+      if (existing.eventId) {
+        const event = await storage.getEvent(existing.eventId);
+        if (event && !canAccessClient(req, event.clientId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
       const deleted = await storage.deleteLiveOverride(getPathParam(req, "id"));
       if (!deleted) {
         return res.status(404).json({ error: "Live override not found" });

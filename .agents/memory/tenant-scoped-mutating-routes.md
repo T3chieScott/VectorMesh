@@ -22,3 +22,27 @@ are present. The media/layout routes now live in
 `server/mediaLayoutRoutes.ts` (extracted like `server/agendaRoutes.ts`)
 specifically so these boundaries can be exercised with HTTP-level stub
 tests; keep new tenant routes testable the same way.
+
+**Indirectly-scoped resources:** some rows have no direct `clientId` and
+must resolve it through a chain. Schedule blocks resolve via
+programme version → programme → event → `event.clientId`; live overrides
+resolve via nullable `eventId` → `event.clientId`. Mirror the programme
+pattern: when the chain yields an event, enforce `canAccessClient` on it;
+a missing/absent link is treated as accessible (so orphans aren't bricked),
+EXCEPT enforce a target check when a mutation sets a new `eventId`.
+Handlers that take an OPTIONAL `canAccessClient` param (e.g.
+`buildScreenPatchHandler`, `buildScreenRegeneratePairingHandler`) only
+enforce when the route passes it in — so the production route MUST also
+mount `loadUserContext` and pass `canAccessClient`, or the check silently
+no-ops.
+
+**Two easy-to-miss move/bulk gaps (don't reintroduce):**
+- A patchable owning FK is a move vector. If a PATCH body can change the
+  field that resolves the site (e.g. a schedule block's
+  `programmeVersionId`, a playlist's `clientId`/`eventId`), you must
+  authorize BOTH the current owner AND the target — checking only the
+  existing owner still lets a one-site user push a row into another site.
+- A bulk/series delete keyed by a shared id (e.g.
+  `deleteScheduleBlocksBySeries`) can span multiple sites. Authorize
+  EVERY distinct owning resource the set touches before deleting, not
+  just `rows[0]` — and refresh all touched versions, not just the first.

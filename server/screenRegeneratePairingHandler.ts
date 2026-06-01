@@ -28,6 +28,7 @@ type AuditFn = (
 export function buildScreenRegeneratePairingHandler(
   storage: ScreenRegenerateStorage,
   audit?: AuditFn,
+  canAccessClient?: (req: Request, clientId: string) => boolean,
 ) {
   return async function screenRegeneratePairingHandler(
     req: Request,
@@ -37,6 +38,12 @@ export function buildScreenRegeneratePairingHandler(
       const seed = await storage.getScreen(getPathParam(req, "id"));
       if (!seed) {
         return res.status(404).json({ error: "Screen not found" });
+      }
+      // Task #257: tenant authz — regenerating pairing on a screen
+      // unpairs the whole wall, so reject callers that can't access the
+      // screen's owning site.
+      if (canAccessClient && seed.clientId && !canAccessClient(req, seed.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
       }
       // Task #180: pairing codes are unique per-screen (DB-level UNIQUE).
       // Regenerating from any wall tile rotates EVERY member onto its
