@@ -1,0 +1,1 @@
+- [Tenant-scoped mutating routes](tenant-scoped-mutating-routes.md) — site-scoped create/update/delete must load context + canAccessClient on both existing owner and any new clientId (reject cross-site moves).
