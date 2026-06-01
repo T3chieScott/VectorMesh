@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
 import { pickAgendaLayout } from "@shared/agenda-resolver";
 import { AgendaConfigZoneWidget } from "@/components/agenda/AgendaConfigZoneWidget";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -1452,6 +1452,81 @@ function ZonePositionFields({ form, layout }: { form: any; layout: LayoutTemplat
   );
 }
 
+// HTML widget Live Preview: renders the widget's sandboxed iframe at the zone's
+// notional device resolution (refWidth x refHeight) and CSS-scales it down to
+// fill the preview box. This keeps author-fixed pixel sizes (fonts/spacing) in
+// true proportion so the whole widget is visible exactly as on a real screen,
+// instead of overflowing/clipping at the small preview size. The outer box
+// carries the real aspect ratio; the inner scaler is absolute (positioning
+// context for ZoneRenderer's fillContainer) so it stays clipped to the box.
+function HtmlWidgetLivePreview({
+  textContent,
+  htmlCss,
+  ratio,
+  maxWidthPx,
+  refWidth,
+  refHeight,
+}: {
+  textContent: string;
+  htmlCss: string;
+  ratio: number;
+  maxWidthPx: number;
+  refWidth: number;
+  refHeight: number;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [wrapWidth, setWrapWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    setWrapWidth(el.clientWidth);
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) setWrapWidth(entry.contentRect.width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const scale = refWidth > 0 && wrapWidth > 0 ? wrapWidth / refWidth : 0;
+
+  return (
+    <div
+      ref={wrapRef}
+      className="relative w-full mx-auto rounded-md border border-input overflow-hidden bg-background"
+      style={{ aspectRatio: `${ratio}`, maxWidth: `${maxWidthPx}px` }}
+      data-testid="preview-html-widget"
+    >
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: `${refWidth}px`,
+          height: `${refHeight}px`,
+          transform: `scale(${scale})`,
+          transformOrigin: "top left",
+        }}
+      >
+        <ZoneRenderer
+          zone={{
+            id: "html-preview",
+            name: "HTML Preview",
+            type: "html",
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+            textContent,
+            htmlCss,
+          }}
+          fillContainer={true}
+        />
+      </div>
+    </div>
+  );
+}
+
 function ZoneEditorDialog({
   layout,
   zone,
@@ -1816,16 +1891,20 @@ function ZoneEditorDialog({
     },
   });
 
-  // HTML widget Live Preview proportions: match the real rendering surface so
-  // responsive content lays out the same as on a screen. The widget fills its
-  // zone, so the ratio is the layout's pixel resolution scaled by the edited
-  // zone's width/height percentages. Falls back to the layout (then 16:9) when
-  // zone dimensions aren't usable. Capped via maxWidth so portrait/ultrawide
-  // layouts don't push the rest of the editor off-screen.
+  // HTML widget Live Preview geometry: match the real rendering surface so the
+  // widget renders exactly as on a screen. The widget fills its zone, so the
+  // ratio is the layout's pixel resolution scaled by the edited zone's
+  // width/height percentages (falls back to the layout ratio, then 16:9).
+  // `maxWidthPx` caps the displayed height so portrait/ultrawide layouts don't
+  // push the editor off-screen. `refWidth`/`refHeight` are the zone's notional
+  // device pixels (relative to a 1080p screen) — the preview renders the iframe
+  // at this real size and CSS-scales it down to fit, so author-fixed pixel
+  // sizes (fonts/spacing) appear in true proportion instead of overflowing.
   const watchedZoneWidth = form.watch("width");
   const watchedZoneHeight = form.watch("height");
   const htmlPreviewBox = useMemo(() => {
     const PREVIEW_MAX_HEIGHT_PX = 320;
+    const REFERENCE_SCREEN_HEIGHT = 1080;
     const dims = getAspectRatioDimensions(
       layout.aspectRatio || "16:9",
       layout.customWidth,
@@ -1842,7 +1921,9 @@ function ZoneEditorDialog({
     const surfaceW = dims.width * wPct;
     const surfaceH = dims.height * hPct;
     const ratio = surfaceW > 0 && surfaceH > 0 ? surfaceW / surfaceH : 16 / 9;
-    return { ratio, maxWidthPx: PREVIEW_MAX_HEIGHT_PX * ratio };
+    const refHeight = Math.max(1, REFERENCE_SCREEN_HEIGHT * (hPct / 100));
+    const refWidth = Math.max(1, refHeight * ratio);
+    return { ratio, maxWidthPx: PREVIEW_MAX_HEIGHT_PX * ratio, refWidth, refHeight };
   }, [layout.aspectRatio, layout.customWidth, layout.customHeight, watchedZoneWidth, watchedZoneHeight]);
 
   // Reset form when zone changes (for edit vs add mode)
@@ -3740,29 +3821,14 @@ function ZoneEditorDialog({
                 />
                 <div className="space-y-2">
                   <FormLabel>Live Preview</FormLabel>
-                  <div
-                    className="relative w-full mx-auto rounded-md border border-input overflow-hidden bg-background"
-                    style={{
-                      aspectRatio: `${htmlPreviewBox.ratio}`,
-                      maxWidth: `${htmlPreviewBox.maxWidthPx}px`,
-                    }}
-                    data-testid="preview-html-widget"
-                  >
-                    <ZoneRenderer
-                      zone={{
-                        id: "html-preview",
-                        name: "HTML Preview",
-                        type: "html",
-                        x: 0,
-                        y: 0,
-                        width: 100,
-                        height: 100,
-                        textContent: form.watch("textContent") || "",
-                        htmlCss: form.watch("htmlCss") || "",
-                      }}
-                      fillContainer={true}
-                    />
-                  </div>
+                  <HtmlWidgetLivePreview
+                    textContent={form.watch("textContent") || ""}
+                    htmlCss={form.watch("htmlCss") || ""}
+                    ratio={htmlPreviewBox.ratio}
+                    maxWidthPx={htmlPreviewBox.maxWidthPx}
+                    refWidth={htmlPreviewBox.refWidth}
+                    refHeight={htmlPreviewBox.refHeight}
+                  />
                   <FormDescription>
                     Preview rendered inside the same sandboxed iframe used on real screens.
                   </FormDescription>
