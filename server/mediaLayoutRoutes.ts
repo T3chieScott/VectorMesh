@@ -2,11 +2,14 @@ import type { Express, Request, Response, NextFunction, RequestHandler } from "e
 import { z } from "zod";
 import {
   insertMediaAssetSchema,
+  insertMediaFolderSchema,
   insertLayoutTemplateSchema,
   type Client,
   type Event,
   type MediaAsset,
   type InsertMediaAsset,
+  type MediaFolder,
+  type InsertMediaFolder,
   type MediaShare,
   type InsertMediaShare,
   type LayoutTemplate,
@@ -24,6 +27,11 @@ export interface MediaLayoutRoutesStorage {
     data: Partial<InsertMediaAsset>,
   ): Promise<MediaAsset | undefined>;
   deleteMediaAsset(id: string): Promise<boolean>;
+  getMediaFolders(clientId?: string): Promise<MediaFolder[]>;
+  getMediaFolder(id: string): Promise<MediaFolder | undefined>;
+  createMediaFolder(data: InsertMediaFolder): Promise<MediaFolder>;
+  updateMediaFolder(id: string, data: Partial<InsertMediaFolder>): Promise<MediaFolder | undefined>;
+  deleteMediaFolder(id: string): Promise<boolean>;
   getMediaSharesForAsset(mediaAssetId: string): Promise<MediaShare[]>;
   getMediaSharesForClient(clientId: string): Promise<MediaShare[]>;
   createMediaShare(data: InsertMediaShare): Promise<MediaShare>;
@@ -142,6 +150,12 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
         const event = await storage.getEvent(data.eventId);
         if (event && event.clientId !== data.clientId) {
           return res.status(400).json({ error: "Event does not belong to the specified site" });
+        }
+      }
+      if (data.folderId) {
+        const folder = await storage.getMediaFolder(data.folderId);
+        if (!folder || folder.clientId !== data.clientId) {
+          return res.status(400).json({ error: "Folder does not belong to the specified site" });
         }
       }
       const asset = await storage.createMediaAsset(data);
@@ -279,12 +293,28 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
       ) {
         return res.status(403).json({ error: "Access denied to target site" });
       }
+      const effectiveClientId = data.clientId ?? existing.clientId;
       if (data.eventId) {
         const event = await storage.getEvent(data.eventId);
-        const effectiveClientId = data.clientId ?? existing.clientId;
         if (event && effectiveClientId && event.clientId !== effectiveClientId) {
           return res.status(400).json({ error: "Event does not belong to the specified site" });
         }
+      }
+      if (data.folderId) {
+        const folder = await storage.getMediaFolder(data.folderId);
+        if (!folder || folder.clientId !== effectiveClientId) {
+          return res.status(400).json({ error: "Folder does not belong to the specified site" });
+        }
+      } else if (
+        data.folderId === undefined &&
+        data.clientId &&
+        data.clientId !== existing.clientId &&
+        existing.folderId
+      ) {
+        // The asset is moving sites without specifying a folder. A folder
+        // belongs to exactly one site, so the carried-over folder from the
+        // old site would dangle cross-site — drop it back to Uncategorised.
+        (data as Partial<typeof data> & { folderId: string | null }).folderId = null;
       }
       const updated = await storage.updateMediaAsset(id, data);
       if (!updated) {
@@ -387,6 +417,101 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
     } catch (error) {
       console.error("Error backfilling durations:", error);
       res.status(500).json({ error: "Failed to backfill durations" });
+    }
+  });
+
+  // ============ MEDIA FOLDERS (Task #265) ============
+  // Per-site flat folders. Tenant-scoped exactly like media assets:
+  // list returns only folders in the requesting user's allowed sites
+  // (optionally narrowed by ?clientId=), and create/rename/delete all
+  // verify access to the folder's owning site. Deleting a folder never
+  // deletes its assets — the DB FK (onDelete:"set null") un-sets their
+  // folderId so they fall back to the uncategorised view.
+  app.get("/api/media-folders", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const allowed = getAllowedClientIds(req);
+      const clientId = getQueryString(req, "clientId", res); if (clientId === null) return;
+      if (clientId) {
+        if (!canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        return res.json(await storage.getMediaFolders(clientId));
+      }
+      const folders = await storage.getMediaFolders();
+      const filtered = allowed
+        ? folders.filter((f) => allowed.includes(f.clientId))
+        : folders;
+      res.json(filtered);
+    } catch (error) {
+      console.error("Error fetching media folders:", error);
+      res.status(500).json({ error: "Failed to fetch media folders" });
+    }
+  });
+
+  app.post("/api/media-folders", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const data = insertMediaFolderSchema.parse(req.body);
+      if (!canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
+      }
+      const folder = await storage.createMediaFolder(data);
+      logAudit(req, "create", "media_folder", folder.id, { name: folder.name, clientId: data.clientId });
+      res.status(201).json(folder);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      console.error("Error creating media folder:", error);
+      res.status(500).json({ error: "Failed to create media folder" });
+    }
+  });
+
+  app.patch("/api/media-folders/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const id = getPathParam(req, "id");
+      const existing = await storage.getMediaFolder(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Folder not found" });
+      }
+      if (!canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      // Only the name is editable — a folder can't move sites.
+      const data = insertMediaFolderSchema.partial().omit({ clientId: true }).parse(req.body);
+      const updated = await storage.updateMediaFolder(id, data);
+      if (!updated) {
+        return res.status(404).json({ error: "Folder not found" });
+      }
+      logAudit(req, "update", "media_folder", updated.id, { name: updated.name });
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      console.error("Error updating media folder:", error);
+      res.status(500).json({ error: "Failed to update media folder" });
+    }
+  });
+
+  app.delete("/api/media-folders/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const id = getPathParam(req, "id");
+      const existing = await storage.getMediaFolder(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Folder not found" });
+      }
+      if (!canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const deleted = await storage.deleteMediaFolder(id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Folder not found" });
+      }
+      logAudit(req, "delete", "media_folder", id);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting media folder:", error);
+      res.status(500).json({ error: "Failed to delete media folder" });
     }
   });
 

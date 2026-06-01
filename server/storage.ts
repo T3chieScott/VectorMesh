@@ -12,6 +12,7 @@ import {
   screenGroupMemberships,
   screenEventBookings,
   mediaAssets,
+  mediaFolders,
   mediaShares,
   layoutTemplates,
   programmes,
@@ -42,6 +43,8 @@ import {
   type InsertCanvasGroup,
   type MediaAsset,
   type InsertMediaAsset,
+  type MediaFolder,
+  type InsertMediaFolder,
   type MediaShare,
   type InsertMediaShare,
   type LayoutTemplate,
@@ -479,6 +482,13 @@ export interface IStorage {
   createMediaAsset(data: InsertMediaAsset): Promise<MediaAsset>;
   updateMediaAsset(id: string, data: Partial<InsertMediaAsset>): Promise<MediaAsset | undefined>;
   deleteMediaAsset(id: string): Promise<boolean>;
+
+  // Media Folders (Task #265) — per-site flat folders for organising assets.
+  getMediaFolders(clientId?: string): Promise<MediaFolder[]>;
+  getMediaFolder(id: string): Promise<MediaFolder | undefined>;
+  createMediaFolder(data: InsertMediaFolder): Promise<MediaFolder>;
+  updateMediaFolder(id: string, data: Partial<InsertMediaFolder>): Promise<MediaFolder | undefined>;
+  deleteMediaFolder(id: string): Promise<boolean>;
 
   // Media Shares
   getMediaSharesForAsset(mediaAssetId: string): Promise<MediaShare[]>;
@@ -2113,6 +2123,39 @@ export class DatabaseStorage implements IStorage {
 
   async deleteMediaAsset(id: string): Promise<boolean> {
     const result = await db.delete(mediaAssets).where(eq(mediaAssets.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Media Folders (Task #265)
+  async getMediaFolders(clientId?: string): Promise<MediaFolder[]> {
+    const query = db.select().from(mediaFolders);
+    if (clientId) {
+      return query.where(eq(mediaFolders.clientId, clientId)).orderBy(asc(mediaFolders.name));
+    }
+    return query.orderBy(asc(mediaFolders.name));
+  }
+
+  async getMediaFolder(id: string): Promise<MediaFolder | undefined> {
+    const [folder] = await db.select().from(mediaFolders).where(eq(mediaFolders.id, id));
+    return folder;
+  }
+
+  async createMediaFolder(data: InsertMediaFolder): Promise<MediaFolder> {
+    const [folder] = await db.insert(mediaFolders).values(data).returning();
+    return folder;
+  }
+
+  async updateMediaFolder(id: string, data: Partial<InsertMediaFolder>): Promise<MediaFolder | undefined> {
+    const [folder] = await db
+      .update(mediaFolders)
+      .set(data)
+      .where(eq(mediaFolders.id, id))
+      .returning();
+    return folder;
+  }
+
+  async deleteMediaFolder(id: string): Promise<boolean> {
+    const result = await db.delete(mediaFolders).where(eq(mediaFolders.id, id));
     return (result.rowCount ?? 0) > 0;
   }
 

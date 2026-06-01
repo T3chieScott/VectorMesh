@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -29,6 +30,9 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { useToast } from "@/hooks/use-toast";
@@ -49,8 +53,29 @@ import {
   Minimize2,
   Share2,
   Building2,
+  Folder,
+  FolderPlus,
+  FolderInput,
+  Pencil,
+  X,
 } from "lucide-react";
-import type { MediaAsset, MediaShare, Client } from "@shared/schema";
+import type { MediaAsset, MediaShare, Client, MediaFolder } from "@shared/schema";
+
+type ThumbSize = "small" | "medium" | "large";
+
+const THUMB_SIZE_STORAGE_KEY = "vm-media-thumb-size";
+
+function loadThumbSize(): ThumbSize {
+  if (typeof window === "undefined") return "medium";
+  const saved = window.localStorage.getItem(THUMB_SIZE_STORAGE_KEY);
+  return saved === "small" || saved === "medium" || saved === "large" ? saved : "medium";
+}
+
+const THUMB_GRID_CLASS: Record<ThumbSize, string> = {
+  small: "grid gap-3 grid-cols-2 sm:grid-cols-4 lg:grid-cols-6",
+  medium: "grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4",
+  large: "grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3",
+};
 
 function formatFileSize(bytes: number | null | undefined): string {
   if (!bytes) return "Unknown";
@@ -234,18 +259,22 @@ function MediaCard({
   asset,
   viewMode,
   clients,
+  folders,
   isAdmin,
   selectedClientId,
 }: {
   asset: MediaAsset;
   viewMode: "grid" | "list";
   clients: Client[];
+  folders: MediaFolder[];
   isAdmin: boolean;
   selectedClientId: string | null;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const { toast } = useToast();
+
+  const assetFolders = folders.filter((f) => f.clientId === asset.clientId);
 
   const ownerClient = clients.find(c => c.id === asset.clientId);
   const isSharedAsset = selectedClientId && asset.clientId !== selectedClientId;
@@ -272,6 +301,21 @@ function MediaCard({
     },
     onError: () => {
       toast({ title: "Failed to update display mode", variant: "destructive" });
+    },
+  });
+
+  const moveToFolderMutation = useMutation({
+    mutationFn: (folderId: string | null) =>
+      apiRequest("PATCH", `/api/media/${asset.id}`, { folderId }),
+    onSuccess: (_data, folderId) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/media"] });
+      const folderName = folderId
+        ? assetFolders.find((f) => f.id === folderId)?.name ?? "folder"
+        : null;
+      toast({ title: folderName ? `Moved to "${folderName}"` : "Removed from folder" });
+    },
+    onError: () => {
+      toast({ title: "Failed to move media", variant: "destructive" });
     },
   });
 
@@ -330,6 +374,43 @@ function MediaCard({
             <Share2 className="mr-2 h-4 w-4" />
             Share to Sites
           </DropdownMenuItem>
+        </>
+      )}
+      {!isSharedAsset && (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger data-testid={`button-move-folder-${asset.id}`}>
+              <FolderInput className="mr-2 h-4 w-4" />
+              Move to folder
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuItem
+                disabled={!asset.folderId}
+                onSelect={() => moveToFolderMutation.mutate(null)}
+                data-testid={`button-move-folder-none-${asset.id}`}
+              >
+                <X className="mr-2 h-4 w-4" />
+                Uncategorised
+              </DropdownMenuItem>
+              {assetFolders.length > 0 && <DropdownMenuSeparator />}
+              {assetFolders.length === 0 ? (
+                <DropdownMenuItem disabled>No folders yet</DropdownMenuItem>
+              ) : (
+                assetFolders.map((folder) => (
+                  <DropdownMenuItem
+                    key={folder.id}
+                    disabled={asset.folderId === folder.id}
+                    onSelect={() => moveToFolderMutation.mutate(folder.id)}
+                    data-testid={`button-move-folder-${folder.id}-${asset.id}`}
+                  >
+                    <Folder className="mr-2 h-4 w-4" />
+                    {folder.name}
+                  </DropdownMenuItem>
+                ))
+              )}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         </>
       )}
       {!isSharedAsset && (
@@ -539,14 +620,27 @@ function MediaCard({
 
 export default function MediaPage() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [thumbSize, setThumbSize] = useState<ThumbSize>(() => loadThumbSize());
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
+  const [selectedFolderId, setSelectedFolderId] = useState<string>("all");
   const [sitePickerOpen, setSitePickerOpen] = useState(false);
   const [pendingUploadResult, setPendingUploadResult] = useState<any>(null);
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [folderDialogMode, setFolderDialogMode] = useState<"create" | "rename">("create");
+  const [folderDialogName, setFolderDialogName] = useState("");
+  const [folderBeingEdited, setFolderBeingEdited] = useState<MediaFolder | null>(null);
   const { toast } = useToast();
   const { selectedClientId } = useSiteContext();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+
+  const handleThumbSizeChange = (size: ThumbSize) => {
+    setThumbSize(size);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(THUMB_SIZE_STORAGE_KEY, size);
+    }
+  };
 
   const { data: clients = [] } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
@@ -555,14 +649,8 @@ export default function MediaPage() {
   const mediaQueryConfig = useSiteFilteredQuery<MediaAsset[]>("/api/media");
   const { data: media = [], isLoading } = useQuery<MediaAsset[]>(mediaQueryConfig);
 
-  const filteredMedia = media.filter((asset) => {
-    const matchesSearch = asset.name
-      .toLowerCase()
-      .includes(searchQuery.toLowerCase());
-    const matchesType =
-      filterType === "all" || asset.mediaType === filterType;
-    return matchesSearch && matchesType;
-  });
+  const foldersQueryConfig = useSiteFilteredQuery<MediaFolder[]>("/api/media-folders");
+  const { data: folders = [] } = useQuery<MediaFolder[]>(foldersQueryConfig);
 
   const resolveUploadClientId = (): string | null => {
     if (selectedClientId) return selectedClientId;
@@ -570,12 +658,112 @@ export default function MediaPage() {
     return null;
   };
 
+  const folderClientId = resolveUploadClientId();
   const needsSiteSelection = clients.length > 1 && !selectedClientId;
   const activeClient = selectedClientId ? clients.find(c => c.id === selectedClientId) : (clients.length === 1 ? clients[0] : null);
   const maxUploadBytes = (activeClient?.maxUploadSizeMb ?? 100) * 1024 * 1024;
 
+  // Reset the selected folder if it disappears (e.g. after delete or a
+  // site switch where the folder belongs to another site).
+  const selectedFolderStillExists =
+    selectedFolderId === "all" ||
+    selectedFolderId === "uncategorised" ||
+    folders.some((f) => f.id === selectedFolderId);
+  const effectiveFolderId = selectedFolderStillExists ? selectedFolderId : "all";
+
+  const filteredMedia = media.filter((asset) => {
+    const matchesSearch = asset.name
+      .toLowerCase()
+      .includes(searchQuery.toLowerCase());
+    const matchesType =
+      filterType === "all" || asset.mediaType === filterType;
+    const matchesFolder =
+      effectiveFolderId === "all"
+        ? true
+        : effectiveFolderId === "uncategorised"
+        ? !asset.folderId
+        : asset.folderId === effectiveFolderId;
+    return matchesSearch && matchesType && matchesFolder;
+  });
+
+  const uncategorisedCount = media.filter((a) => !a.folderId).length;
+  const folderCounts = (folderId: string) =>
+    media.filter((a) => a.folderId === folderId).length;
+
+  const createFolderMutation = useMutation({
+    mutationFn: (vars: { name: string; clientId: string }) =>
+      apiRequest("POST", "/api/media-folders", vars),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/media-folders"] });
+      toast({ title: "Folder created" });
+    },
+    onError: () => {
+      toast({ title: "Failed to create folder", variant: "destructive" });
+    },
+  });
+
+  const renameFolderMutation = useMutation({
+    mutationFn: (vars: { id: string; name: string }) =>
+      apiRequest("PATCH", `/api/media-folders/${vars.id}`, { name: vars.name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/media-folders"] });
+      toast({ title: "Folder renamed" });
+    },
+    onError: () => {
+      toast({ title: "Failed to rename folder", variant: "destructive" });
+    },
+  });
+
+  const deleteFolderMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/media-folders/${id}`),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/media-folders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/media"] });
+      if (selectedFolderId === id) setSelectedFolderId("all");
+      toast({ title: "Folder deleted. Its media moved to Uncategorised." });
+    },
+    onError: () => {
+      toast({ title: "Failed to delete folder", variant: "destructive" });
+    },
+  });
+
+  const openCreateFolder = () => {
+    setFolderDialogMode("create");
+    setFolderDialogName("");
+    setFolderBeingEdited(null);
+    setFolderDialogOpen(true);
+  };
+
+  const openRenameFolder = (folder: MediaFolder) => {
+    setFolderDialogMode("rename");
+    setFolderDialogName(folder.name);
+    setFolderBeingEdited(folder);
+    setFolderDialogOpen(true);
+  };
+
+  const submitFolderDialog = () => {
+    const name = folderDialogName.trim();
+    if (!name) return;
+    if (folderDialogMode === "create") {
+      if (!folderClientId) {
+        toast({ title: "Please select a site first", description: "Folders belong to a single site — choose one from the sidebar.", variant: "destructive" });
+        return;
+      }
+      createFolderMutation.mutate({ name, clientId: folderClientId });
+    } else if (folderBeingEdited) {
+      renameFolderMutation.mutate({ id: folderBeingEdited.id, name });
+    }
+    setFolderDialogOpen(false);
+  };
+
   const saveMediaRecords = async (result: any, clientId: string) => {
     if (result.successful?.length > 0) {
+      // New uploads default into the selected folder when it belongs to the
+      // target site; otherwise they land in Uncategorised.
+      const targetFolder = folders.find(
+        (f) => f.id === effectiveFolderId && f.clientId === clientId,
+      );
+      const folderId = targetFolder ? targetFolder.id : null;
       for (const file of result.successful) {
         const body = file.response?.body;
         const filePath = body?.filePath;
@@ -592,6 +780,7 @@ export default function MediaPage() {
               mimeType: file.type,
               fileSize: file.size,
               clientId,
+              folderId,
             });
           } catch (e) {
             console.error("Failed to save media record:", e);
@@ -715,6 +904,34 @@ export default function MediaPage() {
             <FileImage className="mr-1.5 h-3.5 w-3.5" />
             GIFs
           </Button>
+          {viewMode === "grid" && (
+            <div className="flex items-center gap-1 border-l pl-2 ml-2">
+              <Button
+                variant={thumbSize === "small" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => handleThumbSizeChange("small")}
+                data-testid="button-thumb-small"
+              >
+                Small
+              </Button>
+              <Button
+                variant={thumbSize === "medium" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => handleThumbSizeChange("medium")}
+                data-testid="button-thumb-medium"
+              >
+                Medium
+              </Button>
+              <Button
+                variant={thumbSize === "large" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => handleThumbSizeChange("large")}
+                data-testid="button-thumb-large"
+              >
+                Large
+              </Button>
+            </div>
+          )}
           <div className="border-l pl-2 ml-2">
             <Button
               variant={viewMode === "grid" ? "secondary" : "ghost"}
@@ -736,12 +953,107 @@ export default function MediaPage() {
         </div>
       </div>
 
+      <div className="flex flex-col md:flex-row gap-6">
+        <aside className="w-full md:w-56 shrink-0 space-y-1" data-testid="folder-sidebar">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-muted-foreground">Folders</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={openCreateFolder}
+              data-testid="button-new-folder"
+              title="New folder"
+            >
+              <FolderPlus className="h-4 w-4" />
+            </Button>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSelectedFolderId("all")}
+            className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm hover-elevate ${
+              effectiveFolderId === "all" ? "bg-accent text-accent-foreground" : ""
+            }`}
+            data-testid="button-folder-all"
+          >
+            <span className="flex items-center gap-2">
+              <Folder className="h-4 w-4" />
+              All media
+            </span>
+            <span className="text-xs text-muted-foreground">{media.length}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedFolderId("uncategorised")}
+            className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm hover-elevate ${
+              effectiveFolderId === "uncategorised" ? "bg-accent text-accent-foreground" : ""
+            }`}
+            data-testid="button-folder-uncategorised"
+          >
+            <span className="flex items-center gap-2">
+              <FolderInput className="h-4 w-4" />
+              Uncategorised
+            </span>
+            <span className="text-xs text-muted-foreground">{uncategorisedCount}</span>
+          </button>
+          {folders.length > 0 && <DropdownMenuSeparator />}
+          {folders.map((folder) => (
+            <div
+              key={folder.id}
+              className={`group flex items-center justify-between rounded-md pl-2 pr-1 py-1.5 text-sm hover-elevate ${
+                effectiveFolderId === folder.id ? "bg-accent text-accent-foreground" : ""
+              }`}
+              data-testid={`folder-item-${folder.id}`}
+            >
+              <button
+                type="button"
+                onClick={() => setSelectedFolderId(folder.id)}
+                className="flex flex-1 items-center gap-2 min-w-0 text-left"
+                data-testid={`button-folder-${folder.id}`}
+              >
+                <Folder className="h-4 w-4 shrink-0" />
+                <span className="truncate">{folder.name}</span>
+              </button>
+              <span className="text-xs text-muted-foreground mr-1">{folderCounts(folder.id)}</span>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                    data-testid={`button-folder-menu-${folder.id}`}
+                  >
+                    <MoreHorizontal className="h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onSelect={() => openRenameFolder(folder)}
+                    data-testid={`button-rename-folder-${folder.id}`}
+                  >
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Rename
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onSelect={() => deleteFolderMutation.mutate(folder.id)}
+                    data-testid={`button-delete-folder-${folder.id}`}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ))}
+        </aside>
+
+        <div className="flex-1 min-w-0">
       {isLoading ? (
         <div
           className={
-            viewMode === "grid"
-              ? "grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
-              : "space-y-2"
+            viewMode === "grid" ? THUMB_GRID_CLASS[thumbSize] : "space-y-2"
           }
         >
           {[...Array(8)].map((_, i) =>
@@ -797,9 +1109,7 @@ export default function MediaPage() {
       ) : (
         <div
           className={
-            viewMode === "grid"
-              ? "grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
-              : "space-y-2"
+            viewMode === "grid" ? THUMB_GRID_CLASS[thumbSize] : "space-y-2"
           }
         >
           {filteredMedia.map((asset) => (
@@ -808,12 +1118,57 @@ export default function MediaPage() {
               asset={asset}
               viewMode={viewMode}
               clients={clients}
+              folders={folders}
               isAdmin={isAdmin}
               selectedClientId={selectedClientId}
             />
           ))}
         </div>
       )}
+        </div>
+      </div>
+
+      <Dialog open={folderDialogOpen} onOpenChange={setFolderDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {folderDialogMode === "create" ? "New folder" : "Rename folder"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="folder-name">Folder name</Label>
+            <Input
+              id="folder-name"
+              value={folderDialogName}
+              onChange={(e) => setFolderDialogName(e.target.value)}
+              placeholder="e.g. Promotions"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  submitFolderDialog();
+                }
+              }}
+              data-testid="input-folder-name"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setFolderDialogOpen(false)}
+              data-testid="button-folder-cancel"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={submitFolderDialog}
+              disabled={!folderDialogName.trim()}
+              data-testid="button-folder-save"
+            >
+              {folderDialogMode === "create" ? "Create" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <SitePickerDialog
         clients={clients}

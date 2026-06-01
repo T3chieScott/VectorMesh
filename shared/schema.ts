@@ -331,18 +331,42 @@ export const mediaAssets = pgTable("media_assets", {
   checksum: text("checksum"),
   tags: text("tags").array(),
   displayMode: scaleModeEnum("display_mode").default("cover"),
+  folderId: varchar("folder_id").references(() => mediaFolders.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const mediaAssetsRelations = relations(mediaAssets, ({ one, many }) => ({
   client: one(clients, { fields: [mediaAssets.clientId], references: [clients.id] }),
   event: one(events, { fields: [mediaAssets.eventId], references: [events.id] }),
+  folder: one(mediaFolders, { fields: [mediaAssets.folderId], references: [mediaFolders.id] }),
   shares: many(mediaShares),
 }));
 
 export const insertMediaAssetSchema = createInsertSchema(mediaAssets).omit({ id: true, createdAt: true });
 export type InsertMediaAsset = z.infer<typeof insertMediaAssetSchema>;
 export type MediaAsset = typeof mediaAssets.$inferSelect;
+
+// ============ MEDIA FOLDERS ============
+// Per-site (clientId-scoped) flat folders for organising media assets.
+// Task #265: deleting a folder must NOT delete its assets — the
+// folderId FK uses onDelete:"set null" so the assets fall back to the
+// uncategorised view instead of cascading.
+
+export const mediaFolders = pgTable("media_folders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const mediaFoldersRelations = relations(mediaFolders, ({ one, many }) => ({
+  client: one(clients, { fields: [mediaFolders.clientId], references: [clients.id] }),
+  assets: many(mediaAssets),
+}));
+
+export const insertMediaFolderSchema = createInsertSchema(mediaFolders).omit({ id: true, createdAt: true });
+export type InsertMediaFolder = z.infer<typeof insertMediaFolderSchema>;
+export type MediaFolder = typeof mediaFolders.$inferSelect;
 
 // ============ MEDIA SHARES ============
 

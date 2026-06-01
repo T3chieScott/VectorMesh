@@ -12,6 +12,7 @@ import type {
   Event,
   MediaAsset,
   InsertMediaAsset,
+  MediaFolder,
   MediaShare,
   InsertMediaShare,
   LayoutTemplate,
@@ -58,6 +59,7 @@ function makeAsset(
     checksum: over.checksum ?? null,
     tags: over.tags ?? null,
     displayMode: (over.displayMode ?? "cover") as MediaAsset["displayMode"],
+    folderId: over.folderId ?? null,
     createdAt: over.createdAt ?? new Date("2026-05-01T00:00:00Z"),
   };
 }
@@ -97,21 +99,25 @@ function makeFakeStorage(initial: {
   shares?: MediaShare[];
   clients?: Client[];
   events?: Event[];
+  folders?: MediaFolder[];
 }): MediaLayoutRoutesStorage & {
   assets: MediaAsset[];
   layouts: LayoutTemplate[];
   shares: MediaShare[];
+  folders: MediaFolder[];
 } {
   const assets: MediaAsset[] = [...(initial.assets ?? [])];
   const layouts: LayoutTemplate[] = [...(initial.layouts ?? [])];
   const shares: MediaShare[] = [...(initial.shares ?? [])];
   const clients: Client[] = [...(initial.clients ?? [])];
   const events: Event[] = [...(initial.events ?? [])];
+  const folders: MediaFolder[] = [...(initial.folders ?? [])];
 
   return {
     assets,
     layouts,
     shares,
+    folders,
     async getMediaAssets() {
       return assets.slice();
     },
@@ -138,6 +144,34 @@ function makeFakeStorage(initial: {
       const idx = assets.findIndex((a) => a.id === id);
       if (idx >= 0) assets.splice(idx, 1);
       return assets.length < before;
+    },
+    async getMediaFolders(clientId?: string) {
+      return clientId ? folders.filter((f) => f.clientId === clientId) : folders.slice();
+    },
+    async getMediaFolder(id) {
+      return folders.find((f) => f.id === id);
+    },
+    async createMediaFolder(data) {
+      const row: MediaFolder = {
+        id: `folder-${folders.length + 1}`,
+        clientId: data.clientId,
+        name: data.name,
+        createdAt: new Date("2026-05-01T00:00:00Z"),
+      };
+      folders.push(row);
+      return row;
+    },
+    async updateMediaFolder(id, data) {
+      const idx = folders.findIndex((f) => f.id === id);
+      if (idx === -1) return undefined;
+      folders[idx] = { ...folders[idx], ...(data as Partial<MediaFolder>) };
+      return folders[idx];
+    },
+    async deleteMediaFolder(id) {
+      const before = folders.length;
+      const idx = folders.findIndex((f) => f.id === id);
+      if (idx >= 0) folders.splice(idx, 1);
+      return folders.length < before;
     },
     async getMediaSharesForAsset(mediaAssetId) {
       return shares.filter((s) => s.mediaAssetId === mediaAssetId);
@@ -616,6 +650,192 @@ test("admin — can read, edit, and delete media/layouts across any site", async
     // Admin delete works across sites.
     assert.equal((await fetch(`${srv.base}/api/media/b1`, { method: "DELETE" })).status, 204);
     assert.equal((await fetch(`${srv.base}/api/layouts/lb`, { method: "DELETE" })).status, 204);
+  } finally {
+    await srv.close();
+  }
+});
+
+// ============ MEDIA FOLDERS — Task #265 ============
+
+function makeFolder(id: string, clientId: string, name?: string): MediaFolder {
+  return {
+    id,
+    clientId,
+    name: name ?? `Folder ${id}`,
+    createdAt: new Date("2026-05-01T00:00:00Z"),
+  };
+}
+
+test("folders — list is tenant-scoped (manager sees own sites only), scoped query 403 on disallowed", async () => {
+  const fa = makeFolder("fa", "siteA");
+  const fb = makeFolder("fb", "siteB");
+  const fc = makeFolder("fc", "siteC");
+  const storage = makeFakeStorage({ folders: [fa, fb, fc] });
+  const srv = await startTestServer({ storage, user: MANAGER });
+  try {
+    const list = (await (await fetch(`${srv.base}/api/media-folders`)).json()) as Array<{ id: string }>;
+    assert.deepEqual(list.map((f) => f.id).sort(), ["fa", "fc"], "manager never sees siteB folder");
+
+    assert.equal((await fetch(`${srv.base}/api/media-folders?clientId=siteA`)).status, 200);
+    assert.equal((await fetch(`${srv.base}/api/media-folders?clientId=siteB`)).status, 403);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("folders — create allowed in granted site, denied in disallowed", async () => {
+  const storage = makeFakeStorage({});
+  const srv = await startTestServer({ storage, user: MANAGER });
+  try {
+    const ok = await fetch(`${srv.base}/api/media-folders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteC", name: "Promotions" }),
+    });
+    assert.equal(ok.status, 201);
+    assert.equal(storage.folders.length, 1);
+    assert.equal(storage.folders[0].clientId, "siteC");
+
+    const denied = await fetch(`${srv.base}/api/media-folders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteB", name: "Injected" }),
+    });
+    assert.equal(denied.status, 403);
+    assert.equal(storage.folders.length, 1, "no siteB folder may be created");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("folders — rename scoped to allowed site; disallowed rejected; site cannot change", async () => {
+  const fc = makeFolder("fc", "siteC", "Old name");
+  const fb = makeFolder("fb", "siteB", "B name");
+  const storage = makeFakeStorage({ folders: [fc, fb] });
+  const srv = await startTestServer({ storage, user: MANAGER });
+  try {
+    const ok = await fetch(`${srv.base}/api/media-folders/fc`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "New name", clientId: "siteA" }),
+    });
+    assert.equal(ok.status, 200);
+    const updated = storage.folders.find((f) => f.id === "fc")!;
+    assert.equal(updated.name, "New name");
+    assert.equal(updated.clientId, "siteC", "clientId is omitted server-side — folder can't move sites");
+
+    const denied = await fetch(`${srv.base}/api/media-folders/fb`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Hijacked" }),
+    });
+    assert.equal(denied.status, 403);
+    assert.equal(storage.folders.find((f) => f.id === "fb")?.name, "B name");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("folders — delete scoped; disallowed rejected; does NOT delete assets", async () => {
+  const fc = makeFolder("fc", "siteC");
+  const fb = makeFolder("fb", "siteB");
+  const inFolder = makeAsset({ id: "c1", clientId: "siteC", folderId: "fc" });
+  const storage = makeFakeStorage({ folders: [fc, fb], assets: [inFolder] });
+  const srv = await startTestServer({ storage, user: MANAGER });
+  try {
+    const denied = await fetch(`${srv.base}/api/media-folders/fb`, { method: "DELETE" });
+    assert.equal(denied.status, 403);
+    assert.ok(storage.folders.find((f) => f.id === "fb"), "siteB folder must survive");
+
+    const ok = await fetch(`${srv.base}/api/media-folders/fc`, { method: "DELETE" });
+    assert.equal(ok.status, 204);
+    assert.equal(storage.folders.find((f) => f.id === "fc"), undefined);
+    assert.ok(
+      storage.assets.find((a) => a.id === "c1"),
+      "deleting a folder must NOT delete the assets inside it",
+    );
+  } finally {
+    await srv.close();
+  }
+});
+
+test("media create/patch — folderId must belong to the asset's site", async () => {
+  const fa = makeFolder("fa", "siteA");
+  const fc = makeFolder("fc", "siteC");
+  const c1 = makeAsset({ id: "c1", clientId: "siteC" });
+  const storage = makeFakeStorage({ folders: [fa, fc], assets: [c1] });
+  const srv = await startTestServer({ storage, user: MANAGER });
+  try {
+    // Create with a folder from a different site → 400.
+    const badCreate = await fetch(`${srv.base}/api/media`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: "siteC",
+        name: "Mismatched",
+        originalPath: "/uploads/x.png",
+        mediaType: "image",
+        folderId: "fa",
+      }),
+    });
+    assert.equal(badCreate.status, 400);
+
+    // Create with a matching folder → 201.
+    const okCreate = await fetch(`${srv.base}/api/media`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: "siteC",
+        name: "Matched",
+        originalPath: "/uploads/y.png",
+        mediaType: "image",
+        folderId: "fc",
+      }),
+    });
+    assert.equal(okCreate.status, 201);
+
+    // PATCH move into a same-site folder → 200.
+    const okMove = await fetch(`${srv.base}/api/media/c1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folderId: "fc" }),
+    });
+    assert.equal(okMove.status, 200);
+    assert.equal(storage.assets.find((a) => a.id === "c1")?.folderId, "fc");
+
+    // PATCH move into a cross-site folder → 400.
+    const badMove = await fetch(`${srv.base}/api/media/c1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folderId: "fa" }),
+    });
+    assert.equal(badMove.status, 400);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("media PATCH — moving an asset to a new site without a folderId drops its stale folder", async () => {
+  // Admin can move assets across sites. The asset starts in siteA's folder
+  // "fa"; moving it to siteB without naming a folder must clear folderId so
+  // it can't dangle cross-site.
+  const fa = makeFolder("fa", "siteA");
+  const a1 = makeAsset({ id: "a1", clientId: "siteA", folderId: "fa" });
+  const storage = makeFakeStorage({ folders: [fa], assets: [a1] });
+  const srv = await startTestServer({
+    storage,
+    user: { role: "admin", allowedClientIds: null },
+  });
+  try {
+    const res = await fetch(`${srv.base}/api/media/a1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteB" }),
+    });
+    assert.equal(res.status, 200);
+    const moved = storage.assets.find((a) => a.id === "a1")!;
+    assert.equal(moved.clientId, "siteB");
+    assert.equal(moved.folderId, null, "stale siteA folder must be cleared on cross-site move");
   } finally {
     await srv.close();
   }
