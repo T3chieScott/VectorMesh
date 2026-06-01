@@ -823,15 +823,20 @@ ${styles}
 </style></head><body>${html}</body></html>`;
   }, [content, css, ctx]);
 
-  // Render the widget on a fixed-height reference canvas (REFERENCE_HEIGHT px
-  // tall, width derived from the container's actual aspect ratio) and CSS-scale
-  // it to fill the real container. This makes author-fixed pixel sizes lay out
-  // identically on every surface — the editor's Live Preview, the layout
-  // canvas, and a real device screen — regardless of the container's true pixel
-  // size. Two containers with the same aspect ratio (e.g. the preview box and
-  // the real zone) therefore render the same widget, just at a different scale,
-  // so the whole widget is always visible instead of clipping at small sizes.
-  const REFERENCE_HEIGHT = 1080;
+  // Render the widget on a fixed-WIDTH reference canvas (REFERENCE_WIDTH px
+  // wide, height derived from the container's actual aspect ratio) and CSS-scale
+  // it to fill the real container. Anchoring to width means the author designs
+  // for a 1920px-wide canvas and their content always fills the zone's width at
+  // the same horizontal scale, regardless of the zone's aspect ratio. The
+  // vertical axis simply follows: a tall zone shows more of the page, a short
+  // zone shows less (the part that fits, top-aligned) — exactly like a 1920px-
+  // wide web page viewed through a window of the zone's height. This is why a
+  // 16:9 zone "just works": at 1920×1080 the reference height lands on 1080 and
+  // the scale is 1 (native), and every other ratio renders the same width-wise.
+  // Width-anchoring also keeps rendering identical across surfaces (editor Live
+  // Preview, layout canvas, real device): two containers of the same aspect
+  // ratio render the same reference page, just at a different scale.
+  const REFERENCE_WIDTH = 1920;
   const wrapRef = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   useLayoutEffect(() => {
@@ -844,9 +849,9 @@ ${styles}
     return () => ro.disconnect();
   }, []);
 
-  const refWidth =
-    box.h > 0 ? (box.w / box.h) * REFERENCE_HEIGHT : REFERENCE_HEIGHT;
-  const scale = box.h > 0 ? box.h / REFERENCE_HEIGHT : 0;
+  const refHeight =
+    box.w > 0 ? (box.h / box.w) * REFERENCE_WIDTH : (REFERENCE_WIDTH * 9) / 16;
+  const scale = box.w > 0 ? box.w / REFERENCE_WIDTH : 0;
 
   return (
     <div ref={wrapRef} className="relative h-full w-full overflow-hidden">
@@ -855,8 +860,8 @@ ${styles}
           position: "absolute",
           top: 0,
           left: 0,
-          width: `${refWidth}px`,
-          height: `${REFERENCE_HEIGHT}px`,
+          width: `${REFERENCE_WIDTH}px`,
+          height: `${refHeight}px`,
           transform: `scale(${scale})`,
           transformOrigin: "top left",
         }}
@@ -866,7 +871,7 @@ ${styles}
           sandbox="allow-same-origin"
           srcDoc={srcDoc}
           className="block border-0"
-          style={{ width: `${refWidth}px`, height: `${REFERENCE_HEIGHT}px` }}
+          style={{ width: `${REFERENCE_WIDTH}px`, height: `${refHeight}px` }}
           data-testid="iframe-html-widget"
         />
       </div>
