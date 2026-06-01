@@ -1816,6 +1816,35 @@ function ZoneEditorDialog({
     },
   });
 
+  // HTML widget Live Preview proportions: match the real rendering surface so
+  // responsive content lays out the same as on a screen. The widget fills its
+  // zone, so the ratio is the layout's pixel resolution scaled by the edited
+  // zone's width/height percentages. Falls back to the layout (then 16:9) when
+  // zone dimensions aren't usable. Capped via maxWidth so portrait/ultrawide
+  // layouts don't push the rest of the editor off-screen.
+  const watchedZoneWidth = form.watch("width");
+  const watchedZoneHeight = form.watch("height");
+  const htmlPreviewBox = useMemo(() => {
+    const PREVIEW_MAX_HEIGHT_PX = 320;
+    const dims = getAspectRatioDimensions(
+      layout.aspectRatio || "16:9",
+      layout.customWidth,
+      layout.customHeight,
+    );
+    const wPct =
+      Number.isFinite(watchedZoneWidth) && (watchedZoneWidth as number) > 0
+        ? (watchedZoneWidth as number)
+        : 100;
+    const hPct =
+      Number.isFinite(watchedZoneHeight) && (watchedZoneHeight as number) > 0
+        ? (watchedZoneHeight as number)
+        : 100;
+    const surfaceW = dims.width * wPct;
+    const surfaceH = dims.height * hPct;
+    const ratio = surfaceW > 0 && surfaceH > 0 ? surfaceW / surfaceH : 16 / 9;
+    return { ratio, maxWidthPx: PREVIEW_MAX_HEIGHT_PX * ratio };
+  }, [layout.aspectRatio, layout.customWidth, layout.customHeight, watchedZoneWidth, watchedZoneHeight]);
+
   // Reset form when zone changes (for edit vs add mode)
   useEffect(() => {
     if (open) {
@@ -3712,7 +3741,11 @@ function ZoneEditorDialog({
                 <div className="space-y-2">
                   <FormLabel>Live Preview</FormLabel>
                   <div
-                    className="relative w-full h-48 rounded-md border border-input overflow-hidden bg-background"
+                    className="relative w-full mx-auto rounded-md border border-input overflow-hidden bg-background"
+                    style={{
+                      aspectRatio: `${htmlPreviewBox.ratio}`,
+                      maxWidth: `${htmlPreviewBox.maxWidthPx}px`,
+                    }}
                     data-testid="preview-html-widget"
                   >
                     <ZoneRenderer
