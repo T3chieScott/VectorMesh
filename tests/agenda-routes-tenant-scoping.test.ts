@@ -954,3 +954,285 @@ test("POST /api/agenda/sync-configs — admin can create a config for any site",
     await srv.close();
   }
 });
+
+// ============ Task #255 — account-manager multi-site allow-list scoping =====
+//
+// Tasks #211 / #215 / #224 exercised the agenda routes with a single-site
+// `site_user` (allowedClientIds = ["siteA"]) and an all-access `admin`. The
+// third RBAC tier — `account_manager`, who is granted a *subset* of multiple
+// sites — was never exercised. Multi-site allow-lists are exactly where
+// boundary bugs hide: an "any allowed site" vs "this specific site" mix-up,
+// or off-by-one filtering, would let a manager touch a site they were never
+// granted. These tests pin the boundary for a manager allowed
+// ["siteA","siteC"] but NOT "siteB" across the item, widget-config and
+// sync-config routes.
+
+const MANAGER: FakeUser = { role: "account_manager", allowedClientIds: ["siteA", "siteC"] };
+
+test("account_manager — agenda items: reads only allowed sites, can patch/delete in them, 403 on disallowed site", async () => {
+  const start = new Date("2026-06-01T10:00:00Z");
+  const end = new Date("2026-06-01T11:00:00Z");
+  const itemA = makeItem({ id: "iA", clientId: "siteA", startsAt: start, endsAt: end });
+  const itemB = makeItem({ id: "iB", clientId: "siteB", startsAt: start, endsAt: end });
+  const itemC = makeItem({ id: "iC", clientId: "siteC", startsAt: start, endsAt: end });
+  const storage = makeFakeStorage({ items: [itemA, itemB, itemC] });
+  const srv = await startTestServer({ storage, user: MANAGER });
+  try {
+    // Unfiltered list: only the two allowed sites, siteB filtered out.
+    const list = (await (await fetch(`${srv.base}/api/agenda`)).json()) as Array<{ id: string }>;
+    assert.deepEqual(list.map((i) => i.id).sort(), ["iA", "iC"]);
+
+    // Explicit clientId for an allowed site → 200, scoped to that site.
+    const getC = await fetch(`${srv.base}/api/agenda?clientId=siteC`);
+    assert.equal(getC.status, 200);
+    assert.deepEqual(((await getC.json()) as Array<{ id: string }>).map((i) => i.id), ["iC"]);
+
+    // Explicit clientId for the disallowed site → 403.
+    const getB = await fetch(`${srv.base}/api/agenda?clientId=siteB`);
+    assert.equal(getB.status, 403);
+
+    // Patch & delete are allowed in both granted sites.
+    const patchA = await fetch(`${srv.base}/api/agenda/iA`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Edited A" }),
+    });
+    assert.equal(patchA.status, 200);
+    assert.equal(storage.items.find((i) => i.id === "iA")?.title, "Edited A");
+
+    const delC = await fetch(`${srv.base}/api/agenda/iC`, { method: "DELETE" });
+    assert.equal(delC.status, 204);
+    assert.equal(storage.items.find((i) => i.id === "iC"), undefined);
+
+    // Patch & delete on the disallowed site → 403, row untouched.
+    const patchB = await fetch(`${srv.base}/api/agenda/iB`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Hijacked" }),
+    });
+    assert.equal(patchB.status, 403);
+    assert.equal(storage.items.find((i) => i.id === "iB")?.title, "Session iB");
+
+    const delB = await fetch(`${srv.base}/api/agenda/iB`, { method: "DELETE" });
+    assert.equal(delB.status, 403);
+    assert.ok(storage.items.find((i) => i.id === "iB"), "siteB row must survive");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("account_manager — agenda items: can create in an allowed site but not in a disallowed one", async () => {
+  const storage = makeFakeStorage({});
+  const srv = await startTestServer({ storage, user: MANAGER });
+  try {
+    const ok = await fetch(`${srv.base}/api/agenda`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: "siteC",
+        title: "New C session",
+        startsAt: "2026-06-01T09:00:00Z",
+        endsAt: "2026-06-01T10:00:00Z",
+      }),
+    });
+    assert.equal(ok.status, 201);
+    assert.equal(storage.items.length, 1);
+    assert.equal(storage.items[0].clientId, "siteC");
+
+    const denied = await fetch(`${srv.base}/api/agenda`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: "siteB",
+        title: "Injected B session",
+        startsAt: "2026-06-01T09:00:00Z",
+        endsAt: "2026-06-01T10:00:00Z",
+      }),
+    });
+    assert.equal(denied.status, 403);
+    assert.equal(storage.items.length, 1, "no siteB row may be created");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("account_manager — agenda items: cannot move a row from an allowed site to a disallowed one", async () => {
+  const start = new Date("2026-06-01T10:00:00Z");
+  const end = new Date("2026-06-01T11:00:00Z");
+  const itemA = makeItem({ id: "iA", clientId: "siteA", startsAt: start, endsAt: end });
+  const storage = makeFakeStorage({ items: [itemA] });
+  const srv = await startTestServer({ storage, user: MANAGER });
+  try {
+    const move = await fetch(`${srv.base}/api/agenda/iA`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteB" }),
+    });
+    assert.equal(move.status, 403);
+    assert.equal(storage.items.find((i) => i.id === "iA")?.clientId, "siteA");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("account_manager — widget configs: reads only allowed sites, patch/delete scoped, 403 on disallowed site", async () => {
+  const cfgA = makeConfig({ id: "cfgA", clientId: "siteA", name: "A" });
+  const cfgB = makeConfig({ id: "cfgB", clientId: "siteB", name: "B" });
+  const cfgC = makeConfig({ id: "cfgC", clientId: "siteC", name: "C" });
+  const storage = makeFakeStorage({ configs: [cfgA, cfgB, cfgC] });
+  const srv = await startTestServer({ storage, user: MANAGER });
+  try {
+    // Unfiltered list: only siteA + siteC.
+    const list = (await (await fetch(`${srv.base}/api/agenda/configs`)).json()) as Array<{ id: string }>;
+    assert.deepEqual(list.map((c) => c.id).sort(), ["cfgA", "cfgC"]);
+
+    // Explicit allowed site → 200; disallowed site → 403.
+    assert.equal((await fetch(`${srv.base}/api/agenda/configs?clientId=siteA`)).status, 200);
+    assert.equal((await fetch(`${srv.base}/api/agenda/configs?clientId=siteB`)).status, 403);
+
+    // Patch in an allowed site succeeds.
+    const patchC = await fetch(`${srv.base}/api/agenda/configs/cfgC`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Renamed C" }),
+    });
+    assert.equal(patchC.status, 200);
+    assert.equal(storage.configs.find((c) => c.id === "cfgC")?.name, "Renamed C");
+
+    // Patch / delete on the disallowed site → 403, row untouched.
+    const patchB = await fetch(`${srv.base}/api/agenda/configs/cfgB`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Hijacked" }),
+    });
+    assert.equal(patchB.status, 403);
+    assert.equal(storage.configs.find((c) => c.id === "cfgB")?.name, "B");
+
+    const delB = await fetch(`${srv.base}/api/agenda/configs/cfgB`, { method: "DELETE" });
+    assert.equal(delB.status, 403);
+    assert.ok(storage.configs.find((c) => c.id === "cfgB"), "siteB config must survive");
+
+    // Delete in an allowed site succeeds.
+    const delA = await fetch(`${srv.base}/api/agenda/configs/cfgA`, { method: "DELETE" });
+    assert.equal(delA.status, 204);
+    assert.equal(storage.configs.find((c) => c.id === "cfgA"), undefined);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("account_manager — widget configs: can create in an allowed site but not in a disallowed one", async () => {
+  const storage = makeFakeStorage({});
+  const srv = await startTestServer({ storage, user: MANAGER });
+  try {
+    // Create in a granted site → 201.
+    const ok = await fetch(`${srv.base}/api/agenda/configs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteC", name: "New C config" }),
+    });
+    assert.equal(ok.status, 201);
+    assert.equal(storage.configs.length, 1);
+    assert.equal(storage.configs[0].clientId, "siteC");
+
+    // Create in the disallowed site → 403, no row added.
+    const denied = await fetch(`${srv.base}/api/agenda/configs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteB", name: "Injected B config" }),
+    });
+    assert.equal(denied.status, 403);
+    assert.equal(storage.configs.length, 1, "no siteB config may be created");
+    assert.equal(storage.configs.filter((c) => c.clientId === "siteB").length, 0);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("account_manager — sync configs: reads only allowed sites, CRUD + run scoped, 403 on disallowed site", async () => {
+  const syncA = makeSyncConfig({ id: "syncA", clientId: "siteA", name: "A feed", sourceUrl: "http://127.0.0.1/a.ics" });
+  const syncB = makeSyncConfig({ id: "syncB", clientId: "siteB", name: "B feed", sourceUrl: "http://127.0.0.1/b.ics" });
+  const syncC = makeSyncConfig({ id: "syncC", clientId: "siteC", name: "C feed", sourceUrl: "http://127.0.0.1/c.ics" });
+  const storage = makeFakeStorage({ syncConfigs: [syncA, syncB, syncC] });
+  const srv = await startTestServer({ storage, user: MANAGER });
+  try {
+    // Unfiltered list: only siteA + siteC.
+    const list = (await (await fetch(`${srv.base}/api/agenda/sync-configs`)).json()) as Array<{ id: string }>;
+    assert.deepEqual(list.map((c) => c.id).sort(), ["syncA", "syncC"]);
+
+    // Explicit allowed site → 200; disallowed site → 403.
+    assert.equal((await fetch(`${srv.base}/api/agenda/sync-configs?clientId=siteC`)).status, 200);
+    assert.equal((await fetch(`${srv.base}/api/agenda/sync-configs?clientId=siteB`)).status, 403);
+
+    // Create allowed in a granted site, denied in the disallowed one.
+    const createC = await fetch(`${srv.base}/api/agenda/sync-configs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteC", name: "New C", sourceType: "ics", sourceUrl: "http://127.0.0.1/new-c.ics" }),
+    });
+    assert.equal(createC.status, 201);
+
+    const createB = await fetch(`${srv.base}/api/agenda/sync-configs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteB", name: "Stolen", sourceType: "ics", sourceUrl: "http://127.0.0.1/stolen.ics" }),
+    });
+    assert.equal(createB.status, 403);
+    assert.equal(storage.syncConfigs.filter((c) => c.clientId === "siteB").length, 1, "no siteB sync config may be created");
+
+    // Patch on the disallowed site → 403, row (and its source URL) untouched.
+    const patchB = await fetch(`${srv.base}/api/agenda/sync-configs/syncB`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Hijacked", sourceUrl: "http://127.0.0.1/evil.ics" }),
+    });
+    assert.equal(patchB.status, 403);
+    assert.equal(storage.syncConfigs.find((c) => c.id === "syncB")?.name, "B feed");
+    assert.equal(storage.syncConfigs.find((c) => c.id === "syncB")?.sourceUrl, "http://127.0.0.1/b.ics");
+
+    // Trigger on the disallowed site → 403, engine never ran.
+    const runB = await fetch(`${srv.base}/api/agenda/sync-configs/syncB/run`, { method: "POST" });
+    assert.equal(runB.status, 403);
+    assert.equal(storage.syncConfigs.find((c) => c.id === "syncB")?.lastSyncAt, null, "siteB sync must not have executed");
+
+    // Trigger on an allowed site → past the auth check; loopback URL is
+    // blocked by safeFetch so the engine returns ok:false but DID run.
+    const runC = await fetch(`${srv.base}/api/agenda/sync-configs/syncC/run`, { method: "POST" });
+    assert.equal(runC.status, 200);
+    assert.notEqual(
+      storage.syncConfigs.find((c) => c.id === "syncC")?.lastSyncAt,
+      null,
+      "the allowed-site sync engine ran and stamped lastSyncAt",
+    );
+
+    // Delete on the disallowed site → 403; delete on an allowed site → 204.
+    const delB = await fetch(`${srv.base}/api/agenda/sync-configs/syncB`, { method: "DELETE" });
+    assert.equal(delB.status, 403);
+    assert.ok(storage.syncConfigs.find((c) => c.id === "syncB"), "siteB sync config must survive");
+
+    const delA = await fetch(`${srv.base}/api/agenda/sync-configs/syncA`, { method: "DELETE" });
+    assert.equal(delA.status, 204);
+    assert.equal(storage.syncConfigs.find((c) => c.id === "syncA"), undefined);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("account_manager — cannot move a sync config from an allowed site to a disallowed one", async () => {
+  const syncA = makeSyncConfig({ id: "syncA", clientId: "siteA", name: "Original" });
+  const storage = makeFakeStorage({ syncConfigs: [syncA] });
+  const srv = await startTestServer({ storage, user: MANAGER });
+  try {
+    const move = await fetch(`${srv.base}/api/agenda/sync-configs/syncA`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteB" }),
+    });
+    assert.equal(move.status, 403);
+    const body = (await move.json()) as { error: string };
+    assert.match(body.error, /target site/i);
+    assert.equal(storage.syncConfigs.find((c) => c.id === "syncA")?.clientId, "siteA");
+  } finally {
+    await srv.close();
+  }
+});
