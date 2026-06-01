@@ -5489,6 +5489,9 @@ export interface ZoneRendererProps {
   showBorder?: boolean;
   playlistName?: string;
   timezone?: string;
+  // When true the renderer's root is positioned absolute with inset:0 to fill
+  // its parent — the parent MUST establish a positioning context (relative/
+  // absolute/fixed/sticky) or the preview escapes and overlays the page.
   fillContainer?: boolean;
   mediaBaseUrl?: string;
   deviceToken?: string;

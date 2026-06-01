@@ -3712,7 +3712,7 @@ function ZoneEditorDialog({
                 <div className="space-y-2">
                   <FormLabel>Live Preview</FormLabel>
                   <div
-                    className="w-full h-48 rounded-md border border-input overflow-hidden bg-background"
+                    className="relative w-full h-48 rounded-md border border-input overflow-hidden bg-background"
                     data-testid="preview-html-widget"
                   >
                     <ZoneRenderer
