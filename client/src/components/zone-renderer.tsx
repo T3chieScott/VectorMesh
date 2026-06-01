@@ -805,11 +805,17 @@ function HtmlWidget({
   // sandboxed iframe (allow-same-origin only, NO allow-scripts) is the real
   // security boundary — sanitisation is defence-in-depth and also runs
   // server-side before this content ever reaches a device.
+  // The body is a centred flex column (`justify-content: safe center`) so that
+  // content shorter than the zone sits in the middle instead of jammed at the
+  // top with the page background showing as dead space below it. `safe` keeps
+  // overflowing (taller-than-zone) content top-aligned so its top is never
+  // clipped. Authors can override `display`/`justify-content` on `body`.
   const srcDoc = useMemo(() => {
     const html = sanitizeWidgetHtml(resolvePlayerVariables(content || "", ctx));
     const styles = sanitizeWidgetCss(css || "");
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;box-sizing:border-box;}
+body{display:flex;flex-direction:column;justify-content:safe center;}
 *,*::before,*::after{box-sizing:inherit;}
 ${styles}
 </style></head><body>${html}</body></html>`;
