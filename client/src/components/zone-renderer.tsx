@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -815,14 +815,54 @@ ${styles}
 </style></head><body>${html}</body></html>`;
   }, [content, css, ctx]);
 
+  // Render the widget on a fixed-height reference canvas (REFERENCE_HEIGHT px
+  // tall, width derived from the container's actual aspect ratio) and CSS-scale
+  // it to fill the real container. This makes author-fixed pixel sizes lay out
+  // identically on every surface — the editor's Live Preview, the layout
+  // canvas, and a real device screen — regardless of the container's true pixel
+  // size. Two containers with the same aspect ratio (e.g. the preview box and
+  // the real zone) therefore render the same widget, just at a different scale,
+  // so the whole widget is always visible instead of clipping at small sizes.
+  const REFERENCE_HEIGHT = 1080;
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  useLayoutEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const measure = () => setBox({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const refWidth =
+    box.h > 0 ? (box.w / box.h) * REFERENCE_HEIGHT : REFERENCE_HEIGHT;
+  const scale = box.h > 0 ? box.h / REFERENCE_HEIGHT : 0;
+
   return (
-    <iframe
-      title="HTML widget"
-      sandbox="allow-same-origin"
-      srcDoc={srcDoc}
-      className="block h-full w-full border-0"
-      data-testid="iframe-html-widget"
-    />
+    <div ref={wrapRef} className="relative h-full w-full overflow-hidden">
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: `${refWidth}px`,
+          height: `${REFERENCE_HEIGHT}px`,
+          transform: `scale(${scale})`,
+          transformOrigin: "top left",
+        }}
+      >
+        <iframe
+          title="HTML widget"
+          sandbox="allow-same-origin"
+          srcDoc={srcDoc}
+          className="block border-0"
+          style={{ width: `${refWidth}px`, height: `${REFERENCE_HEIGHT}px` }}
+          data-testid="iframe-html-widget"
+        />
+      </div>
+    </div>
   );
 }
 
