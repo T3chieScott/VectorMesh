@@ -830,7 +830,14 @@ function HtmlWidget({
     );
     const html = sanitizeWidgetHtml(resolved);
     const styles = sanitizeWidgetCss(css || "");
-    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+    // A `srcdoc` document's URL is `about:srcdoc`, so root-relative URLs like
+    // `/api/media/<id>/file` don't reliably resolve against the app origin from
+    // inside the iframe. Pin a <base> to the real origin so resolved media
+    // refs (and any author-relative URL) load everywhere — editor, simulator,
+    // and a paired device, each of which is served from that same origin.
+    const baseHref =
+      typeof window !== "undefined" ? `${window.location.origin}/` : "/";
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><base href="${baseHref}"><style>
 html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;box-sizing:border-box;}
 *,*::before,*::after{box-sizing:inherit;}
 ${styles}

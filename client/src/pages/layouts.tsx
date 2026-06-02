@@ -506,7 +506,7 @@ function MediaInsertMenu({
                 >
                   <div className="aspect-square w-full overflow-hidden rounded-sm border border-border bg-muted">
                     <img
-                      src={`/api/media/${asset.id}/thumbnail`}
+                      src={asset.thumbnailPath ? `/api/media/${asset.id}/thumbnail` : `/api/media/${asset.id}/file`}
                       alt={asset.name}
                       className="h-full w-full object-cover"
                       loading="lazy"
