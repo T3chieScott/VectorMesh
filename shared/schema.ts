@@ -1128,22 +1128,112 @@ export type AgendaItem = typeof agendaItems.$inferSelect;
 // into agenda rows, and upserts by (externalSyncConfigId, externalId).
 // Rows that an operator has hand-edited (manualOverride=true) are
 // skipped by future syncs so manual fixes are never clobbered.
-export const AGENDA_SYNC_SOURCE_TYPES = ["ics", "google_sheets_csv"] as const;
+// Task #267 — the spreadsheet-source mapper widens the set well beyond
+// the original two. `ics` and `google_sheets_csv` keep their original
+// fixed-column behaviour untouched; the new types all flow through the
+// generic column-mapping path (shared/spreadsheet-mapping.ts):
+//   - google_sheets       — any Google Sheet (exported as CSV), mapped
+//   - csv_url             — any publicly-fetchable CSV URL, mapped
+//   - excel_onedrive      — an Excel/OneDrive direct-download link (XLSX)
+//   - sharepoint_excel    — a SharePoint Excel direct-download link (XLSX)
+//   - uploaded_xlsx       — an operator-uploaded .xlsx stored on disk
+export const AGENDA_SYNC_SOURCE_TYPES = [
+  "ics",
+  "google_sheets_csv",
+  "google_sheets",
+  "csv_url",
+  "excel_onedrive",
+  "sharepoint_excel",
+  "uploaded_xlsx",
+] as const;
 export type AgendaSyncSourceType = (typeof AGENDA_SYNC_SOURCE_TYPES)[number];
+
+// Source types that drive the generic column-mapping path. The two
+// legacy types (ics, google_sheets_csv) are deliberately excluded.
+export const AGENDA_MAPPED_SOURCE_TYPES = [
+  "google_sheets",
+  "csv_url",
+  "excel_onedrive",
+  "sharepoint_excel",
+  "uploaded_xlsx",
+] as const;
+
+// The new sync engine fetches spreadsheet bytes for these (XLSX), the
+// rest are fetched/parsed as text.
+export const AGENDA_XLSX_SOURCE_TYPES = [
+  "excel_onedrive",
+  "sharepoint_excel",
+  "uploaded_xlsx",
+] as const;
+
+export const AGENDA_SYNC_MODES = ["manual", "interval"] as const;
+export type AgendaSyncMode = (typeof AGENDA_SYNC_MODES)[number];
+
+// The VectorMesh agenda fields an operator can map a spreadsheet column
+// onto. `title`, `startsAt` and `endsAt` are required before a mapped
+// sync is allowed; the rest are optional.
+export const AGENDA_MAPPABLE_FIELDS = [
+  "title",
+  "description",
+  "room",
+  "track",
+  "presenter",
+  "startsAt",
+  "endsAt",
+  "status",
+  "statusMessage",
+] as const;
+export type AgendaMappableField = (typeof AGENDA_MAPPABLE_FIELDS)[number];
+export const AGENDA_REQUIRED_MAPPABLE_FIELDS = ["title", "startsAt", "endsAt"] as const;
+
+// Column mapping persists as { agendaField: spreadsheetHeaderLabel }.
+// Future extension (out of scope now): allow an array of header labels
+// per field to build one agenda field from several columns.
+export type AgendaColumnMapping = Partial<Record<AgendaMappableField, string>>;
 
 export const agendaSyncConfigs = pgTable("agenda_sync_configs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   sourceType: text("source_type").notNull(),
-  sourceUrl: text("source_url").notNull(),
+  // Nullable now: uploaded_xlsx sources have no URL (the file lives at
+  // `storedFilePath`). URL-based types still require a valid URL, which
+  // is enforced in the route/engine rather than the column.
+  sourceUrl: text("source_url"),
   enabled: boolean("enabled").notNull().default(true),
   syncIntervalMinutes: integer("sync_interval_minutes").notNull().default(60),
+  // Task #267 — spreadsheet-source mapper fields. All nullable so
+  // existing ics/google_sheets_csv rows keep working unchanged.
+  // For uploaded_xlsx: the original upload name + the on-disk path.
+  originalFileName: text("original_file_name"),
+  storedFilePath: text("stored_file_path"),
+  // Which sheet/tab to read (XLSX only; null = first sheet).
+  sheetName: text("sheet_name"),
+  // 0-based index of the header row within the sheet/CSV.
+  headerRowIndex: integer("header_row_index").notNull().default(0),
+  // 0-based index of the first data row (null = headerRowIndex + 1).
+  firstDataRowIndex: integer("first_data_row_index"),
+  // { agendaField: spreadsheetHeaderLabel } — see AgendaColumnMapping.
+  columnMapping: jsonb("column_mapping").$type<AgendaColumnMapping>(),
+  // Spreadsheet column whose value is the stable external id (priority 1).
+  externalIdColumn: text("external_id_column"),
+  // IANA timezone for wall-clock date parsing (null = client timezone).
+  timezone: text("timezone"),
+  // Hint for ambiguous numeric dates: "uk" (d/m/y), "us" (m/d/y), "iso".
+  dateFormatHint: text("date_format_hint"),
+  timeFormatHint: text("time_format_hint"),
+  // manual = only sync on explicit trigger; interval = background ticks.
+  syncMode: text("sync_mode").notNull().default("interval"),
+  // When true (default), items missing from the source on a sync are
+  // deleted. When false they are left in place.
+  removeMissingItems: boolean("remove_missing_items").notNull().default(true),
   lastSyncAt: timestamp("last_sync_at"),
   lastSyncOk: boolean("last_sync_ok"),
   lastError: text("last_error"),
   lastErrorAt: timestamp("last_error_at"),
   lastItemCount: integer("last_item_count"),
+  // Per-row import warnings from the last sync (for the errors view).
+  lastSyncWarnings: jsonb("last_sync_warnings").$type<string[]>(),
   // Task #220 — alert when a feed has been failing for a while. The
   // sync engine bumps `consecutiveFailureCount` on every failed pull
   // and resets it to 0 on the next success. Once the count crosses the
@@ -1173,13 +1263,37 @@ export const insertAgendaSyncConfigSchema = createInsertSchema(agendaSyncConfigs
     lastItemCount: true,
     consecutiveFailureCount: true,
     failureAlertSent: true,
+    lastSyncWarnings: true,
   })
   .extend({
     name: z.string().min(1, "Name is required"),
     sourceType: z.enum(AGENDA_SYNC_SOURCE_TYPES),
-    sourceUrl: z.string().url("Must be a valid URL"),
+    // URL is optional at the schema level so uploaded_xlsx (no URL) and
+    // PATCH (.partial()) both validate. URL-based source types get an
+    // explicit "URL required + valid" check in the route layer
+    // (validateAgendaSourceShape). When present it must be a valid URL.
+    sourceUrl: z
+      .string()
+      .url("Must be a valid URL")
+      .optional()
+      .nullable(),
     syncIntervalMinutes: z.number().int().min(5).max(60 * 24).default(60),
     enabled: z.boolean().default(true),
+    headerRowIndex: z.number().int().min(0).default(0),
+    firstDataRowIndex: z.number().int().min(0).optional().nullable(),
+    columnMapping: z
+      .record(z.enum(AGENDA_MAPPABLE_FIELDS), z.string())
+      .optional()
+      .nullable(),
+    syncMode: z.enum(AGENDA_SYNC_MODES).default("interval"),
+    removeMissingItems: z.boolean().default(true),
+    timezone: z.string().optional().nullable(),
+    dateFormatHint: z.string().optional().nullable(),
+    timeFormatHint: z.string().optional().nullable(),
+    sheetName: z.string().optional().nullable(),
+    externalIdColumn: z.string().optional().nullable(),
+    originalFileName: z.string().optional().nullable(),
+    storedFilePath: z.string().optional().nullable(),
   });
 export type InsertAgendaSyncConfig = z.infer<typeof insertAgendaSyncConfigSchema>;
 export type AgendaSyncConfig = typeof agendaSyncConfigs.$inferSelect;

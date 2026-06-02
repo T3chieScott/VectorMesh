@@ -11,14 +11,28 @@
 // Errors are recorded on the sync config row (lastError/lastErrorAt)
 // instead of being silently swallowed, so the UI can surface them.
 
+import { readFile } from "fs/promises";
 import { parseIcs } from "@shared/agenda-ics";
 import { parseAgendaCsv } from "@shared/agenda-csv";
+import {
+  parseCsvToGrid,
+  extractGrid,
+  applyMapping,
+  suggestColumnMapping,
+  missingRequiredMappings,
+  cellToString,
+  type Grid,
+} from "@shared/spreadsheet-mapping";
+import { DEFAULT_SCHEDULE_TIMEZONE_FALLBACK } from "@shared/timezone-utils";
+import { parseWorkbookBuffer } from "./spreadsheetParse";
 import { safeFetch, type SafeFetchOptions } from "./safeFetch";
 import type {
   AgendaItem,
   AgendaSyncConfig,
+  Client,
   InsertAgendaItem,
 } from "@shared/schema";
+import { AGENDA_XLSX_SOURCE_TYPES } from "@shared/schema";
 
 export interface AgendaSyncStorage {
   getAgendaSyncConfigs(clientId?: string): Promise<AgendaSyncConfig[]>;
@@ -34,7 +48,19 @@ export interface AgendaSyncStorage {
     data: Partial<InsertAgendaItem>,
   ): Promise<AgendaItem | undefined>;
   deleteAgendaItem(id: string): Promise<boolean>;
+  // Task #267 — used to resolve the wall-clock timezone for mapped
+  // spreadsheet date parsing (config tz → client tz → fallback).
+  // Optional so legacy ics/google_sheets_csv stubs don't need it.
+  getClient?(id: string): Promise<Client | undefined>;
 }
+
+// Shown when an Excel/OneDrive/SharePoint link can't be fetched as a
+// real XLSX (it served an HTML sign-in / preview page instead). The UI
+// surfaces this verbatim so operators know their options.
+export const ONEDRIVE_CANNOT_READ_MESSAGE =
+  "This Excel/OneDrive/SharePoint link can't be read directly. Use a direct-download link to the .xlsx file, export the sheet to CSV and use a CSV URL, upload the .xlsx file here instead, or wait for Microsoft sign-in support.";
+
+const XLSX_SOURCE_SET = new Set<string>(AGENDA_XLSX_SOURCE_TYPES);
 
 export interface AgendaSyncResult {
   ok: boolean;
@@ -83,6 +109,14 @@ export interface AgendaSyncDeps {
    * alert fires. Defaults to AGENDA_FAILURE_ALERT_THRESHOLD (3).
    */
   failureAlertThreshold?: number;
+  /**
+   * Task #267 — resolves an uploaded_xlsx `storedFilePath` (a path
+   * relative to the upload root) into an absolute, root-contained path
+   * before the engine reads it. Supplied by the route layer
+   * (fileStorage.getAbsolutePath) so the engine stays decoupled from
+   * file storage. When absent the stored path is read verbatim.
+   */
+  resolveStoredPath?: (storedPath: string) => Promise<string>;
 }
 
 /** Consecutive failed syncs before a feed-failing alert is sent. */
@@ -138,17 +172,70 @@ export function normalizeGoogleSheetsCsvUrl(rawUrl: string): string {
   return gid ? `${base}&gid=${encodeURIComponent(gid)}` : base;
 }
 
-async function fetchSource(
-  url: string,
+/**
+ * Best-effort rewrite of a OneDrive / SharePoint *share* link into a
+ * direct-download form by appending `download=1`. This works for many
+ * SharePoint/OneDrive-for-Business links; personal `1drv.ms` shorteners
+ * and sign-in-gated files won't transform and will surface the
+ * ONEDRIVE_CANNOT_READ_MESSAGE guidance instead. Exported for tests.
+ */
+export function normalizeOneDriveSharePointUrl(rawUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return rawUrl;
+  }
+  const host = parsed.hostname.toLowerCase();
+  const isMs =
+    host.endsWith("sharepoint.com") ||
+    host.endsWith("onedrive.live.com") ||
+    host.endsWith("1drv.ms");
+  if (!isMs) return rawUrl;
+  if (parsed.searchParams.get("download") === "1") return rawUrl;
+  parsed.searchParams.set("download", "1");
+  return parsed.toString();
+}
+
+interface FetchedContent {
+  text?: string;
+  bytes?: Uint8Array;
+}
+
+// Load the raw source content for a config. URL-based types go through
+// the SSRF-hardened safeFetch; uploaded_xlsx reads the stored file from
+// disk. XLSX types return bytes; text types return text.
+async function loadSourceContent(
+  config: AgendaSyncConfig,
   fetchImpl: typeof fetch,
   extra?: AgendaSyncDeps["safeFetchOptions"],
-): Promise<string> {
-  // SSRF-hardened fetch: only http/https, blocks private / loopback /
-  // link-local / cloud-metadata / multicast / reserved ranges, follows
-  // redirects manually (re-validating each hop), and caps body size.
-  // 15s budget — anything longer is almost certainly hung and should
-  // fail fast so the next tick gets another shot.
-  const res = await safeFetch(url, {
+  resolveStoredPath?: AgendaSyncDeps["resolveStoredPath"],
+): Promise<FetchedContent> {
+  const isXlsx = XLSX_SOURCE_SET.has(config.sourceType);
+
+  if (config.sourceType === "uploaded_xlsx") {
+    if (!config.storedFilePath) {
+      throw new Error("No uploaded file is attached to this source.");
+    }
+    const abs = resolveStoredPath
+      ? await resolveStoredPath(config.storedFilePath)
+      : config.storedFilePath;
+    const buf = await readFile(abs);
+    return { bytes: new Uint8Array(buf) };
+  }
+
+  // Resolve the effective URL per source type.
+  let effectiveUrl = config.sourceUrl ?? "";
+  if (!effectiveUrl) throw new Error("Source URL is not set.");
+  if (config.sourceType === "google_sheets_csv" || config.sourceType === "google_sheets") {
+    effectiveUrl = normalizeGoogleSheetsCsvUrl(effectiveUrl);
+  } else if (config.sourceType === "excel_onedrive" || config.sourceType === "sharepoint_excel") {
+    effectiveUrl = normalizeOneDriveSharePointUrl(effectiveUrl);
+  }
+
+  // SSRF-hardened fetch: only http/https, blocks private/reserved
+  // ranges, re-validates each redirect hop, caps body size, 15s budget.
+  const res = await safeFetch(effectiveUrl, {
     fetchImpl,
     timeoutMs: extra?.timeoutMs ?? 15_000,
     maxBytes: extra?.maxBytes,
@@ -157,22 +244,194 @@ async function fetchSource(
   if (res.status < 200 || res.status >= 300) {
     throw new Error(`HTTP ${res.status} ${res.statusText}`);
   }
-  return res.text;
+
+  if (isXlsx) {
+    // A real XLSX is a ZIP — magic bytes "PK" (0x50 0x4B). Anything
+    // else (an HTML sign-in / preview page) means the link can't be
+    // read directly; surface the operator-facing guidance.
+    const b = res.bytes;
+    if (b.length < 4 || b[0] !== 0x50 || b[1] !== 0x4b) {
+      throw new Error(ONEDRIVE_CANNOT_READ_MESSAGE);
+    }
+    return { bytes: b };
+  }
+  return { text: res.text };
 }
 
-function parseUpstream(
-  sourceType: AgendaSyncConfig["sourceType"],
-  text: string,
-): { items: ParsedUpstream[]; warnings: string[] } {
+// Resolve the wall-clock timezone for mapped date parsing:
+// config.timezone → client.timezone → fallback.
+async function resolveTimezone(
+  config: AgendaSyncConfig,
+  storage: AgendaSyncStorage,
+): Promise<string> {
+  if (config.timezone) return config.timezone;
+  if (storage.getClient) {
+    try {
+      const client = await storage.getClient(config.clientId);
+      if (client?.timezone) return client.timezone;
+    } catch {
+      /* fall through to default */
+    }
+  }
+  return DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+}
+
+// Build the Cell[][] grid (and sheet names for XLSX) from fetched
+// content for a mapped source type.
+async function loadGridForConfig(
+  config: Pick<AgendaSyncConfig, "sourceType" | "sheetName">,
+  content: FetchedContent,
+): Promise<{ grid: Grid; sheetNames: string[] }> {
+  if (XLSX_SOURCE_SET.has(config.sourceType)) {
+    if (!content.bytes) throw new Error("No spreadsheet data was fetched.");
+    const wb = await parseWorkbookBuffer(content.bytes);
+    return { grid: wb.getGrid(config.sheetName), sheetNames: wb.sheetNames };
+  }
+  return { grid: parseCsvToGrid(content.text ?? ""), sheetNames: [] };
+}
+
+// The fields a preview / test request supplies. A subset of a full
+// AgendaSyncConfig — enough to fetch + parse + map without persisting.
+export type AgendaSourceDraft = Pick<
+  AgendaSyncConfig,
+  | "clientId"
+  | "sourceType"
+  | "sourceUrl"
+  | "storedFilePath"
+  | "sheetName"
+  | "headerRowIndex"
+  | "firstDataRowIndex"
+  | "columnMapping"
+  | "externalIdColumn"
+  | "timezone"
+  | "dateFormatHint"
+>;
+
+export interface AgendaSourcePreview {
+  sheetNames: string[];
+  headers: string[];
+  /** First N data rows, stringified for display. */
+  sampleRows: string[][];
+  totalDataRows: number;
+  suggestedMapping: ReturnType<typeof suggestColumnMapping>;
+  /** Required fields still missing from the supplied mapping. */
+  missingRequired: string[];
+  /** Per-row mapping outcome for the sample (only when a mapping is supplied). */
+  mapped?: {
+    okCount: number;
+    errorCount: number;
+    skippedCount: number;
+    rows: Array<{
+      rowNumber: number;
+      status: "ok" | "error" | "skipped";
+      error?: string;
+      title?: string;
+      startsAt?: string;
+      endsAt?: string;
+      status_?: string;
+    }>;
+  };
+}
+
+// Fetch + parse a (possibly unsaved) mapped source and return a preview:
+// detected sheet names, headers, sample rows, an auto-suggested mapping,
+// and — when a mapping is supplied — the per-row mapping outcome. Powers
+// the admin "Test connection" / mapping panel. Never used for ics /
+// google_sheets_csv (those keep their fixed-column flow).
+export async function previewAgendaSource(
+  draft: AgendaSourceDraft,
+  deps: {
+    storage: AgendaSyncStorage;
+    fetchImpl?: typeof fetch;
+    safeFetchOptions?: AgendaSyncDeps["safeFetchOptions"];
+    resolveStoredPath?: AgendaSyncDeps["resolveStoredPath"];
+  },
+  opts: { sampleLimit?: number } = {},
+): Promise<AgendaSourcePreview> {
+  const sampleLimit = opts.sampleLimit ?? 20;
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  // loadSourceContent only reads sourceType / sourceUrl / storedFilePath
+  // / sheetName — safe to pass the draft cast to a full config.
+  const content = await loadSourceContent(
+    draft as AgendaSyncConfig,
+    fetchImpl,
+    deps.safeFetchOptions,
+    deps.resolveStoredPath,
+  );
+  const { grid, sheetNames } = await loadGridForConfig(draft, content);
+  const { headers, dataRows } = extractGrid(
+    grid,
+    draft.headerRowIndex ?? 0,
+    draft.firstDataRowIndex,
+  );
+  const suggestedMapping = suggestColumnMapping(headers);
+  const sampleRows = dataRows
+    .slice(0, sampleLimit)
+    .map((row) => headers.map((_, i) => cellToString(row[i])));
+
+  const preview: AgendaSourcePreview = {
+    sheetNames,
+    headers,
+    sampleRows,
+    totalDataRows: dataRows.length,
+    suggestedMapping,
+    missingRequired: [],
+  };
+
+  const mapping = draft.columnMapping;
+  if (mapping && Object.keys(mapping).length > 0) {
+    preview.missingRequired = missingRequiredMappings(mapping);
+    const timezone = await resolveTimezone(draft as AgendaSyncConfig, deps.storage);
+    const mapped = applyMapping(dataRows.slice(0, sampleLimit), {
+      headers,
+      mapping,
+      externalIdColumn: draft.externalIdColumn,
+      timezone,
+      dateFormatHint: draft.dateFormatHint,
+    });
+    let okCount = 0;
+    let errorCount = 0;
+    let skippedCount = 0;
+    const rows = mapped.map((r) => {
+      if (r.status === "ok") okCount++;
+      else if (r.status === "error") errorCount++;
+      else skippedCount++;
+      return {
+        rowNumber: r.rowNumber,
+        status: r.status,
+        error: r.error,
+        title: r.item?.title,
+        startsAt: r.item?.startsAt?.toISOString(),
+        endsAt: r.item?.endsAt?.toISOString(),
+        status_: r.item?.status,
+      };
+    });
+    preview.mapped = { okCount, errorCount, skippedCount, rows };
+  }
+
+  return preview;
+}
+
+// Turn a fetched content payload into parsed upstream rows. ics and
+// google_sheets_csv keep their original fixed-column behaviour; all
+// other (mapped) types run through the shared column-mapping layer.
+async function parseUpstreamForConfig(
+  config: AgendaSyncConfig,
+  content: FetchedContent,
+  storage: AgendaSyncStorage,
+): Promise<{ items: ParsedUpstream[]; warnings: string[] }> {
+  const sourceType = config.sourceType;
+
   if (sourceType === "ics") {
-    const { items, errors } = parseIcs(text);
+    const { items, errors } = parseIcs(content.text ?? "");
     return {
       items: items.map((i) => ({ externalId: i.externalId, data: i.item })),
       warnings: errors,
     };
   }
+
   if (sourceType === "google_sheets_csv") {
-    const rows = parseAgendaCsv(text);
+    const rows = parseAgendaCsv(content.text ?? "");
     const warnings: string[] = [];
     const items: ParsedUpstream[] = [];
     for (const row of rows) {
@@ -181,17 +440,55 @@ function parseUpstream(
         continue;
       }
       if (!row.item) continue;
-      // Synthesise a stable id from title+startsAt when the CSV
-      // doesn't carry one. Google Sheets exports rarely include a
-      // dedicated UID column, but title+start is stable enough as
-      // long as operators don't reuse the same title in the same
-      // minute.
+      // Synthesise a stable id from title+startsAt when the CSV doesn't
+      // carry one (Google Sheets exports rarely include a UID column).
       const externalId = `${row.item.title}__${row.item.startsAt.toISOString()}`;
       items.push({ externalId, data: row.item });
     }
     return { items, warnings };
   }
-  throw new Error(`Unsupported source type: ${sourceType}`);
+
+  // ===== Mapped spreadsheet types (Task #267) =====
+  if (!config.columnMapping) {
+    throw new Error("This source has no column mapping configured yet.");
+  }
+  // Guard against a half-configured mapping (e.g. created directly via the
+  // API). Running with a required field unmapped would produce zero ok
+  // rows and — with removeMissingItems=true — tombstone every previously
+  // synced item. Fail loudly instead so the catch path records the error
+  // and skips removal entirely.
+  const missing = missingRequiredMappings(config.columnMapping);
+  if (missing.length > 0) {
+    throw new Error(
+      `Column mapping is incomplete — these required fields are unmapped: ${missing.join(", ")}.`,
+    );
+  }
+  const { grid } = await loadGridForConfig(config, content);
+
+  const { headers, dataRows } = extractGrid(
+    grid,
+    config.headerRowIndex ?? 0,
+    config.firstDataRowIndex,
+  );
+  const timezone = await resolveTimezone(config, storage);
+  const mapped = applyMapping(dataRows, {
+    headers,
+    mapping: config.columnMapping,
+    externalIdColumn: config.externalIdColumn,
+    timezone,
+    dateFormatHint: config.dateFormatHint,
+  });
+
+  const items: ParsedUpstream[] = [];
+  const warnings: string[] = [];
+  for (const r of mapped) {
+    if (r.status === "ok" && r.item && r.externalId) {
+      items.push({ externalId: r.externalId, data: r.item });
+    } else if (r.status === "error") {
+      warnings.push(`Row ${r.rowNumber + 1}: ${r.error}`);
+    }
+  }
+  return { items, warnings };
 }
 
 export async function runAgendaSync(
@@ -209,20 +506,25 @@ export async function runAgendaSync(
     totalUpstream: 0,
   };
   try {
-    // Rewrite browser-address-bar Google Sheets URLs (".../edit?gid=...")
-    // into the CSV-export form before fetching. Other source types
-    // (ICS) pass through unchanged.
-    const effectiveUrl =
-      config.sourceType === "google_sheets_csv"
-        ? normalizeGoogleSheetsCsvUrl(config.sourceUrl)
-        : config.sourceUrl;
-    const text = await fetchSource(effectiveUrl, fetchImpl, deps.safeFetchOptions);
-    const { items: upstream, warnings } = parseUpstream(
-      config.sourceType as AgendaSyncConfig["sourceType"],
-      text,
+    // Load + parse the source. URL normalisation (Google Sheets,
+    // OneDrive/SharePoint) and XLSX-vs-text handling live in
+    // loadSourceContent; column mapping for the generic spreadsheet
+    // types lives in parseUpstreamForConfig. ics / google_sheets_csv
+    // keep their original fixed-column behaviour.
+    const content = await loadSourceContent(
+      config,
+      fetchImpl,
+      deps.safeFetchOptions,
+      deps.resolveStoredPath,
+    );
+    const { items: upstream, warnings } = await parseUpstreamForConfig(
+      config,
+      content,
+      deps.storage,
     );
     result.totalUpstream = upstream.length;
-    if (warnings.length > 0) result.parseWarnings = warnings.slice(0, 50);
+    const trimmedWarnings = warnings.slice(0, 50);
+    if (trimmedWarnings.length > 0) result.parseWarnings = trimmedWarnings;
 
     const existing = await deps.storage.getAgendaItemsBySyncConfig(config.id);
     const existingByExt = new Map<string, AgendaItem>();
@@ -274,12 +576,18 @@ export async function runAgendaSync(
     // Tombstone removal: anything we used to own that no longer
     // appears upstream is dropped, unless the operator marked it
     // manualOverride (in which case we treat it as locally owned).
-    for (const row of existing) {
-      if (!row.externalId) continue;
-      if (seenExt.has(row.externalId)) continue;
-      if (row.manualOverride) continue;
-      await deps.storage.deleteAgendaItem(row.id);
-      result.removed++;
+    // When removeMissingItems is false the operator wants to keep
+    // previously-synced rows even when they drop out of the source, so
+    // we skip removal entirely. (Default true preserves legacy
+    // behaviour for ics / google_sheets_csv feeds.)
+    if (config.removeMissingItems !== false) {
+      for (const row of existing) {
+        if (!row.externalId) continue;
+        if (seenExt.has(row.externalId)) continue;
+        if (row.manualOverride) continue;
+        await deps.storage.deleteAgendaItem(row.id);
+        result.removed++;
+      }
     }
 
     // Task #220 — a successful sync clears the failure streak. If we'd
@@ -292,6 +600,7 @@ export async function runAgendaSync(
       lastError: null,
       lastErrorAt: null,
       lastItemCount: upstream.length,
+      lastSyncWarnings: trimmedWarnings.length > 0 ? trimmedWarnings : null,
       consecutiveFailureCount: 0,
       failureAlertSent: false,
     });
@@ -348,6 +657,9 @@ export async function runDueAgendaSyncs(
   const results: Array<{ configId: string; result: AgendaSyncResult }> = [];
   for (const cfg of configs) {
     if (!cfg.enabled) continue;
+    // Manual-mode feeds only sync when an operator triggers them, so the
+    // scheduler skips them (null/"interval" run on the timer).
+    if (cfg.syncMode === "manual") continue;
     const intervalMs = (cfg.syncIntervalMinutes || 60) * 60_000;
     const lastMs = cfg.lastSyncAt ? new Date(cfg.lastSyncAt).getTime() : 0;
     if (now.getTime() - lastMs < intervalMs) continue;

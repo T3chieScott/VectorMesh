@@ -117,6 +117,13 @@ export interface SafeFetchResponse {
   status: number;
   statusText: string;
   text: string;
+  /**
+   * Raw response bytes. Needed for binary payloads (e.g. XLSX) where
+   * the UTF-8 `text` decode would corrupt the content. Always populated
+   * — it is the same buffer `text` is decoded from, so existing callers
+   * that only read `text` are unaffected.
+   */
+  bytes: Uint8Array;
   finalUrl: string;
 }
 
@@ -220,6 +227,7 @@ export async function safeFetch(
         status: res.status,
         statusText: res.statusText,
         text,
+        bytes: buf,
         finalUrl: currentUrl,
       };
     }

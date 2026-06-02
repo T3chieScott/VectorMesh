@@ -28,6 +28,7 @@ import { mountAgendaRoutes } from "./agendaRoutes";
 import { mountMediaLayoutRoutes } from "./mediaLayoutRoutes";
 import { mountCustomerDataRoutes } from "./customerDataRoutes";
 import { runDueAgendaSyncs } from "./agendaSync";
+import { parseWorkbookBuffer } from "./spreadsheetParse";
 import multer from "multer";
 import path from "path";
 import os from "os";
@@ -988,7 +989,11 @@ export async function registerRoutes(
   };
   const tickAgendaSync = async () => {
     try {
-      const { ran, results } = await runDueAgendaSyncs({ storage, alerter: agendaAlerter });
+      const { ran, results } = await runDueAgendaSyncs({
+        storage,
+        alerter: agendaAlerter,
+        resolveStoredPath: (p) => fileStorage.getAbsolutePath(p),
+      });
       if (ran > 0) {
         const failed = results.filter((r) => !r.result.ok).length;
         console.log(
@@ -1752,6 +1757,68 @@ export async function registerRoutes(
       await cleanupTemp();
       console.error("[upload] Error uploading file:", error);
       res.status(500).json({ error: "Failed to upload file" });
+    }
+  });
+
+  // Task #267 — dedicated upload for agenda spreadsheet sources. Validates
+  // the .xlsx is readable (parses sheet names) before persisting it, so the
+  // mapping UI can immediately offer a sheet picker. Returns the relative
+  // storedFilePath that the sync config persists.
+  app.post("/api/agenda/sync-configs/upload-xlsx", requireAuth, loadUserContext, upload.single("file"), async (req, res) => {
+    const tempPath = req.file?.path;
+    const cleanupTemp = async () => {
+      if (tempPath) {
+        try { await fs.promises.unlink(tempPath); } catch {}
+      }
+    };
+    try {
+      if (!req.file || !tempPath) {
+        return res.status(400).json({ error: "No file provided" });
+      }
+      const clientId = req.body.clientId;
+      if (!clientId) {
+        await cleanupTemp();
+        return res.status(400).json({ error: "clientId is required" });
+      }
+      if (!canAccessClient(req, clientId)) {
+        await cleanupTemp();
+        return res.status(403).json({ error: "Access denied to this client" });
+      }
+      const originalName = req.file.originalname || "";
+      if (!/\.xlsx$/i.test(originalName)) {
+        await cleanupTemp();
+        return res.status(400).json({ error: "Only .xlsx spreadsheet files are supported" });
+      }
+      const client = await storage.getClient(clientId);
+      if (client) {
+        const maxSizeMb = client.maxUploadSizeMb ?? 100;
+        if (req.file.size > maxSizeMb * 1024 * 1024) {
+          await cleanupTemp();
+          return res.status(413).json({ error: `File size exceeds the ${maxSizeMb}MB limit for this site` });
+        }
+      }
+      // Parse sheet names from the bytes before we hand the temp file to
+      // saveFileFromDisk (which renames it away).
+      let sheetNames: string[] = [];
+      try {
+        const buf = await fs.promises.readFile(tempPath);
+        const parsed = await parseWorkbookBuffer(buf);
+        sheetNames = parsed.sheetNames;
+      } catch {
+        await cleanupTemp();
+        return res.status(400).json({ error: "Could not read the spreadsheet. Make sure it is a valid .xlsx file." });
+      }
+      const storedFilePath = await fileStorage.saveFileFromDisk(
+        tempPath,
+        originalName,
+        req.file.mimetype,
+        clientId,
+      );
+      res.json({ storedFilePath, originalFileName: originalName, sheetNames });
+    } catch (error) {
+      await cleanupTemp();
+      console.error("[upload-xlsx] Error uploading spreadsheet:", error);
+      res.status(500).json({ error: "Failed to upload spreadsheet" });
     }
   });
 
@@ -4485,6 +4552,7 @@ export async function registerRoutes(
     requireAuthOrToken,
     loadUserContext,
     logAudit,
+    resolveStoredPath: (p) => fileStorage.getAbsolutePath(p),
   });
 
   return httpServer;

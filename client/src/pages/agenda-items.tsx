@@ -17,7 +17,19 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Pencil, Trash2, Upload, Download, Calendar, FileText, RefreshCw, AlertTriangle, CheckCircle2, Link2 } from "lucide-react";
-import { AGENDA_STATUSES, AGENDA_SYNC_SOURCE_TYPES, type AgendaItem, type AgendaSyncConfig } from "@shared/schema";
+import {
+  AGENDA_STATUSES,
+  AGENDA_SYNC_SOURCE_TYPES,
+  AGENDA_MAPPED_SOURCE_TYPES,
+  AGENDA_XLSX_SOURCE_TYPES,
+  AGENDA_MAPPABLE_FIELDS,
+  AGENDA_REQUIRED_MAPPABLE_FIELDS,
+  AGENDA_SYNC_MODES,
+  type AgendaItem,
+  type AgendaSyncConfig,
+  type AgendaColumnMapping,
+  type AgendaMappableField,
+} from "@shared/schema";
 import { serializeAgendaCsv, AGENDA_CSV_HEADER, buildAgendaCsvSample } from "@shared/agenda-csv";
 
 const itemFormSchema = z.object({
@@ -281,6 +293,72 @@ function CsvImportDialog({ open, onOpenChange, clientId }: { open: boolean; onOp
   );
 }
 
+type SourceType = typeof AGENDA_SYNC_SOURCE_TYPES[number];
+
+const SOURCE_TYPE_LABELS: Record<SourceType, string> = {
+  ics: "ICS / iCalendar URL",
+  google_sheets_csv: "Google Sheets (CSV publish URL, fixed columns)",
+  google_sheets: "Google Sheets (mapped columns)",
+  csv_url: "CSV file URL (mapped columns)",
+  excel_onedrive: "Excel on OneDrive (.xlsx link)",
+  sharepoint_excel: "Excel on SharePoint (.xlsx link)",
+  uploaded_xlsx: "Upload an Excel file (.xlsx)",
+};
+
+const SOURCE_TYPE_HINTS: Record<SourceType, string> = {
+  ics: "Paste the .ics feed URL from Sched, Cvent, Google Calendar, etc.",
+  google_sheets_csv:
+    "In Google Sheets: File → Share → Publish to web → CSV. The columns must match the fixed import format.",
+  google_sheets:
+    "Paste the normal Google Sheets URL. The sheet must be shared so anyone with the link can view. You'll map the columns below.",
+  csv_url: "Paste a direct link to a .csv file. You'll map the columns below.",
+  excel_onedrive:
+    "Paste a OneDrive share link to the .xlsx file. Use a link that downloads the file directly. You'll map the columns below.",
+  sharepoint_excel:
+    "Paste a SharePoint link to the .xlsx file. Use a link that downloads the file directly. You'll map the columns below.",
+  uploaded_xlsx: "Upload a .xlsx file from your computer. You'll map the columns below.",
+};
+
+const FIELD_LABELS: Record<AgendaMappableField, string> = {
+  title: "Title",
+  description: "Description",
+  room: "Room",
+  track: "Track",
+  presenter: "Presenter",
+  startsAt: "Start time",
+  endsAt: "End time",
+  status: "Status",
+  statusMessage: "Status message",
+};
+
+const REQUIRED_FIELDS = AGENDA_REQUIRED_MAPPABLE_FIELDS as readonly AgendaMappableField[];
+const MAPPED_TYPES = AGENDA_MAPPED_SOURCE_TYPES as readonly string[];
+const XLSX_TYPES = AGENDA_XLSX_SOURCE_TYPES as readonly string[];
+const NO_COLUMN = "__none__";
+
+interface PreviewResult {
+  sheetNames: string[];
+  headers: string[];
+  sampleRows: string[][];
+  totalDataRows: number;
+  suggestedMapping: AgendaColumnMapping;
+  missingRequired: string[];
+  mapped?: {
+    okCount: number;
+    errorCount: number;
+    skippedCount: number;
+    rows: Array<{
+      rowNumber: number;
+      status: "ok" | "error" | "skipped";
+      error?: string;
+      title?: string;
+      startsAt?: string;
+      endsAt?: string;
+      status_?: string;
+    }>;
+  };
+}
+
 function SyncConfigDialog({
   open,
   onOpenChange,
@@ -294,7 +372,6 @@ function SyncConfigDialog({
 }) {
   const { toast } = useToast();
   const [name, setName] = useState(initial?.name ?? "");
-  type SourceType = typeof AGENDA_SYNC_SOURCE_TYPES[number];
   const initialSourceType: SourceType =
     initial && (AGENDA_SYNC_SOURCE_TYPES as readonly string[]).includes(initial.sourceType)
       ? (initial.sourceType as SourceType)
@@ -305,14 +382,154 @@ function SyncConfigDialog({
   const [syncIntervalMinutes, setSyncIntervalMinutes] = useState<number>(
     initial?.syncIntervalMinutes ?? 60,
   );
+  const [syncMode, setSyncMode] = useState<string>(initial?.syncMode ?? "interval");
+  const [removeMissingItems, setRemoveMissingItems] = useState<boolean>(
+    initial?.removeMissingItems ?? true,
+  );
+
+  // Mapped-source state.
+  const [storedFilePath, setStoredFilePath] = useState<string | null>(initial?.storedFilePath ?? null);
+  const [originalFileName, setOriginalFileName] = useState<string | null>(initial?.originalFileName ?? null);
+  const [sheetName, setSheetName] = useState<string | null>(initial?.sheetName ?? null);
+  const [headerRowIndex, setHeaderRowIndex] = useState<number>(initial?.headerRowIndex ?? 0);
+  const [externalIdColumn, setExternalIdColumn] = useState<string | null>(initial?.externalIdColumn ?? null);
+  const [timezone, setTimezone] = useState<string>(initial?.timezone ?? "");
+  const [dateFormatHint, setDateFormatHint] = useState<string>(initial?.dateFormatHint ?? "");
+  const [columnMapping, setColumnMapping] = useState<AgendaColumnMapping>(
+    (initial?.columnMapping as AgendaColumnMapping) ?? {},
+  );
+
+  const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [sheetNames, setSheetNames] = useState<string[]>(initial?.sheetName ? [initial.sheetName] : []);
+
+  const isMapped = MAPPED_TYPES.includes(sourceType);
+  const isXlsx = XLSX_TYPES.includes(sourceType);
+  const isUpload = sourceType === "uploaded_xlsx";
+  const needsUrl = isMapped && !isUpload;
+
+  function resetMappedState() {
+    setStoredFilePath(null);
+    setOriginalFileName(null);
+    setSheetName(null);
+    setHeaderRowIndex(0);
+    setExternalIdColumn(null);
+    setColumnMapping({});
+    setPreview(null);
+    setSheetNames([]);
+  }
+
+  function handleSourceTypeChange(v: string) {
+    const next = v as SourceType;
+    setSourceType(next);
+    // Switching away from mapped types clears mapping; switching between
+    // mapped types keeps the URL but clears the resolved schema.
+    if (!MAPPED_TYPES.includes(next)) {
+      resetMappedState();
+    } else {
+      setPreview(null);
+    }
+  }
+
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("clientId", clientId);
+      const res = await fetch("/api/agenda/sync-configs/upload-xlsx", {
+        method: "POST",
+        body: fd,
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Upload failed");
+      }
+      return res.json() as Promise<{ storedFilePath: string; originalFileName: string; sheetNames: string[] }>;
+    },
+    onSuccess: (data) => {
+      setStoredFilePath(data.storedFilePath);
+      setOriginalFileName(data.originalFileName);
+      setSheetNames(data.sheetNames);
+      setSheetName(data.sheetNames[0] ?? null);
+      setPreview(null);
+      toast({ title: "File uploaded", description: data.originalFileName });
+    },
+    onError: (e: any) =>
+      toast({ title: "Upload failed", description: String(e?.message ?? e), variant: "destructive" }),
+  });
+
+  function buildPreviewPayload(includeMapping: boolean) {
+    return {
+      clientId,
+      sourceType,
+      sourceUrl: needsUrl ? sourceUrl || null : null,
+      storedFilePath: isUpload ? storedFilePath : null,
+      sheetName: sheetName || null,
+      headerRowIndex,
+      columnMapping: includeMapping ? columnMapping : null,
+      externalIdColumn: externalIdColumn || null,
+      timezone: timezone || null,
+      dateFormatHint: dateFormatHint || null,
+    };
+  }
+
+  const previewMutation = useMutation({
+    mutationFn: async (includeMapping: boolean) => {
+      const endpoint = includeMapping
+        ? "/api/agenda/sync-configs/preview"
+        : "/api/agenda/sync-configs/test";
+      const res = await apiRequest("POST", endpoint, buildPreviewPayload(includeMapping));
+      return res.json() as Promise<PreviewResult>;
+    },
+    onSuccess: (data, includeMapping) => {
+      setPreview(data);
+      if (data.sheetNames?.length) setSheetNames(data.sheetNames);
+      // On the first "test", adopt the auto-suggested mapping if the
+      // operator hasn't mapped anything yet.
+      if (!includeMapping && Object.keys(columnMapping).length === 0 && data.suggestedMapping) {
+        setColumnMapping(data.suggestedMapping);
+      }
+      toast({ title: "Connected", description: `Found ${data.totalDataRows} data row(s).` });
+    },
+    onError: (e: any) =>
+      toast({ title: "Connection failed", description: String(e?.message ?? e), variant: "destructive" }),
+  });
+
+  const missingRequired = useMemo(
+    () => REQUIRED_FIELDS.filter((f) => !columnMapping[f]),
+    [columnMapping],
+  );
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const payload = { clientId, name, sourceType, sourceUrl, enabled, syncIntervalMinutes };
-      if (initial) {
-        return apiRequest("PATCH", `/api/agenda/sync-configs/${initial.id}`, payload);
+      const base: Record<string, unknown> = {
+        clientId,
+        name,
+        sourceType,
+        enabled,
+        syncIntervalMinutes,
+      };
+      if (isMapped) {
+        Object.assign(base, {
+          sourceUrl: needsUrl ? sourceUrl || null : null,
+          storedFilePath: isUpload ? storedFilePath : null,
+          originalFileName: isUpload ? originalFileName : null,
+          sheetName: isXlsx ? sheetName || null : null,
+          headerRowIndex,
+          columnMapping,
+          externalIdColumn: externalIdColumn || null,
+          timezone: timezone || null,
+          dateFormatHint: dateFormatHint || null,
+          syncMode,
+          removeMissingItems,
+        });
+      } else {
+        Object.assign(base, { sourceUrl });
       }
-      return apiRequest("POST", `/api/agenda/sync-configs`, payload);
+      if (initial) {
+        return apiRequest("PATCH", `/api/agenda/sync-configs/${initial.id}`, base);
+      }
+      return apiRequest("POST", `/api/agenda/sync-configs`, base);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/agenda/sync-configs"] });
@@ -323,9 +540,30 @@ function SyncConfigDialog({
       toast({ title: "Save failed", description: String(e?.message ?? e), variant: "destructive" }),
   });
 
+  const canTest = isMapped && (needsUrl ? !!sourceUrl : !!storedFilePath);
+  const canSave = (() => {
+    if (!name) return false;
+    if (!isMapped) return !!sourceUrl;
+    if (needsUrl && !sourceUrl) return false;
+    if (isUpload && !storedFilePath) return false;
+    return missingRequired.length === 0;
+  })();
+
+  function setFieldMapping(field: AgendaMappableField, header: string) {
+    setColumnMapping((prev) => {
+      const next = { ...prev };
+      if (header === NO_COLUMN || !header) {
+        delete next[field];
+      } else {
+        next[field] = header;
+      }
+      return next;
+    });
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{initial ? "Edit Sync Source" : "Add Sync Source"}</DialogTitle>
         </DialogHeader>
@@ -341,59 +579,295 @@ function SyncConfigDialog({
           </div>
           <div>
             <Label>Source type</Label>
-            <Select value={sourceType} onValueChange={(v) => setSourceType(v as SourceType)}>
+            <Select value={sourceType} onValueChange={handleSourceTypeChange}>
               <SelectTrigger data-testid="select-sync-source-type"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="ics">ICS / iCalendar URL</SelectItem>
-                <SelectItem value="google_sheets_csv">Google Sheets (CSV publish URL)</SelectItem>
+                {AGENDA_SYNC_SOURCE_TYPES.map((t) => (
+                  <SelectItem key={t} value={t}>{SOURCE_TYPE_LABELS[t]}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground mt-1">
-              {sourceType === "ics"
-                ? "Paste the .ics feed URL from Sched, Cvent, Google Calendar, etc."
-                : "In Google Sheets: File → Share → Publish to web → CSV. The columns must match the import format."}
-            </p>
+            <p className="text-xs text-muted-foreground mt-1">{SOURCE_TYPE_HINTS[sourceType]}</p>
           </div>
-          <div>
-            <Label>Source URL</Label>
-            <Input
-              value={sourceUrl}
-              onChange={(e) => setSourceUrl(e.target.value)}
-              placeholder="https://…"
-              data-testid="input-sync-url"
-            />
-          </div>
+
+          {/* URL input — every type except uploaded_xlsx */}
+          {!isUpload && (
+            <div>
+              <Label>Source URL</Label>
+              <Input
+                value={sourceUrl}
+                onChange={(e) => setSourceUrl(e.target.value)}
+                placeholder="https://…"
+                data-testid="input-sync-url"
+              />
+              {(sourceType === "excel_onedrive" || sourceType === "sharepoint_excel") && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  If the link opens a Microsoft sign-in or preview page, the file can't be read
+                  directly. Use a direct-download link, export to CSV and use a CSV URL, or upload
+                  the .xlsx file instead.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Upload — uploaded_xlsx */}
+          {isUpload && (
+            <div>
+              <Label>Excel file (.xlsx)</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="file"
+                  accept=".xlsx"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) uploadMutation.mutate(file);
+                  }}
+                  data-testid="input-xlsx-file"
+                />
+                {uploadMutation.isPending && <span className="text-xs text-muted-foreground">Uploading…</span>}
+              </div>
+              {originalFileName && (
+                <p className="text-xs text-muted-foreground mt-1" data-testid="text-uploaded-name">
+                  Current file: {originalFileName}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Mapped-source configuration */}
+          {isMapped && (
+            <>
+              {isXlsx && sheetNames.length > 0 && (
+                <div>
+                  <Label>Sheet</Label>
+                  <Select value={sheetName ?? sheetNames[0]} onValueChange={setSheetName}>
+                    <SelectTrigger data-testid="select-sheet"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {sheetNames.map((s) => (
+                        <SelectItem key={s} value={s}>{s}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Header row number</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={headerRowIndex + 1}
+                    onChange={(e) =>
+                      setHeaderRowIndex(Math.max(0, (parseInt(e.target.value || "1", 10) || 1) - 1))
+                    }
+                    data-testid="input-header-row"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">The row that holds your column titles.</p>
+                </div>
+                <div>
+                  <Label>Date format</Label>
+                  <Select value={dateFormatHint || "auto"} onValueChange={(v) => setDateFormatHint(v === "auto" ? "" : v)}>
+                    <SelectTrigger data-testid="select-date-format"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Auto-detect</SelectItem>
+                      <SelectItem value="uk">UK (day/month/year)</SelectItem>
+                      <SelectItem value="us">US (month/day/year)</SelectItem>
+                      <SelectItem value="iso">ISO (year-month-day)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div>
+                <Label>Timezone (optional)</Label>
+                <Input
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  placeholder="Leave blank to use the site timezone (e.g. Europe/London)"
+                  data-testid="input-timezone"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!canTest || previewMutation.isPending}
+                  onClick={() => previewMutation.mutate(false)}
+                  data-testid="button-test-connection"
+                >
+                  {previewMutation.isPending ? "Connecting…" : "Test connection"}
+                </Button>
+                {preview && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={previewMutation.isPending || missingRequired.length > 0}
+                    onClick={() => previewMutation.mutate(true)}
+                    data-testid="button-preview-mapping"
+                  >
+                    Preview mapped rows
+                  </Button>
+                )}
+              </div>
+
+              {/* Mapping panel — appears once we have headers */}
+              {preview && preview.headers.length > 0 && (
+                <div className="border rounded-md p-3 space-y-3" data-testid="panel-mapping">
+                  <div className="text-sm font-medium">Map your columns</div>
+                  <p className="text-xs text-muted-foreground">
+                    Title, Start time and End time are required. We've guessed where we can — adjust
+                    anything that's wrong.
+                  </p>
+                  <div className="grid gap-2">
+                    {AGENDA_MAPPABLE_FIELDS.map((field) => {
+                      const required = REQUIRED_FIELDS.includes(field);
+                      const missing = required && !columnMapping[field];
+                      return (
+                        <div key={field} className="grid grid-cols-2 gap-2 items-center">
+                          <Label className={missing ? "text-destructive" : ""}>
+                            {FIELD_LABELS[field]}{required ? " *" : ""}
+                          </Label>
+                          <Select
+                            value={columnMapping[field] ?? NO_COLUMN}
+                            onValueChange={(v) => setFieldMapping(field, v)}
+                          >
+                            <SelectTrigger data-testid={`select-map-${field}`}>
+                              <SelectValue placeholder="— Not mapped —" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={NO_COLUMN}>— Not mapped —</SelectItem>
+                              {preview.headers.map((h, i) => (
+                                <SelectItem key={`${h}-${i}`} value={h}>{h}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 items-center">
+                    <Label>Unique ID column (optional)</Label>
+                    <Select
+                      value={externalIdColumn ?? NO_COLUMN}
+                      onValueChange={(v) => setExternalIdColumn(v === NO_COLUMN ? null : v)}
+                    >
+                      <SelectTrigger data-testid="select-external-id"><SelectValue placeholder="— Auto —" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NO_COLUMN}>— Auto (use row contents) —</SelectItem>
+                        {preview.headers.map((h, i) => (
+                          <SelectItem key={`id-${h}-${i}`} value={h}>{h}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {missingRequired.length > 0 && (
+                    <div className="text-xs text-destructive" data-testid="text-missing-required">
+                      Still need: {missingRequired.map((f) => FIELD_LABELS[f as AgendaMappableField]).join(", ")}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Sample / preview table */}
+              {preview && preview.sampleRows.length > 0 && (
+                <div className="border rounded-md overflow-x-auto" data-testid="table-preview">
+                  <table className="text-xs w-full">
+                    <thead>
+                      <tr className="bg-muted">
+                        {preview.headers.map((h, i) => (
+                          <th key={`h-${i}`} className="px-2 py-1 text-left font-medium whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.sampleRows.slice(0, 8).map((row, ri) => (
+                        <tr key={`r-${ri}`} className="border-t">
+                          {preview.headers.map((_, ci) => (
+                            <td key={`c-${ri}-${ci}`} className="px-2 py-1 whitespace-nowrap">{row[ci] ?? ""}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Mapped-row outcome */}
+              {preview?.mapped && (
+                <div className="text-xs space-y-1" data-testid="text-mapped-summary">
+                  <div className="flex gap-3">
+                    <span className="text-green-600">{preview.mapped.okCount} ok</span>
+                    <span className="text-destructive">{preview.mapped.errorCount} error(s)</span>
+                    <span className="text-muted-foreground">{preview.mapped.skippedCount} skipped</span>
+                  </div>
+                  {preview.mapped.rows.filter((r) => r.status === "error").slice(0, 5).map((r) => (
+                    <div key={`err-${r.rowNumber}`} className="text-destructive">
+                      Row {r.rowNumber}: {r.error}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Scheduling */}
           <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Sync mode</Label>
+              <Select value={syncMode} onValueChange={setSyncMode}>
+                <SelectTrigger data-testid="select-sync-mode"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="interval">Automatic (on a timer)</SelectItem>
+                  <SelectItem value="manual">Manual only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div>
               <Label>Refresh every (minutes)</Label>
               <Input
                 type="number"
                 min={5}
                 max={60 * 24}
+                disabled={syncMode === "manual"}
                 value={syncIntervalMinutes}
                 onChange={(e) => setSyncIntervalMinutes(Math.max(5, Math.min(60 * 24, parseInt(e.target.value || "60", 10))))}
                 data-testid="input-sync-interval"
               />
             </div>
-            <div className="flex items-end">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={enabled}
-                  onChange={(e) => setEnabled(e.target.checked)}
-                  data-testid="checkbox-sync-enabled"
-                />
-                Enabled
-              </label>
-            </div>
           </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) => setEnabled(e.target.checked)}
+                data-testid="checkbox-sync-enabled"
+              />
+              Enabled
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={removeMissingItems}
+                onChange={(e) => setRemoveMissingItems(e.target.checked)}
+                data-testid="checkbox-remove-missing"
+              />
+              Remove items that disappear from the source
+            </label>
+          </div>
+
           <p className="text-xs text-muted-foreground">
             Items you edit by hand here are kept and never overwritten by the next sync.
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button
-              disabled={!name || !sourceUrl || mutation.isPending}
+              disabled={!canSave || mutation.isPending}
               onClick={() => mutation.mutate()}
               data-testid="button-save-sync"
             >
@@ -483,7 +957,7 @@ function SyncSourcesSection({ clientId }: { clientId: string }) {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium">{cfg.name}</span>
                     <Badge variant="outline">
-                      {cfg.sourceType === "ics" ? "ICS" : "Google Sheets CSV"}
+                      {SOURCE_TYPE_LABELS[cfg.sourceType as SourceType] ?? cfg.sourceType}
                     </Badge>
                     {cfg.enabled ? (
                       <Badge variant="secondary">Enabled · every {cfg.syncIntervalMinutes}m</Badge>

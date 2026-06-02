@@ -4,6 +4,9 @@ import {
   insertAgendaItemSchema,
   insertAgendaWidgetConfigSchema,
   insertAgendaSyncConfigSchema,
+  AGENDA_MAPPED_SOURCE_TYPES,
+  AGENDA_MAPPABLE_FIELDS,
+  AGENDA_REQUIRED_MAPPABLE_FIELDS,
   type AgendaItem,
   type AgendaWidgetConfig,
   type AgendaSyncConfig,
@@ -13,7 +16,11 @@ import {
   type InsertAgendaSyncConfig,
 } from "@shared/schema";
 import { parseAgendaCsv } from "@shared/agenda-csv";
-import { runAgendaSync, type AgendaSyncStorage } from "./agendaSync";
+import {
+  runAgendaSync,
+  previewAgendaSource,
+  type AgendaSyncStorage,
+} from "./agendaSync";
 import { getPathParam, getQueryString } from "./requestParams";
 
 export interface AgendaRoutesStorage {
@@ -70,6 +77,12 @@ export interface AgendaRoutesDeps {
     payload?: any,
   ) => void;
   now?: () => Date;
+  /**
+   * Task #267 — resolves an uploaded_xlsx storedFilePath (relative to
+   * the upload root) into an absolute path the sync engine can read.
+   * Wired to fileStorage.getAbsolutePath in server/routes.ts.
+   */
+  resolveStoredPath?: (storedPath: string) => Promise<string>;
 }
 
 // Shape of the public payload returned by GET /api/agenda/display/:configId.
@@ -139,6 +152,34 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
   } = deps;
   const now = deps.now ?? (() => new Date());
   const audit: NonNullable<typeof logAudit> = logAudit ?? (() => {});
+  const resolveStoredPath = deps.resolveStoredPath;
+
+  // A mapped source (Task #267) must carry either a URL (URL types) or a
+  // storedFilePath (uploaded_xlsx) before it can be saved. Returns an
+  // error string, or null when the shape is valid. Legacy ics /
+  // google_sheets_csv types are unaffected.
+  function validateSourceShape(
+    sourceType: string,
+    sourceUrl: unknown,
+    storedFilePath: unknown,
+  ): string | null {
+    if (sourceType === "uploaded_xlsx") {
+      if (!storedFilePath) return "An uploaded .xlsx file is required for this source type.";
+      return null;
+    }
+    // All other types (legacy + mapped URL types) need a URL.
+    if (!sourceUrl) return "A source URL is required for this source type.";
+    return null;
+  }
+
+  // Guards against pointing an uploaded_xlsx config at another site's
+  // file: the storedFilePath must live under the config's own clientId
+  // directory (fileStorage stores files at `${clientId}/uploads/...`).
+  function storedPathBelongsToClient(storedPath: string, clientId: string): boolean {
+    const norm = storedPath.replace(/\\/g, "/").replace(/^\/+/, "");
+    if (norm.includes("..")) return false;
+    return norm === clientId || norm.startsWith(`${clientId}/`);
+  }
 
   app.get("/api/agenda", requireAuthOrToken, loadUserContext, async (req, res) => {
     try {
@@ -305,6 +346,11 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       if (!auth.canAccessClient(req, data.clientId)) {
         return res.status(403).json({ error: "Access denied to requested site" });
       }
+      const shapeError = validateSourceShape(data.sourceType, data.sourceUrl, data.storedFilePath);
+      if (shapeError) return res.status(400).json({ error: shapeError });
+      if (data.storedFilePath && !storedPathBelongsToClient(data.storedFilePath, data.clientId)) {
+        return res.status(403).json({ error: "Uploaded file does not belong to this site" });
+      }
       const cfg = await storage.createAgendaSyncConfig(data);
       audit(req, "create", "agenda_sync_config", cfg.id, { name: cfg.name, sourceType: cfg.sourceType });
       res.status(201).json(cfg);
@@ -326,6 +372,17 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       const data = insertAgendaSyncConfigSchema.partial().parse(req.body);
       if (data.clientId && data.clientId !== existing.clientId && !auth.canAccessClient(req, data.clientId)) {
         return res.status(403).json({ error: "Access denied to target site" });
+      }
+      // Validate the merged shape so a PATCH can't leave a config in an
+      // unfetchable state (e.g. switching to uploaded_xlsx without a file).
+      const mergedType = data.sourceType ?? existing.sourceType;
+      const mergedUrl = data.sourceUrl !== undefined ? data.sourceUrl : existing.sourceUrl;
+      const mergedFile = data.storedFilePath !== undefined ? data.storedFilePath : existing.storedFilePath;
+      const mergedClient = data.clientId ?? existing.clientId;
+      const shapeError = validateSourceShape(mergedType, mergedUrl, mergedFile);
+      if (shapeError) return res.status(400).json({ error: shapeError });
+      if (mergedFile && !storedPathBelongsToClient(mergedFile, mergedClient)) {
+        return res.status(403).json({ error: "Uploaded file does not belong to this site" });
       }
       const cfg = await storage.updateAgendaSyncConfig(id, data);
       audit(req, "update", "agenda_sync_config", id, { name: cfg?.name });
@@ -365,7 +422,7 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       // AgendaRoutesStorage is structurally a superset of AgendaSyncStorage
       // (both reference identical method signatures from the @shared/schema
       // types), so this pass-through is type-safe.
-      const result = await runAgendaSync(existing, { storage, now });
+      const result = await runAgendaSync(existing, { storage, now, resolveStoredPath });
       audit(req, "run", "agenda_sync_config", id, {
         ok: result.ok,
         inserted: result.inserted,
@@ -377,6 +434,103 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
     } catch (error) {
       console.error("Error running agenda sync:", error);
       res.status(500).json({ error: "Failed to run agenda sync" });
+    }
+  });
+
+  // ----- Mapped-source preview / test (Task #267) -----
+  // Body shape shared by /preview and /test: a draft (unsaved) mapped
+  // source. /test omits the mapping (just verifies the connection +
+  // returns headers / sheet names); /preview includes the mapping and
+  // returns the per-row mapping outcome for a sample.
+  const previewBodySchema = z.object({
+    clientId: z.string().min(1),
+    sourceType: z.enum(AGENDA_MAPPED_SOURCE_TYPES),
+    sourceUrl: z.string().url().optional().nullable(),
+    storedFilePath: z.string().optional().nullable(),
+    sheetName: z.string().optional().nullable(),
+    headerRowIndex: z.number().int().min(0).optional(),
+    firstDataRowIndex: z.number().int().min(0).optional().nullable(),
+    columnMapping: z
+      .record(z.enum(AGENDA_MAPPABLE_FIELDS), z.string())
+      .optional()
+      .nullable(),
+    externalIdColumn: z.string().optional().nullable(),
+    timezone: z.string().optional().nullable(),
+    dateFormatHint: z.string().optional().nullable(),
+  });
+
+  async function handlePreview(req: Request, res: Response, includeMapping: boolean) {
+    let body: z.infer<typeof previewBodySchema>;
+    try {
+      body = previewBodySchema.parse(req.body);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      throw error;
+    }
+    if (!auth.canAccessClient(req, body.clientId)) {
+      return res.status(403).json({ error: "Access denied to requested site" });
+    }
+    const shapeError = validateSourceShape(body.sourceType, body.sourceUrl, body.storedFilePath);
+    if (shapeError) return res.status(400).json({ error: shapeError });
+    if (body.storedFilePath && !storedPathBelongsToClient(body.storedFilePath, body.clientId)) {
+      return res.status(403).json({ error: "Uploaded file does not belong to this site" });
+    }
+    try {
+      const preview = await previewAgendaSource(
+        {
+          clientId: body.clientId,
+          sourceType: body.sourceType,
+          sourceUrl: body.sourceUrl ?? null,
+          storedFilePath: body.storedFilePath ?? null,
+          sheetName: body.sheetName ?? null,
+          headerRowIndex: body.headerRowIndex ?? 0,
+          firstDataRowIndex: body.firstDataRowIndex ?? null,
+          columnMapping: includeMapping ? (body.columnMapping ?? null) : null,
+          externalIdColumn: body.externalIdColumn ?? null,
+          timezone: body.timezone ?? null,
+          dateFormatHint: body.dateFormatHint ?? null,
+        },
+        { storage, resolveStoredPath },
+      );
+      res.json(preview);
+    } catch (error) {
+      // Source-side failures (bad URL, OneDrive sign-in page, unreadable
+      // file) are operator-facing, not server bugs — return 400 with the
+      // message so the UI can show it inline.
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ error: message });
+    }
+  }
+
+  app.post("/api/agenda/sync-configs/preview", requireAuth, loadUserContext, (req, res) =>
+    handlePreview(req, res, true),
+  );
+
+  app.post("/api/agenda/sync-configs/test", requireAuth, loadUserContext, (req, res) =>
+    handlePreview(req, res, false),
+  );
+
+  // Surface the most recent sync warnings / error for a config so the UI
+  // can show per-row parse problems without re-running the sync.
+  app.get("/api/agenda/sync-configs/:id/errors", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const id = getPathParam(req, "id");
+      const existing = await storage.getAgendaSyncConfig(id);
+      if (!existing) return res.status(404).json({ error: "Sync config not found" });
+      if (!auth.canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied to this site" });
+      }
+      res.json({
+        lastError: existing.lastError ?? null,
+        lastErrorAt: existing.lastErrorAt ?? null,
+        lastSyncOk: existing.lastSyncOk ?? null,
+        lastSyncAt: existing.lastSyncAt ?? null,
+        lastItemCount: existing.lastItemCount ?? null,
+        warnings: existing.lastSyncWarnings ?? [],
+      });
+    } catch (error) {
+      console.error("Error fetching agenda sync errors:", error);
+      res.status(500).json({ error: "Failed to fetch sync errors" });
     }
   });
 
