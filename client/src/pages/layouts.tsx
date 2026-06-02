@@ -326,7 +326,7 @@ function useVariablePreviewScreenId(): string {
   return variablePreviewScreenId;
 }
 
-function VariableInsertMenu({ onInsert, textareaRef }: { onInsert: (token: string) => void; textareaRef?: React.RefObject<HTMLTextAreaElement | null> }) {
+function VariableInsertMenu({ onInsert, textareaRef }: { onInsert: (value: string, isFullValue?: boolean) => void; textareaRef?: React.RefObject<HTMLTextAreaElement | null> }) {
   const [open, setOpen] = useState(false);
   const previewScreenId = useVariablePreviewScreenId();
 
@@ -350,7 +350,26 @@ function VariableInsertMenu({ onInsert, textareaRef }: { onInsert: (token: strin
   const previewCtx = previewVarsData?.playerVars ?? undefined;
 
   const handleInsert = (token: string) => {
-    onInsert(token);
+    const el = textareaRef?.current;
+    if (el) {
+      // Insert at the caret (replacing any selection) so the token lands
+      // where the operator is editing, not appended off-screen.
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      const next = el.value.slice(0, start) + token + el.value.slice(end);
+      onInsert(next, true);
+      requestAnimationFrame(() => {
+        el.focus();
+        const caret = start + token.length;
+        try {
+          el.setSelectionRange(caret, caret);
+        } catch {
+          /* setSelectionRange can throw on detached nodes */
+        }
+      });
+    } else {
+      onInsert(token, false);
+    }
     setOpen(false);
   };
 
@@ -1515,6 +1534,10 @@ function ZoneEditorDialog({
   const [geocodeResults, setGeocodeResults] = useState<Array<{ name: string; country: string; admin1?: string; lat: number; lng: number }>>([]);
   const [geocodeTarget, setGeocodeTarget] = useState<"weather" | "forecast" | "qr" | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  // Ref to the HTML widget body textarea so "Insert Variable" can drop the
+  // token at the caret (and scroll/focus there) instead of silently
+  // appending to the end of a long body where it lands off-screen.
+  const htmlBodyRef = useRef<HTMLTextAreaElement | null>(null);
 
   const doGeocodeSearch = async (location: string, target: "weather" | "forecast" | "qr") => {
     if (!location?.trim()) {
@@ -3742,7 +3765,12 @@ function ZoneEditorDialog({
                     <FormItem>
                       <div className="flex items-center justify-between gap-2">
                         <FormLabel>HTML</FormLabel>
-                        <VariableInsertMenu onInsert={(token) => field.onChange((field.value || "") + token)} />
+                        <VariableInsertMenu
+                          textareaRef={htmlBodyRef}
+                          onInsert={(value, isFullValue) =>
+                            field.onChange(isFullValue ? value : (field.value || "") + value)
+                          }
+                        />
                       </div>
                       <FormControl>
                         <textarea
@@ -3750,6 +3778,10 @@ function ZoneEditorDialog({
                           className="w-full min-h-[160px] p-3 rounded-md border border-input bg-background font-mono text-sm resize-y"
                           {...field}
                           value={field.value || ""}
+                          ref={(el) => {
+                            if (typeof field.ref === "function") field.ref(el);
+                            htmlBodyRef.current = el;
+                          }}
                           data-testid="input-html-body"
                         />
                       </FormControl>
