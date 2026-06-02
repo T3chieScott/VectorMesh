@@ -62,6 +62,7 @@ import {
   sanitizeWidgetHtml,
   sanitizeWidgetCss,
 } from "@shared/html-widget-sanitize";
+import { resolveMediaRefs } from "@shared/media-refs";
 
 export type { PlayerVariableContext } from "@/lib/player-variables";
 
@@ -796,10 +797,16 @@ function HtmlWidget({
   content,
   css,
   ctx,
+  media,
+  mediaBaseUrl,
+  deviceToken,
 }: {
   content?: string;
   css?: string;
   ctx?: PlayerVariableContext;
+  media?: MediaAsset[];
+  mediaBaseUrl?: string;
+  deviceToken?: string;
 }) {
   // Resolve {{player variables}} in the HTML body, then sanitise. The
   // sandboxed iframe (allow-same-origin only, NO allow-scripts) is the real
@@ -814,14 +821,21 @@ function HtmlWidget({
   // margins and makes the body fill the reference canvas; authors choose how
   // their content fills or centres within it.
   const srcDoc = useMemo(() => {
-    const html = sanitizeWidgetHtml(resolvePlayerVariables(content || "", ctx));
+    // Order matters: resolve {{player variables}}, then {{media:…}} references
+    // (turned into real token-aware URLs the same way media zones build them),
+    // then sanitise as the final defence-in-depth step.
+    const resolved = resolveMediaRefs(
+      resolvePlayerVariables(content || "", ctx),
+      { media: media || [], mediaBaseUrl, deviceToken },
+    );
+    const html = sanitizeWidgetHtml(resolved);
     const styles = sanitizeWidgetCss(css || "");
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;box-sizing:border-box;}
 *,*::before,*::after{box-sizing:inherit;}
 ${styles}
 </style></head><body>${html}</body></html>`;
-  }, [content, css, ctx]);
+  }, [content, css, ctx, media, mediaBaseUrl, deviceToken]);
 
   // Render the widget on a fixed-WIDTH reference canvas (REFERENCE_WIDTH px
   // wide, height derived from the container's actual aspect ratio) and CSS-scale
@@ -5617,7 +5631,7 @@ export function ZoneRenderer({
       case "logo":
         return <LogoWidget />;
       case "html":
-        return <HtmlWidget content={zone.textContent} css={zone.htmlCss} ctx={ctx} />;
+        return <HtmlWidget content={zone.textContent} css={zone.htmlCss} ctx={ctx} media={media} mediaBaseUrl={mediaBaseUrl} deviceToken={deviceToken} />;
       case "weather":
         return (
           <WeatherWidget 

@@ -135,6 +135,7 @@ import {
   Wifi,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client, AgendaWidgetConfig } from "@shared/schema";
+import { buildMediaImgSnippet } from "@shared/media-refs";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { resolveLayoutUploadClientId } from "@/lib/layoutUploadClientId";
 import { ZoneRenderer } from "@/components/zone-renderer";
@@ -326,6 +327,34 @@ function useVariablePreviewScreenId(): string {
   return variablePreviewScreenId;
 }
 
+// Insert `token` into the textarea at the caret (replacing any selection) and
+// restore focus/caret after it. When no textarea is available it falls back to
+// the caller's plain append (isFullValue=false). Shared by VariableInsertMenu
+// and MediaInsertMenu so both insert-at-caret behave identically.
+function applyCaretInsert(
+  el: HTMLTextAreaElement | null,
+  token: string,
+  onInsert: (value: string, isFullValue?: boolean) => void,
+) {
+  if (el) {
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const next = el.value.slice(0, start) + token + el.value.slice(end);
+    onInsert(next, true);
+    requestAnimationFrame(() => {
+      el.focus();
+      const caret = start + token.length;
+      try {
+        el.setSelectionRange(caret, caret);
+      } catch {
+        /* setSelectionRange can throw on detached nodes */
+      }
+    });
+  } else {
+    onInsert(token, false);
+  }
+}
+
 function VariableInsertMenu({ onInsert, textareaRef }: { onInsert: (value: string, isFullValue?: boolean) => void; textareaRef?: React.RefObject<HTMLTextAreaElement | null> }) {
   const [open, setOpen] = useState(false);
   const previewScreenId = useVariablePreviewScreenId();
@@ -350,26 +379,7 @@ function VariableInsertMenu({ onInsert, textareaRef }: { onInsert: (value: strin
   const previewCtx = previewVarsData?.playerVars ?? undefined;
 
   const handleInsert = (token: string) => {
-    const el = textareaRef?.current;
-    if (el) {
-      // Insert at the caret (replacing any selection) so the token lands
-      // where the operator is editing, not appended off-screen.
-      const start = el.selectionStart ?? el.value.length;
-      const end = el.selectionEnd ?? el.value.length;
-      const next = el.value.slice(0, start) + token + el.value.slice(end);
-      onInsert(next, true);
-      requestAnimationFrame(() => {
-        el.focus();
-        const caret = start + token.length;
-        try {
-          el.setSelectionRange(caret, caret);
-        } catch {
-          /* setSelectionRange can throw on detached nodes */
-        }
-      });
-    } else {
-      onInsert(token, false);
-    }
+    applyCaretInsert(textareaRef?.current ?? null, token, onInsert);
     setOpen(false);
   };
 
@@ -429,6 +439,84 @@ function VariableInsertMenu({ onInsert, textareaRef }: { onInsert: (value: strin
               </button>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Image picker for the HTML widget editor. Lists site-scoped images and, on
+// click, inserts an `<img src="{{media:ID}}">` snippet at the caret. The
+// {{media:…}} reference is resolved to a real (token-aware) URL at render time
+// by resolveMediaRefs, so the image loads in the editor preview, the
+// simulator, and on a paired device.
+function MediaInsertMenu({
+  onInsert,
+  textareaRef,
+}: {
+  onInsert: (value: string, isFullValue?: boolean) => void;
+  textareaRef?: React.RefObject<HTMLTextAreaElement | null>;
+}) {
+  const [open, setOpen] = useState(false);
+  const mediaQueryOpts = useSiteFilteredQuery<MediaAsset[]>("/api/media");
+  const { data: mediaData = [], isLoading } = useQuery<MediaAsset[]>({
+    ...mediaQueryOpts,
+    enabled: open,
+  });
+  const images = mediaData.filter(
+    (m) => m.mediaType === "image" || m.mediaType === "gif",
+  );
+
+  const handlePick = (asset: MediaAsset) => {
+    applyCaretInsert(textareaRef?.current ?? null, buildMediaImgSnippet(asset), onInsert);
+    setOpen(false);
+  };
+
+  return (
+    <div className="relative">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => setOpen(!open)}
+        data-testid="button-insert-image"
+      >
+        <Image className="h-3 w-3 mr-1" />
+        Insert Image
+      </Button>
+      {open && (
+        <div className="absolute z-50 top-full mt-1 right-0 bg-popover border border-border rounded-md shadow-lg p-2 w-[320px] max-h-[400px] overflow-auto">
+          {isLoading ? (
+            <div className="py-6 text-center text-sm text-muted-foreground" data-testid="text-media-picker-loading">
+              Loading images…
+            </div>
+          ) : images.length === 0 ? (
+            <div className="py-6 text-center text-sm text-muted-foreground" data-testid="text-media-picker-empty">
+              No images in this site's media library.
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-2">
+              {images.map((asset) => (
+                <button
+                  key={asset.id}
+                  type="button"
+                  className="group flex flex-col gap-1 rounded-sm p-1 hover-elevate cursor-pointer text-left"
+                  onClick={() => handlePick(asset)}
+                  data-testid={`button-insert-image-${asset.id}`}
+                >
+                  <div className="aspect-square w-full overflow-hidden rounded-sm border border-border bg-muted">
+                    <img
+                      src={`/api/media/${asset.id}/thumbnail`}
+                      alt={asset.name}
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                    />
+                  </div>
+                  <span className="text-[11px] text-muted-foreground truncate">{asset.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1489,6 +1577,10 @@ function HtmlWidgetLivePreview({
   ratio: number;
   maxWidthPx: number;
 }) {
+  // Site-scoped media so {{media:…}} references render in the preview while
+  // authoring (no device token here — session auth covers /api/media/:id/file).
+  const mediaQueryOpts = useSiteFilteredQuery<MediaAsset[]>("/api/media");
+  const { data: mediaData = [] } = useQuery<MediaAsset[]>(mediaQueryOpts);
   return (
     <div
       className="relative w-full mx-auto rounded-md border border-input overflow-hidden bg-background"
@@ -1507,6 +1599,7 @@ function HtmlWidgetLivePreview({
           textContent,
           htmlCss,
         }}
+        media={mediaData}
         fillContainer={true}
       />
     </div>
@@ -3785,12 +3878,20 @@ function ZoneEditorDialog({
                     <FormItem>
                       <div className="flex items-center justify-between gap-2">
                         <FormLabel>HTML</FormLabel>
-                        <VariableInsertMenu
-                          textareaRef={htmlBodyRef}
-                          onInsert={(value, isFullValue) =>
-                            field.onChange(isFullValue ? value : (field.value || "") + value)
-                          }
-                        />
+                        <div className="flex items-center gap-2">
+                          <MediaInsertMenu
+                            textareaRef={htmlBodyRef}
+                            onInsert={(value, isFullValue) =>
+                              field.onChange(isFullValue ? value : (field.value || "") + value)
+                            }
+                          />
+                          <VariableInsertMenu
+                            textareaRef={htmlBodyRef}
+                            onInsert={(value, isFullValue) =>
+                              field.onChange(isFullValue ? value : (field.value || "") + value)
+                            }
+                          />
+                        </div>
                       </div>
                       <FormControl>
                         <textarea
