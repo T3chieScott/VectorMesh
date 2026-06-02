@@ -242,6 +242,17 @@ async function loadSourceContent(
     lookupImpl: extra?.lookupImpl,
   });
   if (res.status < 200 || res.status >= 300) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(
+        `The source rejected our request (HTTP ${res.status}). This usually means the link isn't publicly readable. ` +
+          `For Google Sheets, use File → Share → Publish to web (or set "Anyone with the link can view"). ` +
+          `For OneDrive/SharePoint, the file must be shared so "anyone with the link" can access it. ` +
+          `Private files that need a sign-in can't be read directly.`,
+      );
+    }
+    if (res.status === 404) {
+      throw new Error(`The source URL returned "Not Found" (HTTP 404). Double-check the link.`);
+    }
     throw new Error(`HTTP ${res.status} ${res.statusText}`);
   }
 

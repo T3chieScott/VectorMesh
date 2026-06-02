@@ -182,7 +182,16 @@ export async function safeFetch(
       const res = await fetchImpl(currentUrl, {
         signal: ctrl.signal,
         redirect: "manual",
-        headers: { "user-agent": "VectorMesh-AgendaSync/1.0", accept: "*/*" },
+        // Use a realistic browser User-Agent. Many hosts (Cloudflare,
+        // Google, SharePoint, generic CDNs) reject unknown bot UAs with a
+        // 403, so a non-browser UA was the most common cause of agenda
+        // sources that load fine in a browser failing server-side.
+        headers: {
+          "user-agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*;q=0.8",
+        },
       });
 
       // Redirect? Re-validate the new URL on the next loop iteration.
