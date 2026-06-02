@@ -1,0 +1,316 @@
+Update the existing VectorMesh Google Sheets helper to become a more general Agenda Spreadsheet Source Helper with column mapping and Excel/OneDrive support.
+
+Goal:
+We already have a Google Sheets helper, but it currently expects fixed column names or does not allow users to map spreadsheet columns to VectorMesh agenda fields. We need to extend this so client spreadsheets can remain in their own format while VectorMesh extracts the correct data for the Agenda Display Widget.
+
+Required agenda fields:
+- title
+- description
+- room
+- track
+- presenter
+- startsAt
+- endsAt
+- status
+- statusMessage
+
+Important:
+Do not remove or break the existing Google Sheets helper.
+Refactor or extend it so existing Google Sheets functionality continues to work.
+Add column mapping as a reusable layer.
+Add Excel/OneDrive/SharePoint support.
+Do not hardcode spreadsheet column names.
+Do not require the client to reformat their spreadsheet.
+
+Feature name:
+Agenda Spreadsheet Source Mapper
+
+Core functionality:
+1. Existing Google Sheets helper should continue to work.
+2. Add support for Excel/OneDrive/SharePoint spreadsheet sources.
+3. Add support for CSV URL and uploaded XLSX fallback.
+4. Add a column mapping interface so users can map spreadsheet columns to agenda fields.
+5. Save the mapping configuration.
+6. Allow preview before import/sync.
+7. Allow manual sync.
+8. Allow scheduled sync where technically possible.
+9. Imported/synced data should feed the existing Agenda Display Widget.
+
+Source types:
+Add support for:
+- google_sheets
+- excel_onedrive
+- sharepoint_excel
+- csv_url
+- uploaded_xlsx
+
+Google Sheets:
+Keep the current helper but add:
+- source config record
+- header row selection
+- sheet/tab selection where supported
+- column mapping UI
+- preview rows
+- manual sync
+- error reporting
+
+Excel / OneDrive / SharePoint:
+Implement support in phases.
+
+Phase 1:
+Support direct downloadable XLSX or CSV links.
+If the OneDrive/SharePoint share URL can be transformed into a direct download link, fetch it server-side.
+Parse XLSX using a server-side library such as xlsx or exceljs.
+Extract sheet names, headers, and rows.
+
+Phase 2:
+If a link cannot be accessed directly, show a clear message:
+“This Excel/OneDrive link cannot be read directly. Please provide a direct download link, export as CSV, or connect using Microsoft authentication.”
+
+Phase 3 future extension:
+Add Microsoft Graph integration for private OneDrive/SharePoint files using OAuth.
+Do not implement frontend secrets.
+Keep Graph credentials server-side only.
+
+Database additions:
+Create or extend a table called agenda_spreadsheet_sources:
+
+Fields:
+- id
+- name
+- sourceType: google_sheets, excel_onedrive, sharepoint_excel, csv_url, uploaded_xlsx
+- sourceUrl
+- originalFileName
+- sheetName
+- headerRowIndex
+- firstDataRowIndex
+- columnMapping JSON
+- externalIdColumn optional
+- timezone
+- dateFormatHint
+- timeFormatHint
+- syncMode: manual, interval
+- syncIntervalMinutes
+- removeMissingItems boolean default false
+- lastSyncedAt
+- lastSyncStatus
+- lastSyncError
+- createdAt
+- updatedAt
+
+Column mapping JSON example:
+{
+  "title": "Session Title",
+  "description": "Session Description",
+  "room": "Room Name",
+  "track": "Stream",
+  "presenter": "Speaker",
+  "startsAt": "Start",
+  "endsAt": "Finish",
+  "status": "Status",
+  "statusMessage": "Notes"
+}
+
+Optional future support:
+Allow one VectorMesh field to be built from multiple spreadsheet columns, for example:
+presenter = Speaker First Name + Speaker Last Name
+startsAt = Date + Start Time
+endsAt = Date + End Time
+
+Admin UI:
+Add a new admin page or extend the Agenda section with:
+Agenda Sources / Spreadsheet Imports
+
+The user should be able to:
+- create a new spreadsheet source
+- choose source type
+- paste Google Sheets, Excel, OneDrive, SharePoint or CSV URL
+- upload XLSX manually if required
+- test connection
+- select sheet/tab
+- choose the header row
+- preview detected columns
+- preview first 10–20 rows
+- map columns to agenda fields
+- save mapping
+- run sync now
+- view last sync result
+- view import errors
+- enable/disable scheduled sync
+
+Mapping UI:
+Show VectorMesh fields on the left and spreadsheet columns in dropdowns on the right.
+
+Required mappings:
+- title
+- startsAt
+- endsAt
+
+Recommended mappings:
+- room
+- presenter
+
+Optional mappings:
+- description
+- track
+- status
+- statusMessage
+
+Validation:
+Before allowing sync, validate:
+- required mappings exist
+- source can be fetched
+- selected sheet exists
+- header row contains values
+- startsAt and endsAt are parseable
+- endsAt is after startsAt
+- empty rows are ignored
+- invalid rows are reported but do not crash the import
+
+Date/time handling:
+Support:
+- ISO datetime
+- UK date format
+- spreadsheet date/time cells
+- Excel serial dates
+- separate date and time columns as a future extension
+- configurable timezone
+
+Add config options:
+- timezone
+- date format hint
+- time format hint
+
+Import/sync behaviour:
+Imported rows should upsert into agenda_items.
+Do not blindly duplicate rows.
+
+Stable row identity:
+Use this priority:
+1. user-mapped external ID column if provided
+2. spreadsheet row number + source ID
+3. generated hash from title + startsAt + room
+
+When syncing:
+- create new agenda items
+- update existing imported items
+- do not delete missing rows by default
+- if removeMissingItems is enabled, mark missing items as hidden/cancelled rather than hard deleting
+
+Status mapping:
+Map common spreadsheet values to VectorMesh statuses:
+- scheduled
+- delayed
+- cancelled
+- moved
+
+Also accept common variations:
+- active → scheduled
+- confirmed → scheduled
+- postponed → delayed
+- removed → cancelled
+- changed room → moved
+
+Unknown or blank status should default to scheduled.
+
+Server-side helpers:
+Create reusable helper functions:
+- detectSpreadsheetSource(url)
+- normaliseSpreadsheetUrl(url)
+- fetchGoogleSheetData(sourceConfig)
+- fetchExcelOrOneDriveData(sourceConfig)
+- fetchCsvData(sourceConfig)
+- parseXlsxBuffer(buffer)
+- parseCsvText(csvText)
+- listSheetNames(workbook)
+- getRowsFromSheet(workbook, sheetName)
+- inferHeaders(rows, headerRowIndex)
+- applyColumnMapping(rows, columnMapping)
+- parseAgendaDateTime(value, sourceConfig)
+- validateMappedAgendaRows(rows)
+- upsertAgendaItemsFromSpreadsheet(rows, sourceId)
+
+Security:
+- Fetch spreadsheets server-side only.
+- Do not expose source credentials or tokens to frontend.
+- Validate URLs.
+- Reject unsupported protocols.
+- Limit file size.
+- Do not execute spreadsheet formulas.
+- Treat spreadsheet content as untrusted text.
+- Sanitise imported text before display.
+- Do not store Microsoft OAuth tokens in frontend state.
+
+API endpoints:
+Add or extend endpoints:
+
+GET /api/agenda/spreadsheet-sources
+POST /api/agenda/spreadsheet-sources
+PATCH /api/agenda/spreadsheet-sources/:id
+DELETE /api/agenda/spreadsheet-sources/:id
+
+POST /api/agenda/spreadsheet-sources/test
+GET /api/agenda/spreadsheet-sources/:id/preview
+POST /api/agenda/spreadsheet-sources/:id/sync
+GET /api/agenda/spreadsheet-sources/:id/errors
+
+POST /api/agenda/spreadsheet-sources/upload-xlsx
+
+Preview endpoint:
+Should return:
+- available sheet names
+- detected headers
+- first rows
+- suggested mappings where obvious
+- warnings/errors
+
+Suggested mapping logic:
+Attempt to auto-suggest mappings using fuzzy matching:
+title: title, session, session title, name
+description: description, abstract, details, synopsis
+room: room, location, venue, space
+track: track, stream, category
+presenter: presenter, speaker, host, moderator
+startsAt: start, start time, begins, from
+endsAt: end, end time, finish, to
+status: status, state
+statusMessage: note, notes, message, update, comment
+
+But the user must be able to override all suggestions.
+
+Agenda integration:
+The synced rows must populate the central agenda_items table used by the Agenda Display Widget.
+Room-specific displays should use the mapped room field.
+Track displays should use the mapped track field.
+Presenter and status message should appear where enabled in the agenda widget layout.
+
+Error reporting:
+After sync, show:
+- rows imported
+- rows updated
+- rows skipped
+- validation errors
+- source fetch errors
+- date parsing errors
+- duplicate row warnings
+
+Do not crash the server if the spreadsheet is unavailable.
+Keep the last successful agenda data available.
+
+User experience:
+The client should be able to keep using their own spreadsheet layout.
+VectorMesh should adapt by mapping columns, not by forcing the client to change their file.
+
+Done criteria:
+- Existing Google Sheets helper still works.
+- Google Sheets can now use custom column mapping.
+- Direct CSV URLs can be imported.
+- Direct downloadable XLSX files can be imported.
+- OneDrive/SharePoint links are handled where direct download is possible.
+- If OneDrive/SharePoint private access is blocked, the app shows a clear explanation.
+- User can preview spreadsheet data.
+- User can map columns to title, description, room, track, presenter, startsAt, endsAt, status and statusMessage.
+- User can manually sync agenda items.
+- Imported agenda items appear in the Agenda Display Widget.
+- Build passes.
+- Existing VectorMesh functionality remains intact.
