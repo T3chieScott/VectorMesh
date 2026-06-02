@@ -1534,10 +1534,12 @@ function ZoneEditorDialog({
   const [geocodeResults, setGeocodeResults] = useState<Array<{ name: string; country: string; admin1?: string; lat: number; lng: number }>>([]);
   const [geocodeTarget, setGeocodeTarget] = useState<"weather" | "forecast" | "qr" | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-  // Ref to the HTML widget body textarea so "Insert Variable" can drop the
+  // Refs to the multi-line widget textareas so "Insert Variable" can drop the
   // token at the caret (and scroll/focus there) instead of silently
-  // appending to the end of a long body where it lands off-screen.
+  // appending to the end of long content where it lands off-screen.
   const htmlBodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const tickerTextRef = useRef<HTMLTextAreaElement | null>(null);
+  const textContentRef = useRef<HTMLTextAreaElement | null>(null);
 
   const doGeocodeSearch = async (location: string, target: "weather" | "forecast" | "qr") => {
     if (!location?.trim()) {
@@ -3525,7 +3527,12 @@ function ZoneEditorDialog({
                     <FormItem>
                       <div className="flex items-center justify-between gap-2">
                         <FormLabel>Scrolling Text</FormLabel>
-                        <VariableInsertMenu onInsert={(token) => field.onChange((field.value || "") + token)} />
+                        <VariableInsertMenu
+                          textareaRef={tickerTextRef}
+                          onInsert={(value, isFullValue) =>
+                            field.onChange(isFullValue ? value : (field.value || "") + value)
+                          }
+                        />
                       </div>
                       <FormControl>
                         <textarea 
@@ -3533,6 +3540,10 @@ function ZoneEditorDialog({
                           className="w-full min-h-[80px] p-3 rounded-md border border-input bg-background resize-y"
                           {...field}
                           value={field.value || ""}
+                          ref={(el) => {
+                            if (typeof field.ref === "function") field.ref(el);
+                            tickerTextRef.current = el;
+                          }}
                           data-testid="input-ticker-text" 
                         />
                       </FormControl>
@@ -3648,7 +3659,12 @@ function ZoneEditorDialog({
                     <FormItem>
                       <div className="flex items-center justify-between gap-2">
                         <FormLabel>Text Content</FormLabel>
-                        <VariableInsertMenu onInsert={(token) => field.onChange((field.value || "") + token)} />
+                        <VariableInsertMenu
+                          textareaRef={textContentRef}
+                          onInsert={(value, isFullValue) =>
+                            field.onChange(isFullValue ? value : (field.value || "") + value)
+                          }
+                        />
                       </div>
                       <FormControl>
                         <textarea 
@@ -3656,6 +3672,10 @@ function ZoneEditorDialog({
                           className="w-full min-h-[100px] p-3 rounded-md border border-input bg-background resize-y"
                           {...field}
                           value={field.value || ""}
+                          ref={(el) => {
+                            if (typeof field.ref === "function") field.ref(el);
+                            textContentRef.current = el;
+                          }}
                           data-testid="input-text-content" 
                         />
                       </FormControl>
