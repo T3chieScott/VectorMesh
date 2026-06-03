@@ -1,2 +1,3 @@
 - [Tenant-scoped mutating routes](tenant-scoped-mutating-routes.md) — site-scoped create/update/delete must load context + canAccessClient on both existing owner and any new clientId (reject cross-site moves).
 - [Schema migrations](schema-migrations.md) — schema changes need BOTH `npm run db:push` AND a new idempotent `migrations/NNNN_*.sql` file; review flags missing file as blocking.
+- [OneDrive Graph file listing](onedrive-graph-file-listing.md) — `/me/drive/recent` is near-empty on business accounts; list `root/children` for the picker; share-link 403 = account can't access the link, not a bug.

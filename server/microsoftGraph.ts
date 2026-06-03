@@ -221,12 +221,26 @@ export async function resolveShareLink(
   const fetchImpl = opts.fetchImpl ?? fetch;
   const token = await resolveAccessToken(opts.prefer, fetchImpl);
   const encoded = encodeShareUrl(shareUrl);
-  const raw = await graphGetJson<RawDriveItem>(
-    `/shares/${encoded}/driveItem?$select=id,name,webUrl,size,lastModifiedDateTime,parentReference`,
-    token,
-    fetchImpl,
-  );
-  return toDriveItem(raw);
+  try {
+    const raw = await graphGetJson<RawDriveItem>(
+      `/shares/${encoded}/driveItem?$select=id,name,webUrl,size,lastModifiedDateTime,parentReference`,
+      token,
+      fetchImpl,
+    );
+    return toDriveItem(raw);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // 403/404 here means the *connected* account can't reach this link
+    // (shared with someone else, a site it isn't a member of, or expired)
+    // — not a bug we can fix in code. Steer the operator to the picker.
+    if (/HTTP 40[34]/.test(msg)) {
+      throw new Error(
+        `${msg} The connected Microsoft account doesn't have access to this link, or the link has expired. ` +
+          `Make sure the file is shared with that account, or choose it from the file list instead of pasting a share link.`,
+      );
+    }
+    throw err;
+  }
 }
 
 /**
@@ -238,14 +252,40 @@ export async function listRecentXlsxFiles(
 ): Promise<MicrosoftDriveItem[]> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const token = await resolveAccessToken(opts.prefer ?? "onedrive", fetchImpl);
-  const data = await graphGetJson<{ value: RawDriveItem[] }>(
-    `/me/drive/recent`,
-    token,
-    fetchImpl,
-  );
-  return (data.value ?? [])
-    .filter((r) => isXlsx(r.name))
-    .map(toDriveItem);
+  const byId = new Map<string, MicrosoftDriveItem>();
+  let rootError: unknown;
+  let recentError: unknown;
+  // Root children are the reliable default: `/me/drive/recent` is often
+  // near-empty on business accounts even when OneDrive is full of files.
+  try {
+    const root = await graphGetJson<{ value: RawDriveItem[] }>(
+      `/me/drive/root/children?$select=id,name,webUrl,size,lastModifiedDateTime,parentReference&$top=200`,
+      token,
+      fetchImpl,
+    );
+    for (const r of root.value ?? []) {
+      if (isXlsx(r.name)) byId.set(r.id, toDriveItem(r));
+    }
+  } catch (err) {
+    rootError = err;
+  }
+  // Recently-used files round out the list (may include shared-library items).
+  try {
+    const recent = await graphGetJson<{ value: RawDriveItem[] }>(
+      `/me/drive/recent`,
+      token,
+      fetchImpl,
+    );
+    for (const r of recent.value ?? []) {
+      if (isXlsx(r.name) && !byId.has(r.id)) byId.set(r.id, toDriveItem(r));
+    }
+  } catch (err) {
+    recentError = err;
+  }
+  // Surface an error only if BOTH calls failed and we collected nothing.
+  // If either call succeeded (even empty), an empty list is a valid answer.
+  if (byId.size === 0 && rootError && recentError) throw rootError;
+  return [...byId.values()];
 }
 
 /**

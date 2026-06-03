@@ -725,7 +725,7 @@ function SyncConfigDialog({
                         <Input
                           value={msSearch}
                           onChange={(e) => setMsSearch(e.target.value)}
-                          placeholder="Search by file name (blank = recent files)"
+                          placeholder="Search by file name (blank = your files)"
                           data-testid="input-ms-search"
                         />
                         <div className="mt-2 max-h-40 overflow-y-auto rounded border divide-y">
