@@ -21,6 +21,14 @@ import {
   previewAgendaSource,
   type AgendaSyncStorage,
 } from "./agendaSync";
+import {
+  getMicrosoftConnectionStatus,
+  listRecentXlsxFiles,
+  searchXlsxFiles,
+  resolveShareLink,
+  MicrosoftNotConnectedError,
+  MICROSOFT_NOT_CONNECTED_MESSAGE,
+} from "./microsoftGraph";
 import { getPathParam, getQueryString } from "./requestParams";
 
 export interface AgendaRoutesStorage {
@@ -83,6 +91,13 @@ export interface AgendaRoutesDeps {
    * Wired to fileStorage.getAbsolutePath in server/routes.ts.
    */
   resolveStoredPath?: (storedPath: string) => Promise<string>;
+  /**
+   * Task #268 — fetches .xlsx bytes for a Microsoft-backed source via
+   * Microsoft Graph. Wired to microsoftGraph.fetchMicrosoftXlsxBytes in
+   * server/routes.ts. When absent, Microsoft-backed sources fall back to
+   * the public-link path.
+   */
+  graphFetch?: (config: AgendaSyncConfig) => Promise<Uint8Array>;
 }
 
 // Shape of the public payload returned by GET /api/agenda/display/:configId.
@@ -153,6 +168,7 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
   const now = deps.now ?? (() => new Date());
   const audit: NonNullable<typeof logAudit> = logAudit ?? (() => {});
   const resolveStoredPath = deps.resolveStoredPath;
+  const graphFetch = deps.graphFetch;
 
   // A mapped source (Task #267) must carry either a URL (URL types) or a
   // storedFilePath (uploaded_xlsx) before it can be saved. Returns an
@@ -162,10 +178,21 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
     sourceType: string,
     sourceUrl: unknown,
     storedFilePath: unknown,
+    ms?: { microsoftAuth?: unknown; msDriveId?: unknown; msItemId?: unknown },
   ): string | null {
     if (sourceType === "uploaded_xlsx") {
       if (!storedFilePath) return "An uploaded .xlsx file is required for this source type.";
       return null;
+    }
+    // Task #268 — Microsoft-backed OneDrive/SharePoint Excel sources are
+    // addressed either by a picked file (driveId + itemId) or a pasted
+    // share link (sourceUrl). Either satisfies the shape.
+    if (
+      ms?.microsoftAuth === true &&
+      (sourceType === "excel_onedrive" || sourceType === "sharepoint_excel")
+    ) {
+      if ((ms.msDriveId && ms.msItemId) || sourceUrl) return null;
+      return "Select a Microsoft file or paste a share link for this source type.";
     }
     // All other types (legacy + mapped URL types) need a URL.
     if (!sourceUrl) return "A source URL is required for this source type.";
@@ -346,7 +373,11 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       if (!auth.canAccessClient(req, data.clientId)) {
         return res.status(403).json({ error: "Access denied to requested site" });
       }
-      const shapeError = validateSourceShape(data.sourceType, data.sourceUrl, data.storedFilePath);
+      const shapeError = validateSourceShape(data.sourceType, data.sourceUrl, data.storedFilePath, {
+        microsoftAuth: data.microsoftAuth,
+        msDriveId: data.msDriveId,
+        msItemId: data.msItemId,
+      });
       if (shapeError) return res.status(400).json({ error: shapeError });
       if (data.storedFilePath && !storedPathBelongsToClient(data.storedFilePath, data.clientId)) {
         return res.status(403).json({ error: "Uploaded file does not belong to this site" });
@@ -379,7 +410,14 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       const mergedUrl = data.sourceUrl !== undefined ? data.sourceUrl : existing.sourceUrl;
       const mergedFile = data.storedFilePath !== undefined ? data.storedFilePath : existing.storedFilePath;
       const mergedClient = data.clientId ?? existing.clientId;
-      const shapeError = validateSourceShape(mergedType, mergedUrl, mergedFile);
+      const mergedMsAuth = data.microsoftAuth !== undefined ? data.microsoftAuth : existing.microsoftAuth;
+      const mergedDriveId = data.msDriveId !== undefined ? data.msDriveId : existing.msDriveId;
+      const mergedItemId = data.msItemId !== undefined ? data.msItemId : existing.msItemId;
+      const shapeError = validateSourceShape(mergedType, mergedUrl, mergedFile, {
+        microsoftAuth: mergedMsAuth,
+        msDriveId: mergedDriveId,
+        msItemId: mergedItemId,
+      });
       if (shapeError) return res.status(400).json({ error: shapeError });
       if (mergedFile && !storedPathBelongsToClient(mergedFile, mergedClient)) {
         return res.status(403).json({ error: "Uploaded file does not belong to this site" });
@@ -422,7 +460,7 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       // AgendaRoutesStorage is structurally a superset of AgendaSyncStorage
       // (both reference identical method signatures from the @shared/schema
       // types), so this pass-through is type-safe.
-      const result = await runAgendaSync(existing, { storage, now, resolveStoredPath });
+      const result = await runAgendaSync(existing, { storage, now, resolveStoredPath, graphFetch });
       audit(req, "run", "agenda_sync_config", id, {
         ok: result.ok,
         inserted: result.inserted,
@@ -457,6 +495,10 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
     externalIdColumn: z.string().optional().nullable(),
     timezone: z.string().optional().nullable(),
     dateFormatHint: z.string().optional().nullable(),
+    // Task #268 — Microsoft-backed source addressing for preview/test.
+    microsoftAuth: z.boolean().optional(),
+    msDriveId: z.string().optional().nullable(),
+    msItemId: z.string().optional().nullable(),
   });
 
   async function handlePreview(req: Request, res: Response, includeMapping: boolean) {
@@ -470,7 +512,11 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
     if (!auth.canAccessClient(req, body.clientId)) {
       return res.status(403).json({ error: "Access denied to requested site" });
     }
-    const shapeError = validateSourceShape(body.sourceType, body.sourceUrl, body.storedFilePath);
+    const shapeError = validateSourceShape(body.sourceType, body.sourceUrl, body.storedFilePath, {
+      microsoftAuth: body.microsoftAuth,
+      msDriveId: body.msDriveId,
+      msItemId: body.msItemId,
+    });
     if (shapeError) return res.status(400).json({ error: shapeError });
     if (body.storedFilePath && !storedPathBelongsToClient(body.storedFilePath, body.clientId)) {
       return res.status(403).json({ error: "Uploaded file does not belong to this site" });
@@ -489,8 +535,11 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
           externalIdColumn: body.externalIdColumn ?? null,
           timezone: body.timezone ?? null,
           dateFormatHint: body.dateFormatHint ?? null,
+          microsoftAuth: body.microsoftAuth ?? false,
+          msDriveId: body.msDriveId ?? null,
+          msItemId: body.msItemId ?? null,
         },
-        { storage, resolveStoredPath },
+        { storage, resolveStoredPath, graphFetch },
       );
       res.json(preview);
     } catch (error) {
@@ -509,6 +558,81 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
   app.post("/api/agenda/sync-configs/test", requireAuth, loadUserContext, (req, res) =>
     handlePreview(req, res, false),
   );
+
+  // ----- Microsoft sign-in (Task #268) -----
+  // Read-only Graph-backed endpoints for the SyncConfigDialog. All three
+  // require auth + a site the caller can access (canAccessClient on the
+  // ?clientId query). Tokens are never returned to the client; the
+  // connector proxy holds them.
+
+  // Is a system-level Microsoft account connected? Drives the
+  // "Connect Microsoft" UI state and whether the can't-read fallback
+  // message is shown.
+  app.get("/api/agenda/microsoft/status", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const clientId = getQueryString(req, "clientId", res);
+      if (clientId === null) return;
+      if (clientId && !auth.canAccessClient(req, clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
+      }
+      const status = await getMicrosoftConnectionStatus();
+      res.json(status);
+    } catch (error) {
+      console.error("Error checking Microsoft connection status:", error);
+      res.status(500).json({ error: "Failed to check Microsoft connection status" });
+    }
+  });
+
+  // List recent Excel files, or search when ?q= is supplied. Powers the
+  // file picker.
+  app.get("/api/agenda/microsoft/files", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const clientId = getQueryString(req, "clientId", res);
+      if (clientId === null) return;
+      if (clientId && !auth.canAccessClient(req, clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
+      }
+      const q = getQueryString(req, "q", res);
+      if (q === null) return;
+      const files = q ? await searchXlsxFiles(q) : await listRecentXlsxFiles();
+      res.json(files);
+    } catch (error) {
+      if (error instanceof MicrosoftNotConnectedError) {
+        return res.status(409).json({ error: MICROSOFT_NOT_CONNECTED_MESSAGE });
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ error: message });
+    }
+  });
+
+  // Resolve a pasted OneDrive/SharePoint share link to (driveId, itemId,
+  // name) so the config can store a concrete addressing pair.
+  const resolveShareBodySchema = z.object({
+    clientId: z.string().min(1),
+    shareUrl: z.string().url(),
+  });
+  app.post("/api/agenda/microsoft/resolve-share", requireAuth, loadUserContext, async (req, res) => {
+    let body: z.infer<typeof resolveShareBodySchema>;
+    try {
+      body = resolveShareBodySchema.parse(req.body);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      throw error;
+    }
+    if (!auth.canAccessClient(req, body.clientId)) {
+      return res.status(403).json({ error: "Access denied to requested site" });
+    }
+    try {
+      const item = await resolveShareLink(body.shareUrl);
+      res.json(item);
+    } catch (error) {
+      if (error instanceof MicrosoftNotConnectedError) {
+        return res.status(409).json({ error: MICROSOFT_NOT_CONNECTED_MESSAGE });
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ error: message });
+    }
+  });
 
   // Surface the most recent sync warnings / error for a config so the UI
   // can show per-row parse problems without re-running the sync.

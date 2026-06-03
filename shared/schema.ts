@@ -1200,6 +1200,19 @@ export const agendaSyncConfigs = pgTable("agenda_sync_configs", {
   // `storedFilePath`). URL-based types still require a valid URL, which
   // is enforced in the route/engine rather than the column.
   sourceUrl: text("source_url"),
+  // Task #268 — Microsoft sign-in for private OneDrive/SharePoint Excel.
+  // When `microsoftAuth` is true (only meaningful for excel_onedrive /
+  // sharepoint_excel sources) the fetch step pulls the .xlsx bytes via
+  // Microsoft Graph using the system-level Microsoft connector instead
+  // of the public-link `safeFetch` path. A Graph-backed file is
+  // addressed either by its (driveId, itemId) — set by the file picker —
+  // or resolved at fetch time from a pasted share link in `sourceUrl`.
+  // `msSiteId` is a SharePoint seam (currently informational; per-client
+  // / multi-tenant Microsoft accounts are explicitly out of scope).
+  microsoftAuth: boolean("microsoft_auth").notNull().default(false),
+  msDriveId: text("ms_drive_id"),
+  msItemId: text("ms_item_id"),
+  msSiteId: text("ms_site_id"),
   enabled: boolean("enabled").notNull().default(true),
   syncIntervalMinutes: integer("sync_interval_minutes").notNull().default(60),
   // Task #267 — spreadsheet-source mapper fields. All nullable so
@@ -1294,6 +1307,11 @@ export const insertAgendaSyncConfigSchema = createInsertSchema(agendaSyncConfigs
     externalIdColumn: z.string().optional().nullable(),
     originalFileName: z.string().optional().nullable(),
     storedFilePath: z.string().optional().nullable(),
+    // Task #268 — Microsoft Graph-backed source fields.
+    microsoftAuth: z.boolean().default(false),
+    msDriveId: z.string().optional().nullable(),
+    msItemId: z.string().optional().nullable(),
+    msSiteId: z.string().optional().nullable(),
   });
 export type InsertAgendaSyncConfig = z.infer<typeof insertAgendaSyncConfigSchema>;
 export type AgendaSyncConfig = typeof agendaSyncConfigs.$inferSelect;

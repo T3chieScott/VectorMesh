@@ -25,6 +25,7 @@ import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
 import { setupAuth, isAuthenticated, isAuthenticatedOrToken, hashApiToken } from "./auth";
 import { mountTestAuthRoute } from "./testAuthRoute";
 import { mountAgendaRoutes } from "./agendaRoutes";
+import { fetchMicrosoftXlsxBytes } from "./microsoftGraph";
 import { mountMediaLayoutRoutes } from "./mediaLayoutRoutes";
 import { mountCustomerDataRoutes } from "./customerDataRoutes";
 import { runDueAgendaSyncs } from "./agendaSync";
@@ -993,6 +994,7 @@ export async function registerRoutes(
         storage,
         alerter: agendaAlerter,
         resolveStoredPath: (p) => fileStorage.getAbsolutePath(p),
+        graphFetch: (cfg) => fetchMicrosoftXlsxBytes(cfg),
       });
       if (ran > 0) {
         const failed = results.filter((r) => !r.result.ok).length;
@@ -4553,6 +4555,7 @@ export async function registerRoutes(
     loadUserContext,
     logAudit,
     resolveStoredPath: (p) => fileStorage.getAbsolutePath(p),
+    graphFetch: (cfg) => fetchMicrosoftXlsxBytes(cfg),
   });
 
   return httpServer;

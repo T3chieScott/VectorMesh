@@ -117,6 +117,29 @@ export interface AgendaSyncDeps {
    * file storage. When absent the stored path is read verbatim.
    */
   resolveStoredPath?: (storedPath: string) => Promise<string>;
+  /**
+   * Task #268 — fetches the .xlsx bytes for a Microsoft-backed source
+   * (excel_onedrive / sharepoint_excel with `microsoftAuth`) via
+   * Microsoft Graph. Supplied by the route layer (server/microsoftGraph)
+   * so the engine stays decoupled from the connector plumbing and tests
+   * can inject a mock. When the source is Microsoft-backed but this is
+   * absent, the engine falls back to the public-link path. The impl
+   * throws when no Microsoft account is connected so the caller surfaces
+   * the connect-Microsoft guidance instead of the generic message.
+   */
+  graphFetch?: (config: AgendaSyncConfig) => Promise<Uint8Array>;
+}
+
+// True when a config is a Microsoft Graph-backed OneDrive/SharePoint
+// Excel source (operator opted into Microsoft sign-in). Only these two
+// source types support it.
+export function isMicrosoftBackedSource(
+  config: Pick<AgendaSyncConfig, "sourceType" | "microsoftAuth">,
+): boolean {
+  return (
+    config.microsoftAuth === true &&
+    (config.sourceType === "excel_onedrive" || config.sourceType === "sharepoint_excel")
+  );
 }
 
 /** Consecutive failed syncs before a feed-failing alert is sent. */
@@ -210,6 +233,7 @@ async function loadSourceContent(
   fetchImpl: typeof fetch,
   extra?: AgendaSyncDeps["safeFetchOptions"],
   resolveStoredPath?: AgendaSyncDeps["resolveStoredPath"],
+  graphFetch?: AgendaSyncDeps["graphFetch"],
 ): Promise<FetchedContent> {
   const isXlsx = XLSX_SOURCE_SET.has(config.sourceType);
 
@@ -222,6 +246,27 @@ async function loadSourceContent(
       : config.storedFilePath;
     const buf = await readFile(abs);
     return { bytes: new Uint8Array(buf) };
+  }
+
+  // Task #268 — Microsoft Graph-backed OneDrive/SharePoint Excel. When
+  // the operator opted into Microsoft sign-in we pull the .xlsx bytes
+  // through Graph (private files supported) instead of the public-link
+  // path. graphFetch throws a connect-Microsoft error when nothing is
+  // bound — surfaced verbatim to the operator. We still validate the
+  // ZIP magic so a non-xlsx response fails loudly.
+  if (isMicrosoftBackedSource(config)) {
+    if (!graphFetch) {
+      throw new Error(
+        "Microsoft sign-in support is unavailable in this context. Use a public direct-download link instead.",
+      );
+    }
+    const bytes = await graphFetch(config);
+    if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
+      throw new Error(
+        "Microsoft returned a file that isn't a valid .xlsx workbook. Make sure the selected file is an Excel .xlsx.",
+      );
+    }
+    return { bytes };
   }
 
   // Resolve the effective URL per source type.
@@ -316,6 +361,10 @@ export type AgendaSourceDraft = Pick<
   | "externalIdColumn"
   | "timezone"
   | "dateFormatHint"
+  // Task #268 — Microsoft Graph-backed source addressing.
+  | "microsoftAuth"
+  | "msDriveId"
+  | "msItemId"
 >;
 
 export interface AgendaSourcePreview {
@@ -356,18 +405,21 @@ export async function previewAgendaSource(
     fetchImpl?: typeof fetch;
     safeFetchOptions?: AgendaSyncDeps["safeFetchOptions"];
     resolveStoredPath?: AgendaSyncDeps["resolveStoredPath"];
+    graphFetch?: AgendaSyncDeps["graphFetch"];
   },
   opts: { sampleLimit?: number } = {},
 ): Promise<AgendaSourcePreview> {
   const sampleLimit = opts.sampleLimit ?? 20;
   const fetchImpl = deps.fetchImpl ?? fetch;
   // loadSourceContent only reads sourceType / sourceUrl / storedFilePath
-  // / sheetName — safe to pass the draft cast to a full config.
+  // / sheetName / microsoftAuth / msDriveId / msItemId — safe to pass the
+  // draft cast to a full config.
   const content = await loadSourceContent(
     draft as AgendaSyncConfig,
     fetchImpl,
     deps.safeFetchOptions,
     deps.resolveStoredPath,
+    deps.graphFetch,
   );
   const { grid, sheetNames } = await loadGridForConfig(draft, content);
   const { headers, dataRows } = extractGrid(
@@ -527,6 +579,7 @@ export async function runAgendaSync(
       fetchImpl,
       deps.safeFetchOptions,
       deps.resolveStoredPath,
+      deps.graphFetch,
     );
     const { items: upstream, warnings } = await parseUpstreamForConfig(
       config,

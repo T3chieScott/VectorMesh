@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Plus, Pencil, Trash2, Upload, Download, Calendar, FileText, RefreshCw, AlertTriangle, CheckCircle2, Link2 } from "lucide-react";
 import {
   AGENDA_STATUSES,
@@ -402,10 +403,20 @@ function SyncConfigDialog({
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [sheetNames, setSheetNames] = useState<string[]>(initial?.sheetName ? [initial.sheetName] : []);
 
+  // Task #268 — Microsoft sign-in state. When microsoftAuth is on, the
+  // file is addressed by a picked (driveId, itemId) or a resolved share
+  // link rather than a public download URL.
+  const [microsoftAuth, setMicrosoftAuth] = useState<boolean>(initial?.microsoftAuth ?? false);
+  const [msDriveId, setMsDriveId] = useState<string | null>(initial?.msDriveId ?? null);
+  const [msItemId, setMsItemId] = useState<string | null>(initial?.msItemId ?? null);
+  const [msFileName, setMsFileName] = useState<string | null>(null);
+  const [msSearch, setMsSearch] = useState("");
+
   const isMapped = MAPPED_TYPES.includes(sourceType);
   const isXlsx = XLSX_TYPES.includes(sourceType);
   const isUpload = sourceType === "uploaded_xlsx";
-  const needsUrl = isMapped && !isUpload;
+  const isMicrosoftType = sourceType === "excel_onedrive" || sourceType === "sharepoint_excel";
+  const needsUrl = isMapped && !isUpload && !(isMicrosoftType && microsoftAuth);
 
   function resetMappedState() {
     setStoredFilePath(null);
@@ -416,6 +427,11 @@ function SyncConfigDialog({
     setColumnMapping({});
     setPreview(null);
     setSheetNames([]);
+    setMicrosoftAuth(false);
+    setMsDriveId(null);
+    setMsItemId(null);
+    setMsFileName(null);
+    setMsSearch("");
   }
 
   function handleSourceTypeChange(v: string) {
@@ -458,6 +474,63 @@ function SyncConfigDialog({
       toast({ title: "Upload failed", description: String(e?.message ?? e), variant: "destructive" }),
   });
 
+  // Task #268 — is a system-level Microsoft account connected? Only
+  // queried while a Microsoft source type is selected. Drives the
+  // Connect-Microsoft UI and whether the can't-read fallback shows.
+  const msStatusQuery = useQuery<{ connected: boolean; connectors: string[] }>({
+    queryKey: ["/api/agenda/microsoft/status", clientId],
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/agenda/microsoft/status?clientId=${encodeURIComponent(clientId)}`,
+      );
+      return res.json();
+    },
+    enabled: open && isMicrosoftType,
+  });
+  const msConnected = msStatusQuery.data?.connected ?? false;
+
+  // Recent / searched Excel files in the connected account.
+  const msFilesQuery = useQuery<
+    Array<{ id: string; name: string; driveId?: string; webUrl?: string }>
+  >({
+    queryKey: ["/api/agenda/microsoft/files", clientId, msSearch],
+    queryFn: async () => {
+      const qs = msSearch ? `&q=${encodeURIComponent(msSearch)}` : "";
+      const res = await apiRequest(
+        "GET",
+        `/api/agenda/microsoft/files?clientId=${encodeURIComponent(clientId)}${qs}`,
+      );
+      return res.json();
+    },
+    enabled: open && isMicrosoftType && microsoftAuth && msConnected,
+  });
+
+  function pickMsFile(file: { id: string; name: string; driveId?: string }) {
+    setMsDriveId(file.driveId ?? null);
+    setMsItemId(file.id);
+    setMsFileName(file.name);
+    setSourceUrl("");
+    setPreview(null);
+  }
+
+  // Resolve a pasted share link into a concrete (driveId, itemId).
+  const resolveShareMutation = useMutation({
+    mutationFn: async (shareUrl: string) => {
+      const res = await apiRequest("POST", "/api/agenda/microsoft/resolve-share", {
+        clientId,
+        shareUrl,
+      });
+      return res.json() as Promise<{ id: string; name: string; driveId?: string }>;
+    },
+    onSuccess: (data) => {
+      pickMsFile(data);
+      toast({ title: "File resolved", description: data.name });
+    },
+    onError: (e: any) =>
+      toast({ title: "Could not resolve link", description: String(e?.message ?? e), variant: "destructive" }),
+  });
+
   function buildPreviewPayload(includeMapping: boolean) {
     return {
       clientId,
@@ -470,6 +543,9 @@ function SyncConfigDialog({
       externalIdColumn: externalIdColumn || null,
       timezone: timezone || null,
       dateFormatHint: dateFormatHint || null,
+      microsoftAuth: isMicrosoftType ? microsoftAuth : false,
+      msDriveId: isMicrosoftType && microsoftAuth ? msDriveId : null,
+      msItemId: isMicrosoftType && microsoftAuth ? msItemId : null,
     };
   }
 
@@ -522,6 +598,9 @@ function SyncConfigDialog({
           dateFormatHint: dateFormatHint || null,
           syncMode,
           removeMissingItems,
+          microsoftAuth: isMicrosoftType ? microsoftAuth : false,
+          msDriveId: isMicrosoftType && microsoftAuth ? msDriveId : null,
+          msItemId: isMicrosoftType && microsoftAuth ? msItemId : null,
         });
       } else {
         Object.assign(base, { sourceUrl });
@@ -540,10 +619,21 @@ function SyncConfigDialog({
       toast({ title: "Save failed", description: String(e?.message ?? e), variant: "destructive" }),
   });
 
-  const canTest = isMapped && (needsUrl ? !!sourceUrl : !!storedFilePath);
+  const msReady = isMicrosoftType && microsoftAuth && ((!!msDriveId && !!msItemId) || !!sourceUrl);
+  const canTest = isMapped
+    ? isMicrosoftType && microsoftAuth
+      ? msReady
+      : needsUrl
+        ? !!sourceUrl
+        : !!storedFilePath
+    : false;
   const canSave = (() => {
     if (!name) return false;
     if (!isMapped) return !!sourceUrl;
+    if (isMicrosoftType && microsoftAuth) {
+      if (!msReady) return false;
+      return missingRequired.length === 0;
+    }
     if (needsUrl && !sourceUrl) return false;
     if (isUpload && !storedFilePath) return false;
     return missingRequired.length === 0;
@@ -590,8 +680,112 @@ function SyncConfigDialog({
             <p className="text-xs text-muted-foreground mt-1">{SOURCE_TYPE_HINTS[sourceType]}</p>
           </div>
 
-          {/* URL input — every type except uploaded_xlsx */}
-          {!isUpload && (
+          {/* Microsoft sign-in — OneDrive / SharePoint (Task #268) */}
+          {isMicrosoftType && (
+            <div className="rounded-md border p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>Sign in with Microsoft</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Read a private OneDrive/SharePoint Excel file via a connected Microsoft account.
+                  </p>
+                </div>
+                <Switch
+                  checked={microsoftAuth}
+                  onCheckedChange={(v) => {
+                    setMicrosoftAuth(v);
+                    setMsDriveId(null);
+                    setMsItemId(null);
+                    setMsFileName(null);
+                    setPreview(null);
+                  }}
+                  data-testid="switch-microsoft-auth"
+                />
+              </div>
+
+              {microsoftAuth && (
+                <div className="space-y-3">
+                  {msStatusQuery.isLoading ? (
+                    <p className="text-xs text-muted-foreground">Checking Microsoft connection…</p>
+                  ) : msConnected ? (
+                    <p className="text-xs text-green-600 dark:text-green-400" data-testid="text-ms-connected">
+                      Microsoft account connected.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="text-ms-not-connected">
+                      No Microsoft account is connected yet. Ask an administrator to connect a
+                      Microsoft account so VectorMesh can read private files.
+                    </p>
+                  )}
+
+                  {msConnected && (
+                    <>
+                      <div>
+                        <Label>Find an Excel file</Label>
+                        <Input
+                          value={msSearch}
+                          onChange={(e) => setMsSearch(e.target.value)}
+                          placeholder="Search by file name (blank = recent files)"
+                          data-testid="input-ms-search"
+                        />
+                        <div className="mt-2 max-h-40 overflow-y-auto rounded border divide-y">
+                          {msFilesQuery.isLoading && (
+                            <p className="text-xs text-muted-foreground p-2">Loading files…</p>
+                          )}
+                          {!msFilesQuery.isLoading && (msFilesQuery.data?.length ?? 0) === 0 && (
+                            <p className="text-xs text-muted-foreground p-2">No Excel files found.</p>
+                          )}
+                          {msFilesQuery.data?.map((f) => (
+                            <button
+                              key={f.id}
+                              type="button"
+                              onClick={() => pickMsFile(f)}
+                              className={`block w-full text-left text-sm px-2 py-1.5 hover:bg-accent ${
+                                msItemId === f.id ? "bg-accent" : ""
+                              }`}
+                              data-testid={`button-ms-file-${f.id}`}
+                            >
+                              {f.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label>…or paste a share link</Label>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            value={sourceUrl}
+                            onChange={(e) => setSourceUrl(e.target.value)}
+                            placeholder="https://…sharepoint.com/… or OneDrive share link"
+                            data-testid="input-ms-share-url"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={!sourceUrl || resolveShareMutation.isPending}
+                            onClick={() => resolveShareMutation.mutate(sourceUrl)}
+                            data-testid="button-ms-resolve-share"
+                          >
+                            {resolveShareMutation.isPending ? "Resolving…" : "Resolve"}
+                          </Button>
+                        </div>
+                      </div>
+
+                      {msFileName && (
+                        <p className="text-xs text-muted-foreground" data-testid="text-ms-selected-file">
+                          Selected file: {msFileName}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* URL input — every type except uploaded_xlsx and MS-backed sources */}
+          {!isUpload && !(isMicrosoftType && microsoftAuth) && (
             <div>
               <Label>Source URL</Label>
               <Input
@@ -600,11 +794,11 @@ function SyncConfigDialog({
                 placeholder="https://…"
                 data-testid="input-sync-url"
               />
-              {(sourceType === "excel_onedrive" || sourceType === "sharepoint_excel") && (
+              {isMicrosoftType && (
                 <p className="text-xs text-muted-foreground mt-1">
                   If the link opens a Microsoft sign-in or preview page, the file can't be read
-                  directly. Use a direct-download link, export to CSV and use a CSV URL, or upload
-                  the .xlsx file instead.
+                  directly. Turn on "Sign in with Microsoft" above to read private files, or use a
+                  direct-download link, export to CSV, or upload the .xlsx file instead.
                 </p>
               )}
             </div>
