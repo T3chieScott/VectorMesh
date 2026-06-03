@@ -29,7 +29,7 @@ import { fetchMicrosoftXlsxBytes } from "./microsoftGraph";
 import { mountMediaLayoutRoutes } from "./mediaLayoutRoutes";
 import { mountCustomerDataRoutes } from "./customerDataRoutes";
 import { runDueAgendaSyncs } from "./agendaSync";
-import { parseWorkbookBuffer } from "./spreadsheetParse";
+import { parseWorkbookBuffer, SpreadsheetTooLargeError } from "./spreadsheetParse";
 import multer from "multer";
 import path from "path";
 import os from "os";
@@ -1806,8 +1806,11 @@ export async function registerRoutes(
         const buf = await fs.promises.readFile(tempPath);
         const parsed = await parseWorkbookBuffer(buf);
         sheetNames = parsed.sheetNames;
-      } catch {
+      } catch (parseErr) {
         await cleanupTemp();
+        if (parseErr instanceof SpreadsheetTooLargeError) {
+          return res.status(413).json({ error: parseErr.message });
+        }
         return res.status(400).json({ error: "Could not read the spreadsheet. Make sure it is a valid .xlsx file." });
       }
       const storedFilePath = await fileStorage.saveFileFromDisk(
