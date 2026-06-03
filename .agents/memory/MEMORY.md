@@ -1,3 +1,4 @@
 - [Tenant-scoped mutating routes](tenant-scoped-mutating-routes.md) — site-scoped create/update/delete must load context + canAccessClient on both existing owner and any new clientId (reject cross-site moves).
 - [Schema migrations](schema-migrations.md) — schema changes need BOTH `npm run db:push` AND a new idempotent `migrations/NNNN_*.sql` file; review flags missing file as blocking.
+- [Dev server OOM](dev-server-oom.md) — `Start application` runtime-OOMs at Node's ~2GB heap; fix = `NODE_OPTIONS=--max-old-space-size=4096` on the workflow command (not package.json), not a plain restart.
 - [OneDrive Graph file listing](onedrive-graph-file-listing.md) — `/me/drive/recent` is near-empty on business accounts; list `root/children` for the picker; share-link 403 = account can't access the link, not a bug.
