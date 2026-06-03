@@ -230,13 +230,18 @@ export async function resolveShareLink(
     return toDriveItem(raw);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // 403/404 here means the *connected* account can't reach this link
-    // (shared with someone else, a site it isn't a member of, or expired)
-    // — not a bug we can fix in code. Steer the operator to the picker.
+    // 403/404 here is almost always a *scope* limit, not a dead link: the
+    // Microsoft connector is granted Files.Read (the user's OWN OneDrive)
+    // only — it cannot read files that live in a SharePoint site or are
+    // owned by someone else, even ones the user can open in a browser.
+    // Reading those would need Files.Read.All / Sites.Read.All, which the
+    // connector doesn't request. Not fixable in code; steer to workarounds.
     if (/HTTP 40[34]/.test(msg)) {
       throw new Error(
-        `${msg} The connected Microsoft account doesn't have access to this link, or the link has expired. ` +
-          `Make sure the file is shared with that account, or choose it from the file list instead of pasting a share link.`,
+        `Microsoft Graph request failed (HTTP 403). VectorMesh's Microsoft connection can only read files in ` +
+          `your own OneDrive — not files that live in a SharePoint site or are owned by someone else, even if you ` +
+          `can open them in your browser. To use this file: open it in OneDrive/SharePoint and choose "Save a copy" ` +
+          `into your own OneDrive (then pick it from the list above), or download it and use the "Upload .xlsx" option.`,
       );
     }
     throw err;

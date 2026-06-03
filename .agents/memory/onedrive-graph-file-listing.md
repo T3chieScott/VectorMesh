@@ -22,12 +22,28 @@ picker was empty. Root children returned the real files.
 Only throw when BOTH the root-children and recent calls fail and nothing
 was collected; if either succeeds (even empty) an empty list is valid.
 
-## Share-link 403 is an account-access fact, not a bug
-A Graph `/shares/{id}/driveItem` 403 ("sharing link no longer exists, or
-you do not have permission") means the *connected* account can't reach
-that link (shared with someone else, a site it isn't a member of, or
-expired). No code change grants access — steer operators to the picker.
-The SDK proxy path must include the `/v1.0` version segment
-(`connectors.proxy("onedrive", "/v1.0/me")`); omitting it returns Graph
-"Invalid version". The server's own code uses `GRAPH_BASE` which already
-includes `/v1.0`.
+## Share-link 403 is a connector SCOPE limit, not a bug
+The Replit Microsoft connectors are granted **delegated** scopes only:
+- onedrive: `Files.Read Files.ReadWrite User.Read`
+- sharepoint: same + `Sites.Selected`
+
+`Files.Read`/`Files.ReadWrite` = the user's **own OneDrive files only**.
+`Sites.Selected` = only SharePoint sites an admin explicitly granted to
+the app (by default none). So a Graph `/shares/{id}/driveItem` (or any
+read of a file owned by someone else / living in a SharePoint site)
+returns **403** even though the user can open the same link in a browser
+(browser login carries full SharePoint membership). Reading those would
+need `Files.Read.All` / `Sites.Read.All` + admin consent — the connector
+doesn't request them, so it is **not fixable in VectorMesh code**.
+
+**Workarounds that work today:** save a copy of the file into the user's
+own OneDrive (then it shows in the root-children picker), or download it
+and use VectorMesh's `uploaded_xlsx` upload option.
+
+**Decode token scopes** without leaking the token: base64url-decode the
+JWT payload (`access_token.split('.')[1]`) and read the `scp` claim.
+
+**SDK proxy quirk:** `connectors.proxy(name, path)` does NOT add the API
+version — include `/v1.0` (`connectors.proxy("onedrive", "/v1.0/me")`),
+else Graph returns "Invalid version". The server's own code uses
+`GRAPH_BASE` which already includes `/v1.0`.
