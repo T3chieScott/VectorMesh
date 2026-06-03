@@ -342,6 +342,7 @@ interface PreviewResult {
   headers: string[];
   sampleRows: string[][];
   totalDataRows: number;
+  totalDataRowsTruncated?: boolean;
   suggestedMapping: AgendaColumnMapping;
   missingRequired: string[];
   mapped?: {
@@ -565,7 +566,12 @@ function SyncConfigDialog({
       if (!includeMapping && Object.keys(columnMapping).length === 0 && data.suggestedMapping) {
         setColumnMapping(data.suggestedMapping);
       }
-      toast({ title: "Connected", description: `Found ${data.totalDataRows} data row(s).` });
+      toast({
+        title: "Connected",
+        description: data.totalDataRowsTruncated
+          ? `Showing the first ${data.totalDataRows} row(s) for a quick preview. All rows are processed when you sync.`
+          : `Found ${data.totalDataRows} data row(s).`,
+      });
     },
     onError: (e: any) =>
       toast({ title: "Connection failed", description: String(e?.message ?? e), variant: "destructive" }),
@@ -988,6 +994,12 @@ function SyncConfigDialog({
                     </tbody>
                   </table>
                 </div>
+              )}
+
+              {preview?.totalDataRowsTruncated && (
+                <p className="text-xs text-muted-foreground" data-testid="text-preview-truncated">
+                  Showing the first {preview.totalDataRows} rows for a quick preview. All rows are processed when you sync.
+                </p>
               )}
 
               {/* Mapped-row outcome */}

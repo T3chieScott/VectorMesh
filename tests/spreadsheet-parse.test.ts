@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import ExcelJS from "exceljs";
-import { parseWorkbookBuffer, SpreadsheetTooLargeError } from "../server/spreadsheetParse";
+import {
+  parseWorkbookBuffer,
+  SpreadsheetTooLargeError,
+  readSheetNames,
+  readSheetSample,
+} from "../server/spreadsheetParse";
 import { extractGrid, applyMapping } from "../shared/spreadsheet-mapping";
 
 // Task #267 — server XLSX reader. Build a workbook in memory, round-trip
@@ -106,4 +111,137 @@ test("parseWorkbookBuffer aborts (does not OOM) when a file blows past the total
     () => parseWorkbookBuffer(buf),
     (err: unknown) => err instanceof SpreadsheetTooLargeError,
   );
+});
+
+// ===== Fast readers (Task #267 optimisation) =====
+
+test("readSheetNames lists all sheet names", async () => {
+  const buf = await buildWorkbook();
+  const names = await readSheetNames(buf);
+  assert.deepEqual(names, ["Agenda", "Notes"]);
+});
+
+test("readSheetSample matches parseWorkbookBuffer headers + applyMapping output", async () => {
+  const buf = await buildWorkbook();
+
+  const full = await parseWorkbookBuffer(buf);
+  const fullGrid = full.getGrid("Agenda");
+  const fullExtract = extractGrid(fullGrid, 0);
+
+  const sample = await readSheetSample(buf, { sheetName: "Agenda", maxRows: 50 });
+  assert.deepEqual(sample.sheetNames, ["Agenda", "Notes"]);
+  const sampleExtract = extractGrid(sample.grid, 0);
+
+  // Same headers from both paths.
+  assert.deepEqual(sampleExtract.headers, fullExtract.headers);
+
+  const mapping = {
+    title: "Title",
+    startsAt: "Start",
+    endsAt: "End",
+    room: "Room",
+    status: "Status",
+  };
+  const fullMapped = applyMapping(fullExtract.dataRows, {
+    headers: fullExtract.headers,
+    mapping,
+    timezone: "Europe/London",
+  });
+  const sampleMapped = applyMapping(sampleExtract.dataRows, {
+    headers: sampleExtract.headers,
+    mapping,
+    timezone: "Europe/London",
+  });
+
+  const norm = (rows: typeof fullMapped) =>
+    rows.map((r) => ({
+      status: r.status,
+      title: r.item?.title,
+      startsAt: r.item?.startsAt?.toISOString(),
+      endsAt: r.item?.endsAt?.toISOString(),
+      st: r.item?.status,
+    }));
+  assert.deepEqual(norm(sampleMapped), norm(fullMapped));
+});
+
+test("readSheetSample honours maxRows and reports truncation", async () => {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Big");
+  ws.addRow(["Title", "Start"]);
+  for (let i = 0; i < 100; i++) {
+    ws.addRow([`Item ${i}`, "2026-06-02T09:00:00Z"]);
+  }
+  const ab = await wb.xlsx.writeBuffer();
+  const buf = Buffer.from(ab as ArrayBuffer);
+
+  const sample = await readSheetSample(buf, { sheetName: "Big", maxRows: 10 });
+  assert.equal(sample.grid.length, 10);
+  assert.equal(sample.truncated, true);
+  assert.equal(sample.grid[0][0], "Title");
+  assert.equal(sample.grid[1][0], "Item 0");
+
+  // Reading past the end is not truncated.
+  const whole = await readSheetSample(buf, { sheetName: "Big", maxRows: 1000 });
+  assert.equal(whole.grid.length, 101);
+  assert.equal(whole.truncated, false);
+});
+
+test("readSheetSample matches parseWorkbookBuffer row width for a styled trailing blank column", async () => {
+  // A styled-but-empty cell counts toward exceljs row.cellCount, so
+  // parseWorkbookBuffer pads that row with trailing nulls out to it. The
+  // fast reader must do the same or preview/sync row shapes diverge.
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Styled");
+  ws.addRow(["Title", "Start"]);
+  ws.addRow(["Keynote", "2026-06-02T09:00:00Z"]);
+  // Style a blank cell two columns past the data on the header row.
+  ws.getCell(1, 5).style = { font: { bold: true } };
+  const ab = await wb.xlsx.writeBuffer();
+  const buf = Buffer.from(ab as ArrayBuffer);
+
+  const full = await parseWorkbookBuffer(buf);
+  const fullGrid = full.getGrid("Styled");
+  const sample = await readSheetSample(buf, { sheetName: "Styled", maxRows: 50 });
+
+  assert.deepEqual(
+    sample.grid.map((r) => r.length),
+    fullGrid.map((r) => r.length),
+    "per-row widths must match between the fast reader and parseWorkbookBuffer",
+  );
+  assert.deepEqual(sample.grid, fullGrid);
+});
+
+test("readSheetSample reports truncated=false when the sheet has exactly maxRows rows", async () => {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Exact");
+  ws.addRow(["Title", "Start"]);
+  for (let i = 0; i < 9; i++) ws.addRow([`Item ${i}`, "2026-06-02T09:00:00Z"]);
+  const ab = await wb.xlsx.writeBuffer();
+  const buf = Buffer.from(ab as ArrayBuffer);
+
+  // 10 total rows, maxRows = 10 → not truncated.
+  const exact = await readSheetSample(buf, { sheetName: "Exact", maxRows: 10 });
+  assert.equal(exact.grid.length, 10);
+  assert.equal(exact.truncated, false);
+
+  // maxRows = 9 → there IS a row beyond the window → truncated.
+  const over = await readSheetSample(buf, { sheetName: "Exact", maxRows: 9 });
+  assert.equal(over.grid.length, 9);
+  assert.equal(over.truncated, true);
+});
+
+test("readSheetSample picks the requested sheet, defaulting to the first", async () => {
+  const wb = new ExcelJS.Workbook();
+  const a = wb.addWorksheet("First");
+  a.addRow(["A1", "A2"]);
+  const b = wb.addWorksheet("Second");
+  b.addRow(["B1", "B2"]);
+  const ab = await wb.xlsx.writeBuffer();
+  const buf = Buffer.from(ab as ArrayBuffer);
+
+  const second = await readSheetSample(buf, { sheetName: "Second", maxRows: 10 });
+  assert.equal(second.grid[0][0], "B1");
+
+  const def = await readSheetSample(buf, { maxRows: 10 });
+  assert.equal(def.grid[0][0], "A1");
 });

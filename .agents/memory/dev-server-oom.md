@@ -56,3 +56,28 @@ bounded loads — never a substitute for not loading the whole model.
 rather than full-load, and bound the grid it materialises. Pinned by a regression
 test (`tests/spreadsheet-parse.test.ts`) where a phantom far-out styled column
 must not inflate the grid width.
+
+## Fast preview/sheet-name readers — grid parity with the full read
+Even the streaming reader still scans the WHOLE file to reach EOF (~12s on the
+22MB junk file). Upload only needs sheet NAMES; Test/Preview only need headers +
+a few sample rows. So there are two fast readers that go straight to the zip with
+`jszip` + `saxes`: read only `xl/workbook.xml` for names, or parse
+`sharedStrings` once and stream ONLY the target sheet, aborting after the row
+window. The full bounded exceljs read stays at sync time.
+
+**Why:** a mapping the operator picks from a preview must line up exactly with
+what sync produces, so the fast sample grid MUST be byte-for-byte the same
+`Cell[][]` shape as the full read.
+
+**How to apply — the two parity traps:**
+- *Row width:* exceljs `row.cellCount` counts a styled-but-empty trailing cell
+  (e.g. `<c r="CV1" s="1"/>`), so the full read pads that row with trailing
+  nulls. The raw-XML reader must also advance the row's max-column index for any
+  cell that has a `r=` reference even when its value is null — otherwise trailing
+  blank columns get dropped and header/row widths diverge.
+- *Truncation flag:* read ONE row past the requested window and report
+  `truncated = collectedRows > maxRows` (then drop the extra). Stopping at
+  `>= maxRows` falsely flags an exact-fit sheet as truncated.
+- jszip emits a small sheet in a single chunk that `parser.write` processes
+  synchronously, so an early-abort can't rely on destroying the stream — guard
+  every saxes handler with `if (done) return` so no rows accumulate past the cap.

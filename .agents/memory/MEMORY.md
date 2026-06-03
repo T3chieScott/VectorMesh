@@ -1,4 +1,5 @@
-- [Tenant-scoped mutating routes](tenant-scoped-mutating-routes.md) — site-scoped create/update/delete must load context + canAccessClient on both existing owner and any new clientId (reject cross-site moves).
+- [Tenant-scoped mutating routes](tenant-scoped-mutating-routes.md) — site-scoped writes must canAccessClient on both existing owner and any new clientId (block cross-site moves).
 - [Schema migrations](schema-migrations.md) — schema changes need BOTH `npm run db:push` AND a new idempotent `migrations/NNNN_*.sql` file; review flags missing file as blocking.
 - [Dev server OOM](dev-server-oom.md) — XLSX OOM is exceljs full-load materializing every cell into live heap; fix = streaming reader (WorkbookReader), never load(). Bigger heap doesn't fix it.
-- [OneDrive Graph file listing](onedrive-graph-file-listing.md) — `/me/drive/recent` is near-empty on business accounts; list `root/children` for the picker; share-link 403 = account can't access the link, not a bug.
+- [OneDrive Graph file listing](onedrive-graph-file-listing.md) — `/me/drive/recent` near-empty on business accounts; list `root/children`; share-link 403 = account can't access link.
+- [XLSX fast preview vs full read parity](dev-server-oom.md) — jszip+saxes preview reader must match exceljs full-read grid shape (trailing styled-blank col widths, truncation) or preview-picked mappings diverge from sync.

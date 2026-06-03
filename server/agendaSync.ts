@@ -24,7 +24,7 @@ import {
   type Grid,
 } from "@shared/spreadsheet-mapping";
 import { DEFAULT_SCHEDULE_TIMEZONE_FALLBACK } from "@shared/timezone-utils";
-import { parseWorkbookBuffer } from "./spreadsheetParse";
+import { parseWorkbookBuffer, readSheetSample } from "./spreadsheetParse";
 import { safeFetch, type SafeFetchOptions } from "./safeFetch";
 import type {
   AgendaItem,
@@ -346,6 +346,36 @@ async function loadGridForConfig(
   return { grid: parseCsvToGrid(content.text ?? ""), sheetNames: [] };
 }
 
+// Fast preview grid loader (Task #267 optimisation). Test/Preview only
+// need the header row plus a handful of sample rows, so for XLSX sources
+// we stream just the target sheet and abort after `maxRows` instead of
+// materialising the whole (possibly huge) workbook via parseWorkbookBuffer.
+// `truncated` is true when the sheet has more rows below the sampled
+// window. CSV content is already in memory, so it is parsed in full.
+async function loadPreviewGrid(
+  config: Pick<AgendaSyncConfig, "sourceType" | "sheetName">,
+  content: FetchedContent,
+  maxRows: number,
+): Promise<{ grid: Grid; sheetNames: string[]; truncated: boolean }> {
+  if (XLSX_SOURCE_SET.has(config.sourceType)) {
+    if (!content.bytes) throw new Error("No spreadsheet data was fetched.");
+    const sample = await readSheetSample(content.bytes, {
+      sheetName: config.sheetName,
+      maxRows,
+    });
+    return {
+      grid: sample.grid,
+      sheetNames: sample.sheetNames,
+      truncated: sample.truncated,
+    };
+  }
+  return {
+    grid: parseCsvToGrid(content.text ?? ""),
+    sheetNames: [],
+    truncated: false,
+  };
+}
+
 // The fields a preview / test request supplies. A subset of a full
 // AgendaSyncConfig — enough to fetch + parse + map without persisting.
 export type AgendaSourceDraft = Pick<
@@ -373,6 +403,12 @@ export interface AgendaSourcePreview {
   /** First N data rows, stringified for display. */
   sampleRows: string[][];
   totalDataRows: number;
+  /**
+   * True when the source was only partially read for speed, so
+   * `totalDataRows` is the sampled count, not the true total. The full
+   * row set is processed at sync time.
+   */
+  totalDataRowsTruncated: boolean;
   suggestedMapping: ReturnType<typeof suggestColumnMapping>;
   /** Required fields still missing from the supplied mapping. */
   missingRequired: string[];
@@ -421,7 +457,16 @@ export async function previewAgendaSource(
     deps.resolveStoredPath,
     deps.graphFetch,
   );
-  const { grid, sheetNames } = await loadGridForConfig(draft, content);
+  // Read only as far as we need: the header row plus `sampleLimit` data
+  // rows (with a small buffer for blank/header-offset rows).
+  const headerRowIndex = draft.headerRowIndex ?? 0;
+  const firstDataRowIndex = draft.firstDataRowIndex ?? headerRowIndex + 1;
+  const maxRows = firstDataRowIndex + sampleLimit + 5;
+  const { grid, sheetNames, truncated } = await loadPreviewGrid(
+    draft,
+    content,
+    maxRows,
+  );
   const { headers, dataRows } = extractGrid(
     grid,
     draft.headerRowIndex ?? 0,
@@ -437,6 +482,7 @@ export async function previewAgendaSource(
     headers,
     sampleRows,
     totalDataRows: dataRows.length,
+    totalDataRowsTruncated: truncated,
     suggestedMapping,
     missingRequired: [],
   };

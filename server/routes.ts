@@ -29,7 +29,7 @@ import { fetchMicrosoftXlsxBytes } from "./microsoftGraph";
 import { mountMediaLayoutRoutes } from "./mediaLayoutRoutes";
 import { mountCustomerDataRoutes } from "./customerDataRoutes";
 import { runDueAgendaSyncs } from "./agendaSync";
-import { parseWorkbookBuffer, SpreadsheetTooLargeError } from "./spreadsheetParse";
+import { readSheetNames } from "./spreadsheetParse";
 import multer from "multer";
 import path from "path";
 import os from "os";
@@ -1799,18 +1799,15 @@ export async function registerRoutes(
           return res.status(413).json({ error: `File size exceeds the ${maxSizeMb}MB limit for this site` });
         }
       }
-      // Parse sheet names from the bytes before we hand the temp file to
-      // saveFileFromDisk (which renames it away).
+      // Read ONLY the sheet names (xl/workbook.xml) before we hand the temp
+      // file to saveFileFromDisk (which renames it away). Upload needs
+      // nothing more, so we never scan the (potentially huge) sheet data.
       let sheetNames: string[] = [];
       try {
         const buf = await fs.promises.readFile(tempPath);
-        const parsed = await parseWorkbookBuffer(buf);
-        sheetNames = parsed.sheetNames;
+        sheetNames = await readSheetNames(buf);
       } catch (parseErr) {
         await cleanupTemp();
-        if (parseErr instanceof SpreadsheetTooLargeError) {
-          return res.status(413).json({ error: parseErr.message });
-        }
         return res.status(400).json({ error: "Could not read the spreadsheet. Make sure it is a valid .xlsx file." });
       }
       const storedFilePath = await fileStorage.saveFileFromDisk(
