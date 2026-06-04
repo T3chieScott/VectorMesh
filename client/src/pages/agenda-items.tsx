@@ -958,7 +958,7 @@ function SyncConfigDialog({
                       const required = REQUIRED_FIELDS.includes(field);
                       const missing = required && !columnMapping[field];
                       return (
-                        <div key={field} className="grid grid-cols-2 gap-2 items-center">
+                        <div key={field} className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2 sm:items-center">
                           <Label className={missing ? "text-destructive" : ""}>
                             {FIELD_LABELS[field]}{required ? " *" : ""}
                           </Label>
@@ -991,7 +991,7 @@ function SyncConfigDialog({
                       to <span className="font-medium">Start time</span> / <span className="font-medium">End time</span> above,
                       then pick the matching time columns here.
                     </p>
-                    <div className="grid grid-cols-2 gap-2 items-center">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2 sm:items-center">
                       <Label>Start time column</Label>
                       <Select
                         value={startTimeColumn ?? NO_COLUMN}
@@ -1006,7 +1006,7 @@ function SyncConfigDialog({
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 items-center">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2 sm:items-center">
                       <Label>End time column</Label>
                       <Select
                         value={endTimeColumn ?? NO_COLUMN}
@@ -1021,7 +1021,7 @@ function SyncConfigDialog({
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 items-center">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2 sm:items-center">
                       <Label>Base month &amp; year</Label>
                       <div className="flex gap-2">
                         <Select
@@ -1053,7 +1053,7 @@ function SyncConfigDialog({
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 items-center">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2 sm:items-center">
                     <Label>Unique ID column (optional)</Label>
                     <Select
                       value={externalIdColumn ?? NO_COLUMN}
