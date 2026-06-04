@@ -376,6 +376,26 @@ interface PreviewResult {
   };
 }
 
+// Auto-generated placeholder label for a header cell that was empty in the
+// source (see buildHeaderLabels). A column is treated as "blank" only when
+// its header is one of these placeholders AND it has no data in the sample.
+const PLACEHOLDER_HEADER = /^Column \d+$/;
+
+function isBlankPreviewColumn(
+  preview: PreviewResult,
+  idx: number,
+  label: string,
+  inUse: Set<string>,
+): boolean {
+  // Never hide a column the operator has already selected somewhere.
+  if (inUse.has(label)) return false;
+  if (!PLACEHOLDER_HEADER.test(label)) return false;
+  return preview.sampleRows.every((row) => {
+    const v = row[idx];
+    return v == null || String(v).trim() === "";
+  });
+}
+
 function SyncConfigDialog({
   open,
   onOpenChange,
@@ -428,6 +448,9 @@ function SyncConfigDialog({
 
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [sheetNames, setSheetNames] = useState<string[]>(initial?.sheetName ? [initial.sheetName] : []);
+  // Hide empty placeholder columns (e.g. an Excel "used range" that stretches
+  // to column 1024) from the mapping pickers + preview table by default.
+  const [hideBlankColumns, setHideBlankColumns] = useState(true);
 
   // Task #268 — Microsoft sign-in state. When microsoftAuth is on, the
   // file is addressed by a picked (driveId, itemId) or a resolved share
@@ -610,6 +633,37 @@ function SyncConfigDialog({
     () => REQUIRED_FIELDS.filter((f) => !columnMapping[f]),
     [columnMapping],
   );
+
+  // Header labels currently referenced by any picker — these stay visible
+  // even if they look blank in the sample.
+  const inUseLabels = useMemo(() => {
+    const s = new Set<string>();
+    for (const f of Object.keys(columnMapping) as AgendaMappableField[]) {
+      const v = columnMapping[f];
+      if (v) s.add(v);
+    }
+    if (startTimeColumn) s.add(startTimeColumn);
+    if (endTimeColumn) s.add(endTimeColumn);
+    if (externalIdColumn) s.add(externalIdColumn);
+    return s;
+  }, [columnMapping, startTimeColumn, endTimeColumn, externalIdColumn]);
+
+  const blankColumnCount = useMemo(() => {
+    if (!preview) return 0;
+    return preview.headers.filter((label, idx) =>
+      isBlankPreviewColumn(preview, idx, label, inUseLabels),
+    ).length;
+  }, [preview, inUseLabels]);
+
+  // Columns to actually offer/show, honouring the hide toggle.
+  const visibleHeaders = useMemo(() => {
+    if (!preview) return [] as { label: string; idx: number }[];
+    return preview.headers
+      .map((label, idx) => ({ label, idx }))
+      .filter(({ label, idx }) =>
+        hideBlankColumns ? !isBlankPreviewColumn(preview, idx, label, inUseLabels) : true,
+      );
+  }, [preview, hideBlankColumns, inUseLabels]);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -953,6 +1007,24 @@ function SyncConfigDialog({
                     Title, Start time and End time are required. We've guessed where we can — adjust
                     anything that's wrong.
                   </p>
+                  {blankColumnCount > 0 && (
+                    <div className="flex items-center justify-between gap-2 rounded-md bg-muted/50 px-2 py-1.5">
+                      <span className="text-xs text-muted-foreground" data-testid="text-blank-columns">
+                        {hideBlankColumns
+                          ? `${blankColumnCount} empty column${blankColumnCount === 1 ? "" : "s"} hidden`
+                          : `${blankColumnCount} empty column${blankColumnCount === 1 ? "" : "s"} shown`}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setHideBlankColumns((v) => !v)}
+                        data-testid="button-toggle-blank-columns"
+                      >
+                        {hideBlankColumns ? "Show all columns" : "Remove blank columns"}
+                      </Button>
+                    </div>
+                  )}
                   <div className="grid gap-2">
                     {AGENDA_MAPPABLE_FIELDS.map((field) => {
                       const required = REQUIRED_FIELDS.includes(field);
@@ -971,8 +1043,8 @@ function SyncConfigDialog({
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value={NO_COLUMN}>— Not mapped —</SelectItem>
-                              {preview.headers.map((h, i) => (
-                                <SelectItem key={`${h}-${i}`} value={h}>{h}</SelectItem>
+                              {visibleHeaders.map(({ label, idx }) => (
+                                <SelectItem key={`${label}-${idx}`} value={label}>{label}</SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
@@ -1000,8 +1072,8 @@ function SyncConfigDialog({
                         <SelectTrigger data-testid="select-start-time-column"><SelectValue placeholder="— Not used —" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value={NO_COLUMN}>— Not used —</SelectItem>
-                          {preview.headers.map((h, i) => (
-                            <SelectItem key={`st-${h}-${i}`} value={h}>{h}</SelectItem>
+                          {visibleHeaders.map(({ label, idx }) => (
+                            <SelectItem key={`st-${label}-${idx}`} value={label}>{label}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -1015,8 +1087,8 @@ function SyncConfigDialog({
                         <SelectTrigger data-testid="select-end-time-column"><SelectValue placeholder="— Not used —" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value={NO_COLUMN}>— Not used —</SelectItem>
-                          {preview.headers.map((h, i) => (
-                            <SelectItem key={`et-${h}-${i}`} value={h}>{h}</SelectItem>
+                          {visibleHeaders.map(({ label, idx }) => (
+                            <SelectItem key={`et-${label}-${idx}`} value={label}>{label}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -1062,8 +1134,8 @@ function SyncConfigDialog({
                       <SelectTrigger data-testid="select-external-id"><SelectValue placeholder="— Auto —" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value={NO_COLUMN}>— Auto (use row contents) —</SelectItem>
-                        {preview.headers.map((h, i) => (
-                          <SelectItem key={`id-${h}-${i}`} value={h}>{h}</SelectItem>
+                        {visibleHeaders.map(({ label, idx }) => (
+                          <SelectItem key={`id-${label}-${idx}`} value={label}>{label}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -1083,16 +1155,16 @@ function SyncConfigDialog({
                   <table className="text-xs w-full">
                     <thead>
                       <tr className="bg-muted">
-                        {preview.headers.map((h, i) => (
-                          <th key={`h-${i}`} className="px-2 py-1 text-left font-medium whitespace-nowrap">{h}</th>
+                        {visibleHeaders.map(({ label, idx }) => (
+                          <th key={`h-${idx}`} className="px-2 py-1 text-left font-medium whitespace-nowrap">{label}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {preview.sampleRows.slice(0, 8).map((row, ri) => (
                         <tr key={`r-${ri}`} className="border-t">
-                          {preview.headers.map((_, ci) => (
-                            <td key={`c-${ri}-${ci}`} className="px-2 py-1 whitespace-nowrap">{row[ci] ?? ""}</td>
+                          {visibleHeaders.map(({ idx }) => (
+                            <td key={`c-${ri}-${idx}`} className="px-2 py-1 whitespace-nowrap">{row[idx] ?? ""}</td>
                           ))}
                         </tr>
                       ))}
