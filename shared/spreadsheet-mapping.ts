@@ -412,6 +412,43 @@ export function parseAgendaDate(value: Cell, opts: DateParseOptions): Date | nul
   return Number.isNaN(fallback.getTime()) ? null : fallback;
 }
 
+// Render a raw cell value as a readable date/time in the configured
+// timezone (e.g. "4 Jun 2026, 09:00"). Handles Excel serial numbers and
+// ISO timestamps via parseAgendaDate; returns the raw text unchanged when
+// the value isn't a recognisable date. The clock time is omitted when the
+// value lands on local midnight (a date-only value) — checked in the
+// target timezone, NOT UTC, so DST-shifted instants are classified right.
+export function formatReadableAgendaDate(raw: string, opts: DateParseOptions): string {
+  const text = (raw ?? "").trim();
+  if (!text) return "";
+  const tz =
+    opts.timezone && isValidTimezone(opts.timezone)
+      ? opts.timezone
+      : DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+  const parsed = parseAgendaDate(text, { timezone: tz, dateFormatHint: opts.dateFormatHint ?? null });
+  if (!parsed) return raw;
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      timeZone: tz,
+    }).formatToParts(parsed);
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+    const hasTime = get("hour") !== "00" || get("minute") !== "00" || get("second") !== "00";
+    return new Intl.DateTimeFormat("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      ...(hasTime ? { hour: "2-digit", minute: "2-digit", hour12: false } : {}),
+      timeZone: tz,
+    }).format(parsed);
+  } catch {
+    return raw;
+  }
+}
+
 // ============ Split date + time combination ============
 //
 // Some spreadsheets keep the calendar date and the clock time in

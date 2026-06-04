@@ -32,6 +32,7 @@ import {
   type AgendaMappableField,
 } from "@shared/schema";
 import { serializeAgendaCsv, AGENDA_CSV_HEADER, buildAgendaCsvSample } from "@shared/agenda-csv";
+import { formatReadableAgendaDate } from "@shared/spreadsheet-mapping";
 
 const itemFormSchema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -396,6 +397,7 @@ function isBlankPreviewColumn(
   });
 }
 
+
 function SyncConfigDialog({
   open,
   onOpenChange,
@@ -664,6 +666,19 @@ function SyncConfigDialog({
         hideBlankColumns ? !isBlankPreviewColumn(preview, idx, label, inUseLabels) : true,
       );
   }, [preview, hideBlankColumns, inUseLabels]);
+
+  // Column indices whose values should be shown as readable dates/times in
+  // the preview (the columns mapped to the date/datetime fields).
+  const dateColumnIdxSet = useMemo(() => {
+    const s = new Set<number>();
+    if (!preview) return s;
+    for (const label of [columnMapping.startsAt, columnMapping.endsAt]) {
+      if (!label) continue;
+      const idx = preview.headers.indexOf(label);
+      if (idx >= 0) s.add(idx);
+    }
+    return s;
+  }, [preview, columnMapping.startsAt, columnMapping.endsAt]);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -1030,7 +1045,7 @@ function SyncConfigDialog({
                       const required = REQUIRED_FIELDS.includes(field);
                       const missing = required && !columnMapping[field];
                       return (
-                        <div key={field} className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2 sm:items-center">
+                        <div key={field} className="grid grid-cols-1 sm:grid-cols-[150px_minmax(0,360px)] gap-1 sm:gap-2 sm:items-center">
                           <Label className={missing ? "text-destructive" : ""}>
                             {FIELD_LABELS[field]}{required ? " *" : ""}
                           </Label>
@@ -1041,10 +1056,12 @@ function SyncConfigDialog({
                             <SelectTrigger data-testid={`select-map-${field}`}>
                               <SelectValue placeholder="— Not mapped —" />
                             </SelectTrigger>
-                            <SelectContent>
+                            <SelectContent className="max-w-[min(90vw,360px)]">
                               <SelectItem value={NO_COLUMN}>— Not mapped —</SelectItem>
                               {visibleHeaders.map(({ label, idx }) => (
-                                <SelectItem key={`${label}-${idx}`} value={label}>{label}</SelectItem>
+                                <SelectItem key={`${label}-${idx}`} value={label} title={label}>
+                                  <span className="block truncate max-w-[300px]">{label}</span>
+                                </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
@@ -1063,37 +1080,41 @@ function SyncConfigDialog({
                       to <span className="font-medium">Start time</span> / <span className="font-medium">End time</span> above,
                       then pick the matching time columns here.
                     </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2 sm:items-center">
+                    <div className="grid grid-cols-1 sm:grid-cols-[150px_minmax(0,360px)] gap-1 sm:gap-2 sm:items-center">
                       <Label>Start time column</Label>
                       <Select
                         value={startTimeColumn ?? NO_COLUMN}
                         onValueChange={(v) => setStartTimeColumn(v === NO_COLUMN ? null : v)}
                       >
                         <SelectTrigger data-testid="select-start-time-column"><SelectValue placeholder="— Not used —" /></SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="max-w-[min(90vw,360px)]">
                           <SelectItem value={NO_COLUMN}>— Not used —</SelectItem>
                           {visibleHeaders.map(({ label, idx }) => (
-                            <SelectItem key={`st-${label}-${idx}`} value={label}>{label}</SelectItem>
+                            <SelectItem key={`st-${label}-${idx}`} value={label} title={label}>
+                              <span className="block truncate max-w-[300px]">{label}</span>
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2 sm:items-center">
+                    <div className="grid grid-cols-1 sm:grid-cols-[150px_minmax(0,360px)] gap-1 sm:gap-2 sm:items-center">
                       <Label>End time column</Label>
                       <Select
                         value={endTimeColumn ?? NO_COLUMN}
                         onValueChange={(v) => setEndTimeColumn(v === NO_COLUMN ? null : v)}
                       >
                         <SelectTrigger data-testid="select-end-time-column"><SelectValue placeholder="— Not used —" /></SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="max-w-[min(90vw,360px)]">
                           <SelectItem value={NO_COLUMN}>— Not used —</SelectItem>
                           {visibleHeaders.map(({ label, idx }) => (
-                            <SelectItem key={`et-${label}-${idx}`} value={label}>{label}</SelectItem>
+                            <SelectItem key={`et-${label}-${idx}`} value={label} title={label}>
+                              <span className="block truncate max-w-[300px]">{label}</span>
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2 sm:items-center">
+                    <div className="grid grid-cols-1 sm:grid-cols-[150px_minmax(0,360px)] gap-1 sm:gap-2 sm:items-center">
                       <Label>Base month &amp; year</Label>
                       <div className="flex gap-2">
                         <Select
@@ -1125,17 +1146,19 @@ function SyncConfigDialog({
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2 sm:items-center">
+                  <div className="grid grid-cols-1 sm:grid-cols-[150px_minmax(0,360px)] gap-1 sm:gap-2 sm:items-center">
                     <Label>Unique ID column (optional)</Label>
                     <Select
                       value={externalIdColumn ?? NO_COLUMN}
                       onValueChange={(v) => setExternalIdColumn(v === NO_COLUMN ? null : v)}
                     >
                       <SelectTrigger data-testid="select-external-id"><SelectValue placeholder="— Auto —" /></SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="max-w-[min(90vw,360px)]">
                         <SelectItem value={NO_COLUMN}>— Auto (use row contents) —</SelectItem>
                         {visibleHeaders.map(({ label, idx }) => (
-                          <SelectItem key={`id-${label}-${idx}`} value={label}>{label}</SelectItem>
+                          <SelectItem key={`id-${label}-${idx}`} value={label} title={label}>
+                            <span className="block truncate max-w-[300px]">{label}</span>
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -1152,20 +1175,38 @@ function SyncConfigDialog({
               {/* Sample / preview table */}
               {preview && preview.sampleRows.length > 0 && (
                 <div className="border rounded-md overflow-x-auto" data-testid="table-preview">
-                  <table className="text-xs w-full">
+                  <table className="text-xs w-full table-fixed">
                     <thead>
                       <tr className="bg-muted">
                         {visibleHeaders.map(({ label, idx }) => (
-                          <th key={`h-${idx}`} className="px-2 py-1 text-left font-medium whitespace-nowrap">{label}</th>
+                          <th
+                            key={`h-${idx}`}
+                            title={label}
+                            className="px-2 py-1 text-left font-medium truncate max-w-[180px]"
+                          >
+                            {label}
+                          </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {preview.sampleRows.slice(0, 8).map((row, ri) => (
                         <tr key={`r-${ri}`} className="border-t">
-                          {visibleHeaders.map(({ idx }) => (
-                            <td key={`c-${ri}-${idx}`} className="px-2 py-1 whitespace-nowrap">{row[idx] ?? ""}</td>
-                          ))}
+                          {visibleHeaders.map(({ idx }) => {
+                            const raw = row[idx] ?? "";
+                            const display = dateColumnIdxSet.has(idx)
+                              ? formatReadableAgendaDate(raw, { timezone, dateFormatHint })
+                              : raw;
+                            return (
+                              <td
+                                key={`c-${ri}-${idx}`}
+                                title={raw}
+                                className="px-2 py-1 truncate max-w-[180px]"
+                              >
+                                {display}
+                              </td>
+                            );
+                          })}
                         </tr>
                       ))}
                     </tbody>
