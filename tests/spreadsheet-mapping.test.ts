@@ -11,6 +11,9 @@ import {
   buildExternalId,
   missingRequiredMappings,
   cellToString,
+  extractDateParts,
+  parseTimeOfDay,
+  combineDateAndTime,
   type Grid,
 } from "../shared/spreadsheet-mapping";
 
@@ -255,4 +258,115 @@ test("cellToString stringifies cell variants", () => {
   assert.equal(cellToString(true), "true");
   assert.equal(cellToString("hi"), "hi");
   assert.equal(cellToString(new Date("2026-06-02T00:00:00Z")), "2026-06-02T00:00:00.000Z");
+});
+
+// ============ Split date + time (separate columns) ============
+
+test("extractDateParts parses a full ISO date", () => {
+  assert.deepEqual(
+    extractDateParts("2026-06-12", { timezone: TZ }, {}),
+    { year: 2026, month: 6, day: 12 },
+  );
+});
+
+test("extractDateParts completes a day-only cell from the base month/year", () => {
+  assert.deepEqual(
+    extractDateParts("12th", { timezone: TZ }, { year: 2026, month: 6 }),
+    { year: 2026, month: 6, day: 12 },
+  );
+  assert.deepEqual(
+    extractDateParts(12, { timezone: TZ }, { year: 2026, month: 6 }),
+    { year: 2026, month: 6, day: 12 },
+  );
+  assert.deepEqual(
+    extractDateParts("Day 5", { timezone: TZ }, { year: 2025, month: 11 }),
+    { year: 2025, month: 11, day: 5 },
+  );
+});
+
+test("extractDateParts returns null for a day-only cell with no base", () => {
+  assert.equal(extractDateParts("12th", { timezone: TZ }, {}), null);
+});
+
+test("parseTimeOfDay reads an Excel time fraction", () => {
+  // 0.479166... = 11:30
+  assert.deepEqual(parseTimeOfDay(0.479166666), { hour: 11, minute: 30, second: 0 });
+  // datetime serial keeps the same fraction
+  assert.deepEqual(parseTimeOfDay(45809.5), { hour: 12, minute: 0, second: 0 });
+});
+
+test("parseTimeOfDay reads HH:MM, am/pm and bare am/pm", () => {
+  assert.deepEqual(parseTimeOfDay("11:30"), { hour: 11, minute: 30, second: 0 });
+  assert.deepEqual(parseTimeOfDay("2:15 PM"), { hour: 14, minute: 15, second: 0 });
+  assert.deepEqual(parseTimeOfDay("12:00 AM"), { hour: 0, minute: 0, second: 0 });
+  assert.deepEqual(parseTimeOfDay("9am"), { hour: 9, minute: 0, second: 0 });
+});
+
+test("parseTimeOfDay returns null for blanks", () => {
+  assert.equal(parseTimeOfDay(""), null);
+  assert.equal(parseTimeOfDay(null), null);
+});
+
+test("combineDateAndTime merges a day-only date with an Excel time fraction", () => {
+  const d = combineDateAndTime("12th", 0.479166666, { timezone: TZ }, { year: 2026, month: 6 });
+  assert.ok(d);
+  // 12 June 2026 11:30 BST = 10:30 UTC
+  assert.equal(d!.toISOString(), "2026-06-12T10:30:00.000Z");
+});
+
+test("combineDateAndTime treats a missing time as midnight", () => {
+  const d = combineDateAndTime("2026-01-12", "", { timezone: TZ }, {});
+  assert.ok(d);
+  // 12 Jan 2026 00:00 GMT = 00:00 UTC
+  assert.equal(d!.toISOString(), "2026-01-12T00:00:00.000Z");
+});
+
+test("applyMapping uses split date+time columns when configured", () => {
+  const headers = ["Title", "Day", "Start", "End"];
+  const rows: Grid = [
+    ["Keynote", "12th", 0.375, 0.5], // 09:00 -> 12:00
+  ];
+  const out = applyMapping(rows, {
+    headers,
+    mapping: { title: "Title", startsAt: "Day", endsAt: "Day" },
+    timezone: TZ,
+    startTimeColumn: "Start",
+    endTimeColumn: "End",
+    dateBaseYear: 2026,
+    dateBaseMonth: 6,
+  });
+  assert.equal(out[0].status, "ok");
+  assert.equal(out[0].item!.startsAt.toISOString(), "2026-06-12T08:00:00.000Z");
+  assert.equal(out[0].item!.endsAt.toISOString(), "2026-06-12T11:00:00.000Z");
+});
+
+test("applyMapping split mode reports both date and time in the error", () => {
+  const headers = ["Title", "Day", "Start", "End"];
+  const rows: Grid = [
+    ["Keynote", "12th", 0.375, 0.5], // no base -> date can't resolve
+  ];
+  const out = applyMapping(rows, {
+    headers,
+    mapping: { title: "Title", startsAt: "Day", endsAt: "Day" },
+    timezone: TZ,
+    startTimeColumn: "Start",
+    endTimeColumn: "End",
+  });
+  assert.equal(out[0].status, "error");
+  assert.match(out[0].error!, /Could not parse start\/end date/);
+  assert.match(out[0].error!, /12th/);
+});
+
+test("applyMapping stays backward-compatible with single date+time cells", () => {
+  const headers = ["Title", "Start", "End"];
+  const rows: Grid = [
+    ["Keynote", "2026-06-12 09:00", "2026-06-12 12:00"],
+  ];
+  const out = applyMapping(rows, {
+    headers,
+    mapping: { title: "Title", startsAt: "Start", endsAt: "End" },
+    timezone: TZ,
+  });
+  assert.equal(out[0].status, "ok");
+  assert.equal(out[0].item!.startsAt.toISOString(), "2026-06-12T08:00:00.000Z");
 });

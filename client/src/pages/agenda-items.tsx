@@ -332,6 +332,21 @@ const FIELD_LABELS: Record<AgendaMappableField, string> = {
   statusMessage: "Status message",
 };
 
+const MONTH_OPTIONS = [
+  { value: 1, label: "January" },
+  { value: 2, label: "February" },
+  { value: 3, label: "March" },
+  { value: 4, label: "April" },
+  { value: 5, label: "May" },
+  { value: 6, label: "June" },
+  { value: 7, label: "July" },
+  { value: 8, label: "August" },
+  { value: 9, label: "September" },
+  { value: 10, label: "October" },
+  { value: 11, label: "November" },
+  { value: 12, label: "December" },
+];
+
 const REQUIRED_FIELDS = AGENDA_REQUIRED_MAPPABLE_FIELDS as readonly AgendaMappableField[];
 const MAPPED_TYPES = AGENDA_MAPPED_SOURCE_TYPES as readonly string[];
 const XLSX_TYPES = AGENDA_XLSX_SOURCE_TYPES as readonly string[];
@@ -399,6 +414,16 @@ function SyncConfigDialog({
   const [dateFormatHint, setDateFormatHint] = useState<string>(initial?.dateFormatHint ?? "");
   const [columnMapping, setColumnMapping] = useState<AgendaColumnMapping>(
     (initial?.columnMapping as AgendaColumnMapping) ?? {},
+  );
+  // Split date/time mapping: optional separate time columns + a base
+  // month/year used when the date column is only a day ("12th").
+  const [startTimeColumn, setStartTimeColumn] = useState<string | null>(initial?.startTimeColumn ?? null);
+  const [endTimeColumn, setEndTimeColumn] = useState<string | null>(initial?.endTimeColumn ?? null);
+  const [dateBaseYear, setDateBaseYear] = useState<string>(
+    initial?.dateBaseYear != null ? String(initial.dateBaseYear) : "",
+  );
+  const [dateBaseMonth, setDateBaseMonth] = useState<string>(
+    initial?.dateBaseMonth != null ? String(initial.dateBaseMonth) : "",
   );
 
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -544,6 +569,10 @@ function SyncConfigDialog({
       externalIdColumn: externalIdColumn || null,
       timezone: timezone || null,
       dateFormatHint: dateFormatHint || null,
+      startTimeColumn: startTimeColumn || null,
+      endTimeColumn: endTimeColumn || null,
+      dateBaseYear: dateBaseYear ? parseInt(dateBaseYear, 10) : null,
+      dateBaseMonth: dateBaseMonth ? parseInt(dateBaseMonth, 10) : null,
       microsoftAuth: isMicrosoftType ? microsoftAuth : false,
       msDriveId: isMicrosoftType && microsoftAuth ? msDriveId : null,
       msItemId: isMicrosoftType && microsoftAuth ? msItemId : null,
@@ -602,6 +631,10 @@ function SyncConfigDialog({
           externalIdColumn: externalIdColumn || null,
           timezone: timezone || null,
           dateFormatHint: dateFormatHint || null,
+          startTimeColumn: startTimeColumn || null,
+          endTimeColumn: endTimeColumn || null,
+          dateBaseYear: dateBaseYear ? parseInt(dateBaseYear, 10) : null,
+          dateBaseMonth: dateBaseMonth ? parseInt(dateBaseMonth, 10) : null,
           syncMode,
           removeMissingItems,
           microsoftAuth: isMicrosoftType ? microsoftAuth : false,
@@ -946,6 +979,78 @@ function SyncConfigDialog({
                         </div>
                       );
                     })}
+                  </div>
+
+                  {/* Split date & time — for sheets that keep the date and
+                      the clock time in separate columns. */}
+                  <div className="border-t pt-3 mt-1 space-y-2" data-testid="panel-split-datetime">
+                    <div className="text-sm font-medium">Separate time columns (optional)</div>
+                    <p className="text-xs text-muted-foreground">
+                      Use this if your sheet keeps the time in its own column (e.g. a "Date" column with
+                      <span className="font-medium"> 12th</span> and a separate start/end time). Map the date
+                      to <span className="font-medium">Start time</span> / <span className="font-medium">End time</span> above,
+                      then pick the matching time columns here.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 items-center">
+                      <Label>Start time column</Label>
+                      <Select
+                        value={startTimeColumn ?? NO_COLUMN}
+                        onValueChange={(v) => setStartTimeColumn(v === NO_COLUMN ? null : v)}
+                      >
+                        <SelectTrigger data-testid="select-start-time-column"><SelectValue placeholder="— Not used —" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={NO_COLUMN}>— Not used —</SelectItem>
+                          {preview.headers.map((h, i) => (
+                            <SelectItem key={`st-${h}-${i}`} value={h}>{h}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 items-center">
+                      <Label>End time column</Label>
+                      <Select
+                        value={endTimeColumn ?? NO_COLUMN}
+                        onValueChange={(v) => setEndTimeColumn(v === NO_COLUMN ? null : v)}
+                      >
+                        <SelectTrigger data-testid="select-end-time-column"><SelectValue placeholder="— Not used —" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={NO_COLUMN}>— Not used —</SelectItem>
+                          {preview.headers.map((h, i) => (
+                            <SelectItem key={`et-${h}-${i}`} value={h}>{h}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 items-center">
+                      <Label>Base month &amp; year</Label>
+                      <div className="flex gap-2">
+                        <Select
+                          value={dateBaseMonth || NO_COLUMN}
+                          onValueChange={(v) => setDateBaseMonth(v === NO_COLUMN ? "" : v)}
+                        >
+                          <SelectTrigger data-testid="select-date-base-month"><SelectValue placeholder="Month" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={NO_COLUMN}>— Month —</SelectItem>
+                            {MONTH_OPTIONS.map((m) => (
+                              <SelectItem key={`mo-${m.value}`} value={String(m.value)}>{m.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          type="number"
+                          min={1970}
+                          max={2200}
+                          placeholder="Year"
+                          value={dateBaseYear}
+                          onChange={(e) => setDateBaseYear(e.target.value)}
+                          data-testid="input-date-base-year"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Only needed when the date column is just a day (like "12th"). If your date column
+                      already has a full date, leave these blank.
+                    </p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 items-center">

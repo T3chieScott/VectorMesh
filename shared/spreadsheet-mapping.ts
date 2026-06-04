@@ -412,6 +412,199 @@ export function parseAgendaDate(value: Cell, opts: DateParseOptions): Date | nul
   return Number.isNaN(fallback.getTime()) ? null : fallback;
 }
 
+// ============ Split date + time combination ============
+//
+// Some spreadsheets keep the calendar date and the clock time in
+// SEPARATE columns — and the "date" column is sometimes only a day of
+// the month ("12th"). `combineDateAndTime` stitches a date cell and a
+// time cell into one absolute instant, filling a day-only date from the
+// operator-supplied base year/month.
+
+export interface DateBase {
+  year?: number | null;
+  /** 1-12. */
+  month?: number | null;
+}
+
+interface DateParts {
+  year: number;
+  month: number;
+  day: number;
+}
+
+function dayFromBase(day: number, base: DateBase): DateParts | null {
+  if (base.year == null || base.month == null) return null;
+  if (base.month < 1 || base.month > 12) return null;
+  if (day < 1 || day > 31) return null;
+  return { year: base.year, month: base.month, day };
+}
+
+function excelSerialToParts(serial: number): DateParts | null {
+  const ms = Math.round((Math.floor(serial) - 25569) * 86_400_000);
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return null;
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+}
+
+// Extract calendar year/month/day from a date cell. Accepts a full date
+// (ISO, slash/dot/dash, Excel date serial, JS Date) OR a bare
+// day-of-month ("12", "12th", "Day 12") which is completed from `base`.
+export function extractDateParts(
+  cell: Cell,
+  opts: DateParseOptions,
+  base: DateBase,
+): DateParts | null {
+  if (cell == null) return null;
+
+  if (cell instanceof Date) {
+    if (Number.isNaN(cell.getTime())) return null;
+    return { year: cell.getUTCFullYear(), month: cell.getUTCMonth() + 1, day: cell.getUTCDate() };
+  }
+
+  if (typeof cell === "number") {
+    if (cell > 20000 && cell < 120000) return excelSerialToParts(cell);
+    if (Number.isInteger(cell)) return dayFromBase(cell, base);
+    return null;
+  }
+
+  if (typeof cell === "boolean") return null;
+
+  const raw = String(cell).trim();
+  if (!raw) return null;
+
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    const n = Number(raw);
+    if (n > 20000 && n < 120000) return excelSerialToParts(n);
+  }
+
+  const iso = ISO_LOCAL.exec(raw);
+  if (iso) {
+    const [, y, mo, d] = iso;
+    const month = +mo;
+    const day = +d;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return { year: +y, month, day };
+  }
+
+  const slash = SLASH_DATE.exec(raw);
+  if (slash) {
+    const [, aStr, bStr, yrStr] = slash;
+    const a = +aStr;
+    const b = +bStr;
+    const hint = (opts.dateFormatHint || "").toLowerCase();
+    let day: number;
+    let month: number;
+    if (a > 12 && b <= 12) {
+      day = a;
+      month = b;
+    } else if (b > 12 && a <= 12) {
+      month = a;
+      day = b;
+    } else if (hint === "us") {
+      month = a;
+      day = b;
+    } else {
+      day = a;
+      month = b;
+    }
+    let year = +yrStr;
+    if (year < 100) year += 2000;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return { year, month, day };
+  }
+
+  // Day-only label: "12", "12th", "Day 12".
+  const dayOnly = /^(?:day\s+)?(\d{1,2})(?:st|nd|rd|th)?$/i.exec(raw);
+  if (dayOnly) return dayFromBase(+dayOnly[1], base);
+
+  return null;
+}
+
+interface TimeParts {
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+// An Excel time is a fraction of a day (0.5 = noon). A datetime serial
+// (45809.5) carries the same fraction, so take the fractional part of
+// any number.
+function fractionToTime(n: number): TimeParts | null {
+  if (!Number.isFinite(n)) return null;
+  const frac = n - Math.floor(n);
+  const total = Math.round(frac * 86_400);
+  return {
+    hour: Math.floor(total / 3600) % 24,
+    minute: Math.floor(total / 60) % 60,
+    second: total % 60,
+  };
+}
+
+// Extract the clock time from a time cell: an Excel fraction/serial, or
+// text like "11:30", "11:30:00", "11:30 AM", "9am". Returns null when
+// no time is present (caller treats that as midnight).
+export function parseTimeOfDay(cell: Cell): TimeParts | null {
+  if (cell == null) return null;
+
+  if (cell instanceof Date) {
+    if (Number.isNaN(cell.getTime())) return null;
+    return { hour: cell.getUTCHours(), minute: cell.getUTCMinutes(), second: cell.getUTCSeconds() };
+  }
+
+  if (typeof cell === "number") return fractionToTime(cell);
+  if (typeof cell === "boolean") return null;
+
+  const raw = String(cell).trim();
+  if (!raw) return null;
+
+  if (/^\d+(?:\.\d+)?$/.test(raw)) return fractionToTime(Number(raw));
+
+  const hm = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([aApP][mM])?$/.exec(raw);
+  if (hm) {
+    let hour = +hm[1];
+    const minute = +hm[2];
+    const second = hm[3] ? +hm[3] : 0;
+    if (hm[4]) {
+      const pm = /p/i.test(hm[4]);
+      if (pm && hour < 12) hour += 12;
+      if (!pm && hour === 12) hour = 0;
+    }
+    if (hour > 23 || minute > 59 || second > 59) return null;
+    return { hour, minute, second };
+  }
+
+  const ampm = /^(\d{1,2})\s*([aApP][mM])$/.exec(raw);
+  if (ampm) {
+    let hour = +ampm[1];
+    const pm = /p/i.test(ampm[2]);
+    if (pm && hour < 12) hour += 12;
+    if (!pm && hour === 12) hour = 0;
+    if (hour > 23) return null;
+    return { hour, minute: 0, second: 0 };
+  }
+
+  return null;
+}
+
+// Combine a date cell and a time cell into one absolute instant. The
+// date may be day-only (completed from `base`); a missing/blank time is
+// treated as midnight. Returns null only when the date can't be resolved.
+export function combineDateAndTime(
+  dateCell: Cell,
+  timeCell: Cell,
+  opts: DateParseOptions,
+  base: DateBase,
+): Date | null {
+  const dp = extractDateParts(dateCell, opts, base);
+  if (!dp) return null;
+  const tp = parseTimeOfDay(timeCell) ?? { hour: 0, minute: 0, second: 0 };
+  const tz =
+    opts.timezone && isValidTimezone(opts.timezone)
+      ? opts.timezone
+      : DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+  return new Date(wallPartsToUtcMs(dp.year, dp.month, dp.day, tp.hour, tp.minute, tp.second, tz));
+}
+
 // ============ Stable external id ============
 
 function simpleHash(s: string): string {
@@ -443,6 +636,13 @@ export interface ApplyMappingOptions {
   externalIdColumn?: string | null;
   timezone: string;
   dateFormatHint?: string | null;
+  // Split date/time: when a time column is supplied, the corresponding
+  // startsAt/endsAt mapped column provides the DATE and this column the
+  // TIME. dateBaseYear/Month complete a day-only date cell ("12th").
+  startTimeColumn?: string | null;
+  endTimeColumn?: string | null;
+  dateBaseYear?: number | null;
+  dateBaseMonth?: number | null;
 }
 
 function columnIndex(headers: string[], label: string | undefined): number {
@@ -464,6 +664,12 @@ export function applyMapping(
     idx[f] = columnIndex(headers, mapping[f]);
   }
   const extIdx = columnIndex(headers, opts.externalIdColumn ?? undefined);
+  const startTimeIdx = columnIndex(headers, opts.startTimeColumn ?? undefined);
+  const endTimeIdx = columnIndex(headers, opts.endTimeColumn ?? undefined);
+  const base: DateBase = {
+    year: opts.dateBaseYear ?? null,
+    month: opts.dateBaseMonth ?? null,
+  };
   const dateOpts: DateParseOptions = {
     timezone: opts.timezone,
     dateFormatHint: opts.dateFormatHint,
@@ -495,13 +701,27 @@ export function applyMapping(
       continue;
     }
 
-    const startsAt = parseAgendaDate(startCell, dateOpts);
-    const endsAt = parseAgendaDate(endCell, dateOpts);
+    // Split date/time mode: combine the date cell with a separate time
+    // cell. Otherwise parse a single date+time cell as before.
+    const startTimeCell = startTimeIdx >= 0 ? row[startTimeIdx] : undefined;
+    const endTimeCell = endTimeIdx >= 0 ? row[endTimeIdx] : undefined;
+    const startsAt =
+      startTimeIdx >= 0
+        ? combineDateAndTime(startCell, startTimeCell, dateOpts, base)
+        : parseAgendaDate(startCell, dateOpts);
+    const endsAt =
+      endTimeIdx >= 0
+        ? combineDateAndTime(endCell, endTimeCell, dateOpts, base)
+        : parseAgendaDate(endCell, dateOpts);
     if (!startsAt || !endsAt) {
+      const shown = (dateCell: Cell, timeIdx: number, timeCell: Cell): string =>
+        timeIdx >= 0
+          ? `${cellToString(dateCell)} ${cellToString(timeCell)}`.trim()
+          : cellToString(dateCell);
       results.push({
         rowNumber: r,
         status: "error",
-        error: `Could not parse start/end date (got "${cellToString(startCell)}" / "${cellToString(endCell)}")`,
+        error: `Could not parse start/end date (got "${shown(startCell, startTimeIdx, startTimeCell)}" / "${shown(endCell, endTimeIdx, endTimeCell)}")`,
       });
       continue;
     }

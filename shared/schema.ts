@@ -1228,6 +1228,13 @@ export const agendaSyncConfigs = pgTable("agenda_sync_configs", {
   firstDataRowIndex: integer("first_data_row_index"),
   // { agendaField: spreadsheetHeaderLabel } — see AgendaColumnMapping.
   columnMapping: jsonb("column_mapping").$type<AgendaColumnMapping>(),
+  // Split date/time: when set, the startsAt/endsAt mapped column supplies
+  // the DATE and these columns supply the TIME (combined at parse time).
+  // dateBaseYear/dateBaseMonth complete a day-only date cell ("12th").
+  startTimeColumn: text("start_time_column"),
+  endTimeColumn: text("end_time_column"),
+  dateBaseYear: integer("date_base_year"),
+  dateBaseMonth: integer("date_base_month"),
   // Spreadsheet column whose value is the stable external id (priority 1).
   externalIdColumn: text("external_id_column"),
   // IANA timezone for wall-clock date parsing (null = client timezone).
@@ -1303,6 +1310,10 @@ export const insertAgendaSyncConfigSchema = createInsertSchema(agendaSyncConfigs
     timezone: z.string().optional().nullable(),
     dateFormatHint: z.string().optional().nullable(),
     timeFormatHint: z.string().optional().nullable(),
+    startTimeColumn: z.string().optional().nullable(),
+    endTimeColumn: z.string().optional().nullable(),
+    dateBaseYear: z.number().int().min(1970).max(2200).optional().nullable(),
+    dateBaseMonth: z.number().int().min(1).max(12).optional().nullable(),
     sheetName: z.string().optional().nullable(),
     externalIdColumn: z.string().optional().nullable(),
     originalFileName: z.string().optional().nullable(),

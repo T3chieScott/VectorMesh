@@ -391,6 +391,10 @@ export type AgendaSourceDraft = Pick<
   | "externalIdColumn"
   | "timezone"
   | "dateFormatHint"
+  | "startTimeColumn"
+  | "endTimeColumn"
+  | "dateBaseYear"
+  | "dateBaseMonth"
   // Task #268 — Microsoft Graph-backed source addressing.
   | "microsoftAuth"
   | "msDriveId"
@@ -497,6 +501,10 @@ export async function previewAgendaSource(
       externalIdColumn: draft.externalIdColumn,
       timezone,
       dateFormatHint: draft.dateFormatHint,
+      startTimeColumn: draft.startTimeColumn,
+      endTimeColumn: draft.endTimeColumn,
+      dateBaseYear: draft.dateBaseYear,
+      dateBaseMonth: draft.dateBaseMonth,
     });
     let okCount = 0;
     let errorCount = 0;
@@ -586,6 +594,10 @@ async function parseUpstreamForConfig(
     externalIdColumn: config.externalIdColumn,
     timezone,
     dateFormatHint: config.dateFormatHint,
+    startTimeColumn: config.startTimeColumn,
+    endTimeColumn: config.endTimeColumn,
+    dateBaseYear: config.dateBaseYear,
+    dateBaseMonth: config.dateBaseMonth,
   });
 
   const items: ParsedUpstream[] = [];
