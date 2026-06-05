@@ -202,6 +202,27 @@ test("applyMapping produces ok rows for valid data", () => {
   assert.equal(out[0].externalId, "row-0");
 });
 
+test("applyMapping composes presenter from first name, last name and company", () => {
+  const headers = ["Title", "Start", "End", "First", "Surname", "Company"];
+  const mapping = {
+    title: "Title",
+    startsAt: "Start",
+    endsAt: "End",
+    presenter: "First",
+    presenterLastName: "Surname",
+    company: "Company",
+  } as const;
+  const rows: Grid = [
+    ["Keynote", "2026-06-02 09:00", "2026-06-02 10:00", "Jane", "Doe", "Acme"],
+    ["Panel", "2026-06-02 11:00", "2026-06-02 12:00", "Sam", "Lee", ""],
+    ["Talk", "2026-06-02 13:00", "2026-06-02 14:00", "", "", "Globex"],
+  ];
+  const out = applyMapping(rows, { headers, mapping: { ...mapping }, timezone: TZ });
+  assert.equal(out[0].item!.presenter, "Jane Doe, Acme");
+  assert.equal(out[1].item!.presenter, "Sam Lee");
+  assert.equal(out[2].item!.presenter, "Globex");
+});
+
 test("applyMapping skips fully-empty rows", () => {
   const rows: Grid = [["", "", "", "", ""]];
   const out = applyMapping(rows, { headers: HEADERS, mapping: { ...MAPPING }, timezone: TZ });

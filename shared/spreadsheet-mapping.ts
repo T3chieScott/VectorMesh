@@ -123,7 +123,9 @@ const FIELD_SYNONYMS: Record<AgendaMappableField, string[]> = {
   description: ["description", "desc", "details", "abstract", "summary", "synopsis", "overview"],
   room: ["room", "location", "venue", "hall", "space", "area", "stage", "theatre", "theater"],
   track: ["track", "category", "stream", "theme", "strand", "type"],
-  presenter: ["presenter", "speaker", "speakers", "host", "facilitator", "author", "presented by", "chair"],
+  presenter: ["presenter", "speaker", "speakers", "host", "facilitator", "author", "presented by", "chair", "first name", "firstname", "given name", "forename"],
+  presenterLastName: ["surname", "last name", "lastname", "family name", "second name"],
+  company: ["company", "organisation", "organization", "org", "employer", "affiliation", "business"],
   startsAt: ["start time", "start date", "start datetime", "starts", "start", "begin", "from", "date", "time"],
   endsAt: ["end time", "end date", "end datetime", "ends", "end", "finish", "until", "to"],
   status: ["status", "session status", "state"],
@@ -168,6 +170,8 @@ export function suggestColumnMapping(headers: string[]): AgendaColumnMapping {
     "room",
     "track",
     "presenter",
+    "presenterLastName",
+    "company",
     "status",
     "statusMessage",
     "description",
@@ -772,12 +776,27 @@ export function applyMapping(
     }
 
     const room = cellToString(get("room")).trim() || null;
+    // Build the speaker string from up to three columns: first name
+    // (presenter), last name (presenterLastName) and company. The full
+    // name joins first+last with a space; the company is appended after
+    // a comma ("Firstname Lastname, Company"). Each xlsx row is one
+    // speaker — the resolver later merges per-speaker rows of the same
+    // session, listing each speaker on its own line.
+    const firstName = cellToString(get("presenter")).trim();
+    const lastName = cellToString(get("presenterLastName")).trim();
+    const company = cellToString(get("company")).trim();
+    const fullName = [firstName, lastName].filter(Boolean).join(" ");
+    const presenter = fullName
+      ? company
+        ? `${fullName}, ${company}`
+        : fullName
+      : company || null;
     const item: MappedAgendaItem = {
       title,
       description: cellToString(get("description")).trim() || null,
       room,
       track: cellToString(get("track")).trim() || null,
-      presenter: cellToString(get("presenter")).trim() || null,
+      presenter,
       startsAt,
       endsAt,
       status: normalizeStatus(get("status")),

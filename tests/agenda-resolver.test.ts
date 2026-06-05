@@ -287,7 +287,7 @@ test("dedupeAgendaSessions collapses per-speaker rows into one session, merging 
   const out = resolveAgendaItems({ items: rows, config: cfg(), now: new Date("2026-06-01T10:50:00Z") });
   assert.equal(out.length, 2, "the two duplicate session rows collapse to one");
   const merged = out.find((i) => i.title === "Behind the Partnership")!;
-  assert.equal(merged.presenter, "Moderator, Speaker");
+  assert.equal(merged.presenter, "Moderator\nSpeaker");
 });
 
 test("dedupeAgendaSessions dedupes identical presenter roles and surfaces an urgent status", () => {
@@ -300,7 +300,7 @@ test("dedupeAgendaSessions dedupes identical presenter roles and surfaces an urg
   ];
   const out = resolveAgendaItems({ items: rows, config: cfg({ displayMode: "alert" }), now: new Date("2026-06-01T10:50:00Z") });
   assert.equal(out.length, 1);
-  assert.equal(out[0].presenter, "Panellist, Moderator");
+  assert.equal(out[0].presenter, "Panellist\nModerator");
   assert.equal(out[0].status, "cancelled", "merged session keeps the most urgent status");
 });
 

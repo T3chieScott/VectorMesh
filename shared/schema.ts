@@ -1178,6 +1178,12 @@ export const AGENDA_MAPPABLE_FIELDS = [
   "room",
   "track",
   "presenter",
+  // Optional second name column. When mapped, it is combined with
+  // `presenter` (first name) to form the speaker's full name.
+  "presenterLastName",
+  // Optional company/organisation column, appended after the name
+  // ("Firstname Lastname, Company") so the display can show affiliation.
+  "company",
   "startsAt",
   "endsAt",
   "status",

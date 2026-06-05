@@ -266,7 +266,7 @@ function AgendaRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <h3
-            className="font-semibold leading-tight truncate"
+            className="font-semibold leading-tight break-words"
             style={{ fontSize: scale * 1.15, ...bodyStyle }}
             data-testid={`agenda-title-${item.id}`}
           >
@@ -286,7 +286,9 @@ function AgendaRow({
               <span data-testid={`agenda-room-${item.id}`}>📍 {item.room}</span>
             )}
             {item.track && <span>🏷 {item.track}</span>}
-            {config.showPresenter && item.presenter && <span>🎤 {item.presenter}</span>}
+            {config.showPresenter && item.presenter && (
+              <span className="whitespace-pre-line" data-testid={`agenda-presenter-${item.id}`}>🎤 {item.presenter}</span>
+            )}
           </div>
         ) : null}
         {config.showDescription && item.description && (
@@ -320,23 +322,43 @@ interface RowGridProps {
   roleColors: RoleColors;
 }
 
-function LandscapeGrid({ pageItems, config, tz, scale, now, highlightCurrent, roleColors }: RowGridProps) {
+// Multi-column layouts use CSS columns rather than a grid so sessions
+// flow DOWN each column first and then across — i.e. reading a column
+// top-to-bottom stays in chronological order (a row-major grid jumps in
+// time when read down a column). break-inside-avoid keeps each card
+// whole, and because cards size to their own content they grow to fit
+// longer titles or multi-speaker lists.
+function ColumnFlow({
+  pageItems,
+  config,
+  tz,
+  scale,
+  now,
+  highlightCurrent,
+  roleColors,
+  columnsClass,
+}: RowGridProps & { columnsClass: string }) {
   return (
-    <div className="flex-1 grid grid-cols-2 gap-3 overflow-hidden">
+    <div className={`flex-1 overflow-hidden ${columnsClass}`} style={{ columnGap: "0.75rem" }}>
       {pageItems.map((it) => (
-        <AgendaRow
-          key={it.id}
-          item={it}
-          config={config}
-          tz={tz}
-          scale={scale}
-          isCurrent={highlightCurrent && isCurrentlyRunning(it, now)}
-          accentColor={config.accentColor}
-          roleColors={roleColors}
-        />
+        <div key={it.id} className="break-inside-avoid mb-3">
+          <AgendaRow
+            item={it}
+            config={config}
+            tz={tz}
+            scale={scale}
+            isCurrent={highlightCurrent && isCurrentlyRunning(it, now)}
+            accentColor={config.accentColor}
+            roleColors={roleColors}
+          />
+        </div>
       ))}
     </div>
   );
+}
+
+function LandscapeGrid(props: RowGridProps) {
+  return <ColumnFlow {...props} columnsClass="columns-2" />;
 }
 
 function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, roleColors }: RowGridProps) {
@@ -358,23 +380,8 @@ function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, ro
   );
 }
 
-function UltraWideGrid({ pageItems, config, tz, scale, now, highlightCurrent, roleColors }: RowGridProps) {
-  return (
-    <div className="flex-1 grid grid-cols-3 xl:grid-cols-4 gap-3 overflow-hidden">
-      {pageItems.map((it) => (
-        <AgendaRow
-          key={it.id}
-          item={it}
-          config={config}
-          tz={tz}
-          scale={scale}
-          isCurrent={highlightCurrent && isCurrentlyRunning(it, now)}
-          accentColor={config.accentColor}
-          roleColors={roleColors}
-        />
-      ))}
-    </div>
-  );
+function UltraWideGrid(props: RowGridProps) {
+  return <ColumnFlow {...props} columnsClass="columns-3 xl:columns-4" />;
 }
 
 function TotemNowNext({
@@ -473,7 +480,7 @@ function RoomDoor({
               {cur.title}
             </h1>
             {cur.presenter && (
-              <p className="mt-3 opacity-80" style={{ fontSize: scale * 1.3, ...bodyStyle }}>
+              <p className="mt-3 opacity-80 whitespace-pre-line" style={{ fontSize: scale * 1.3, ...bodyStyle }}>
                 {cur.presenter}
               </p>
             )}

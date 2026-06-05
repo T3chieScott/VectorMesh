@@ -13,7 +13,12 @@ title/time/room. With no externalId column mapped, each becomes a distinct
 **Fix lives in `shared/agenda-resolver.ts` → `dedupeAgendaSessions()`**, called at
 the top of `resolveAgendaItems()` so preview, the public display endpoint, and
 on-screen rendering all collapse identically. Session identity =
-`(clientId, title, startsAt, endsAt, room)`; distinct presenters are joined ", ".
+`(clientId, title, startsAt, endsAt, room)`. Distinct presenters are joined with
+a NEWLINE (one speaker per line) so the display card lists everyone vertically
+and grows to fit; the widget renders presenter text with `whitespace-pre-line`.
+Each speaker string can carry a trailing ", Company" (composed at sync time in
+`applyMapping`, see below). If you change this separator, update the widget
+render (pre-line) and the resolver tests in lockstep.
 
 **Why:** an unconditional, lossy presentation transform is correct here because
 duplicate cards for one session are never wanted on a display. If a future use

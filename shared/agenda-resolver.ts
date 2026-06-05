@@ -122,7 +122,10 @@ export function dedupeAgendaSessions(items: AgendaItem[]): AgendaItem[] {
       if (p > bp) base = it;
     }
 
-    // Combine distinct presenters in first-seen order.
+    // Combine distinct presenters in first-seen order. Each speaker
+    // (which may carry a trailing ", Company") goes on its own line so a
+    // multi-speaker session lists everyone vertically and the display
+    // card grows to fit. The widget renders this with whitespace-pre-line.
     const seen = new Set<string>();
     const presenters: string[] = [];
     for (const it of group) {
@@ -136,7 +139,7 @@ export function dedupeAgendaSessions(items: AgendaItem[]): AgendaItem[] {
 
     out.push({
       ...base,
-      presenter: presenters.length ? presenters.join(", ") : null,
+      presenter: presenters.length ? presenters.join("\n") : null,
       description: firstNonEmpty(group, (i) => i.description),
       track: firstNonEmpty(group, (i) => i.track),
       statusMessage: firstNonEmpty(group, (i) => i.statusMessage),
