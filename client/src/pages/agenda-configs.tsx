@@ -431,7 +431,7 @@ function ConfigEditor({
                         </p>
                       </>
                     ) : (
-                      <Popover>
+                      <Popover modal>
                         <PopoverTrigger asChild>
                           <Button
                             type="button"
