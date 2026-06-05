@@ -1174,15 +1174,15 @@ function SyncConfigDialog({
 
               {/* Sample / preview table */}
               {preview && preview.sampleRows.length > 0 && (
-                <div className="border rounded-md overflow-x-auto" data-testid="table-preview">
+                <div className="border rounded-md max-h-64 overflow-auto" data-testid="table-preview">
                   <table className="text-xs w-full table-fixed">
-                    <thead>
+                    <thead className="sticky top-0 z-10">
                       <tr className="bg-muted">
                         {visibleHeaders.map(({ label, idx }) => (
                           <th
                             key={`h-${idx}`}
                             title={label}
-                            className="px-2 py-1 text-left font-medium truncate max-w-[180px]"
+                            className="px-2 py-1 text-left font-medium truncate max-w-[180px] bg-muted"
                           >
                             {label}
                           </th>
@@ -1190,7 +1190,7 @@ function SyncConfigDialog({
                       </tr>
                     </thead>
                     <tbody>
-                      {preview.sampleRows.slice(0, 8).map((row, ri) => (
+                      {preview.sampleRows.map((row, ri) => (
                         <tr key={`r-${ri}`} className="border-t">
                           {visibleHeaders.map(({ idx }) => {
                             const raw = row[idx] ?? "";
