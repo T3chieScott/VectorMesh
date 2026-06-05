@@ -1329,10 +1329,25 @@ function SyncSourcesSection({ clientId }: { clientId: string }) {
       queryClient.invalidateQueries({ queryKey: ["/api/agenda/sync-configs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/agenda"] });
       if (data?.ok) {
-        toast({
-          title: "Sync complete",
-          description: `${data.inserted} new, ${data.updated} updated, ${data.skippedManual} kept (manual), ${data.removed} removed`,
-        });
+        const warnings: string[] = Array.isArray(data?.parseWarnings) ? data.parseWarnings : [];
+        const counts = `${data.inserted} new, ${data.updated} updated, ${data.skippedManual} kept (manual), ${data.removed} removed`;
+        if (warnings.length > 0 && data.totalUpstream === 0) {
+          const dateHint = /parse start\/end date|could not parse/i.test(warnings[0] ?? "")
+            ? " If your date column is just a day (e.g. \"12th\"), set Base month and Base year in the source settings."
+            : "";
+          toast({
+            title: "Sync ran, but no rows could be read",
+            description: `${warnings.length} row(s) skipped. Example: ${warnings[0]}${dateHint}`,
+            variant: "destructive",
+          });
+        } else if (warnings.length > 0) {
+          toast({
+            title: "Sync complete (with warnings)",
+            description: `${counts}. ${warnings.length} row(s) skipped — e.g. ${warnings[0]}`,
+          });
+        } else {
+          toast({ title: "Sync complete", description: counts });
+        }
       } else {
         toast({ title: "Sync failed", description: data?.error ?? "Unknown error", variant: "destructive" });
       }
