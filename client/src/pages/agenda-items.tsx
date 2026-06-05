@@ -1175,14 +1175,17 @@ function SyncConfigDialog({
               {/* Sample / preview table */}
               {preview && preview.sampleRows.length > 0 && (
                 <div className="border rounded-md max-h-64 overflow-auto" data-testid="table-preview">
-                  <table className="text-xs w-full table-fixed">
+                  <table
+                    className="text-xs table-fixed"
+                    style={{ width: `${visibleHeaders.length * 180}px` }}
+                  >
                     <thead className="sticky top-0 z-10">
                       <tr className="bg-muted">
                         {visibleHeaders.map(({ label, idx }) => (
                           <th
                             key={`h-${idx}`}
                             title={label}
-                            className="px-2 py-1 text-left font-medium truncate max-w-[180px] bg-muted"
+                            className="w-[180px] px-2 py-1 text-left font-medium truncate bg-muted"
                           >
                             {label}
                           </th>
@@ -1201,7 +1204,7 @@ function SyncConfigDialog({
                               <td
                                 key={`c-${ri}-${idx}`}
                                 title={raw}
-                                className="px-2 py-1 truncate max-w-[180px]"
+                                className="w-[180px] px-2 py-1 truncate"
                               >
                                 {display}
                               </td>
