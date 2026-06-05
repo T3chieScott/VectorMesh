@@ -761,7 +761,7 @@ function SyncConfigDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle>{initial ? "Edit Sync Source" : "Add Sync Source"}</DialogTitle>
         </DialogHeader>
@@ -1174,7 +1174,7 @@ function SyncConfigDialog({
 
               {/* Sample / preview table */}
               {preview && preview.sampleRows.length > 0 && (
-                <div className="border rounded-md max-h-64 overflow-auto" data-testid="table-preview">
+                <div className="w-full border rounded-md max-h-64 overflow-auto" data-testid="table-preview">
                   <table
                     className="text-xs table-fixed"
                     style={{ width: `${visibleHeaders.length * 180}px` }}
