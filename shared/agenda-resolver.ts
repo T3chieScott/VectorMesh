@@ -43,15 +43,121 @@ export function tzCalendarDayKey(instant: Date, tz: string | null | undefined): 
   return `${instant.getUTCFullYear()}-${String(instant.getUTCMonth() + 1).padStart(2, "0")}-${String(instant.getUTCDate()).padStart(2, "0")}`;
 }
 
+// Status precedence when merging duplicate session rows — a more
+// "urgent"/active status on any participant row wins so a cancellation,
+// move, delay, or live state is never hidden by collapsing the
+// duplicates. Covers every value in AGENDA_STATUSES; anything unknown
+// falls to 0 (below "scheduled") so a real status always wins.
+const SESSION_STATUS_PRIORITY: Record<string, number> = {
+  cancelled: 5,
+  moved: 4,
+  delayed: 3,
+  in_progress: 2,
+  scheduled: 1,
+};
+
+/** Identity for "the same session" used by dedupeAgendaSessions. */
+function agendaSessionKey(it: AgendaItem): string {
+  const start = new Date(it.startsAt).getTime();
+  const end = new Date(it.endsAt).getTime();
+  return [
+    it.clientId,
+    (it.title || "").trim().toLowerCase(),
+    Number.isNaN(start) ? "?" : String(start),
+    Number.isNaN(end) ? "?" : String(end),
+    (it.room || "").trim().toLowerCase(),
+  ].join("\u0000");
+}
+
+/**
+ * Collapse rows that describe the same session into one entry.
+ *
+ * Some feeds (notably per-speaker spreadsheets) emit one row per
+ * participant — every speaker / moderator / panellist of a session is
+ * its own row sharing the same title, time and room. Rendered as-is
+ * that shows the same session several times. We group by
+ * (client, title, start, end, room) and merge the group into a single
+ * item, combining the distinct presenter values so no speaker is lost.
+ * Single-row sessions pass through untouched and original order is
+ * preserved.
+ */
+export function dedupeAgendaSessions(items: AgendaItem[]): AgendaItem[] {
+  const groups = new Map<string, AgendaItem[]>();
+  const order: string[] = [];
+  for (const it of items) {
+    const key = agendaSessionKey(it);
+    let group = groups.get(key);
+    if (!group) {
+      group = [];
+      groups.set(key, group);
+      order.push(key);
+    }
+    group.push(it);
+  }
+
+  const firstNonEmpty = (
+    group: AgendaItem[],
+    sel: (i: AgendaItem) => string | null | undefined,
+  ): string | null => {
+    for (const it of group) {
+      const v = (sel(it) || "").trim();
+      if (v) return v;
+    }
+    return null;
+  };
+
+  const out: AgendaItem[] = [];
+  for (const key of order) {
+    const group = groups.get(key)!;
+    if (group.length === 1) {
+      out.push(group[0]);
+      continue;
+    }
+
+    // Base row carries the most urgent status; ties keep the first.
+    let base = group[0];
+    for (const it of group) {
+      const p = SESSION_STATUS_PRIORITY[it.status as string] ?? 0;
+      const bp = SESSION_STATUS_PRIORITY[base.status as string] ?? 0;
+      if (p > bp) base = it;
+    }
+
+    // Combine distinct presenters in first-seen order.
+    const seen = new Set<string>();
+    const presenters: string[] = [];
+    for (const it of group) {
+      const p = (it.presenter || "").trim();
+      if (!p) continue;
+      const dedupeKey = p.toLowerCase();
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      presenters.push(p);
+    }
+
+    out.push({
+      ...base,
+      presenter: presenters.length ? presenters.join(", ") : null,
+      description: firstNonEmpty(group, (i) => i.description),
+      track: firstNonEmpty(group, (i) => i.track),
+      statusMessage: firstNonEmpty(group, (i) => i.statusMessage),
+    });
+  }
+  return out;
+}
+
 /**
  * Apply config filters to the agenda pool. Items returned are
  * already sorted by start time ascending. Past items that have
  * ended ≥ 15 minutes ago are dropped unless display mode is
  * "alert" (where the operator wants to keep visible cancellations
  * for a longer trailing window — 2h).
+ *
+ * Per-speaker duplicate rows are collapsed up-front via
+ * dedupeAgendaSessions so each session renders once.
  */
 export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
-  const { items, config, now } = input;
+  const { config, now } = input;
+  const items = dedupeAgendaSessions(input.items);
   const nowMs = now.getTime();
   const trailingMs =
     config.displayMode === "alert" ? 2 * 60 * 60 * 1000 : 15 * 60 * 1000;

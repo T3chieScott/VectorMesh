@@ -3,3 +3,4 @@
 - [Dev server OOM](dev-server-oom.md) — XLSX OOM is exceljs full-load materializing every cell into live heap; fix = streaming reader (WorkbookReader), never load(). Bigger heap doesn't fix it.
 - [OneDrive Graph file listing](onedrive-graph-file-listing.md) — `/me/drive/recent` near-empty on business accounts; list `root/children`; share-link 403 = account can't access link.
 - [XLSX fast preview vs full read parity](dev-server-oom.md) — jszip+saxes preview reader must match exceljs full-read grid shape (trailing styled-blank col widths, truncation) or preview-picked mappings diverge from sync.
+- [Agenda session dedup](agenda-session-dedup.md) — display collapses per-speaker rows by (client,title,start,end,room); status-merge precedence must cover every AGENDA_STATUSES value or live sessions get downgraded.

@@ -275,3 +275,54 @@ test("paginate returns [] for empty input", () => {
 test("paginate returns single page when pageSize is 0", () => {
   assert.deepEqual(paginate([1, 2, 3], 0), [[1, 2, 3]]);
 });
+
+test("dedupeAgendaSessions collapses per-speaker rows into one session, merging presenters", () => {
+  const start = new Date("2026-06-01T10:45:00Z");
+  const end = new Date("2026-06-01T11:05:00Z");
+  const rows = [
+    item({ id: "a", title: "Behind the Partnership", room: "Future Tech Stage", presenter: "Moderator", startsAt: start, endsAt: end }),
+    item({ id: "b", title: "Behind the Partnership", room: "Future Tech Stage", presenter: "Speaker", startsAt: start, endsAt: end }),
+    item({ id: "c", title: "Other Talk", room: "Hall A", presenter: "Keynote", startsAt: start, endsAt: end }),
+  ];
+  const out = resolveAgendaItems({ items: rows, config: cfg(), now: new Date("2026-06-01T10:50:00Z") });
+  assert.equal(out.length, 2, "the two duplicate session rows collapse to one");
+  const merged = out.find((i) => i.title === "Behind the Partnership")!;
+  assert.equal(merged.presenter, "Moderator, Speaker");
+});
+
+test("dedupeAgendaSessions dedupes identical presenter roles and surfaces an urgent status", () => {
+  const start = new Date("2026-06-01T10:45:00Z");
+  const end = new Date("2026-06-01T11:05:00Z");
+  const rows = [
+    item({ id: "a", title: "Panel", room: "CR1", presenter: "Panellist", status: "scheduled", startsAt: start, endsAt: end }),
+    item({ id: "b", title: "Panel", room: "CR1", presenter: "Panellist", status: "cancelled", startsAt: start, endsAt: end }),
+    item({ id: "c", title: "Panel", room: "CR1", presenter: "Moderator", status: "scheduled", startsAt: start, endsAt: end }),
+  ];
+  const out = resolveAgendaItems({ items: rows, config: cfg({ displayMode: "alert" }), now: new Date("2026-06-01T10:50:00Z") });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].presenter, "Panellist, Moderator");
+  assert.equal(out[0].status, "cancelled", "merged session keeps the most urgent status");
+});
+
+test("dedupeAgendaSessions keeps a live session live (in_progress beats scheduled)", () => {
+  const start = new Date("2026-06-01T10:45:00Z");
+  const end = new Date("2026-06-01T11:05:00Z");
+  const rows = [
+    item({ id: "a", title: "Panel", room: "CR1", presenter: "Speaker", status: "scheduled", startsAt: start, endsAt: end }),
+    item({ id: "b", title: "Panel", room: "CR1", presenter: "Moderator", status: "in_progress", startsAt: start, endsAt: end }),
+  ];
+  const out = resolveAgendaItems({ items: rows, config: cfg(), now: new Date("2026-06-01T10:50:00Z") });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].status, "in_progress", "a live participant row must not be downgraded to scheduled");
+});
+
+test("dedupeAgendaSessions keeps same title+time in different rooms as distinct sessions", () => {
+  const start = new Date("2026-06-01T10:45:00Z");
+  const end = new Date("2026-06-01T11:05:00Z");
+  const rows = [
+    item({ id: "a", title: "Workshop", room: "Room A", presenter: "Alice", startsAt: start, endsAt: end }),
+    item({ id: "b", title: "Workshop", room: "Room B", presenter: "Bob", startsAt: start, endsAt: end }),
+  ];
+  const out = resolveAgendaItems({ items: rows, config: cfg(), now: new Date("2026-06-01T10:50:00Z") });
+  assert.equal(out.length, 2, "different rooms are different sessions and must not merge");
+});
