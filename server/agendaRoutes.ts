@@ -744,9 +744,16 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
 
   app.get("/api/agenda/display/:configId", async (req, res) => {
     try {
+      // Optional ?at=<ISO instant> test-date override so operators can
+      // preview a screen as if "now" were a chosen moment. Invalid or
+      // missing values fall back to the real server clock.
+      const atRaw = typeof req.query.at === "string" ? req.query.at : null;
+      const parsedAt = atRaw ? new Date(atRaw) : null;
+      const resolveAt =
+        parsedAt && !Number.isNaN(parsedAt.getTime()) ? parsedAt : now();
       const resolved = await storage.getResolvedAgendaForConfig(
         getPathParam(req, "configId"),
-        now(),
+        resolveAt,
       );
       if (!resolved) return res.status(404).json({ error: "Config not found" });
       const { config, items } = resolved;

@@ -31,6 +31,19 @@ const STALE_GRACE_MS = 2 * 60 * 1000;
 export default function DisplayAgendaPage() {
   const [, params] = useRoute("/display/agenda/:configId");
   const configId = params?.configId;
+  // Optional test-date override (?at=<ISO instant>) so an operator can
+  // view a real screen as if "now" were a chosen moment. Absent = live.
+  const testAtParam = new URLSearchParams(
+    typeof window !== "undefined" ? window.location.search : "",
+  ).get("at");
+  const parsedTestNow = testAtParam ? new Date(testAtParam) : null;
+  const testNow =
+    parsedTestNow && !Number.isNaN(parsedTestNow.getTime())
+      ? parsedTestNow
+      : undefined;
+  // Normalised ISO instant, only set when the param parsed cleanly, so
+  // we never forward garbage to the server.
+  const validAtIso = testNow ? testNow.toISOString() : null;
   const [data, setData] = useState<DisplayPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retired, setRetired] = useState(false);
@@ -49,7 +62,10 @@ export default function DisplayAgendaPage() {
     async function load() {
       let terminal = false;
       try {
-        const res = await fetch(`/api/agenda/display/${configId}`, {
+        const url = validAtIso
+          ? `/api/agenda/display/${configId}?at=${encodeURIComponent(validAtIso)}`
+          : `/api/agenda/display/${configId}`;
+        const res = await fetch(url, {
           cache: "no-store",
         });
         if (res.status === 404) {
@@ -104,7 +120,7 @@ export default function DisplayAgendaPage() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [configId]);
+  }, [configId, validAtIso]);
 
   // Lock body so the chromeless page never scrolls under the widget.
   useEffect(() => {
@@ -165,6 +181,7 @@ export default function DisplayAgendaPage() {
         config={data.config}
         items={data.items}
         timezone={data.client?.timezone || null}
+        now={testNow}
       />
     </div>
   );

@@ -549,6 +549,78 @@ test("GET /api/agenda/display/:configId — public payload never leaks internal 
   }
 });
 
+test("GET /api/agenda/display/:configId?at= — resolves against the test instant", async () => {
+  // Server clock is June 2026; the only session is in Sept 2025, so a
+  // live request drops it (fully past). A ?at= inside the session must
+  // bring it back — proving the test-date override drives resolution.
+  const cfg = makeConfig({ id: "cfgAt", clientId: "siteA", name: "AtTest" });
+  const item = makeItem({
+    id: "iAt",
+    clientId: "siteA",
+    startsAt: new Date("2025-09-15T10:00:00Z"),
+    endsAt: new Date("2025-09-15T11:00:00Z"),
+    title: "Sept Keynote",
+  });
+  const storage = makeFakeStorage({
+    configs: [cfg],
+    items: [item],
+    clients: [{ id: "siteA", name: "Site A", timezone: "Europe/London" } as Client],
+  });
+  const srv = await startTestServer({
+    storage,
+    user: null,
+    now: () => new Date("2026-06-01T10:30:00Z"),
+  });
+  try {
+    // Live (no override): the Sept 2025 session is gone.
+    const live = await fetch(`${srv.base}/api/agenda/display/cfgAt`);
+    assert.equal(live.status, 200);
+    const liveBody = (await live.json()) as { items: Array<{ id: string }> };
+    assert.equal(liveBody.items.length, 0, "live request must drop the past session");
+
+    // Override to a moment inside the session: it comes back.
+    const at = await fetch(
+      `${srv.base}/api/agenda/display/cfgAt?at=${encodeURIComponent("2025-09-15T10:30:00Z")}`,
+    );
+    assert.equal(at.status, 200);
+    const atBody = (await at.json()) as { items: Array<{ id: string }> };
+    assert.deepEqual(atBody.items.map((i) => i.id), ["iAt"]);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("GET /api/agenda/display/:configId?at= — invalid value falls back to the live clock", async () => {
+  const cfg = makeConfig({ id: "cfgBad", clientId: "siteA", name: "BadAt" });
+  const item = makeItem({
+    id: "iBad",
+    clientId: "siteA",
+    startsAt: new Date("2025-09-15T10:00:00Z"),
+    endsAt: new Date("2025-09-15T11:00:00Z"),
+    title: "Sept Keynote",
+  });
+  const storage = makeFakeStorage({
+    configs: [cfg],
+    items: [item],
+    clients: [{ id: "siteA", name: "Site A", timezone: "Europe/London" } as Client],
+  });
+  const srv = await startTestServer({
+    storage,
+    user: null,
+    now: () => new Date("2026-06-01T10:30:00Z"),
+  });
+  try {
+    // Garbage ?at= must be ignored → behaves exactly like a live request
+    // (past Sept session dropped), never a 500.
+    const res = await fetch(`${srv.base}/api/agenda/display/cfgBad?at=not-a-date`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { items: Array<{ id: string }> };
+    assert.equal(body.items.length, 0);
+  } finally {
+    await srv.close();
+  }
+});
+
 // ============ Task #215 — POST /api/agenda/import tenant scoping ============
 //
 // Task #211 covered the agenda GET/POST/PATCH/DELETE routes and the

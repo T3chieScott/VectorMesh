@@ -202,6 +202,10 @@ function ConfigEditor({
 }) {
   const { toast } = useToast();
   const [preset, setPreset] = useState(0);
+  // Optional "test date" override so operators can preview the agenda
+  // as if "now" were a chosen moment (event data is often loaded long
+  // before/after the event runs). null = use the real current time.
+  const [testNow, setTestNow] = useState<Date | null>(null);
   const form = useForm<ConfigFormValues>({
     resolver: zodResolver(configFormSchema),
     defaultValues: defaultForm(initial),
@@ -241,8 +245,8 @@ function ConfigEditor({
   );
 
   const previewItems = useMemo(
-    () => resolveAgendaItems({ items: effectiveItems, config: previewConfig, now: new Date(), tz: clientTimezone }),
-    [effectiveItems, previewConfig, clientTimezone],
+    () => resolveAgendaItems({ items: effectiveItems, config: previewConfig, now: testNow ?? new Date(), tz: clientTimezone }),
+    [effectiveItems, previewConfig, clientTimezone, testNow],
   );
 
   const mutation = useMutation({
@@ -260,6 +264,25 @@ function ConfigEditor({
   });
 
   const dims = PREVIEW_PRESETS[preset];
+
+  // datetime-local <input> works in browser-local wall-clock; convert
+  // a Date to/from its "YYYY-MM-DDTHH:mm" string form.
+  const toLocalInputValue = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  // Public display URL carrying the chosen test date (absolute UTC ISO
+  // so the server/client read the same instant regardless of tz). Only
+  // available once the config has been saved (it needs a real id).
+  const testUrl =
+    initial?.id && testNow
+      ? `${window.location.origin}/display/agenda/${initial.id}?at=${encodeURIComponent(testNow.toISOString())}`
+      : "";
+  const copyTestUrl = () => {
+    if (!testUrl) return;
+    navigator.clipboard.writeText(testUrl).then(() => toast({ title: "Test URL copied" }));
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -580,6 +603,62 @@ function ConfigEditor({
                 </Button>
               ))}
             </div>
+            {/* Test date — preview (and optionally a real screen) as if
+                "now" were a chosen moment. Blank = real current time. */}
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="space-y-1">
+                <Label htmlFor="test-date" className="text-xs">Test date &amp; time</Label>
+                <Input
+                  id="test-date"
+                  type="datetime-local"
+                  className="h-8 w-[220px]"
+                  value={testNow ? toLocalInputValue(testNow) : ""}
+                  onChange={(e) => setTestNow(e.target.value ? new Date(e.target.value) : null)}
+                  data-testid="input-test-date"
+                />
+              </div>
+              {testNow && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => setTestNow(null)}
+                  data-testid="button-reset-test-date"
+                >
+                  Reset to now
+                </Button>
+              )}
+              {initial?.id && testNow && (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => window.open(testUrl, "_blank")}
+                    data-testid="button-open-test-display"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5 mr-1" /> Open test display
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={copyTestUrl}
+                    data-testid="button-copy-test-url"
+                  >
+                    <Copy className="h-3.5 w-3.5 mr-1" /> Copy test URL
+                  </Button>
+                </>
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              {testNow
+                ? "Previewing as if now were the selected date/time."
+                : "Leave blank to preview using the real current time."}
+            </p>
             <div className="border rounded-md overflow-hidden bg-black" style={{ aspectRatio: `${dims.w} / ${dims.h}` }}>
               <div style={{ width: "100%", height: "100%" }}>
                 <AgendaDisplayWidget
@@ -588,6 +667,7 @@ function ConfigEditor({
                   width={dims.w}
                   height={dims.h}
                   timezone={clientTimezone ?? undefined}
+                  now={testNow ?? undefined}
                 />
               </div>
             </div>
