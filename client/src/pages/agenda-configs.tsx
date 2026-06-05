@@ -16,7 +16,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Pencil, Plus, Trash2, ExternalLink, Copy, SlidersHorizontal } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Pencil, Plus, Trash2, ExternalLink, Copy, SlidersHorizontal, ChevronsUpDown } from "lucide-react";
 import {
   AGENDA_DISPLAY_MODES,
   AGENDA_DISPLAY_MODE_LABELS,
@@ -227,6 +229,17 @@ function ConfigEditor({
   );
   const usingSampleData = items.length === 0;
 
+  // Unique room names from the imported agenda items, used to populate
+  // the "Filter by rooms" dropdown so operators pick from real data
+  // instead of typing room names by hand.
+  const uniqueRooms = useMemo(
+    () =>
+      Array.from(new Set(items.map((i) => (i.room ?? "").trim()).filter(Boolean))).sort(
+        (a, b) => a.localeCompare(b),
+      ),
+    [items],
+  );
+
   const previewItems = useMemo(
     () => resolveAgendaItems({ items: effectiveItems, config: previewConfig, now: new Date(), tz: clientTimezone }),
     [effectiveItems, previewConfig, clientTimezone],
@@ -387,9 +400,96 @@ function ConfigEditor({
               <FormField control={form.control} name="backgroundUrl" render={({ field }) => (
                 <FormItem><FormLabel>Background image URL</FormLabel><FormControl><Input placeholder="https://…" {...field} /></FormControl></FormItem>
               )} />
-              <FormField control={form.control} name="roomFilter" render={({ field }) => (
-                <FormItem><FormLabel>Filter by rooms (comma separated)</FormLabel><FormControl><Input placeholder="Main Hall, Room A" {...field} data-testid="input-room-filter" /></FormControl></FormItem>
-              )} />
+              <FormField control={form.control} name="roomFilter" render={({ field }) => {
+                const selected = (field.value || "")
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean);
+                const selectedSet = new Set(selected);
+                // Show every imported room plus any already-selected rooms
+                // that no longer appear in the data, so saved filters stay
+                // visible and removable.
+                const options = Array.from(new Set([...uniqueRooms, ...selected])).sort((a, b) =>
+                  a.localeCompare(b),
+                );
+                const toggle = (room: string) => {
+                  const next = new Set(selectedSet);
+                  if (next.has(room)) next.delete(room);
+                  else next.add(room);
+                  field.onChange(Array.from(next).join(", "));
+                };
+                return (
+                  <FormItem>
+                    <FormLabel>Filter by rooms</FormLabel>
+                    {options.length === 0 ? (
+                      <>
+                        <FormControl>
+                          <Input placeholder="Main Hall, Room A" {...field} data-testid="input-room-filter" />
+                        </FormControl>
+                        <p className="text-[10px] text-muted-foreground">
+                          Import agenda items to pick rooms from a list.
+                        </p>
+                      </>
+                    ) : (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full justify-between font-normal"
+                            data-testid="button-room-filter"
+                          >
+                            <span className="truncate">
+                              {selected.length === 0
+                                ? "All rooms"
+                                : `${selected.length} room${selected.length > 1 ? "s" : ""} selected`}
+                            </span>
+                            <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                          <div className="max-h-60 overflow-auto p-1">
+                            {options.map((room) => (
+                              <div
+                                key={room}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => toggle(room)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    toggle(room);
+                                  }
+                                }}
+                                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent"
+                                data-testid={`option-room-${room}`}
+                              >
+                                <Checkbox checked={selectedSet.has(room)} className="pointer-events-none" />
+                                <span className="truncate">{room}</span>
+                              </div>
+                            ))}
+                          </div>
+                          {selected.length > 0 && (
+                            <div className="border-t p-1">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="w-full"
+                                onClick={() => field.onChange("")}
+                                data-testid="button-clear-room-filter"
+                              >
+                                Clear all
+                              </Button>
+                            </div>
+                          )}
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                );
+              }} />
               <FormField control={form.control} name="trackFilter" render={({ field }) => (
                 <FormItem><FormLabel>Filter by tracks</FormLabel><FormControl><Input placeholder="Keynote, Workshop" {...field} /></FormControl></FormItem>
               )} />
