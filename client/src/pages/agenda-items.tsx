@@ -765,7 +765,7 @@ function SyncConfigDialog({
         <DialogHeader>
           <DialogTitle>{initial ? "Edit Sync Source" : "Add Sync Source"}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="space-y-4 min-w-0">
           <div>
             <Label>Name</Label>
             <Input
