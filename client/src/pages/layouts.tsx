@@ -904,10 +904,10 @@ type ZoneFormValues = z.infer<typeof zoneFormSchema>;
 // raw enum keys stored in the DB.
 const AGENDA_DISPLAY_MODE_LABELS: Record<string, string> = {
   full: "Full agenda",
-  room: "Room filtered",
   now_next: "Now + next",
   room_focus: "Room focus",
   alert: "Alerts only",
+  today_tomorrow: "Today / tomorrow",
 };
 const AGENDA_LAYOUT_MODE_LABELS: Record<string, string> = {
   auto: "Auto",

@@ -46,6 +46,8 @@ function cfg(over: Partial<AgendaWidgetConfig> = {}): AgendaWidgetConfig {
     roomFilter: [],
     trackFilter: [],
     statusFilter: [],
+    dayFilter: "all",
+    dayFilterDate: null,
     timeWindowMinutes: null,
     refreshIntervalSeconds: 30,
     rotationIntervalSeconds: 10,
@@ -222,6 +224,92 @@ test("resolveAgendaItems applies timeWindowMinutes", () => {
   ];
   const got = resolveAgendaItems({ items, config: cfg({ timeWindowMinutes: 120 }), now: NOW });
   assert.deepEqual(got.map((i) => i.id), ["soon"]);
+});
+
+// --- Manual "What's on" day filter --------------------------------
+// Anchor "now" mid-morning on Wed 2026-06-03 (a Wednesday) in UTC so
+// the week range is Mon 2026-06-01 .. Sun 2026-06-07.
+const DAY_NOW = new Date("2026-06-03T09:00:00Z");
+function dayItems() {
+  return [
+    item({ id: "mon", startsAt: new Date("2026-06-01T10:00:00Z"), endsAt: new Date("2026-06-01T11:00:00Z") }),
+    item({ id: "today-am", startsAt: new Date("2026-06-03T10:00:00Z"), endsAt: new Date("2026-06-03T11:00:00Z") }),
+    item({ id: "today-pm", startsAt: new Date("2026-06-03T15:00:00Z"), endsAt: new Date("2026-06-03T16:00:00Z") }),
+    item({ id: "tomorrow", startsAt: new Date("2026-06-04T10:00:00Z"), endsAt: new Date("2026-06-04T11:00:00Z") }),
+    item({ id: "sun", startsAt: new Date("2026-06-07T10:00:00Z"), endsAt: new Date("2026-06-07T11:00:00Z") }),
+    item({ id: "nextmon", startsAt: new Date("2026-06-08T10:00:00Z"), endsAt: new Date("2026-06-08T11:00:00Z") }),
+  ];
+}
+
+test("dayFilter=all keeps every (non-past) day", () => {
+  const got = resolveAgendaItems({ items: dayItems(), config: cfg({ dayFilter: "all" }), now: DAY_NOW, tz: "UTC" });
+  // "mon" ended >15min before now → dropped by the trailing window.
+  assert.deepEqual(got.map((i) => i.id), ["today-am", "today-pm", "tomorrow", "sun", "nextmon"]);
+});
+
+test("dayFilter=today keeps only today's sessions", () => {
+  const got = resolveAgendaItems({ items: dayItems(), config: cfg({ dayFilter: "today" }), now: DAY_NOW, tz: "UTC" });
+  assert.deepEqual(got.map((i) => i.id), ["today-am", "today-pm"]);
+});
+
+test("dayFilter=tomorrow keeps only tomorrow's sessions", () => {
+  const got = resolveAgendaItems({ items: dayItems(), config: cfg({ dayFilter: "tomorrow" }), now: DAY_NOW, tz: "UTC" });
+  assert.deepEqual(got.map((i) => i.id), ["tomorrow"]);
+});
+
+test("dayFilter=this_week keeps Mon..Sun of the current week", () => {
+  const got = resolveAgendaItems({ items: dayItems(), config: cfg({ dayFilter: "this_week" }), now: DAY_NOW, tz: "UTC" });
+  // Monday's item ended long ago (trailing window) but next Monday is
+  // outside the week range and must be excluded.
+  assert.deepEqual(got.map((i) => i.id), ["today-am", "today-pm", "tomorrow", "sun"]);
+});
+
+test("dayFilter=specific_date keeps only that calendar day", () => {
+  const got = resolveAgendaItems({
+    items: dayItems(),
+    config: cfg({ dayFilter: "specific_date", dayFilterDate: "2026-06-04" }),
+    now: DAY_NOW,
+    tz: "UTC",
+  });
+  assert.deepEqual(got.map((i) => i.id), ["tomorrow"]);
+});
+
+test("dayFilter=specific_date with no date set is a no-op", () => {
+  const got = resolveAgendaItems({
+    items: dayItems(),
+    config: cfg({ dayFilter: "specific_date", dayFilterDate: null }),
+    now: DAY_NOW,
+    tz: "UTC",
+  });
+  assert.deepEqual(got.map((i) => i.id), ["today-am", "today-pm", "tomorrow", "sun", "nextmon"]);
+});
+
+test("dayFilter is ignored in today_tomorrow mode", () => {
+  // today_tomorrow owns its own day logic — a stray dayFilter must not
+  // double-restrict it. Today still has sessions, so it shows today.
+  const got = resolveAgendaItems({
+    items: dayItems(),
+    config: cfg({ displayMode: "today_tomorrow", dayFilter: "tomorrow" }),
+    now: DAY_NOW,
+    tz: "UTC",
+  });
+  assert.deepEqual(got.map((i) => i.id), ["today-am", "today-pm"]);
+});
+
+test("dayFilter=today honours the site timezone across a DST boundary", () => {
+  // US spring-forward is 2026-03-08 (02:00 local = 10:00Z). At 06:30Z
+  // it is still 2026-03-07 22:30 in Los Angeles (PST, UTC-8), so LA
+  // "today" is 2026-03-07. Both items are in the future (kept by the
+  // time window); the day filter is what distinguishes them.
+  const now = new Date("2026-03-08T06:30:00Z");
+  const items = [
+    // 07:00Z is pre-transition (PST, UTC-8) → LA 2026-03-07 23:00 = today.
+    item({ id: "la-same-day", startsAt: new Date("2026-03-08T07:00:00Z"), endsAt: new Date("2026-03-08T08:00:00Z") }),
+    // 20:00Z is post-transition (PDT, UTC-7) → LA 2026-03-08 13:00 = tomorrow.
+    item({ id: "la-next-day", startsAt: new Date("2026-03-08T20:00:00Z"), endsAt: new Date("2026-03-08T21:00:00Z") }),
+  ];
+  const got = resolveAgendaItems({ items, config: cfg({ dayFilter: "today" }), now, tz: "America/Los_Angeles" });
+  assert.deepEqual(got.map((i) => i.id), ["la-same-day"]);
 });
 
 test("splitCurrentNext finds in-flight item and upcoming ones", () => {

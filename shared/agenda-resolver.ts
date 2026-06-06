@@ -19,6 +19,8 @@ export interface AgendaResolveInput {
     | "trackFilter"
     | "statusFilter"
     | "timeWindowMinutes"
+    | "dayFilter"
+    | "dayFilterDate"
   >;
   now: Date;
   /**
@@ -41,6 +43,33 @@ export function tzCalendarDayKey(instant: Date, tz: string | null | undefined): 
     return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
   }
   return `${instant.getUTCFullYear()}-${String(instant.getUTCMonth() + 1).padStart(2, "0")}-${String(instant.getUTCDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Shift a YYYY-MM-DD calendar-day key by `delta` whole days, returning
+ * another YYYY-MM-DD key. Pure calendar arithmetic done in UTC so it
+ * is DST-safe (we never add/subtract hours across a transition). Used
+ * by the manual day filter and the today_tomorrow auto-roll.
+ */
+export function shiftDayKey(key: string, delta: number): string {
+  const [y, m, d] = key.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d + delta));
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(t.getUTCDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Monday→Sunday range (inclusive) of the calendar week that contains
+ * the given YYYY-MM-DD key. Returned as { start, end } day keys.
+ * Lexicographic comparison of YYYY-MM-DD keys matches chronological
+ * order, so callers can range-check with start <= key <= end.
+ */
+export function weekRangeForDayKey(key: string): { start: string; end: string } {
+  const [y, m, d] = key.split("-").map(Number);
+  // getUTCDay(): 0=Sun..6=Sat. Days since Monday = (dow + 6) % 7.
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const mondayOffset = (dow + 6) % 7;
+  const start = shiftDayKey(key, -mondayOffset);
+  return { start, end: shiftDayKey(start, 6) };
 }
 
 // Status precedence when merging duplicate session rows — a more
@@ -220,6 +249,39 @@ export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
     return a.title.localeCompare(b.title);
   });
 
+  // Manual "What's on" day filter — scopes the board to a single day
+  // or window in the site timezone, independent of the display mode.
+  // Deliberately skipped for today_tomorrow mode, which owns its own
+  // auto-rolling day logic below (the UI also hides the day filter for
+  // that mode). The existing trailing-window drop above still applies,
+  // so "today" shows current + upcoming sessions, not ones that ended
+  // long ago.
+  const dayFilter = config.dayFilter ?? "all";
+  if (config.displayMode !== "today_tomorrow" && dayFilter !== "all") {
+    const todayKey = tzCalendarDayKey(now, input.tz);
+    const dayKeyOf = (it: AgendaItem) =>
+      tzCalendarDayKey(new Date(it.startsAt), input.tz);
+    if (dayFilter === "today") {
+      filtered = filtered.filter((it) => dayKeyOf(it) === todayKey);
+    } else if (dayFilter === "tomorrow") {
+      const tomorrowKey = shiftDayKey(todayKey, 1);
+      filtered = filtered.filter((it) => dayKeyOf(it) === tomorrowKey);
+    } else if (dayFilter === "this_week") {
+      const { start, end } = weekRangeForDayKey(todayKey);
+      filtered = filtered.filter((it) => {
+        const k = dayKeyOf(it);
+        return k >= start && k <= end;
+      });
+    } else if (dayFilter === "specific_date") {
+      const target = config.dayFilterDate;
+      // No date chosen yet → leave the set untouched rather than
+      // blanking the board.
+      if (target) {
+        filtered = filtered.filter((it) => dayKeyOf(it) === target);
+      }
+    }
+  }
+
   // today_tomorrow mode (Task #240): show only items whose startsAt
   // falls on today's tz-local calendar day. Once today has nothing
   // left to show (no item ending after the trailing window cutoff),
@@ -240,12 +302,8 @@ export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
     // exhausted (per spec). We deliberately do not jump further than
     // tomorrow — if tomorrow has no sessions the board stays empty
     // (operators should configure a fallback layout/playlist for that).
-    // Tomorrow's key is computed by parsing todayKey (YYYY-MM-DD) and
-    // incrementing the calendar day — DST-safe because we never do
-    // hour arithmetic across the transition.
-    const [ty, tm, td] = todayKey.split("-").map(Number);
-    const t = new Date(Date.UTC(ty, tm - 1, td + 1));
-    const tomorrowKey = `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(t.getUTCDate()).padStart(2, "0")}`;
+    // shiftDayKey is DST-safe (pure calendar arithmetic in UTC).
+    const tomorrowKey = shiftDayKey(todayKey, 1);
     return filtered.filter(
       (it) => tzCalendarDayKey(new Date(it.startsAt), input.tz) === tomorrowKey,
     );

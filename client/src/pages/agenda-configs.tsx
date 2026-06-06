@@ -22,6 +22,8 @@ import { Pencil, Plus, Trash2, ExternalLink, Copy, SlidersHorizontal, ChevronsUp
 import {
   AGENDA_DISPLAY_MODES,
   AGENDA_DISPLAY_MODE_LABELS,
+  AGENDA_DAY_FILTERS,
+  AGENDA_DAY_FILTER_LABELS,
   AGENDA_LAYOUT_MODES,
   AGENDA_FONT_SCALES,
   AGENDA_DENSITIES,
@@ -101,6 +103,8 @@ const configFormSchema = z.object({
   roomFilter: z.string().optional(),
   trackFilter: z.string().optional(),
   statusFilter: z.array(z.string()).default([]),
+  dayFilter: z.enum(AGENDA_DAY_FILTERS),
+  dayFilterDate: z.string().optional(),
   timeWindowMinutes: z.string().optional(),
   refreshIntervalSeconds: z.coerce.number().int().min(5).max(3600),
   rotationIntervalSeconds: z.coerce.number().int().min(3).max(3600),
@@ -135,6 +139,8 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     roomFilter: (c?.roomFilter ?? []).join(", "),
     trackFilter: (c?.trackFilter ?? []).join(", "),
     statusFilter: c?.statusFilter ?? [],
+    dayFilter: (c?.dayFilter as ConfigFormValues["dayFilter"]) ?? "all",
+    dayFilterDate: c?.dayFilterDate ?? "",
     timeWindowMinutes: c?.timeWindowMinutes ? String(c.timeWindowMinutes) : "",
     refreshIntervalSeconds: c?.refreshIntervalSeconds ?? 30,
     rotationIntervalSeconds: c?.rotationIntervalSeconds ?? 12,
@@ -170,6 +176,12 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     roomFilter: values.roomFilter ? values.roomFilter.split(",").map((s) => s.trim()).filter(Boolean) : [],
     trackFilter: values.trackFilter ? values.trackFilter.split(",").map((s) => s.trim()).filter(Boolean) : [],
     statusFilter: values.statusFilter,
+    dayFilter: values.dayFilter,
+    // Only persist a date when the specific-date option is chosen.
+    dayFilterDate:
+      values.dayFilter === "specific_date" && values.dayFilterDate
+        ? values.dayFilterDate
+        : null,
     timeWindowMinutes: values.timeWindowMinutes ? Number(values.timeWindowMinutes) : null,
     refreshIntervalSeconds: values.refreshIntervalSeconds,
     rotationIntervalSeconds: values.rotationIntervalSeconds,
@@ -317,6 +329,28 @@ function ConfigEditor({
                   </FormItem>
                 )} />
               </div>
+              {/* "What's on" day filter. Hidden for the auto-roll
+                  today/tomorrow mode, which owns its own day logic. */}
+              {form.watch("displayMode") !== "today_tomorrow" && (
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField control={form.control} name="dayFilter" render={({ field }) => (
+                    <FormItem><FormLabel>What's on</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl><SelectTrigger data-testid="select-day-filter"><SelectValue /></SelectTrigger></FormControl>
+                        <SelectContent>{AGENDA_DAY_FILTERS.map((m) => <SelectItem key={m} value={m}>{AGENDA_DAY_FILTER_LABELS[m]}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </FormItem>
+                  )} />
+                  {form.watch("dayFilter") === "specific_date" && (
+                    <FormField control={form.control} name="dayFilterDate" render={({ field }) => (
+                      <FormItem><FormLabel>Date</FormLabel>
+                        <FormControl><Input type="date" {...field} value={field.value ?? ""} data-testid="input-day-filter-date" /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-3">
                 <FormField control={form.control} name="fontScale" render={({ field }) => (
                   <FormItem><FormLabel>Font</FormLabel>
@@ -770,6 +804,12 @@ export default function AgendaConfigsPage() {
                   {c.roomFilter.length > 0 && <p>Rooms: {c.roomFilter.join(", ")}</p>}
                   {c.trackFilter.length > 0 && <p>Tracks: {c.trackFilter.join(", ")}</p>}
                   {c.statusFilter.length > 0 && <p>Status: {c.statusFilter.join(", ")}</p>}
+                  {c.displayMode !== "today_tomorrow" && c.dayFilter && c.dayFilter !== "all" && (
+                    <p data-testid={`text-day-filter-${c.id}`}>
+                      What's on: {AGENDA_DAY_FILTER_LABELS[c.dayFilter as keyof typeof AGENDA_DAY_FILTER_LABELS]}
+                      {c.dayFilter === "specific_date" && c.dayFilterDate ? ` (${c.dayFilterDate})` : ""}
+                    </p>
+                  )}
                   <p>Refresh {c.refreshIntervalSeconds}s · rotate {c.rotationIntervalSeconds}s</p>
                 </div>
                 <div className="flex gap-1">

@@ -1340,7 +1340,6 @@ export type AgendaSyncConfig = typeof agendaSyncConfigs.$inferSelect;
 // same agenda pool without duplicating items.
 export const AGENDA_DISPLAY_MODES = [
   "full",            // every matching item
-  "room",            // filter by rooms[]
   "now_next",        // currently-running + next upcoming (single column)
   "room_focus",      // single-room now/next, large
   "alert",           // delayed/cancelled/moved only
@@ -1353,11 +1352,31 @@ export type AgendaDisplayMode = (typeof AGENDA_DISPLAY_MODES)[number];
 // keys (e.g. "now_next") are not what we want to show in the UI.
 export const AGENDA_DISPLAY_MODE_LABELS: Record<AgendaDisplayMode, string> = {
   full: "Full agenda",
-  room: "Filter by rooms",
   now_next: "Now / next",
   room_focus: "Single-room focus",
   alert: "Alerts only (delayed / cancelled / moved)",
   today_tomorrow: "Today / tomorrow (auto-roll)",
+};
+
+// Manual "What's on" day filter — scopes the board to a single day or
+// window, independent of the display mode. Applied in every display
+// mode EXCEPT today_tomorrow (which owns its own auto-rolling day
+// logic). "specific_date" reads the companion dayFilterDate value.
+export const AGENDA_DAY_FILTERS = [
+  "all",            // no day filter (current behaviour)
+  "today",
+  "tomorrow",
+  "this_week",      // Monday–Sunday of the current site-tz week
+  "specific_date",  // a single calendar day from dayFilterDate
+] as const;
+export type AgendaDayFilter = (typeof AGENDA_DAY_FILTERS)[number];
+
+export const AGENDA_DAY_FILTER_LABELS: Record<AgendaDayFilter, string> = {
+  all: "All days",
+  today: "Today",
+  tomorrow: "Tomorrow",
+  this_week: "This week",
+  specific_date: "A specific date",
 };
 
 export const AGENDA_LAYOUT_MODES = [
@@ -1428,6 +1447,11 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   roomFilter: text("room_filter").array().notNull().default(sql`'{}'::text[]`),
   trackFilter: text("track_filter").array().notNull().default(sql`'{}'::text[]`),
   statusFilter: text("status_filter").array().notNull().default(sql`'{}'::text[]`),
+  // Manual "What's on" day filter (see AGENDA_DAY_FILTERS). Default
+  // "all" so existing configs are unchanged. dayFilterDate holds the
+  // YYYY-MM-DD target only when dayFilter = "specific_date".
+  dayFilter: text("day_filter").notNull().default("all"),
+  dayFilterDate: text("day_filter_date"),
   // Optional rolling window. If set, only items whose startsAt is
   // within ±timeWindowMinutes of "now" are shown. Null = no window.
   timeWindowMinutes: integer("time_window_minutes"),
@@ -1483,6 +1507,8 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
     roomFilter: z.array(z.string()).default([]),
     trackFilter: z.array(z.string()).default([]),
     statusFilter: z.array(z.enum(AGENDA_STATUSES)).default([]),
+    dayFilter: z.enum(AGENDA_DAY_FILTERS).default("all"),
+    dayFilterDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be a date like 2026-09-12").nullable().optional(),
     accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#0ea5e9"),
     fontFamily: z.enum(AGENDA_FONT_FAMILIES).nullable().optional(),
     titleColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
