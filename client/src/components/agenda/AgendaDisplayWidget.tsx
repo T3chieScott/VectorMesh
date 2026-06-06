@@ -41,6 +41,40 @@ function formatLongDate(d: Date, tz: string | null | undefined): string {
   }).format(d);
 }
 
+// Compact per-card date (e.g. "Fri 12 Sep") shown beside each session's
+// time when the resolved agenda spans more than one calendar day, so a
+// chronological list that crosses midnight (e.g. day-1 16:30 above
+// day-2 10:30) reads correctly instead of looking out of order.
+function formatShortDate(
+  iso: Date | string,
+  tz: string | null | undefined,
+): string {
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  if (Number.isNaN(d.getTime())) return "";
+  // Fall back to UTC (not browser-local) to stay consistent with
+  // tzDayKey()'s multi-day detection — otherwise, with no tz, the
+  // day-splitting decision and the displayed date could disagree.
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: tz || "UTC",
+  }).format(d);
+}
+
+// Stable per-day key in the display timezone, used to detect whether the
+// agenda spans multiple calendar days.
+function tzDayKey(iso: Date | string, tz: string | null | undefined): string {
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: tz || "UTC",
+  }).format(d);
+}
+
 // Resolved role colours, with `undefined` meaning "fall back to the
 // theme default" so existing configs render identically. Threaded
 // through every layout / row component so a single source of truth
@@ -219,6 +253,7 @@ function AgendaRow({
   isCurrent,
   accentColor,
   roleColors,
+  showCardDate,
 }: {
   item: AgendaItem;
   config: AgendaWidgetConfig;
@@ -227,6 +262,7 @@ function AgendaRow({
   isCurrent?: boolean;
   accentColor?: string;
   roleColors?: RoleColors;
+  showCardDate?: boolean;
 }) {
   const timeStyle = roleColors?.time ? { color: roleColors.time } : undefined;
   const bodyStyle = roleColors?.body ? { color: roleColors.body } : undefined;
@@ -262,6 +298,15 @@ function AgendaRow({
         >
           {formatTime(item.endsAt, tz)}
         </span>
+        {showCardDate && (
+          <span
+            className="mt-1 text-center leading-tight opacity-70"
+            style={{ fontSize: scale * 0.6, ...timeStyle }}
+            data-testid={`agenda-card-date-${item.id}`}
+          >
+            {formatShortDate(item.startsAt, tz)}
+          </span>
+        )}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
@@ -320,6 +365,7 @@ interface RowGridProps {
   now: Date;
   highlightCurrent: boolean;
   roleColors: RoleColors;
+  showCardDate?: boolean;
 }
 
 // Multi-column layouts use CSS columns rather than a grid so sessions
@@ -336,6 +382,7 @@ function ColumnFlow({
   now,
   highlightCurrent,
   roleColors,
+  showCardDate,
   columnsClass,
 }: RowGridProps & { columnsClass: string }) {
   return (
@@ -350,6 +397,7 @@ function ColumnFlow({
             isCurrent={highlightCurrent && isCurrentlyRunning(it, now)}
             accentColor={config.accentColor}
             roleColors={roleColors}
+            showCardDate={showCardDate}
           />
         </div>
       ))}
@@ -361,7 +409,7 @@ function LandscapeGrid(props: RowGridProps) {
   return <ColumnFlow {...props} columnsClass="columns-2" />;
 }
 
-function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, roleColors }: RowGridProps) {
+function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, roleColors, showCardDate }: RowGridProps) {
   return (
     <div className="flex-1 flex flex-col gap-3 overflow-hidden">
       {pageItems.map((it) => (
@@ -374,6 +422,7 @@ function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, ro
           isCurrent={highlightCurrent && isCurrentlyRunning(it, now)}
           accentColor={config.accentColor}
           roleColors={roleColors}
+          showCardDate={showCardDate}
         />
       ))}
     </div>
@@ -391,6 +440,7 @@ function TotemNowNext({
   scale,
   now,
   roleColors,
+  showCardDate,
 }: {
   items: AgendaItem[];
   config: AgendaWidgetConfig;
@@ -398,6 +448,7 @@ function TotemNowNext({
   scale: number;
   now: Date;
   roleColors: RoleColors;
+  showCardDate?: boolean;
 }) {
   const { current, upcoming } = splitCurrentNext(items, now);
   const cur = current[0];
@@ -414,7 +465,7 @@ function TotemNowNext({
           Now
         </h2>
         {cur ? (
-          <AgendaRow item={cur} config={config} tz={tz} scale={scale * 1.3} roleColors={roleColors} />
+          <AgendaRow item={cur} config={config} tz={tz} scale={scale * 1.3} roleColors={roleColors} showCardDate={showCardDate} />
         ) : (
           <p className="opacity-60" style={{ fontSize: scale, ...bodyStyle }}>
             No session in progress.
@@ -435,7 +486,7 @@ function TotemNowNext({
             </p>
           )}
           {next.map((it) => (
-            <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} roleColors={roleColors} />
+            <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} roleColors={roleColors} showCardDate={showCardDate} />
           ))}
         </div>
       </section>
@@ -450,6 +501,7 @@ function RoomDoor({
   scale,
   now,
   roleColors,
+  showCardDate,
 }: {
   items: AgendaItem[];
   config: AgendaWidgetConfig;
@@ -457,6 +509,7 @@ function RoomDoor({
   scale: number;
   now: Date;
   roleColors: RoleColors;
+  showCardDate?: boolean;
 }) {
   const { current, upcoming } = splitCurrentNext(items, now);
   const cur = current[0];
@@ -474,7 +527,7 @@ function RoomDoor({
         {cur ? (
           <>
             <p className="font-mono opacity-80 mt-4" style={{ fontSize: scale * 1.6, ...timeStyle }}>
-              {formatTime(cur.startsAt, tz)} – {formatTime(cur.endsAt, tz)}
+              {showCardDate ? `${formatShortDate(cur.startsAt, tz)} · ` : ""}{formatTime(cur.startsAt, tz)} – {formatTime(cur.endsAt, tz)}
             </p>
             <h1 className="font-bold mt-3 leading-tight" style={{ fontSize: scale * 3, ...titleStyle }}>
               {cur.title}
@@ -505,7 +558,7 @@ function RoomDoor({
             Up next
           </p>
           <p className="font-mono opacity-80 mt-2" style={{ fontSize: scale * 1.1, ...timeStyle }}>
-            {formatTime(next.startsAt, tz)}
+            {showCardDate ? `${formatShortDate(next.startsAt, tz)} · ` : ""}{formatTime(next.startsAt, tz)}
           </p>
           <p className="font-semibold mt-1" style={{ fontSize: scale * 1.4, ...bodyStyle }}>
             {next.title}
@@ -595,6 +648,20 @@ export function AgendaDisplayWidget({
   }, [pages.length, config.rotationIntervalSeconds]);
 
   const pageItems = pages[pageIndex] ?? [];
+
+  // When the resolved agenda spans more than one calendar day (in the
+  // display timezone), show a compact date on every card. The list is
+  // already sorted chronologically by start time, but without a date a
+  // multi-day list looks out of order (e.g. day-1 16:30 above day-2
+  // 10:30). Single-day agendas stay clean (no redundant date).
+  const multiDay = useMemo(() => {
+    const days = new Set<string>();
+    for (const it of items) {
+      days.add(tzDayKey(it.startsAt, timezone));
+      if (days.size > 1) return true;
+    }
+    return false;
+  }, [items, timezone]);
 
   // In now_next mode every layout (not only totem/room_door) gets a
   // strong "live now" highlight on the currently-running row(s).
@@ -711,15 +778,15 @@ export function AgendaDisplayWidget({
           No agenda items match this display right now.
         </div>
       ) : layout === "ultrawide" ? (
-        <UltraWideGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} />
+        <UltraWideGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} showCardDate={multiDay} />
       ) : layout === "portrait" ? (
-        <PortraitCards pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} />
+        <PortraitCards pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} showCardDate={multiDay} />
       ) : layout === "totem" ? (
-        <TotemNowNext items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} />
+        <TotemNowNext items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} showCardDate={multiDay} />
       ) : layout === "room_door" ? (
-        <RoomDoor items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} />
+        <RoomDoor items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} showCardDate={multiDay} />
       ) : (
-        <LandscapeGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} />
+        <LandscapeGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} showCardDate={multiDay} />
       )}
     </div>
   );

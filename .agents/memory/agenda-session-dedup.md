@@ -31,6 +31,15 @@ The merge picks a base row by status priority. The first version omitted
 `SESSION_STATUS_PRIORITY` in lockstep with `AGENDA_STATUSES`
 (cancelled>moved>delayed>in_progress>scheduled).
 
+**Multi-day ordering looks wrong without a date.** The display is sorted purely
+by start time, so a multi-day agenda is correctly chronological but *looks* out
+of order when only HH:MM is shown (e.g. day-1 16:30 sitting above day-2 10:30).
+The widget therefore auto-shows a compact per-card date whenever the resolved
+items span more than one calendar day *in the display timezone* (single-day
+agendas stay clean). **Why:** users read this as a sort bug. **How to apply:**
+keep the multi-day detection and the date formatter on the SAME tz fallback
+(UTC when no tz) or the day-split decision and the printed date can disagree.
+
 **Related operator-config trap (not a code bug):** if `presenter` is mapped to a
 "Speaker Role" column, the card shows roles ("Moderator, Speaker") not names.
 Operator should map presenter to the person-name column.
