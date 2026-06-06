@@ -128,12 +128,16 @@ const STATUS_LABELS: Record<AgendaStatus, string> = {
   moved: "Moved",
 };
 
+// Per-status background tint + border. Text colour is intentionally
+// left to inherit `currentColor` so the label stays readable on BOTH
+// the dark theme (light text) and the light theme (dark text) — the
+// old baked-in light text (text-*-100) vanished on a white background.
 const STATUS_COLOR: Record<AgendaStatus, string> = {
-  scheduled: "bg-slate-500/30 text-slate-100 border-slate-400/40",
-  in_progress: "bg-emerald-500/30 text-emerald-100 border-emerald-400/60 animate-pulse",
-  delayed: "bg-amber-500/30 text-amber-100 border-amber-400/60",
-  cancelled: "bg-rose-600/30 text-rose-100 border-rose-400/60",
-  moved: "bg-indigo-500/30 text-indigo-100 border-indigo-400/60",
+  scheduled: "bg-slate-500/20 border-slate-400/50",
+  in_progress: "bg-emerald-500/25 border-emerald-500/60 animate-pulse",
+  delayed: "bg-amber-500/25 border-amber-500/60",
+  cancelled: "bg-rose-600/25 border-rose-500/60",
+  moved: "bg-indigo-500/25 border-indigo-500/60",
 };
 
 // Task #234 — container-relative scaling. Tables are *multipliers*
@@ -145,10 +149,10 @@ const STATUS_COLOR: Record<AgendaStatus, string> = {
 // the agenda now scales down/up to match its host instead of always
 // rendering 18 px text regardless of container size.
 export const AGENDA_FONT_SCALE_RATIO = {
-  small: 14 / 1080,
+  small: 13 / 1080,
   normal: 18 / 1080,
-  large: 22 / 1080,
-  xlarge: 28 / 1080,
+  large: 26 / 1080,
+  xlarge: 36 / 1080,
 } as const;
 
 export const AGENDA_DENSITY_GAP_RATIO = {
@@ -270,20 +274,30 @@ function AgendaRow({
   // session is rendered with a strong accent ring + brighter bg in
   // every layout, so audiences can tell at a glance which session
   // is happening now without reading the timestamp.
-  const highlightClass = isCurrent
-    ? "border-2 bg-white/15 shadow-[0_0_24px_rgba(255,255,255,0.15)]"
-    : "border border-white/10 bg-white/5";
-  const highlightStyle: React.CSSProperties = isCurrent && accentColor
-    ? { borderColor: accentColor }
-    : {};
+  // Card chrome reads theme-aware CSS variables set on the widget root
+  // so it renders on both dark and light themes. A slim accent stripe on
+  // the left edge ties each card to the header accent bar; the currently
+  // running session gets a thicker accent, brighter fill and a soft glow.
+  const cardStyle: React.CSSProperties = {
+    background: isCurrent ? "var(--ag-card-bg-current)" : "var(--ag-card-bg)",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "var(--ag-border)",
+    borderLeftWidth: isCurrent ? 4 : 3,
+    borderLeftColor: accentColor || "var(--ag-border)",
+    boxShadow: isCurrent ? "var(--ag-glow)" : undefined,
+  };
   return (
     <div
-      className={`flex items-start gap-4 rounded-lg ${highlightClass} px-4 py-3 backdrop-blur-sm`}
-      style={highlightStyle}
+      className="flex items-start gap-4 rounded-lg px-4 py-3"
+      style={cardStyle}
       data-testid={`agenda-row-${item.id}`}
       data-current={isCurrent ? "true" : undefined}
     >
-      <div className="flex flex-col items-center min-w-[6.5em] border-r border-white/10 pr-4">
+      <div
+        className="flex flex-col items-center min-w-[6.5em] pr-4"
+        style={{ borderRight: "1px solid var(--ag-divider)" }}
+      >
         <span
           className="font-mono font-bold"
           style={{ fontSize: scale * 1.15, ...timeStyle }}
@@ -553,7 +567,7 @@ function RoomDoor({
         )}
       </div>
       {next && (
-        <div className="border-t border-white/10 pt-6">
+        <div className="pt-6" style={{ borderTop: "1px solid var(--ag-divider)" }}>
           <p className="opacity-60 uppercase tracking-widest" style={{ fontSize: scale * 0.8, ...titleStyle }}>
             Up next
           </p>
@@ -667,9 +681,29 @@ export function AgendaDisplayWidget({
   // strong "live now" highlight on the currently-running row(s).
   const highlightCurrent = config.displayMode === "now_next";
 
-  const themeClass = config.theme === "light"
+  const isLight = config.theme === "light";
+  const themeClass = isLight
     ? "bg-white text-slate-900"
     : "bg-slate-950 text-slate-50";
+  // Theme-aware card chrome exposed as CSS variables so every nested row,
+  // divider and badge inherits the right contrast without prop-drilling.
+  // In light mode the legacy white-on-white borders/backgrounds were
+  // invisible; these dark-tinted values make the cards read on white.
+  const themeVars = (isLight
+    ? {
+        "--ag-card-bg": "rgba(15,23,42,0.04)",
+        "--ag-card-bg-current": "rgba(15,23,42,0.08)",
+        "--ag-border": "rgba(15,23,42,0.14)",
+        "--ag-divider": "rgba(15,23,42,0.10)",
+        "--ag-glow": "0 2px 12px rgba(15,23,42,0.12)",
+      }
+    : {
+        "--ag-card-bg": "rgba(255,255,255,0.05)",
+        "--ag-card-bg-current": "rgba(255,255,255,0.15)",
+        "--ag-border": "rgba(255,255,255,0.10)",
+        "--ag-divider": "rgba(255,255,255,0.10)",
+        "--ag-glow": "0 0 24px rgba(255,255,255,0.15)",
+      }) as React.CSSProperties;
 
   const bgStyle: React.CSSProperties = config.backgroundUrl
     ? {
@@ -691,6 +725,7 @@ export function AgendaDisplayWidget({
       className={`relative w-full h-full flex flex-col ${themeClass}`}
       style={{
         ...bgStyle,
+        ...themeVars,
         padding: gap * 2,
         gap,
         fontFamily: fontStack,

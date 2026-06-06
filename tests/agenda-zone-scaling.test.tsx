@@ -139,9 +139,9 @@ test("scale/gap respond to container size (smaller zones → smaller text)", () 
 
 test("scale/gap honour the explicit fontScale + density tiers", () => {
   // At 1080p min-dim each tier maps to its calibrated pixel size.
-  assert.equal(resolveAgendaFontPx("small", 1920, 1080), 14);
-  assert.equal(resolveAgendaFontPx("large", 1920, 1080), 22);
-  assert.equal(resolveAgendaFontPx("xlarge", 1920, 1080), 28);
+  assert.equal(resolveAgendaFontPx("small", 1920, 1080), 13);
+  assert.equal(resolveAgendaFontPx("large", 1920, 1080), 26);
+  assert.equal(resolveAgendaFontPx("xlarge", 1920, 1080), 36);
   assert.equal(resolveAgendaGapPx("compact", 1920, 1080), 6);
   assert.equal(resolveAgendaGapPx("spacious", 1920, 1080), 20);
 });

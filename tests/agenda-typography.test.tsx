@@ -275,6 +275,45 @@ test("renderer: statusColor overrides badge text colour, keeps per-status tint b
   assert.match(badge, /border-emerald-/);
 });
 
+// ---------- 3b. light-theme card chrome ------------------------------
+
+test("renderer: light theme applies theme-aware card chrome vars (no white-on-white)", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(AgendaDisplayWidget, {
+      config: buildConfig({ theme: "light" }),
+      items: [buildItem({ id: "row" })],
+      width: 1920,
+      height: 1080,
+    }),
+  );
+  // Root exposes the light-mode chrome variables…
+  assert.match(html, /--ag-card-bg:\s*rgba\(15,23,42/);
+  assert.match(html, /--ag-border:\s*rgba\(15,23,42/);
+  // …and the card row consumes them instead of hardcoded white utilities.
+  const row = attrOn(html, "agenda-row-row");
+  assert.match(row, /var\(--ag-card-bg\)/, "card bg should read the theme var");
+  assert.match(row, /var\(--ag-border\)/, "card border should read the theme var");
+  // The legacy white-on-white classes must be gone.
+  assert.ok(!/bg-white\/5|border-white\/10/.test(row));
+});
+
+test("renderer: status badge omits forced light text so it reads on light theme", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(AgendaDisplayWidget, {
+      config: buildConfig({ theme: "light" }),
+      items: [buildItem({ id: "row", status: "in_progress" as any })],
+      width: 1920,
+      height: 1080,
+    }),
+  );
+  const badge = attrOn(html, "agenda-status-in_progress");
+  assert.ok(badge.length > 0, "status badge present");
+  // Per-status tint stays, but baked-in light text classes are gone so
+  // the label inherits the dark theme text colour on a white background.
+  assert.match(badge, /bg-emerald-/);
+  assert.ok(!/text-emerald-100|text-slate-100/.test(badge));
+});
+
 // ---------- 4. Task #240 — day/date header chunks ---------------------
 
 test("renderer: agenda-day-date is omitted when both showDayName and showDate are false", () => {
