@@ -2041,24 +2041,6 @@ function ScreenCard({
                 <Badge variant="secondary">Unpaired</Badge>
               )}
               <VideoHealthBadge screen={screen} />
-              {!screen.displayProfileId && (
-                <button
-                  type="button"
-                  onClick={() => !screen.locked && setEditOpen(true)}
-                  disabled={!!screen.locked}
-                  className="inline-flex"
-                  title="Click to assign a display profile"
-                  data-testid={`button-no-profile-warning-${screen.id}`}
-                >
-                  <Badge
-                    variant="outline"
-                    className="gap-1 border-amber-500/40 text-amber-600 dark:text-amber-400 hover-elevate cursor-pointer"
-                  >
-                    <AlertTriangle className="h-3 w-3" />
-                    No Display Profile
-                  </Badge>
-                </button>
-              )}
             </div>
             {(screen.location || client || screen.hostname || (screen.isPaired && screen.ipAddress)) && (
               <div className="flex items-center gap-1 text-sm text-muted-foreground flex-wrap">
@@ -2482,6 +2464,24 @@ function ScreenCard({
             </div>
           );
         })()}
+        {!screen.displayProfileId && (
+          <button
+            type="button"
+            onClick={() => !screen.locked && setEditOpen(true)}
+            disabled={!!screen.locked}
+            className="inline-flex w-fit"
+            title="Click to assign a display profile"
+            data-testid={`button-no-profile-warning-${screen.id}`}
+          >
+            <Badge
+              variant="outline"
+              className="gap-1 border-amber-500/40 text-amber-600 dark:text-amber-400 hover-elevate cursor-pointer"
+            >
+              <AlertTriangle className="h-3 w-3" />
+              No Display Profile
+            </Badge>
+          </button>
+        )}
         <ScreenBookingStatus screenId={screen.id} />
         {/* Owner-only pairing-code panel + sibling inherits message —
             shared with tests/canvas-pairing-render.test.tsx via the
