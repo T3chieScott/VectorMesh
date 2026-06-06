@@ -932,6 +932,17 @@ function AgendaConfigPickerSection({
   const selectedId = form.watch("agendaConfigId") as string | undefined;
   const selected = (configs || []).find((c) => c.id === selectedId);
 
+  // Optional test-date override for the live preview so an operator can
+  // see how the agenda resolves as if "now" were a chosen moment. The
+  // datetime-local string is converted to a UTC ISO instant before it is
+  // forwarded to the widget (which forwards it to the server as ?at=).
+  const [previewTestAt, setPreviewTestAt] = useState<string>("");
+  const previewAtIso = useMemo(() => {
+    if (!previewTestAt) return undefined;
+    const parsed = new Date(previewTestAt);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  }, [previewTestAt]);
+
   // Compute the zone's effective pixel dimensions inside the current
   // layout. zone width/height are stored as percentages of the
   // layout's pixel canvas, so we multiply through to get a real
@@ -1082,13 +1093,37 @@ function AgendaConfigPickerSection({
                 scaling). Sized to the zone's actual aspect ratio. */}
             {selected && (
               <div className="mt-3 space-y-1">
-                <div className="text-xs text-muted-foreground">Preview</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="text-xs text-muted-foreground">Preview</div>
+                  <Label htmlFor="agenda-preview-test-date" className="text-xs whitespace-nowrap ml-2">Test date</Label>
+                  <input
+                    id="agenda-preview-test-date"
+                    type="datetime-local"
+                    value={previewTestAt}
+                    onChange={(e) => setPreviewTestAt(e.target.value)}
+                    className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+                    data-testid="input-agenda-preview-test-date"
+                  />
+                  {previewTestAt && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setPreviewTestAt("")}
+                      data-testid="button-agenda-preview-test-date-clear"
+                    >
+                      <X className="h-3 w-3 mr-1" />
+                      Live
+                    </Button>
+                  )}
+                </div>
                 <div
                   className="rounded-md border overflow-hidden bg-slate-950"
                   style={{ width: previewW, height: previewH }}
                   data-testid={`agenda-config-preview-${selected.id}`}
                 >
-                  <AgendaConfigZoneWidget configId={selected.id} />
+                  <AgendaConfigZoneWidget configId={selected.id} atIso={previewAtIso} />
                 </div>
               </div>
             )}
@@ -8100,6 +8135,17 @@ function InteractiveLayoutPreview({
     ...mediaQuery,
   });
 
+  // Optional ?at=<ISO/date> test-date override read straight from the URL
+  // (same pattern as the player/simulator). When present, agenda zones in
+  // the interactive canvas resolve as if "now" were the chosen moment.
+  const agendaTestAt = useMemo(() => {
+    if (typeof window === "undefined") return undefined;
+    const raw = new URLSearchParams(window.location.search).get("at");
+    if (!raw) return undefined;
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  }, []);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -8626,6 +8672,7 @@ function InteractiveLayoutPreview({
                 showBorder={false}
                 isPlaying={true}
                 fillContainer={true}
+                agendaTestAt={agendaTestAt}
               />
               {zone.type === "agenda" && (
                 <AgendaZoneEditorLabel configId={zone.agendaConfigId} />

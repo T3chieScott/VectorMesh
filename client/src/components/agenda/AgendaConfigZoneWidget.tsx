@@ -21,11 +21,24 @@ interface DisplayPayload {
 
 export function AgendaConfigZoneWidget({
   configId,
+  atIso,
 }: {
   configId: string;
+  // Optional test-date override (?at=<ISO instant>). When set, it is
+  // forwarded to the server so the agenda resolves as if "now" were
+  // that moment, and passed to the widget so its clock freezes there.
+  atIso?: string;
 }) {
   const [data, setData] = useState<DisplayPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Validate the override once. Garbage values fall back to live.
+  const parsedTestNow = atIso ? new Date(atIso) : null;
+  const testNow =
+    parsedTestNow && !Number.isNaN(parsedTestNow.getTime())
+      ? parsedTestNow
+      : undefined;
+  const validAtIso = testNow ? testNow.toISOString() : null;
 
   useEffect(() => {
     if (!configId) return;
@@ -35,7 +48,10 @@ export function AgendaConfigZoneWidget({
 
     async function load() {
       try {
-        const res = await fetch(`/api/agenda/display/${configId}`, {
+        const url = validAtIso
+          ? `/api/agenda/display/${configId}?at=${encodeURIComponent(validAtIso)}`
+          : `/api/agenda/display/${configId}`;
+        const res = await fetch(url, {
           cache: "no-store",
         });
         if (!res.ok) {
@@ -60,7 +76,7 @@ export function AgendaConfigZoneWidget({
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [configId]);
+  }, [configId, validAtIso]);
 
   if (!configId) {
     return (
@@ -88,6 +104,7 @@ export function AgendaConfigZoneWidget({
       config={data.config}
       items={data.items}
       timezone={data.client?.timezone || null}
+      now={testNow}
     />
   );
 }

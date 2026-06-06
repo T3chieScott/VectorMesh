@@ -5570,6 +5570,10 @@ export interface ZoneRendererProps {
   mediaBaseUrl?: string;
   deviceToken?: string;
   playerContext?: PlayerVariableContext;
+  // Optional test-date override (?at=<ISO instant>) forwarded only to
+  // agenda zones so an operator can preview as if "now" were a chosen
+  // moment. Other zone types ignore it.
+  agendaTestAt?: string;
 }
 
 export function ZoneRenderer({
@@ -5585,6 +5589,7 @@ export function ZoneRenderer({
   mediaBaseUrl,
   deviceToken,
   playerContext,
+  agendaTestAt,
 }: ZoneRendererProps) {
   const ZoneIcon = zoneTypeIcons[zone.type] || Layers;
   // Re-render every 30s so {{date}}/{{time}}/{{day}} stay current without reload
@@ -5949,7 +5954,7 @@ export function ZoneRenderer({
         );
       case "agenda":
         return (
-          <AgendaConfigZoneWidget configId={zone.agendaConfigId || ""} />
+          <AgendaConfigZoneWidget configId={zone.agendaConfigId || ""} atIso={agendaTestAt} />
         );
       case "webrtc_stream": {
         const webrtcFullUrl = zone.webrtcSignallingUrl && zone.webrtcStreamKey

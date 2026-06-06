@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSearch } from "wouter";
+import { useSearch, useLocation } from "wouter";
 import { useSiteFilteredQuery } from "@/hooks/use-site-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -59,6 +59,7 @@ function PlayerDisplay({
   fallbackZones,
   useStableKeys = false,
   playerContext,
+  agendaTestAt,
 }: {
   screen: Screen | null;
   profile: DisplayProfile | null;
@@ -72,6 +73,7 @@ function PlayerDisplay({
   fallbackZones?: LayoutZone[];
   useStableKeys?: boolean;
   playerContext?: PlayerVariableContext;
+  agendaTestAt?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0.5);
@@ -241,6 +243,7 @@ function PlayerDisplay({
                         timezone={weatherTimezone}
                         fillContainer={true}
                         playerContext={playerContext}
+                        agendaTestAt={agendaTestAt}
                       />
                     </div>
                   </div>
@@ -286,6 +289,7 @@ function PlayerDisplay({
                 timezone={weatherTimezone}
                 fillContainer={true}
                 playerContext={playerContext}
+                agendaTestAt={agendaTestAt}
               />
             </div>
           </div>
@@ -374,8 +378,42 @@ interface ResolvedContent {
 
 export default function SimulatorPage() {
   const searchString = useSearch();
+  const [, navigate] = useLocation();
   const searchParams = useMemo(() => new URLSearchParams(searchString), [searchString]);
   const initialPlaylistId = searchParams.get("playlistId") || "";
+
+  // Optional test-date override (?at=<ISO/date>) so an operator can
+  // preview the simulator as if "now" were a chosen moment. Only agenda
+  // zones consume it for content; the displayed clock also freezes to it.
+  const atRaw = searchParams.get("at");
+  const testNow = useMemo(() => {
+    if (!atRaw) return undefined;
+    const parsed = new Date(atRaw);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+  }, [atRaw]);
+  const agendaTestAt = testNow ? testNow.toISOString() : undefined;
+
+  // datetime-local value (YYYY-MM-DDTHH:mm) reflecting the active test
+  // date, or "" when live. Used to populate the picker control.
+  const testDateInputValue = useMemo(() => {
+    if (!testNow) return "";
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${testNow.getFullYear()}-${pad(testNow.getMonth() + 1)}-${pad(testNow.getDate())}T${pad(testNow.getHours())}:${pad(testNow.getMinutes())}`;
+  }, [testNow]);
+
+  const setTestDate = useCallback(
+    (value: string) => {
+      const next = new URLSearchParams(searchString);
+      if (value) {
+        next.set("at", value);
+      } else {
+        next.delete("at");
+      }
+      const qs = next.toString();
+      navigate(qs ? `/simulator?${qs}` : "/simulator", { replace: true });
+    },
+    [searchString, navigate],
+  );
 
   const [selectedScreenId, setSelectedScreenId] = useState<string>("none");
   const [selectedLayoutId, setSelectedLayoutId] = useState<string>("auto");
@@ -675,10 +713,10 @@ export default function SimulatorPage() {
     return playlists.find(p => p.id === playlistId)?.name;
   };
 
-  // Update time every second
+  // Update time every second — or freeze on the chosen test date.
   useEffect(() => {
     const updateTime = () => {
-      const now = new Date();
+      const now = testNow ?? new Date();
       setState((prev) => ({
         ...prev,
         currentTime: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
@@ -687,9 +725,11 @@ export default function SimulatorPage() {
     };
 
     updateTime();
+    // When a test date is pinned the clock is frozen; no interval needed.
+    if (testNow) return;
     const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [testNow]);
 
   const simulatorFallbackZones: LayoutZone[] = useMemo(() => {
     if (selectedLayout || !isAutoMode || !resolvedContent?.fallbackPlaylistId) return [];
@@ -1135,8 +1175,30 @@ export default function SimulatorPage() {
                   )}
                 </CardTitle>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                  <Label htmlFor="simulator-test-date" className="text-xs whitespace-nowrap">Test date</Label>
+                  <input
+                    id="simulator-test-date"
+                    type="datetime-local"
+                    value={testDateInputValue}
+                    onChange={(e) => setTestDate(e.target.value)}
+                    className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+                    data-testid="input-simulator-test-date"
+                  />
+                  {testNow && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setTestDate("")}
+                      data-testid="button-simulator-test-date-clear"
+                    >
+                      <X className="h-3 w-3 mr-1" />
+                      Live
+                    </Button>
+                  )}
                   <Clock className="h-4 w-4" />
-                  <span className="tabular-nums">{state.currentTime}</span>
+                  <span className="tabular-nums" data-testid="text-simulator-clock">{state.currentTime}</span>
                 </div>
               </div>
             </CardHeader>
@@ -1169,6 +1231,7 @@ export default function SimulatorPage() {
                   fallbackZones={isPlaylistPreview ? undefined : simulatorFallbackZones}
                   useStableKeys={isPlaylistPreview && previewHasLayoutItems}
                   playerContext={isPlaylistPreview ? undefined : (resolvedContent?.playerVars ?? undefined)}
+                  agendaTestAt={agendaTestAt}
                 />
               )}
             </CardContent>

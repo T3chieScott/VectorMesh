@@ -242,6 +242,15 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
 function PlayerContent({ screenId, token }: { screenId: string; token: string }) {
   // Server-synced wall clock for widgets and {{time}} tokens.
   const { feedSample, getSyncedNow } = usePlayerClock();
+  // Optional test-date override (?at=<ISO/date>) so an operator can
+  // view a real screen as if "now" were a chosen moment. Only agenda
+  // zones consume this; everything else keeps the synced live clock.
+  const agendaTestAt = useMemo(() => {
+    const raw = new URLSearchParams(window.location.search).get("at");
+    if (!raw) return undefined;
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  }, []);
   const [content, setContent] = useState<PlayerContentData | null>(() => getCachedContent(screenId));
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -1351,6 +1360,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                     fillContainer={true}
                     mediaBaseUrl="/api/player/media"
                     deviceToken={token}
+                    agendaTestAt={agendaTestAt}
                     playerContext={{
                       screenName: tile.name,
                       roomName:
@@ -1556,6 +1566,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                 fillContainer={true}
                 mediaBaseUrl="/api/player/media"
                 deviceToken={token}
+                agendaTestAt={agendaTestAt}
                 playerContext={{
                   screenName: content.playerVars?.screenName ?? content.screen?.name,
                   roomName: content.playerVars?.roomName ?? content.screen?.location,
