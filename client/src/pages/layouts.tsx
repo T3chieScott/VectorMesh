@@ -8116,6 +8116,7 @@ function InteractiveLayoutPreview({
   onDoubleClickZone,
   selectedZoneIds: controlledSelectedZoneIds,
   onSelectedZoneIdsChange,
+  agendaTestAt: agendaTestAtProp,
 }: {
   layout: LayoutTemplate;
   zones: LayoutZone[];
@@ -8128,6 +8129,9 @@ function InteractiveLayoutPreview({
   onDoubleClickZone?: (zoneId: string) => void;
   selectedZoneIds?: Set<string>;
   onSelectedZoneIdsChange?: (ids: Set<string>) => void;
+  // Optional ISO test-date supplied by an in-app control (the Interactive
+  // Preview panel's "Test date" picker). Takes precedence over the URL.
+  agendaTestAt?: string;
 }) {
   const mediaQuery = useSiteFilteredQuery<MediaAsset[]>("/api/media");
   // Fetch media assets for zone rendering
@@ -8138,13 +8142,15 @@ function InteractiveLayoutPreview({
   // Optional ?at=<ISO/date> test-date override read straight from the URL
   // (same pattern as the player/simulator). When present, agenda zones in
   // the interactive canvas resolve as if "now" were the chosen moment.
-  const agendaTestAt = useMemo(() => {
+  const urlAgendaTestAt = useMemo(() => {
     if (typeof window === "undefined") return undefined;
     const raw = new URLSearchParams(window.location.search).get("at");
     if (!raw) return undefined;
     const parsed = new Date(raw);
     return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
   }, []);
+  // An explicit in-app picker value wins over the URL param.
+  const agendaTestAt = agendaTestAtProp ?? urlAgendaTestAt;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -10392,6 +10398,20 @@ function LivePreviewPanel({
   const anchorZoneId = selectedZoneIds.size > 0 ? Array.from(selectedZoneIds)[0] : null;
   const anchorZone = anchorZoneId ? zones.find(z => z.id === anchorZoneId) : null;
 
+  // Test-date override for the interactive canvas so an operator can see how
+  // agenda zones resolve as if "now" were a chosen moment — the same control
+  // the agenda config preview offers, but applied to the whole layout. The
+  // datetime-local string is converted to a UTC ISO instant before being
+  // forwarded (agenda zones forward it to the server as ?at=). Only shown
+  // when the layout actually contains an agenda zone.
+  const hasAgendaZone = zones.some(z => z.type === "agenda");
+  const [previewTestAt, setPreviewTestAt] = useState<string>("");
+  const previewAtIso = useMemo(() => {
+    if (!previewTestAt) return undefined;
+    const parsed = new Date(previewTestAt);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  }, [previewTestAt]);
+
   const alignZones = (alignment: "left" | "center-h" | "right" | "top" | "center-v" | "bottom" | "distribute-h" | "distribute-v") => {
     if (selectedZones.length < 2 || !anchorZone) return;
     const others = selectedZones.filter(z => z.id !== anchorZone.id);
@@ -10479,6 +10499,32 @@ function LivePreviewPanel({
         <p className="text-xs text-muted-foreground mt-1">
           Click to select, drag to move, Shift+click to multi-select, double-click to edit
         </p>
+        {hasAgendaZone && (
+          <div className="flex items-center gap-2 flex-wrap mt-2">
+            <Label htmlFor="layout-preview-test-date" className="text-xs whitespace-nowrap">Agenda test date</Label>
+            <input
+              id="layout-preview-test-date"
+              type="datetime-local"
+              value={previewTestAt}
+              onChange={(e) => setPreviewTestAt(e.target.value)}
+              className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+              data-testid="input-layout-preview-test-date"
+            />
+            {previewTestAt && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setPreviewTestAt("")}
+                data-testid="button-layout-preview-test-date-clear"
+              >
+                <X className="h-3 w-3 mr-1" />
+                Live
+              </Button>
+            )}
+          </div>
+        )}
         <div className="h-9 mt-2 overflow-x-auto overflow-y-hidden" data-testid="alignment-toolbar">
           {selectedZones.length >= 1 && (
             <div className="flex items-center gap-1 flex-nowrap">
@@ -10544,6 +10590,7 @@ function LivePreviewPanel({
             onDoubleClickZone={onDoubleClickZone}
             selectedZoneIds={selectedZoneIds}
             onSelectedZoneIdsChange={onSelectedZoneIdsChange}
+            agendaTestAt={previewAtIso}
           />
         </div>
       </div>
