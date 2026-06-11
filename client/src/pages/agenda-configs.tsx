@@ -693,13 +693,19 @@ function ConfigEditor({
                 ? "Previewing as if now were the selected date/time."
                 : "Leave blank to preview using the real current time."}
             </p>
+            {/* The widget measures its own container (like the real
+                /display/agenda page and the player zone widget) so fonts
+                and spacing scale to this box, not to the logical device
+                resolution. The aspect-ratio box below supplies the chosen
+                form-factor's shape; passing the logical 1080/1920 dims here
+                instead would size text for a full-size screen and overflow
+                this small preview, clipping titles/details (only the times
+                survived). */}
             <div className="border rounded-md overflow-hidden bg-black" style={{ aspectRatio: `${dims.w} / ${dims.h}` }}>
               <div style={{ width: "100%", height: "100%" }}>
                 <AgendaDisplayWidget
                   config={previewConfig}
                   items={previewItems}
-                  width={dims.w}
-                  height={dims.h}
                   timezone={clientTimezone ?? undefined}
                   now={testNow ?? undefined}
                 />
