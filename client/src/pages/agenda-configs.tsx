@@ -29,12 +29,11 @@ import {
   AGENDA_DENSITIES,
   AGENDA_THEMES,
   AGENDA_STATUSES,
-  AGENDA_FONT_FAMILIES,
-  AGENDA_FONT_FAMILY_LABELS,
   type AgendaItem,
   type AgendaWidgetConfig,
 } from "@shared/schema";
 import { resolveAgendaItems } from "@shared/agenda-resolver";
+import { FontFamilySelect } from "@/components/font-family-select";
 
 // Real-world conference signage form factors. Totem is the narrow
 // 9:32 floor kiosk you see at hotel lobbies; room door is the small
@@ -92,8 +91,8 @@ const configFormSchema = z.object({
   density: z.enum(AGENDA_DENSITIES),
   theme: z.enum(AGENDA_THEMES),
   accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Must be hex like #0ea5e9"),
-  // Empty string means "use theme default". When set, must be valid hex.
-  fontFamily: z.union([z.enum(AGENDA_FONT_FAMILIES), z.literal("")]).optional(),
+  // Font key: built-in (see shared/fonts.ts) or `custom:<id>`. Empty = theme default.
+  fontFamily: z.string().optional(),
   titleColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
   bodyColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
   timeColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
@@ -389,15 +388,15 @@ function ConfigEditor({
                 <FormField control={form.control} name="fontFamily" render={({ field }) => (
                   <FormItem>
                     <FormLabel className="text-xs">Font family</FormLabel>
-                    <Select value={field.value ?? ""} onValueChange={(v) => field.onChange(v === "__default__" ? "" : v)}>
-                      <FormControl><SelectTrigger data-testid="select-font-family"><SelectValue placeholder="Theme default (Inter)" /></SelectTrigger></FormControl>
-                      <SelectContent>
-                        <SelectItem value="__default__">Theme default (Inter)</SelectItem>
-                        {AGENDA_FONT_FAMILIES.map((f) => (
-                          <SelectItem key={f} value={f}>{AGENDA_FONT_FAMILY_LABELS[f]}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <FontFamilySelect
+                        value={field.value}
+                        onChange={field.onChange}
+                        clientId={clientId}
+                        defaultLabel="Theme default (Inter)"
+                        data-testid="select-font-family"
+                      />
+                    </FormControl>
                   </FormItem>
                 )} />
                 {(

@@ -63,6 +63,7 @@ import {
   sanitizeWidgetCss,
 } from "@shared/html-widget-sanitize";
 import { resolveMediaRefs } from "@shared/media-refs";
+import { resolveFontStack } from "@shared/fonts";
 
 export type { PlayerVariableContext } from "@/lib/player-variables";
 
@@ -748,12 +749,14 @@ function TextWidget({
   fontSize = 24,
   align = "center",
   verticalAlign = "middle",
+  fontFamily,
   ctx,
 }: { 
   content?: string;
   fontSize?: number | string;
   align?: string;
   verticalAlign?: string;
+  fontFamily?: string | null;
   ctx?: PlayerVariableContext;
 }) {
   const legacySizeMap: Record<string, number> = {
@@ -786,6 +789,7 @@ function TextWidget({
         fontSize: `${resolvedSize}px`,
         textAlign: align as "left" | "center" | "right",
         whiteSpace: "pre-wrap",
+        ...(fontFamily ? { fontFamily: resolveFontStack(fontFamily) } : {}),
       }}
     >
       {resolvePlayerVariables(content || "Sample text content", ctx)}
@@ -5673,6 +5677,7 @@ export function ZoneRenderer({
             fontSize={zone.textFontSize}
             align={zone.textAlign}
             verticalAlign={zone.textVerticalAlign}
+            fontFamily={zone.fontFamily}
             ctx={ctx}
           />
         );

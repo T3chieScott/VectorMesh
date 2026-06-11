@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { AgendaDisplayWidget } from "./AgendaDisplayWidget";
+import { CustomFontFaces } from "@/lib/fontFace";
 import type { AgendaItem, AgendaWidgetConfig } from "@shared/schema";
+import type { CustomFontRef } from "@shared/fonts";
 
 // Wrapper that turns an agenda widget config id into the live
 // AgendaDisplayWidget by polling the same public endpoint that
@@ -16,6 +18,7 @@ interface DisplayPayload {
   config: AgendaWidgetConfig;
   items: AgendaItem[];
   client: { id: string; name: string; timezone: string } | null;
+  fonts?: CustomFontRef[];
   serverTime: number;
 }
 
@@ -100,11 +103,14 @@ export function AgendaConfigZoneWidget({
     );
   }
   return (
-    <AgendaDisplayWidget
-      config={data.config}
-      items={data.items}
-      timezone={data.client?.timezone || null}
-      now={testNow}
-    />
+    <>
+      <CustomFontFaces fonts={data.fonts} />
+      <AgendaDisplayWidget
+        config={data.config}
+        items={data.items}
+        timezone={data.client?.timezone || null}
+        now={testNow}
+      />
+    </>
   );
 }

@@ -25,6 +25,13 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // Task #281: custom font files — cache like media so uploaded fonts
+  // keep rendering when the device is offline.
+  if (url.pathname.match(/\/api\/fonts\/[^/]+\/file/)) {
+    event.respondWith(networkFirstMedia(event.request));
+    return;
+  }
+
   if (url.pathname.match(/\/api\/player\/[^/]+\/content/)) {
     event.respondWith(networkFirstContent(event.request));
     return;

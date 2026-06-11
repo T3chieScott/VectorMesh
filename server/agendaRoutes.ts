@@ -11,6 +11,7 @@ import {
   type AgendaWidgetConfig,
   type AgendaSyncConfig,
   type Client,
+  type CustomFont,
   type InsertAgendaItem,
   type InsertAgendaWidgetConfig,
   type InsertAgendaSyncConfig,
@@ -64,6 +65,7 @@ export interface AgendaRoutesStorage {
     now: Date,
   ): Promise<{ config: AgendaWidgetConfig; items: AgendaItem[] } | undefined>;
   getClient(id: string): Promise<Client | undefined>;
+  getCustomFonts(clientId: string): Promise<CustomFont[]>;
 }
 
 export interface AgendaRoutesAuth {
@@ -808,11 +810,16 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         status: it.status,
         statusMessage: it.statusMessage,
       }));
+      // Task #281: include the site's custom fonts so the chromeless
+      // display page (and agenda zones inside layouts) can inject the
+      // @font-face needed to render a `custom:<id>` fontFamily.
+      const fonts = await storage.getCustomFonts(config.clientId);
       res.setHeader("Cache-Control", "no-store");
       res.json({
         config: publicConfig,
         items: publicItems,
         client: client ? { name: client.name, timezone: client.timezone } : null,
+        fonts: fonts.map((f) => ({ id: f.id, name: f.name, format: f.format })),
         serverTime: Date.now(),
       });
     } catch (error) {

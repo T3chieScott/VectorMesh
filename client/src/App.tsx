@@ -11,6 +11,8 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { useAuth } from "@/hooks/use-auth";
 import { SiteProvider } from "@/hooks/use-site-context";
+import { CustomFontFaces } from "@/lib/fontFace";
+import type { CustomFont } from "@shared/schema";
 
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/landing";
@@ -44,6 +46,7 @@ import HelpPage from "@/pages/help";
 import AgendaItemsPage from "@/pages/agenda-items";
 import AgendaConfigsPage from "@/pages/agenda-configs";
 import DisplayAgendaPage from "@/pages/display-agenda";
+import FontsPage from "@/pages/fonts";
 
 function AdminRoute({ component: Component }: { component: () => JSX.Element }) {
   const { user } = useAuth();
@@ -78,10 +81,26 @@ function AuthenticatedRouter() {
       <Route path="/control-panel" component={ControlPanelPage} />
       <Route path="/agenda" component={AgendaItemsPage} />
       <Route path="/agenda/displays" component={AgendaConfigsPage} />
+      <Route path="/fonts" component={FontsPage} />
       <Route path="/admin/streaming">{() => <AdminRoute component={StreamingServerPage} />}</Route>
       <Route component={NotFound} />
     </Switch>
   );
+}
+
+// Task #281: inject @font-face for every custom font the operator can
+// access so uploaded fonts render in the admin previews (layout editor,
+// agenda preview, the font picker's own option list).
+function CustomFontLoader() {
+  const { data: fonts } = useQuery<CustomFont[]>({
+    queryKey: ["/api/fonts", undefined],
+    queryFn: async () => {
+      const res = await fetch("/api/fonts", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+  return <CustomFontFaces fonts={fonts} />;
 }
 
 function AuthenticatedLayout() {
@@ -92,6 +111,7 @@ function AuthenticatedLayout() {
 
   return (
     <SiteProvider>
+      <CustomFontLoader />
       <SidebarProvider style={style as React.CSSProperties}>
         <div className="flex min-h-screen w-full">
           <AppSidebar />

@@ -35,6 +35,7 @@ import path from "path";
 import os from "os";
 import fs from "fs";
 import * as fileStorage from "./fileStorage";
+import { ALLOWED_FONT_EXTENSIONS } from "@shared/fonts";
 import { find as findTimezone } from "geo-tz";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert, sendAgendaFeedFailingAlert, sendAgendaFeedRecoveredAlert } from "./email";
 import { resolveScreenContent, type ResolverDeps } from "./contentResolver";
@@ -1762,6 +1763,139 @@ export async function registerRoutes(
     }
   });
 
+  // ============ CUSTOM FONTS (Task #281) ============
+
+  // List per-client uploaded fonts. With ?clientId scopes to that site;
+  // without it returns every font the caller can access (used by the
+  // global font-face loader when "All sites" is selected).
+  app.get("/api/fonts", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const clientId = typeof req.query.clientId === "string" ? req.query.clientId : undefined;
+      if (clientId) {
+        if (!canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied to this client" });
+        }
+        return res.json(await storage.getCustomFonts(clientId));
+      }
+      const clients = await storage.getClients();
+      const accessible = clients.filter((c) => canAccessClient(req, c.id));
+      const all = (
+        await Promise.all(accessible.map((c) => storage.getCustomFonts(c.id)))
+      ).flat();
+      res.json(all);
+    } catch (error) {
+      console.error("Error listing fonts:", error);
+      res.status(500).json({ error: "Failed to list fonts" });
+    }
+  });
+
+  // Upload a font file (woff2/woff/ttf/otf) for a client/site.
+  app.post("/api/fonts/upload", requireAuth, loadUserContext, upload.single("file"), async (req, res) => {
+    const tempPath = req.file?.path;
+    const cleanupTemp = async () => {
+      if (tempPath) {
+        try { await fs.promises.unlink(tempPath); } catch {}
+      }
+    };
+    try {
+      if (!req.file || !tempPath) {
+        return res.status(400).json({ error: "No file provided" });
+      }
+      const clientId = req.body.clientId;
+      if (!clientId) {
+        await cleanupTemp();
+        return res.status(400).json({ error: "clientId is required" });
+      }
+      if (!canAccessClient(req, clientId)) {
+        await cleanupTemp();
+        return res.status(403).json({ error: "Access denied to this client" });
+      }
+
+      const ext = path.extname(req.file.originalname).toLowerCase().replace(/^\./, "");
+      if (!(ALLOWED_FONT_EXTENSIONS as readonly string[]).includes(ext)) {
+        await cleanupTemp();
+        return res.status(400).json({
+          error: `Unsupported font format. Allowed: ${ALLOWED_FONT_EXTENSIONS.join(", ")}`,
+        });
+      }
+
+      const client = await storage.getClient(clientId);
+      if (client) {
+        const maxSizeMb = client.maxUploadSizeMb ?? 100;
+        if (req.file.size > maxSizeMb * 1024 * 1024) {
+          await cleanupTemp();
+          return res.status(413).json({ error: `File size exceeds the ${maxSizeMb}MB limit for this site` });
+        }
+      }
+
+      const storagePath = await fileStorage.saveFontFromDisk(
+        tempPath,
+        req.file.originalname,
+        clientId,
+      );
+
+      const rawName = typeof req.body.name === "string" && req.body.name.trim()
+        ? req.body.name.trim()
+        : req.file.originalname.replace(/\.[^.]+$/, "");
+
+      let font;
+      try {
+        font = await storage.createCustomFont({
+          clientId,
+          name: rawName,
+          originalName: req.file.originalname,
+          storagePath,
+          format: ext,
+          fileSize: req.file.size,
+        });
+      } catch (dbError) {
+        // The file is already in permanent storage; remove it so a failed
+        // DB insert doesn't leave an orphaned font file behind.
+        try { await fileStorage.deleteFile(storagePath); } catch {}
+        throw dbError;
+      }
+      res.json(font);
+    } catch (error) {
+      await cleanupTemp();
+      console.error("Error uploading font:", error);
+      res.status(500).json({ error: "Failed to upload font" });
+    }
+  });
+
+  app.delete("/api/fonts/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const font = await storage.getCustomFont(getPathParam(req, "id"));
+      if (!font) {
+        return res.status(404).json({ error: "Font not found" });
+      }
+      if (!canAccessClient(req, font.clientId)) {
+        return res.status(403).json({ error: "Access denied to this font" });
+      }
+      await fileStorage.deleteFile(font.storagePath);
+      await storage.deleteCustomFont(font.id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting font:", error);
+      res.status(500).json({ error: "Failed to delete font" });
+    }
+  });
+
+  // Public font file — served without auth so the chromeless agenda
+  // display page and network-isolated signage players can load the
+  // @font-face source. Font files are not sensitive.
+  app.get("/api/fonts/:id/file", async (req, res) => {
+    try {
+      const font = await storage.getCustomFont(getPathParam(req, "id"));
+      if (!font) {
+        return res.status(404).json({ error: "Font not found" });
+      }
+      await fileStorage.streamFile(font.storagePath, res, req);
+    } catch (error) {
+      console.error("Error serving font file:", error);
+      res.status(500).json({ error: "Failed to serve font file" });
+    }
+  });
+
   // Task #267 — dedicated upload for agenda spreadsheet sources. Validates
   // the .xlsx is readable (parses sheet names) before persisting it, so the
   // mapping UI can immediately offer a sheet picker. Returns the relative
@@ -3262,6 +3396,12 @@ export async function registerRoutes(
         screen.clientId,
         mediaShares,
       );
+      // Task #281: ship the screen's site custom fonts so the player can
+      // inject @font-face (and the service worker can cache the files for
+      // offline use) in this same content response.
+      const customFonts = screen.clientId
+        ? await storage.getCustomFonts(screen.clientId)
+        : [];
       const allPlaylists = await storage.getPlaylists();
       const playlistItemsMap: Record<string, any[]> = {};
       const layoutTemplatesMap: Record<string, any> = {};
@@ -3444,6 +3584,7 @@ export async function registerRoutes(
           ? { ...layout, zones: sanitizeHtmlZones(layout.zones as any) }
           : layout,
         media: mediaAssets,
+        fonts: customFonts.map((f) => ({ id: f.id, name: f.name, format: f.format })),
         playlists: allPlaylists,
         playlistItems: playlistItemsMap,
         // Task #244: layout templates reached via playlist rotation are also a

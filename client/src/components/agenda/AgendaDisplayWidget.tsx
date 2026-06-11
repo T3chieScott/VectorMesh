@@ -5,12 +5,8 @@ import type {
   AgendaStatus,
   AgendaDisplayMode,
   AgendaLayoutMode,
-  AgendaFontFamily,
 } from "@shared/schema";
-import {
-  AGENDA_FONT_FAMILY_STACKS,
-  AGENDA_DEFAULT_FONT_STACK,
-} from "@shared/schema";
+import { resolveFontStack } from "@shared/fonts";
 import {
   pickAgendaLayout,
   paginate,
@@ -95,12 +91,11 @@ function resolveRoleColors(config: AgendaWidgetConfig): RoleColors {
   };
 }
 
-function resolveFontStack(config: AgendaWidgetConfig): string {
-  const key = config.fontFamily as AgendaFontFamily | null | undefined;
-  if (key && key in AGENDA_FONT_FAMILY_STACKS) {
-    return AGENDA_FONT_FAMILY_STACKS[key];
-  }
-  return AGENDA_DEFAULT_FONT_STACK;
+function resolveFontStackForConfig(config: AgendaWidgetConfig): string {
+  // Task #281: fontFamily is now a shared font key (built-in or
+  // `custom:<id>`). The shared resolver falls back to the default stack
+  // for null/empty/legacy values, so existing configs render unchanged.
+  return resolveFontStack(config.fontFamily);
 }
 
 // Single reusable widget for both the live admin preview and the
@@ -714,7 +709,7 @@ export function AgendaDisplayWidget({
     : {};
 
   const roleColors = resolveRoleColors(config);
-  const fontStack = resolveFontStack(config);
+  const fontStack = resolveFontStackForConfig(config);
   const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
   const timeStyle = roleColors.time ? { color: roleColors.time } : undefined;
   const bodyStyle = roleColors.body ? { color: roleColors.body } : undefined;

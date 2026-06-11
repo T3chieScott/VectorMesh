@@ -10,6 +10,7 @@ import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, 
 
 type PlayerContentData = PlayerContentResponse;
 import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
+import { buildFontFaceCss } from "@/lib/fontFace";
 import { TestPattern } from "@/components/test-pattern";
 import html2canvas from "html2canvas";
 import { PlayerClockProvider, usePlayerClock } from "@/lib/playerClock";
@@ -374,12 +375,36 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     };
   }, []);
 
+  // Task #281: inject @font-face for the screen's custom fonts into the
+  // document head. A head-level <style> covers every player render branch
+  // (main, canvas-tile, screen-slot) and survives offline because it is
+  // driven by the cached `content` state.
+  useEffect(() => {
+    const fonts = content?.fonts;
+    const STYLE_ID = "vm-custom-fonts";
+    let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
+    if (!fonts || fonts.length === 0) {
+      if (el) el.remove();
+      return;
+    }
+    if (!el) {
+      el = document.createElement("style");
+      el.id = STYLE_ID;
+      document.head.appendChild(el);
+    }
+    el.textContent = buildFontFaceCss(fonts);
+  }, [content?.fonts]);
+
   const collectMediaUrls = useCallback((data: PlayerContentData): string[] => {
     const urls: string[] = [];
     const zones = (data.layout?.zones as LayoutZone[]) || [];
     const addMediaUrl = (id: string) => {
       if (id) urls.push(`/api/player/media/${id}/file?token=${token}`);
     };
+    // Precache font files so they're available offline (SW caches these).
+    for (const f of data.fonts || []) {
+      urls.push(`/api/fonts/${f.id}/file`);
+    }
 
     for (const zone of zones) {
       if (zone.mediaId) addMediaUrl(zone.mediaId);

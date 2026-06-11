@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useRoute } from "wouter";
 import { AgendaDisplayWidget } from "@/components/agenda/AgendaDisplayWidget";
+import { CustomFontFaces } from "@/lib/fontFace";
 import type { AgendaItem, AgendaWidgetConfig } from "@shared/schema";
+import type { CustomFontRef } from "@shared/fonts";
 
 // Chromeless full-screen display page used by signage players.
 // Mounted at /display/agenda/:configId — no sidebar, no auth.
@@ -21,6 +23,7 @@ interface DisplayPayload {
   config: AgendaWidgetConfig;
   items: AgendaItem[];
   client: { id: string; name: string; timezone: string } | null;
+  fonts?: CustomFontRef[];
   serverTime: number;
 }
 
@@ -177,6 +180,7 @@ export default function DisplayAgendaPage() {
 
   return (
     <div className="fixed inset-0">
+      <CustomFontFaces fonts={data.fonts} />
       <AgendaDisplayWidget
         config={data.config}
         items={data.items}

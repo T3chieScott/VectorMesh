@@ -377,6 +377,29 @@ export const mediaShares = pgTable("media_shares", {
   sharedAt: timestamp("shared_at").defaultNow(),
 });
 
+// Task #281: per-client uploaded font files (woff2/woff/ttf/otf).
+// The exposed CSS @font-face family is derived from the row id at
+// render time (see shared/fonts.ts → customFontFamily), so a layout
+// or agenda config stores the reference as `custom:<id>`.
+export const customFonts = pgTable("custom_fonts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  originalName: text("original_name").notNull(),
+  storagePath: text("storage_path").notNull(),
+  format: text("format").notNull(),
+  fileSize: integer("file_size").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCustomFontSchema = createInsertSchema(customFonts)
+  .omit({ id: true, createdAt: true })
+  .extend({
+    name: z.string().min(1, "Name is required"),
+  });
+export type InsertCustomFont = z.infer<typeof insertCustomFontSchema>;
+export type CustomFont = typeof customFonts.$inferSelect;
+
 export const mediaSharesRelations = relations(mediaShares, ({ one }) => ({
   mediaAsset: one(mediaAssets, { fields: [mediaShares.mediaAssetId], references: [mediaAssets.id] }),
   client: one(clients, { fields: [mediaShares.clientId], references: [clients.id] }),
@@ -474,6 +497,10 @@ export interface LayoutZone {
   newsTextSize?: number;
   // Text widget configuration
   textContent?: string;
+  // Task #281: font family for text zones. Built-in key (see shared/fonts.ts)
+  // or a `custom:<id>` reference to a per-client uploaded font. Undefined =
+  // inherit (preserves the look of text zones saved before this field existed).
+  fontFamily?: string;
   // HTML widget configuration (Task #244). The HTML body reuses `textContent`;
   // `htmlCss` carries the scoped stylesheet. Both render inside a sandboxed
   // iframe (no scripts) and are sanitised server-side before reaching players.
@@ -1510,7 +1537,11 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
     dayFilter: z.enum(AGENDA_DAY_FILTERS).default("all"),
     dayFilterDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be a date like 2026-09-12").nullable().optional(),
     accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#0ea5e9"),
-    fontFamily: z.enum(AGENDA_FONT_FAMILIES).nullable().optional(),
+    // Task #281: accept any built-in font key OR a `custom:<id>` reference.
+    // Kept as a permissive string so the expanded library and per-client
+    // uploaded fonts validate without re-listing every key here. Resolution
+    // (and fallback for unknown keys) happens in shared/fonts.ts.
+    fontFamily: z.string().nullable().optional(),
     titleColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
     bodyColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
     timeColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
@@ -1545,6 +1576,9 @@ export interface PlayerContentResponse {
   profile: DisplayProfile | null;
   layout: LayoutTemplate | null;
   media: MediaAsset[];
+  // Task #281 — per-site custom fonts so the player can inject @font-face
+  // and the service worker can cache the files for offline rendering.
+  fonts?: { id: string; name: string; format?: string | null }[];
   playlists: Playlist[];
   playlistItems: Record<string, PlaylistItem[]>;
   layoutTemplates?: Record<string, LayoutTemplate>;

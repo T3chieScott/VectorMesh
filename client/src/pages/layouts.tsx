@@ -139,6 +139,7 @@ import { buildMediaImgSnippet } from "@shared/media-refs";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { resolveLayoutUploadClientId } from "@/lib/layoutUploadClientId";
 import { ZoneRenderer } from "@/components/zone-renderer";
+import { FontFamilySelect } from "@/components/font-family-select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/hooks/use-auth";
@@ -672,6 +673,8 @@ const zoneFormSchema = z.object({
   newsTextSize: z.number().min(12).max(72).optional(),
   // Text widget configuration
   textContent: z.string().optional(),
+  // Font family key (built-in key or `custom:<id>`); empty = inherit default.
+  fontFamily: z.string().optional(),
   // HTML widget configuration (Task #244): reuses textContent for the HTML body.
   htmlCss: z.string().optional(),
   textFontSize: z.union([z.number().min(12).max(120), z.enum(["small", "medium", "large", "xlarge"])]).optional(),
@@ -1843,6 +1846,7 @@ function ZoneEditorDialog({
       webrtcStreamKey: "",
       webrtcMute: true,
       textContent: "",
+      fontFamily: "",
       htmlCss: "",
       textFontSize: 24,
       textAlign: "center",
@@ -2101,6 +2105,7 @@ function ZoneEditorDialog({
           webrtcStreamKey: zone.webrtcStreamKey || "",
           webrtcMute: zone.webrtcMute !== false,
           textContent: zone.textContent || "",
+          fontFamily: zone.fontFamily || "",
           htmlCss: zone.htmlCss || "",
           textFontSize: typeof zone.textFontSize === 'number' ? zone.textFontSize :
             (zone.textFontSize === 'small' ? 14 : zone.textFontSize === 'large' ? 36 : zone.textFontSize === 'xlarge' ? 48 : 24),
@@ -2325,6 +2330,7 @@ function ZoneEditorDialog({
           webrtcStreamKey: "",
           webrtcMute: true,
           textContent: "",
+          fontFamily: "",
           htmlCss: "",
           textFontSize: 24,
           textAlign: "center",
@@ -3843,6 +3849,28 @@ function ZoneEditorDialog({
                       </FormItem>
                     );
                   }}
+                />
+                <FormField
+                  control={form.control}
+                  name="fontFamily"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Font</FormLabel>
+                      <FormControl>
+                        <FontFamilySelect
+                          value={field.value}
+                          onChange={field.onChange}
+                          clientId={layoutUploadClientId}
+                          defaultLabel="Default (Inter)"
+                          data-testid="select-text-font-family"
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Pick a built-in font or one you've uploaded for this site.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
                 <div className="grid grid-cols-2 gap-4">
                   <FormField

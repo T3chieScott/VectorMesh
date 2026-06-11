@@ -14,6 +14,7 @@ import {
   mediaAssets,
   mediaFolders,
   mediaShares,
+  customFonts,
   layoutTemplates,
   programmes,
   programmeVersions,
@@ -47,6 +48,8 @@ import {
   type InsertMediaFolder,
   type MediaShare,
   type InsertMediaShare,
+  type CustomFont,
+  type InsertCustomFont,
   type LayoutTemplate,
   type InsertLayoutTemplate,
   type Programme,
@@ -494,6 +497,10 @@ export interface IStorage {
   getMediaSharesForAsset(mediaAssetId: string): Promise<MediaShare[]>;
   getMediaSharesForClient(clientId: string): Promise<MediaShare[]>;
   createMediaShare(data: InsertMediaShare): Promise<MediaShare>;
+  getCustomFonts(clientId: string): Promise<CustomFont[]>;
+  getCustomFont(id: string): Promise<CustomFont | undefined>;
+  createCustomFont(data: InsertCustomFont): Promise<CustomFont>;
+  deleteCustomFont(id: string): Promise<boolean>;
   deleteMediaShare(mediaAssetId: string, clientId: string): Promise<boolean>;
 
   // Layout Templates
@@ -2171,6 +2178,30 @@ export class DatabaseStorage implements IStorage {
   async createMediaShare(data: InsertMediaShare): Promise<MediaShare> {
     const [share] = await db.insert(mediaShares).values(data).returning();
     return share;
+  }
+
+  // Custom Fonts (Task #281)
+  async getCustomFonts(clientId: string): Promise<CustomFont[]> {
+    return db
+      .select()
+      .from(customFonts)
+      .where(eq(customFonts.clientId, clientId))
+      .orderBy(desc(customFonts.createdAt));
+  }
+
+  async getCustomFont(id: string): Promise<CustomFont | undefined> {
+    const [font] = await db.select().from(customFonts).where(eq(customFonts.id, id));
+    return font;
+  }
+
+  async createCustomFont(data: InsertCustomFont): Promise<CustomFont> {
+    const [font] = await db.insert(customFonts).values(data).returning();
+    return font;
+  }
+
+  async deleteCustomFont(id: string): Promise<boolean> {
+    const result = await db.delete(customFonts).where(eq(customFonts.id, id));
+    return (result.rowCount ?? 0) > 0;
   }
 
   async deleteMediaShare(mediaAssetId: string, clientId: string): Promise<boolean> {

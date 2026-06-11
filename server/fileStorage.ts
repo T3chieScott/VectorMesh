@@ -37,10 +37,32 @@ export async function ensureDirectories(clientId: string): Promise<string> {
   const root = await getUploadRoot();
   const clientUploadDir = path.join(root, clientId, "uploads");
   const clientThumbDir = path.join(root, clientId, "thumbnails");
+  const clientFontDir = path.join(root, clientId, "fonts");
   assertWithinRoot(clientUploadDir, root);
   await fs.mkdir(clientUploadDir, { recursive: true });
   await fs.mkdir(clientThumbDir, { recursive: true });
+  await fs.mkdir(clientFontDir, { recursive: true });
   return root;
+}
+
+// Task #281: persist an uploaded font file under `<clientId>/fonts/`.
+export async function saveFontFromDisk(
+  tempPath: string,
+  originalName: string,
+  clientId: string,
+): Promise<string> {
+  await ensureDirectories(clientId);
+  const root = await getUploadRoot();
+  const ext = path.extname(originalName) || "";
+  const filename = `${randomUUID()}${ext}`;
+  const relativePath = path.join(clientId, "fonts", filename);
+  const absolutePath = path.join(root, relativePath);
+  assertWithinRoot(absolutePath, root);
+  await fs.rename(tempPath, absolutePath).catch(async () => {
+    await fs.copyFile(tempPath, absolutePath);
+    await fs.unlink(tempPath);
+  });
+  return relativePath;
 }
 
 export async function saveFile(

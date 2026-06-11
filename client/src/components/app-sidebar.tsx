@@ -23,6 +23,7 @@ import {
   SlidersHorizontal,
   HelpCircle,
   CalendarDays,
+  Type,
 } from "lucide-react";
 import {
   Sidebar,
@@ -76,6 +77,11 @@ const contentNavItems = [
     title: "Layouts",
     url: "/layouts",
     icon: Layout,
+  },
+  {
+    title: "Fonts",
+    url: "/fonts",
+    icon: Type,
   },
   {
     title: "Playlists",
