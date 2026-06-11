@@ -98,6 +98,27 @@ function resolveFontStackForConfig(config: AgendaWidgetConfig): string {
   return resolveFontStack(config.fontFamily);
 }
 
+// Style for the time/clock text. The time elements carry a `font-mono`
+// class for digit alignment, which would otherwise override the chosen
+// font. When the operator explicitly picks a font, fold it into the
+// inline style (which beats the class) and keep digits aligned via
+// tabular-nums. When no font is chosen we return only the colour, so
+// existing displays keep their monospace times unchanged.
+function timeRoleStyle(
+  config: AgendaWidgetConfig,
+  color?: string,
+): React.CSSProperties {
+  return {
+    ...(color ? { color } : {}),
+    ...(config.fontFamily
+      ? {
+          fontFamily: resolveFontStackForConfig(config),
+          fontVariantNumeric: "tabular-nums",
+        }
+      : {}),
+  };
+}
+
 // Single reusable widget for both the live admin preview and the
 // public chromeless /display/agenda/:configId page. Caller passes
 // the config + resolved items; widget handles layout selection,
@@ -263,7 +284,7 @@ function AgendaRow({
   roleColors?: RoleColors;
   showCardDate?: boolean;
 }) {
-  const timeStyle = roleColors?.time ? { color: roleColors.time } : undefined;
+  const timeStyle = timeRoleStyle(config, roleColors?.time);
   const bodyStyle = roleColors?.body ? { color: roleColors.body } : undefined;
   // When the operator picks "now_next" mode, the currently-running
   // session is rendered with a strong accent ring + brighter bg in
@@ -526,7 +547,7 @@ function RoomDoor({
   const roomName = cur?.room || next?.room || config.roomFilter?.[0] || "Room";
   const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
   const bodyStyle = roleColors.body ? { color: roleColors.body } : undefined;
-  const timeStyle = roleColors.time ? { color: roleColors.time } : undefined;
+  const timeStyle = timeRoleStyle(config, roleColors.time);
   return (
     <div className="flex-1 flex flex-col justify-center gap-8 text-center px-8">
       <div>
@@ -711,7 +732,7 @@ export function AgendaDisplayWidget({
   const roleColors = resolveRoleColors(config);
   const fontStack = resolveFontStackForConfig(config);
   const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
-  const timeStyle = roleColors.time ? { color: roleColors.time } : undefined;
+  const timeStyle = timeRoleStyle(config, roleColors.time);
   const bodyStyle = roleColors.body ? { color: roleColors.body } : undefined;
 
   return (
