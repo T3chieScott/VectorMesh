@@ -394,3 +394,69 @@ export function paginate<T>(items: T[], pageSize: number): T[][] {
   }
   return pages;
 }
+
+/**
+ * Intelligent auto-fit pagination for variable-height agenda cards.
+ *
+ * Given each card's measured height (in source order), the height available
+ * for cards, the number of columns, and the vertical gap between cards, pack
+ * as many cards as fully fit per page so the last card on a page is never
+ * cut off. Columns are filled top-to-bottom, then left-to-right, then a new
+ * page starts.
+ *
+ * The fit test reserves a trailing gap after every card (`h + rowGap`) so the
+ * computed height never under-counts the real CSS spacing (flex `gap` between
+ * cards plus, in multi-column layouts, a bottom margin after each card). This
+ * keeps the packer conservative — it would rather leave a sliver of slack
+ * than clip a card.
+ *
+ * A single card taller than the whole column is placed alone (so we always
+ * make progress) and accepts that it may be clipped — nothing can make an
+ * oversized card fit.
+ */
+export function packAgendaPages<T>(
+  items: T[],
+  heights: number[],
+  availableHeight: number,
+  numCols: number,
+  rowGap: number,
+): T[][] {
+  const n = items.length;
+  if (n === 0) return [];
+  const cols = Math.max(1, Math.floor(numCols));
+  // Without a positive height budget we cannot fit anything sensibly — keep
+  // everything on one page rather than producing an empty/garbage result.
+  if (!(availableHeight > 0)) return [items.slice()];
+
+  const out: T[][] = [];
+  let i = 0;
+  while (i < n) {
+    const page: T[] = [];
+    for (let col = 0; col < cols && i < n; col++) {
+      let colH = 0;
+      while (i < n) {
+        const h = heights[i] ?? 0;
+        const slot = h + rowGap; // reserve trailing gap, never under-count
+        if (colH + slot <= availableHeight) {
+          page.push(items[i]);
+          colH += slot;
+          i++;
+        } else {
+          if (colH === 0) {
+            // Oversized single card — show it alone, then move on.
+            page.push(items[i]);
+            i++;
+          }
+          break;
+        }
+      }
+    }
+    // Safety: never emit an empty page (would stall pagination).
+    if (page.length === 0) {
+      page.push(items[i]);
+      i++;
+    }
+    out.push(page);
+  }
+  return out;
+}

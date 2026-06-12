@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   AgendaItem,
   AgendaWidgetConfig,
@@ -10,6 +10,7 @@ import { resolveFontStack } from "@shared/fonts";
 import {
   pickAgendaLayout,
   paginate,
+  packAgendaPages,
   splitCurrentNext,
 } from "@shared/agenda-resolver";
 
@@ -658,19 +659,107 @@ export function AgendaDisplayWidget({
   const scale = resolveAgendaFontPx(config.fontScale, measured.w, measured.h);
   const gap = resolveAgendaGapPx(config.density, measured.w, measured.h);
 
-  const pageSize =
+  // ---- Intelligent auto-fit pagination --------------------------------
+  // Card layouts (portrait / landscape / ultrawide) stack variable-height
+  // cards (titles wrap, presenter lists grow, descriptions clamp). A fixed
+  // maxItemsPerPage clips the last card whenever the real content is taller
+  // than the configured guess. Instead we measure every card at its true
+  // render width and pack only as many as fully fit the available height —
+  // so the bottom card is never cut off and the page rotates to show the
+  // rest. totem / room_door are single "now / next" panels (they consume
+  // `items` directly, not pages) and keep their existing behaviour.
+  const cardLayout =
+    layout === "portrait" || layout === "landscape" || layout === "ultrawide";
+
+  // Column count must mirror the CSS in ColumnFlow / its callers so the
+  // measured card width matches what actually renders.
+  const numCols =
+    layout === "ultrawide" ? (measured.w >= 1280 ? 4 : 3)
+    : layout === "landscape" ? 2
+    : 1;
+  const COL_GAP = 12; // ColumnFlow columnGap (0.75rem)
+  const ROW_GAP = 12; // portrait gap-3 / ColumnFlow card mb-3
+
+  // Measure the body content box: the height available for cards and the
+  // width each card actually renders at.
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [contentBox, setContentBox] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[0]?.contentRect;
+      if (!cr) return;
+      setContentBox((p) =>
+        Math.abs(p.w - cr.width) < 0.5 && Math.abs(p.h - cr.height) < 0.5
+          ? p
+          : { w: cr.width, h: cr.height },
+      );
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const cardWidth =
+    contentBox.w > 0 ? (contentBox.w - (numCols - 1) * COL_GAP) / numCols : 0;
+
+  // Off-screen pass that renders every card at its real width and records
+  // its rendered height. setState only fires when a height actually changes,
+  // so this converges in one extra frame instead of looping.
+  const measureRef = useRef<HTMLDivElement>(null);
+  const [cardHeights, setCardHeights] = useState<Record<string, number>>({});
+  useLayoutEffect(() => {
+    const el = measureRef.current;
+    if (!el || !cardLayout || cardWidth <= 0) return;
+    const next: Record<string, number> = {};
+    el.querySelectorAll<HTMLElement>("[data-measure-id]").forEach((node) => {
+      const id = node.dataset.measureId;
+      if (id) next[id] = node.getBoundingClientRect().height;
+    });
+    setCardHeights((prev) => {
+      const keys = Object.keys(next);
+      if (
+        keys.length === Object.keys(prev).length &&
+        keys.every((k) => prev[k] != null && Math.abs(prev[k] - next[k]) < 0.5)
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  });
+
+  // Greedily pack cards into pages so the last card on a page is never
+  // clipped (see packAgendaPages). Returns null until every card has been
+  // measured, so the fallback keeps rendering in the meantime.
+  const autoPages = useMemo(() => {
+    if (!cardLayout || contentBox.h <= 0 || cardWidth <= 0) return null;
+    const heights = items.map((it) => cardHeights[it.id]);
+    if (heights.some((h) => h == null)) return null; // wait for measurement
+    return packAgendaPages(
+      items,
+      heights as number[],
+      contentBox.h,
+      numCols,
+      ROW_GAP,
+    );
+  }, [cardLayout, contentBox.h, cardWidth, numCols, items, cardHeights]);
+
+  // Until measurement is ready (or for non-card layouts) fall back to the
+  // configured cap so something always renders.
+  const fallbackPageSize =
     layout === "portrait" ? Math.min(config.maxItemsPerPage, 6)
-    : layout === "totem" ? config.maxItemsPerPage
-    : layout === "room_door" ? config.maxItemsPerPage
     : layout === "ultrawide" ? Math.max(config.maxItemsPerPage, 12)
     : config.maxItemsPerPage;
 
-  const pages = useMemo(() => paginate(items, pageSize), [items, pageSize]);
+  const pages = useMemo(
+    () => autoPages ?? paginate(items, fallbackPageSize),
+    [autoPages, items, fallbackPageSize],
+  );
 
-  // Rotate pages every rotationIntervalSeconds; reset when items change.
+  // Rotate pages every rotationIntervalSeconds; reset when the page set changes.
   useEffect(() => {
     setPageIndex(0);
-  }, [items.length, pageSize]);
+  }, [items.length, pages.length]);
 
   useEffect(() => {
     if (pages.length <= 1) return;
@@ -681,7 +770,9 @@ export function AgendaDisplayWidget({
     return () => clearInterval(id);
   }, [pages.length, config.rotationIntervalSeconds]);
 
-  const pageItems = pages[pageIndex] ?? [];
+  const safePageIndex =
+    pages.length > 0 ? Math.min(pageIndex, pages.length - 1) : 0;
+  const pageItems = pages[safePageIndex] ?? [];
 
   // When the resolved agenda spans more than one calendar day (in the
   // display timezone), show a compact date on every card. The list is
@@ -828,20 +919,57 @@ export function AgendaDisplayWidget({
       </header>
 
       {/* Body */}
-      {items.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center opacity-60" style={{ fontSize: scale, ...bodyStyle }}>
-          No agenda items match this display right now.
+      <div
+        ref={contentRef}
+        className="flex-1 min-h-0 flex flex-col overflow-hidden"
+      >
+        {items.length === 0 ? (
+          <div className="flex-1 flex items-center justify-center opacity-60" style={{ fontSize: scale, ...bodyStyle }}>
+            No agenda items match this display right now.
+          </div>
+        ) : layout === "ultrawide" ? (
+          <UltraWideGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} showCardDate={multiDay} />
+        ) : layout === "portrait" ? (
+          <PortraitCards pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} showCardDate={multiDay} />
+        ) : layout === "totem" ? (
+          <TotemNowNext items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} showCardDate={multiDay} />
+        ) : layout === "room_door" ? (
+          <RoomDoor items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} showCardDate={multiDay} />
+        ) : (
+          <LandscapeGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} showCardDate={multiDay} />
+        )}
+      </div>
+
+      {/* Off-screen card measurer for intelligent auto-fit pagination.
+          Rendered hidden at the real card width so we know each card's true
+          height before deciding how many fit a page. */}
+      {cardLayout && cardWidth > 0 && items.length > 0 && (
+        <div
+          ref={measureRef}
+          aria-hidden
+          style={{
+            position: "absolute",
+            visibility: "hidden",
+            pointerEvents: "none",
+            left: -99999,
+            top: 0,
+            width: cardWidth,
+          }}
+        >
+          {items.map((it) => (
+            <div key={it.id} data-measure-id={it.id} style={{ width: cardWidth }}>
+              <AgendaRow
+                item={it}
+                config={config}
+                tz={timezone}
+                scale={scale}
+                accentColor={config.accentColor}
+                roleColors={roleColors}
+                showCardDate={multiDay}
+              />
+            </div>
+          ))}
         </div>
-      ) : layout === "ultrawide" ? (
-        <UltraWideGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} showCardDate={multiDay} />
-      ) : layout === "portrait" ? (
-        <PortraitCards pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} showCardDate={multiDay} />
-      ) : layout === "totem" ? (
-        <TotemNowNext items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} showCardDate={multiDay} />
-      ) : layout === "room_door" ? (
-        <RoomDoor items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} showCardDate={multiDay} />
-      ) : (
-        <LandscapeGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} showCardDate={multiDay} />
       )}
     </div>
   );
