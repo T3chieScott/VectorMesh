@@ -137,6 +137,15 @@ export const PUBLIC_AGENDA_CONFIG_FIELDS = [
   "bodyColor",
   "timeColor",
   "statusColor",
+  // Task #284 — per-element text-size multipliers (all nullable; widget
+  // falls back to its built-in defaults when null so untouched displays
+  // render identically).
+  "timeScale",
+  "dateScale",
+  "titleScale",
+  "bodyScale",
+  "headerDateScale",
+  "headerClockScale",
 ] as const;
 
 export const PUBLIC_AGENDA_ITEM_FIELDS = [
@@ -797,6 +806,15 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         bodyColor: config.bodyColor ?? null,
         timeColor: config.timeColor ?? null,
         statusColor: config.statusColor ?? null,
+        // Task #284 — per-element text-size multipliers. Coerce undefined
+        // → null so the keys are always present in the public payload,
+        // matching PUBLIC_AGENDA_CONFIG_FIELDS exactly.
+        timeScale: config.timeScale ?? null,
+        dateScale: config.dateScale ?? null,
+        titleScale: config.titleScale ?? null,
+        bodyScale: config.bodyScale ?? null,
+        headerDateScale: config.headerDateScale ?? null,
+        headerClockScale: config.headerClockScale ?? null,
       };
       const publicItems = items.map((it) => ({
         id: it.id,

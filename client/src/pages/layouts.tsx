@@ -8072,20 +8072,6 @@ function ZoneListItem({
   );
 }
 
-function AgendaZoneEditorLabel({ configId }: { configId?: string | null }) {
-  const agendaConfigsQuery = useSiteFilteredQuery<AgendaWidgetConfig[]>("/api/agenda/configs");
-  const { data: configs } = useQuery<AgendaWidgetConfig[]>({ ...agendaConfigsQuery });
-  const name = configId ? configs?.find((c) => c.id === configId)?.name : null;
-  return (
-    <div
-      className="absolute top-1 right-1 z-10 pointer-events-none px-1.5 py-0.5 rounded bg-black/60 text-white text-[10px] font-medium max-w-[90%] truncate"
-      data-testid={`agenda-zone-editor-label-${configId || "none"}`}
-    >
-      {name ? `Agenda: ${name}` : configId ? "Agenda" : "Agenda: not set"}
-    </div>
-  );
-}
-
 function LayoutPreview({ zones }: { zones: LayoutZone[] }) {
   return (
     <div className="relative w-full aspect-video bg-slate-900 rounded-lg overflow-hidden border-2 border-gray-300 dark:border-gray-500">
@@ -8708,9 +8694,6 @@ function InteractiveLayoutPreview({
                 fillContainer={true}
                 agendaTestAt={agendaTestAt}
               />
-              {zone.type === "agenda" && (
-                <AgendaZoneEditorLabel configId={zone.agendaConfigId} />
-              )}
             </div>
             
             <div

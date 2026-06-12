@@ -187,6 +187,9 @@ function makeFakeStorage(initial: {
     async getClient(id) {
       return clients.find((c) => c.id === id);
     },
+    async getCustomFonts() {
+      return [];
+    },
   };
 }
 
