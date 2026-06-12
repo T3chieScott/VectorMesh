@@ -178,6 +178,35 @@ export const AGENDA_DENSITY_GAP_RATIO = {
   spacious: 20 / 1080,
 } as const;
 
+// Built-in per-role text-size multipliers (relative to the responsive base
+// `scale`). These are the historical hard-coded values; a config may override
+// any of them (config.timeScale / dateScale / titleScale / bodyScale). When an
+// override is null the renderer falls back to the matching default here, so
+// untouched displays look exactly as before. The standard card layout sizes the
+// primary element of each role at `scale * multiplier`; secondary elements
+// (e.g. end time, description) stay proportional to the primary.
+export const AGENDA_ROLE_SIZE_DEFAULTS = {
+  time: 1.15,
+  date: 0.6,
+  title: 1.15,
+  body: 0.75,
+} as const;
+
+// Resolve the four role multipliers for a config, applying built-in fallbacks.
+export function resolveAgendaRoleSizes(config: {
+  timeScale?: number | null;
+  dateScale?: number | null;
+  titleScale?: number | null;
+  bodyScale?: number | null;
+}) {
+  return {
+    time: config.timeScale ?? AGENDA_ROLE_SIZE_DEFAULTS.time,
+    date: config.dateScale ?? AGENDA_ROLE_SIZE_DEFAULTS.date,
+    title: config.titleScale ?? AGENDA_ROLE_SIZE_DEFAULTS.title,
+    body: config.bodyScale ?? AGENDA_ROLE_SIZE_DEFAULTS.body,
+  };
+}
+
 // Floors keep the agenda legible inside tiny zone thumbnails / pickers
 // where min(w,h) might be ~80 px. Without these, text would collapse
 // to sub-pixel values and become invisible.
@@ -287,6 +316,12 @@ function AgendaRow({
 }) {
   const timeStyle = timeRoleStyle(config, roleColors?.time);
   const bodyStyle = roleColors?.body ? { color: roleColors.body } : undefined;
+  // Per-role size multipliers (config overrides → built-in defaults). The
+  // secondary elements stay proportional to their role's primary so the
+  // start/end-time relationship and description sizing are preserved.
+  const roleSizes = resolveAgendaRoleSizes(config);
+  const endTimeMult = roleSizes.time * (0.75 / AGENDA_ROLE_SIZE_DEFAULTS.time);
+  const descMult = roleSizes.body * (0.8 / AGENDA_ROLE_SIZE_DEFAULTS.body);
   // When the operator picks "now_next" mode, the currently-running
   // session is rendered with a strong accent ring + brighter bg in
   // every layout, so audiences can tell at a glance which session
@@ -317,14 +352,14 @@ function AgendaRow({
       >
         <span
           className="font-mono font-bold"
-          style={{ fontSize: scale * 1.15, ...timeStyle }}
+          style={{ fontSize: scale * roleSizes.time, ...timeStyle }}
           data-testid={`agenda-time-start-${item.id}`}
         >
           {formatTime(item.startsAt, tz)}
         </span>
         <span
           className="font-mono opacity-60"
-          style={{ fontSize: scale * 0.75, ...timeStyle }}
+          style={{ fontSize: scale * endTimeMult, ...timeStyle }}
           data-testid={`agenda-time-end-${item.id}`}
         >
           {formatTime(item.endsAt, tz)}
@@ -332,7 +367,7 @@ function AgendaRow({
         {showCardDate && (
           <span
             className="mt-1 text-center leading-tight opacity-70"
-            style={{ fontSize: scale * 0.6, ...timeStyle }}
+            style={{ fontSize: scale * roleSizes.date, ...timeStyle }}
             data-testid={`agenda-card-date-${item.id}`}
           >
             {formatShortDate(item.startsAt, tz)}
@@ -343,7 +378,7 @@ function AgendaRow({
         <div className="flex items-center gap-2 flex-wrap">
           <h3
             className="font-semibold leading-tight break-words"
-            style={{ fontSize: scale * 1.15, ...bodyStyle }}
+            style={{ fontSize: scale * roleSizes.title, ...bodyStyle }}
             data-testid={`agenda-title-${item.id}`}
           >
             {item.title}
@@ -357,7 +392,7 @@ function AgendaRow({
           )}
         </div>
         {(config.showRoom && item.room) || (item.track) || (config.showPresenter && item.presenter) ? (
-          <div className="mt-1 flex flex-col gap-1 opacity-80" style={{ fontSize: scale * 0.75, ...bodyStyle }}>
+          <div className="mt-1 flex flex-col gap-1 opacity-80" style={{ fontSize: scale * roleSizes.body, ...bodyStyle }}>
             {((config.showRoom && item.room) || item.track) && (
               <div className="flex flex-wrap gap-3">
                 {config.showRoom && item.room && (
@@ -372,14 +407,14 @@ function AgendaRow({
           </div>
         ) : null}
         {config.showDescription && item.description && (
-          <p className="mt-1 opacity-75 line-clamp-2" style={{ fontSize: scale * 0.8, ...bodyStyle }}>
+          <p className="mt-1 opacity-75 line-clamp-2" style={{ fontSize: scale * descMult, ...bodyStyle }}>
             {item.description}
           </p>
         )}
         {item.statusMessage && item.status !== "scheduled" && (
           <p
             className="mt-1 italic opacity-90"
-            style={{ fontSize: scale * 0.75, ...bodyStyle }}
+            style={{ fontSize: scale * roleSizes.body, ...bodyStyle }}
             data-testid={`agenda-status-msg-${item.id}`}
           >
             {item.statusMessage}
@@ -553,22 +588,31 @@ function RoomDoor({
   const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
   const bodyStyle = roleColors.body ? { color: roleColors.body } : undefined;
   const timeStyle = timeRoleStyle(config, roleColors.time);
+  // RoomDoor uses its own (much larger) typography than the card layout, so
+  // the per-role overrides are applied here as factors relative to each role's
+  // default. A config left at the defaults yields factor 1 → identical door
+  // sign; raising a role's size scales the door element by the same ratio.
+  // The day/date sits inside the time line, so it follows the time factor.
+  const roleSizes = resolveAgendaRoleSizes(config);
+  const timeFactor = roleSizes.time / AGENDA_ROLE_SIZE_DEFAULTS.time;
+  const titleFactor = roleSizes.title / AGENDA_ROLE_SIZE_DEFAULTS.title;
+  const bodyFactor = roleSizes.body / AGENDA_ROLE_SIZE_DEFAULTS.body;
   return (
     <div className="flex-1 flex flex-col justify-center gap-8 text-center px-8">
       <div>
-        <p className="opacity-70 uppercase tracking-widest" style={{ fontSize: scale, ...titleStyle }}>
+        <p className="opacity-70 uppercase tracking-widest" style={{ fontSize: scale * titleFactor, ...titleStyle }}>
           {roomName}
         </p>
         {cur ? (
           <>
-            <p className="font-mono opacity-80 mt-4" style={{ fontSize: scale * 1.6, ...timeStyle }}>
+            <p className="font-mono opacity-80 mt-4" style={{ fontSize: scale * 1.6 * timeFactor, ...timeStyle }}>
               {showCardDate ? `${formatShortDate(cur.startsAt, tz)} · ` : ""}{formatTime(cur.startsAt, tz)} – {formatTime(cur.endsAt, tz)}
             </p>
-            <h1 className="font-bold mt-3 leading-tight" style={{ fontSize: scale * 3, ...titleStyle }}>
+            <h1 className="font-bold mt-3 leading-tight" style={{ fontSize: scale * 3 * titleFactor, ...titleStyle }}>
               {cur.title}
             </h1>
             {cur.presenter && (
-              <p className="mt-3 opacity-80 whitespace-pre-line" style={{ fontSize: scale * 1.3, ...bodyStyle }}>
+              <p className="mt-3 opacity-80 whitespace-pre-line" style={{ fontSize: scale * 1.3 * bodyFactor, ...bodyStyle }}>
                 {cur.presenter}
               </p>
             )}
@@ -576,26 +620,26 @@ function RoomDoor({
               <StatusBadge status={cur.status as AgendaStatus} scale={scale * 1.4} override={roleColors.status} />
             </div>
             {cur.statusMessage && (
-              <p className="mt-3 italic opacity-80" style={{ fontSize: scale, ...bodyStyle }}>
+              <p className="mt-3 italic opacity-80" style={{ fontSize: scale * bodyFactor, ...bodyStyle }}>
                 {cur.statusMessage}
               </p>
             )}
           </>
         ) : (
-          <p className="opacity-60 mt-6" style={{ fontSize: scale * 1.4, ...bodyStyle }}>
+          <p className="opacity-60 mt-6" style={{ fontSize: scale * 1.4 * bodyFactor, ...bodyStyle }}>
             No session in this room right now.
           </p>
         )}
       </div>
       {next && (
         <div className="pt-6" style={{ borderTop: "1px solid var(--ag-divider)" }}>
-          <p className="opacity-60 uppercase tracking-widest" style={{ fontSize: scale * 0.8, ...titleStyle }}>
+          <p className="opacity-60 uppercase tracking-widest" style={{ fontSize: scale * 0.8 * titleFactor, ...titleStyle }}>
             Up next
           </p>
-          <p className="font-mono opacity-80 mt-2" style={{ fontSize: scale * 1.1, ...timeStyle }}>
+          <p className="font-mono opacity-80 mt-2" style={{ fontSize: scale * 1.1 * timeFactor, ...timeStyle }}>
             {showCardDate ? `${formatShortDate(next.startsAt, tz)} · ` : ""}{formatTime(next.startsAt, tz)}
           </p>
-          <p className="font-semibold mt-1" style={{ fontSize: scale * 1.4, ...bodyStyle }}>
+          <p className="font-semibold mt-1" style={{ fontSize: scale * 1.4 * titleFactor, ...bodyStyle }}>
             {next.title}
           </p>
         </div>

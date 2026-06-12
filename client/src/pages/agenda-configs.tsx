@@ -6,7 +6,8 @@ import { z } from "zod";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useSiteContext, useSiteFilteredQuery } from "@/hooks/use-site-context";
-import { AgendaDisplayWidget } from "@/components/agenda/AgendaDisplayWidget";
+import { AgendaDisplayWidget, AGENDA_ROLE_SIZE_DEFAULTS } from "@/components/agenda/AgendaDisplayWidget";
+import { Slider } from "@/components/ui/slider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -97,6 +98,11 @@ const configFormSchema = z.object({
   bodyColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
   timeColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
   statusColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
+  // Per-element text sizes (multipliers of the responsive base size).
+  timeScale: z.coerce.number().min(0.3).max(4),
+  dateScale: z.coerce.number().min(0.3).max(4),
+  titleScale: z.coerce.number().min(0.3).max(4),
+  bodyScale: z.coerce.number().min(0.3).max(4),
   eventName: z.string().optional(),
   backgroundUrl: z.string().optional(),
   roomFilter: z.string().optional(),
@@ -133,6 +139,10 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     bodyColor: c?.bodyColor ?? "",
     timeColor: c?.timeColor ?? "",
     statusColor: c?.statusColor ?? "",
+    timeScale: c?.timeScale ?? AGENDA_ROLE_SIZE_DEFAULTS.time,
+    dateScale: c?.dateScale ?? AGENDA_ROLE_SIZE_DEFAULTS.date,
+    titleScale: c?.titleScale ?? AGENDA_ROLE_SIZE_DEFAULTS.title,
+    bodyScale: c?.bodyScale ?? AGENDA_ROLE_SIZE_DEFAULTS.body,
     eventName: c?.eventName ?? "",
     backgroundUrl: c?.backgroundUrl ?? "",
     roomFilter: (c?.roomFilter ?? []).join(", "),
@@ -170,6 +180,10 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     bodyColor: values.bodyColor ? values.bodyColor : null,
     timeColor: values.timeColor ? values.timeColor : null,
     statusColor: values.statusColor ? values.statusColor : null,
+    timeScale: values.timeScale,
+    dateScale: values.dateScale,
+    titleScale: values.titleScale,
+    bodyScale: values.bodyScale,
     eventName: values.eventName || null,
     backgroundUrl: values.backgroundUrl || null,
     roomFilter: values.roomFilter ? values.roomFilter.split(",").map((s) => s.trim()).filter(Boolean) : [],
@@ -442,6 +456,66 @@ function ConfigEditor({
                               data-testid={`button-clear-${key}`}
                             >
                               Clear
+                            </Button>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground">{help}</p>
+                          <FormMessage />
+                        </FormItem>
+                      );
+                    }}
+                  />
+                ))}
+              </div>
+
+              {/* Per-element text sizes. Each control sizes one role of text
+                  independently. Defaults reproduce the original look; setting
+                  e.g. Day/Date to the same value as Time makes them match. */}
+              <div className="rounded-md border px-3 py-3 space-y-3">
+                <Label className="text-sm font-semibold">Text sizes</Label>
+                <p className="text-[10px] text-muted-foreground -mt-1">
+                  Adjust how big each kind of text is. Shown as a percentage of the standard size.
+                </p>
+                {(
+                  [
+                    { key: "timeScale", label: "Time", help: "Start and end times", def: AGENDA_ROLE_SIZE_DEFAULTS.time },
+                    { key: "dateScale", label: "Day / Date", help: "The date shown under the time", def: AGENDA_ROLE_SIZE_DEFAULTS.date },
+                    { key: "titleScale", label: "Title", help: "Session titles", def: AGENDA_ROLE_SIZE_DEFAULTS.title },
+                    { key: "bodyScale", label: "Body / details", help: "Room, presenter, description, status text", def: AGENDA_ROLE_SIZE_DEFAULTS.body },
+                  ] as const
+                ).map(({ key, label, help, def }) => (
+                  <FormField
+                    key={key}
+                    control={form.control}
+                    name={key}
+                    render={({ field }) => {
+                      const value = typeof field.value === "number" ? field.value : def;
+                      return (
+                        <FormItem>
+                          <div className="flex items-center justify-between">
+                            <FormLabel className="text-xs">{label}</FormLabel>
+                            <span className="text-xs font-mono text-muted-foreground" data-testid={`text-${key}-pct`}>
+                              {Math.round(value * 100)}%
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Slider
+                              min={0.3}
+                              max={4}
+                              step={0.05}
+                              value={[value]}
+                              onValueChange={(v) => field.onChange(v[0])}
+                              className="flex-1"
+                              data-testid={`slider-${key}`}
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => field.onChange(def)}
+                              disabled={value === def}
+                              data-testid={`button-reset-${key}`}
+                            >
+                              Reset
                             </Button>
                           </div>
                           <p className="text-[10px] text-muted-foreground">{help}</p>

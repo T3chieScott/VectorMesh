@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, jsonb, pgEnum, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, real, boolean, timestamp, jsonb, pgEnum, uniqueIndex, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -1507,6 +1507,15 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   bodyColor: text("body_color"),
   timeColor: text("time_color"),
   statusColor: text("status_color"),
+  // Per-element text-size multipliers (relative to the responsive base
+  // font scale). All nullable so existing rows render identically — the
+  // renderer falls back to the built-in defaults (time 1.15, date 0.6,
+  // title 1.15, body 0.75) when a value is unset. Operators can set the
+  // time and day/date to the same value to make them the same size.
+  timeScale: real("time_scale"),
+  dateScale: real("date_scale"),
+  titleScale: real("title_scale"),
+  bodyScale: real("body_scale"),
   backgroundUrl: text("background_url"),
   eventName: text("event_name"),
   showDescription: boolean("show_description").notNull().default(true),
@@ -1555,6 +1564,13 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
     bodyColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
     timeColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
     statusColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
+    // Per-element size multipliers. Bounded to keep text legible (and to
+    // stay within the auto-fit packer's measured range). Null = use the
+    // renderer's built-in default for that role.
+    timeScale: z.number().min(0.3).max(4).nullable().optional(),
+    dateScale: z.number().min(0.3).max(4).nullable().optional(),
+    titleScale: z.number().min(0.3).max(4).nullable().optional(),
+    bodyScale: z.number().min(0.3).max(4).nullable().optional(),
   });
 export type InsertAgendaWidgetConfig = z.infer<typeof insertAgendaWidgetConfigSchema>;
 export type AgendaWidgetConfig = typeof agendaWidgetConfigs.$inferSelect;
