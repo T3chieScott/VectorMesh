@@ -18,7 +18,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Pencil, Plus, Trash2, ExternalLink, Copy, SlidersHorizontal, ChevronsUpDown } from "lucide-react";
+import { Pencil, Plus, Trash2, ExternalLink, Copy, CopyPlus, SlidersHorizontal, ChevronsUpDown } from "lucide-react";
 import {
   AGENDA_DISPLAY_MODES,
   AGENDA_DISPLAY_MODE_LABELS,
@@ -740,6 +740,28 @@ export default function AgendaConfigsPage() {
     },
   });
 
+  const cloneMutation = useMutation({
+    mutationFn: (c: AgendaWidgetConfig) => {
+      // Re-create the config from its current fields. The server's insert
+      // schema omits id/createdAt/updatedAt, so spreading the row and renaming
+      // is enough — the new display starts as an exact duplicate.
+      const { id, createdAt, updatedAt, ...rest } = c as AgendaWidgetConfig & {
+        updatedAt?: unknown;
+      };
+      return apiRequest("POST", "/api/agenda/configs", {
+        ...rest,
+        name: `${c.name} (copy)`,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agenda/configs"] });
+      toast({ title: "Display duplicated" });
+    },
+    onError: () => {
+      toast({ title: "Could not duplicate display", variant: "destructive" });
+    },
+  });
+
   const copyUrl = (id: string) => {
     const url = `${window.location.origin}/display/agenda/${id}`;
     navigator.clipboard.writeText(url).then(() => toast({ title: "URL copied" }));
@@ -828,6 +850,16 @@ export default function AgendaConfigsPage() {
                   </Button>
                   <Button variant="ghost" size="icon" onClick={() => setEditing(c)} data-testid={`button-edit-config-${c.id}`}>
                     <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => cloneMutation.mutate(c)}
+                    disabled={cloneMutation.isPending}
+                    title="Duplicate display"
+                    data-testid={`button-clone-config-${c.id}`}
+                  >
+                    <CopyPlus className="h-4 w-4" />
                   </Button>
                   <Button variant="ghost" size="icon" onClick={() => deleteMutation.mutate(c.id)} data-testid={`button-delete-config-${c.id}`}>
                     <Trash2 className="h-4 w-4" />
