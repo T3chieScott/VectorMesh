@@ -311,8 +311,8 @@ function AgendaRow({
       data-current={isCurrent ? "true" : undefined}
     >
       <div
-        className="flex flex-col items-center min-w-[6.5em] pr-4"
-        style={{ borderRight: "1px solid var(--ag-divider)" }}
+        className="flex flex-col items-center pr-4"
+        style={{ minWidth: scale * 4, borderRight: "1px solid var(--ag-divider)" }}
       >
         <span
           className="font-mono font-bold"
@@ -356,11 +356,15 @@ function AgendaRow({
           )}
         </div>
         {(config.showRoom && item.room) || (item.track) || (config.showPresenter && item.presenter) ? (
-          <div className="mt-1 flex flex-wrap gap-3 opacity-80" style={{ fontSize: scale * 0.75, ...bodyStyle }}>
-            {config.showRoom && item.room && (
-              <span data-testid={`agenda-room-${item.id}`}>📍 {item.room}</span>
+          <div className="mt-1 flex flex-col gap-1 opacity-80" style={{ fontSize: scale * 0.75, ...bodyStyle }}>
+            {((config.showRoom && item.room) || item.track) && (
+              <div className="flex flex-wrap gap-3">
+                {config.showRoom && item.room && (
+                  <span data-testid={`agenda-room-${item.id}`}>📍 {item.room}</span>
+                )}
+                {item.track && <span>🏷 {item.track}</span>}
+              </div>
             )}
-            {item.track && <span>🏷 {item.track}</span>}
             {config.showPresenter && item.presenter && (
               <span className="whitespace-pre-line" data-testid={`agenda-presenter-${item.id}`}>🎤 {item.presenter}</span>
             )}
