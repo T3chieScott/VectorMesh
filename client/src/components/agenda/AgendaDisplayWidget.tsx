@@ -680,6 +680,22 @@ export function AgendaDisplayWidget({
   const COL_GAP = 12; // ColumnFlow columnGap (0.75rem)
   const ROW_GAP = 12; // portrait gap-3 / ColumnFlow card mb-3
 
+  // When the resolved agenda spans more than one calendar day (in the
+  // display timezone), show a compact date on every card. The list is
+  // already sorted chronologically by start time, but without a date a
+  // multi-day list looks out of order (e.g. day-1 16:30 above day-2
+  // 10:30). Single-day agendas stay clean (no redundant date). Declared
+  // here (before measurement) because it feeds the off-screen card height
+  // pass — a date line changes a card's height.
+  const multiDay = useMemo(() => {
+    const days = new Set<string>();
+    for (const it of items) {
+      days.add(tzDayKey(it.startsAt, timezone));
+      if (days.size > 1) return true;
+    }
+    return false;
+  }, [items, timezone]);
+
   // Measure the body content box: the height available for cards and the
   // width each card actually renders at.
   const contentRef = useRef<HTMLDivElement>(null);
@@ -708,13 +724,44 @@ export function AgendaDisplayWidget({
   // so this converges in one extra frame instead of looping.
   const measureRef = useRef<HTMLDivElement>(null);
   const [cardHeights, setCardHeights] = useState<Record<string, number>>({});
+
+  // Custom web fonts load asynchronously. Text laid out with the fallback
+  // font is a *different* (usually shorter) height than the final custom
+  // font, so a measurement taken before the font swaps in would under-count
+  // and let the packer clip the last card. A font swap is a browser repaint,
+  // not a React render, so nothing would otherwise re-measure — this bumps a
+  // tick once fonts are ready (and on every subsequent font load) to force a
+  // fresh measurement pass.
+  const [fontTick, setFontTick] = useState(0);
+  useEffect(() => {
+    const fonts =
+      typeof document !== "undefined"
+        ? (document.fonts as FontFaceSet | undefined)
+        : undefined;
+    if (!fonts) return;
+    let cancelled = false;
+    const bump = () => {
+      if (!cancelled) setFontTick((t) => t + 1);
+    };
+    fonts.ready.then(bump).catch(() => {});
+    fonts.addEventListener?.("loadingdone", bump);
+    return () => {
+      cancelled = true;
+      fonts.removeEventListener?.("loadingdone", bump);
+    };
+  }, []);
+
   useLayoutEffect(() => {
     const el = measureRef.current;
     if (!el || !cardLayout || cardWidth <= 0) return;
     const next: Record<string, number> = {};
     el.querySelectorAll<HTMLElement>("[data-measure-id]").forEach((node) => {
       const id = node.dataset.measureId;
-      if (id) next[id] = node.getBoundingClientRect().height;
+      // offsetHeight is the layout height (transform-independent), so it
+      // matches the ResizeObserver content box even when an ancestor applies
+      // a `transform: scale()` (zone / device previews). getBoundingClientRect
+      // would return the *scaled* height and make the packer overcount.
+      if (id) next[id] = node.offsetHeight;
     });
     setCardHeights((prev) => {
       const keys = Object.keys(next);
@@ -726,7 +773,11 @@ export function AgendaDisplayWidget({
       }
       return next;
     });
-  });
+    // Re-measure whenever any input that changes a card's height changes —
+    // content, width, scale, config (font/flags), date display, and the
+    // font-load tick above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, cardWidth, scale, config, multiDay, timezone, cardLayout, fontTick]);
 
   // Greedily pack cards into pages so the last card on a page is never
   // clipped (see packAgendaPages). Returns null until every card has been
@@ -773,20 +824,6 @@ export function AgendaDisplayWidget({
   const safePageIndex =
     pages.length > 0 ? Math.min(pageIndex, pages.length - 1) : 0;
   const pageItems = pages[safePageIndex] ?? [];
-
-  // When the resolved agenda spans more than one calendar day (in the
-  // display timezone), show a compact date on every card. The list is
-  // already sorted chronologically by start time, but without a date a
-  // multi-day list looks out of order (e.g. day-1 16:30 above day-2
-  // 10:30). Single-day agendas stay clean (no redundant date).
-  const multiDay = useMemo(() => {
-    const days = new Set<string>();
-    for (const it of items) {
-      days.add(tzDayKey(it.startsAt, timezone));
-      if (days.size > 1) return true;
-    }
-    return false;
-  }, [items, timezone]);
 
   // In now_next mode every layout (not only totem/room_door) gets a
   // strong "live now" highlight on the currently-running row(s).

@@ -18,6 +18,18 @@ flex `gap` (between cards only) but multi-column `ColumnFlow` puts `mb-3` after
 spacing, so the packer errs toward leaving slack rather than clipping the last
 card. That is the whole point of the feature — last card must never be cut off.
 
+**Two measurement gotchas that caused real clipping (both fixed):**
+1. *Custom web fonts load async.* Measuring before the font swaps in uses the
+   shorter fallback font → packer overcounts → last card clips. A font swap is
+   a browser repaint, not a React render, so nothing re-measures on its own.
+   Fix: a `fontTick` bumped on `document.fonts.ready` + `loadingdone` forces a
+   re-measure. Any height-measuring widget with custom fonts needs this.
+2. *Transform scaling.* Measure card height with `offsetHeight` (layout px,
+   transform-independent), NOT `getBoundingClientRect().height` (returns the
+   *scaled* height under a `transform: scale()` ancestor — zone / device
+   previews). It must match the `ResizeObserver` content box, which is also
+   unscaled layout px. Mixing the two makes the packer overcount and clip.
+
 **Known limitation — column count in embedded contexts:** `numCols` for
 ultrawide is inferred from `measured.w >= 1280`, but the actual rendered columns
 come from Tailwind's `xl:columns-4` which keys off the *viewport*, not the
