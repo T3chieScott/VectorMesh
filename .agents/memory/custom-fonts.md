@@ -19,6 +19,17 @@ backfilled pre-existing rows, so legacy `custom:<id>` references still resolve t
 `vmfont-<id>` with zero data rewrite. **The file route still keys on the file id**
 (`/api/fonts/<fileId>/file`); only the @font-face *family name* keys on familyId.
 
+**Same-name uploads join, never duplicate.** The upload route, when given no
+explicit `familyId`, looks for an existing family on the same client whose name
+matches (case-insensitive) and reuses its `familyId`; only a genuinely new name
+mints a fresh one. **Why:** operators expect "type the same family name = same
+family"; without this, each upload via the top "Add a font family" form spawned a
+separate single-file card. Join-by-name only assigns the *new* file to an existing
+familyId — it never re-stamps existing rows, so it can't break a stored
+`custom:<familyId>` reference. Do NOT add auto-merge of pre-existing same-name
+families (re-stamping their familyId) — that WOULD orphan any layout/agenda config
+already pointing at the merged-away family.
+
 **Why store the key, not the stack:** keeps existing layouts/agenda configs
 stable and lets the resolver evolve the fallback chain centrally. A font is only
 applied when explicitly set; unknown/empty resolves to the Inter default, so

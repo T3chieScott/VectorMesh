@@ -1828,10 +1828,22 @@ export async function registerRoutes(
         }
       }
 
+      const weightRaw = Number.parseInt(String(req.body.weight ?? ""), 10);
+      const weight = Number.isFinite(weightRaw) && weightRaw >= 100 && weightRaw <= 900
+        ? weightRaw
+        : 400;
+      const style = req.body.style === "italic" ? "italic" : "normal";
+
+      const rawName = typeof req.body.name === "string" && req.body.name.trim()
+        ? req.body.name.trim()
+        : req.file.originalname.replace(/\.[^.]+$/, "");
+
       // A font family is one or more files. If `familyId` is supplied the
-      // file joins that existing family (a new weight/style); otherwise a
-      // new family is created. The family name + parsed weight/style live
-      // on the row.
+      // file joins that existing family (a new weight/style). Otherwise we
+      // try to join an existing family on this site with the same name
+      // (case-insensitive) so a second upload under the same name extends
+      // the family instead of creating a duplicate; only when no match is
+      // found do we start a brand-new family.
       let familyId = typeof req.body.familyId === "string" && req.body.familyId.trim()
         ? req.body.familyId.trim()
         : "";
@@ -1847,24 +1859,18 @@ export async function registerRoutes(
           return res.status(403).json({ error: "Access denied to this font family" });
         }
       } else {
-        familyId = crypto.randomUUID();
+        const existing = await storage.getCustomFonts(clientId);
+        const match = existing.find(
+          (f) => f.name.trim().toLowerCase() === rawName.toLowerCase(),
+        );
+        familyId = match ? (match.familyId || match.id) : crypto.randomUUID();
       }
-
-      const weightRaw = Number.parseInt(String(req.body.weight ?? ""), 10);
-      const weight = Number.isFinite(weightRaw) && weightRaw >= 100 && weightRaw <= 900
-        ? weightRaw
-        : 400;
-      const style = req.body.style === "italic" ? "italic" : "normal";
 
       const storagePath = await fileStorage.saveFontFromDisk(
         tempPath,
         req.file.originalname,
         clientId,
       );
-
-      const rawName = typeof req.body.name === "string" && req.body.name.trim()
-        ? req.body.name.trim()
-        : req.file.originalname.replace(/\.[^.]+$/, "");
 
       let font;
       try {
