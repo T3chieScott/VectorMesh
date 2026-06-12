@@ -66,6 +66,17 @@ export function FontFamilySelect({
     fonts: BUILTIN_FONTS.filter((f) => f.group === group),
   }));
 
+  // Collapse the per-file rows into one entry per family (keyed on
+  // familyId) so the picker lists each uploaded family once.
+  const families = Array.from(
+    customFonts.reduce((map, f) => {
+      const fam = f.familyId || f.id;
+      if (!map.has(fam)) map.set(fam, { familyId: fam, name: f.name, count: 0 });
+      map.get(fam)!.count += 1;
+      return map;
+    }, new Map<string, { familyId: string; name: string; count: number }>()).values(),
+  );
+
   return (
     <Select
       value={selectValue}
@@ -76,16 +87,17 @@ export function FontFamilySelect({
       </SelectTrigger>
       <SelectContent>
         <SelectItem value={DEFAULT_VALUE}>{defaultLabel}</SelectItem>
-        {customFonts.length > 0 && (
+        {families.length > 0 && (
           <SelectGroup>
             <SelectLabel>Your uploaded fonts</SelectLabel>
-            {customFonts.map((f) => (
+            {families.map((fam) => (
               <SelectItem
-                key={f.id}
-                value={customFontKey(f.id)}
-                style={{ fontFamily: resolveFontStack(customFontKey(f.id)) }}
+                key={fam.familyId}
+                value={customFontKey(fam.familyId)}
+                style={{ fontFamily: resolveFontStack(customFontKey(fam.familyId)) }}
               >
-                {f.name}
+                {fam.name}
+                {fam.count > 1 ? ` (${fam.count} styles)` : ""}
               </SelectItem>
             ))}
           </SelectGroup>

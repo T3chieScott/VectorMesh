@@ -6,9 +6,18 @@ description: How fonts are stored/resolved/served across admin, player, and offl
 # Custom & expanded fonts
 
 Stored values are font **keys**, never CSS stacks: a built-in key (e.g. `inter`)
-or `custom:<id>`. A resolver maps the key to a CSS stack at render time. Custom
-`@font-face` family name is `vmfont-<id>`. Built-ins all map to Google Fonts
-already loaded in `client/index.html`.
+or `custom:<familyId>`. A resolver maps the key to a CSS stack at render time.
+Custom `@font-face` family name is `vmfont-<familyId>`. Built-ins all map to
+Google Fonts already loaded in `client/index.html`.
+
+**Font families (multi-file):** one uploaded file = one weight+style. Files
+that share `familyId` are ONE family; the picker lists the family once and the
+browser auto-switches files as text is bolded/italicised (each file emits its
+own `@font-face` with the shared family name + its `font-weight`/`font-style`).
+For a single-file family, `familyId == id` — which is exactly how the migration
+backfilled pre-existing rows, so legacy `custom:<id>` references still resolve to
+`vmfont-<id>` with zero data rewrite. **The file route still keys on the file id**
+(`/api/fonts/<fileId>/file`); only the @font-face *family name* keys on familyId.
 
 **Why store the key, not the stack:** keeps existing layouts/agenda configs
 stable and lets the resolver evolve the fallback chain centrally. A font is only

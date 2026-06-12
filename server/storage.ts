@@ -499,8 +499,10 @@ export interface IStorage {
   createMediaShare(data: InsertMediaShare): Promise<MediaShare>;
   getCustomFonts(clientId: string): Promise<CustomFont[]>;
   getCustomFont(id: string): Promise<CustomFont | undefined>;
+  getCustomFontsByFamily(familyId: string): Promise<CustomFont[]>;
   createCustomFont(data: InsertCustomFont): Promise<CustomFont>;
   deleteCustomFont(id: string): Promise<boolean>;
+  deleteCustomFontFamily(familyId: string): Promise<boolean>;
   deleteMediaShare(mediaAssetId: string, clientId: string): Promise<boolean>;
 
   // Layout Templates
@@ -2186,12 +2188,20 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(customFonts)
       .where(eq(customFonts.clientId, clientId))
-      .orderBy(desc(customFonts.createdAt));
+      .orderBy(customFonts.name, customFonts.weight);
   }
 
   async getCustomFont(id: string): Promise<CustomFont | undefined> {
     const [font] = await db.select().from(customFonts).where(eq(customFonts.id, id));
     return font;
+  }
+
+  async getCustomFontsByFamily(familyId: string): Promise<CustomFont[]> {
+    return db
+      .select()
+      .from(customFonts)
+      .where(eq(customFonts.familyId, familyId))
+      .orderBy(customFonts.weight);
   }
 
   async createCustomFont(data: InsertCustomFont): Promise<CustomFont> {
@@ -2201,6 +2211,11 @@ export class DatabaseStorage implements IStorage {
 
   async deleteCustomFont(id: string): Promise<boolean> {
     const result = await db.delete(customFonts).where(eq(customFonts.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async deleteCustomFontFamily(familyId: string): Promise<boolean> {
+    const result = await db.delete(customFonts).where(eq(customFonts.familyId, familyId));
     return (result.rowCount ?? 0) > 0;
   }
 

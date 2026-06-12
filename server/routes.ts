@@ -1828,6 +1828,34 @@ export async function registerRoutes(
         }
       }
 
+      // A font family is one or more files. If `familyId` is supplied the
+      // file joins that existing family (a new weight/style); otherwise a
+      // new family is created. The family name + parsed weight/style live
+      // on the row.
+      let familyId = typeof req.body.familyId === "string" && req.body.familyId.trim()
+        ? req.body.familyId.trim()
+        : "";
+      if (familyId) {
+        const siblings = await storage.getCustomFontsByFamily(familyId);
+        if (siblings.length === 0) {
+          await cleanupTemp();
+          return res.status(404).json({ error: "Font family not found" });
+        }
+        // Cross-tenant guard: the family must belong to this client.
+        if (siblings.some((s) => s.clientId !== clientId)) {
+          await cleanupTemp();
+          return res.status(403).json({ error: "Access denied to this font family" });
+        }
+      } else {
+        familyId = crypto.randomUUID();
+      }
+
+      const weightRaw = Number.parseInt(String(req.body.weight ?? ""), 10);
+      const weight = Number.isFinite(weightRaw) && weightRaw >= 100 && weightRaw <= 900
+        ? weightRaw
+        : 400;
+      const style = req.body.style === "italic" ? "italic" : "normal";
+
       const storagePath = await fileStorage.saveFontFromDisk(
         tempPath,
         req.file.originalname,
@@ -1842,7 +1870,10 @@ export async function registerRoutes(
       try {
         font = await storage.createCustomFont({
           clientId,
+          familyId,
           name: rawName,
+          weight,
+          style,
           originalName: req.file.originalname,
           storagePath,
           format: ext,
@@ -1877,6 +1908,27 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deleting font:", error);
       res.status(500).json({ error: "Failed to delete font" });
+    }
+  });
+
+  // Delete a whole font family (every weight/style file under it).
+  app.delete("/api/fonts/family/:familyId", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const files = await storage.getCustomFontsByFamily(getPathParam(req, "familyId"));
+      if (files.length === 0) {
+        return res.status(404).json({ error: "Font family not found" });
+      }
+      if (files.some((f) => !canAccessClient(req, f.clientId))) {
+        return res.status(403).json({ error: "Access denied to this font family" });
+      }
+      for (const f of files) {
+        try { await fileStorage.deleteFile(f.storagePath); } catch {}
+      }
+      await storage.deleteCustomFontFamily(files[0].familyId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting font family:", error);
+      res.status(500).json({ error: "Failed to delete font family" });
     }
   });
 
@@ -3584,7 +3636,7 @@ export async function registerRoutes(
           ? { ...layout, zones: sanitizeHtmlZones(layout.zones as any) }
           : layout,
         media: mediaAssets,
-        fonts: customFonts.map((f) => ({ id: f.id, name: f.name, format: f.format })),
+        fonts: customFonts.map((f) => ({ id: f.id, familyId: f.familyId, name: f.name, weight: f.weight, style: f.style, format: f.format })),
         playlists: allPlaylists,
         playlistItems: playlistItemsMap,
         // Task #244: layout templates reached via playlist rotation are also a

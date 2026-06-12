@@ -819,7 +819,7 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         config: publicConfig,
         items: publicItems,
         client: client ? { name: client.name, timezone: client.timezone } : null,
-        fonts: fonts.map((f) => ({ id: f.id, name: f.name, format: f.format })),
+        fonts: fonts.map((f) => ({ id: f.id, familyId: f.familyId, name: f.name, weight: f.weight, style: f.style, format: f.format })),
         serverTime: Date.now(),
       });
     } catch (error) {

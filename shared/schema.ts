@@ -384,7 +384,14 @@ export const mediaShares = pgTable("media_shares", {
 export const customFonts = pgTable("custom_fonts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  // Files that share a familyId are one font family (their weights/italics
+  // switch automatically when the family is selected). For a single-file
+  // family, familyId equals the row id.
+  familyId: varchar("family_id").notNull().default(sql`gen_random_uuid()`),
+  // `name` is the family name (shared across the family's files).
   name: text("name").notNull(),
+  weight: integer("weight").notNull().default(400),
+  style: text("style").notNull().default("normal"),
   originalName: text("original_name").notNull(),
   storagePath: text("storage_path").notNull(),
   format: text("format").notNull(),
@@ -396,6 +403,8 @@ export const insertCustomFontSchema = createInsertSchema(customFonts)
   .omit({ id: true, createdAt: true })
   .extend({
     name: z.string().min(1, "Name is required"),
+    weight: z.number().int().min(100).max(900).default(400),
+    style: z.enum(["normal", "italic"]).default("normal"),
   });
 export type InsertCustomFont = z.infer<typeof insertCustomFontSchema>;
 export type CustomFont = typeof customFonts.$inferSelect;
@@ -1578,7 +1587,7 @@ export interface PlayerContentResponse {
   media: MediaAsset[];
   // Task #281 — per-site custom fonts so the player can inject @font-face
   // and the service worker can cache the files for offline rendering.
-  fonts?: { id: string; name: string; format?: string | null }[];
+  fonts?: { id: string; familyId: string; name: string; weight?: number | null; style?: string | null; format?: string | null }[];
   playlists: Playlist[];
   playlistItems: Record<string, PlaylistItem[]>;
   layoutTemplates?: Record<string, LayoutTemplate>;

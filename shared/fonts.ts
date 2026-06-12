@@ -69,6 +69,39 @@ export const CUSTOM_FONT_PREFIX = "custom:";
 export const ALLOWED_FONT_EXTENSIONS = ["woff2", "woff", "ttf", "otf"] as const;
 export type AllowedFontExtension = (typeof ALLOWED_FONT_EXTENSIONS)[number];
 
+// A font family is made of one or more uploaded files, each one a
+// specific weight + style. When an operator picks the family, the
+// browser automatically switches to the matching file as text is made
+// bold / italic. These are the weight + style choices offered per file.
+export const FONT_WEIGHT_OPTIONS = [
+  { value: 100, label: "Thin (100)" },
+  { value: 200, label: "Extra Light (200)" },
+  { value: 300, label: "Light (300)" },
+  { value: 400, label: "Regular (400)" },
+  { value: 500, label: "Medium (500)" },
+  { value: 600, label: "Semibold (600)" },
+  { value: 700, label: "Bold (700)" },
+  { value: 800, label: "Extra Bold (800)" },
+  { value: 900, label: "Black (900)" },
+] as const;
+
+export const DEFAULT_FONT_WEIGHT = 400;
+
+export const FONT_STYLE_OPTIONS = [
+  { value: "normal", label: "Normal" },
+  { value: "italic", label: "Italic" },
+] as const;
+export type FontStyle = "normal" | "italic";
+
+export function fontWeightLabel(weight?: number | null): string {
+  const w = weight ?? DEFAULT_FONT_WEIGHT;
+  return FONT_WEIGHT_OPTIONS.find((o) => o.value === w)?.label ?? String(w);
+}
+
+export function normalizeFontStyle(style?: string | null): FontStyle {
+  return style === "italic" ? "italic" : "normal";
+}
+
 export function isCustomFontKey(key?: string | null): boolean {
   return typeof key === "string" && key.startsWith(CUSTOM_FONT_PREFIX);
 }
@@ -121,7 +154,14 @@ export function fontFaceFormat(format?: string | null): string | null {
 // Minimal shape needed to build an @font-face rule on the client. The
 // server ships these in the player content + agenda display payloads.
 export interface CustomFontRef {
+  // The file row id — used to fetch the file (/api/fonts/<id>/file).
   id: string;
+  // The family this file belongs to — used as the @font-face family name
+  // (vmfont-<familyId>) so every weight/style of one family shares a name
+  // and the browser auto-switches between them.
+  familyId: string;
   name: string;
+  weight?: number | null;
+  style?: string | null;
   format?: string | null;
 }
