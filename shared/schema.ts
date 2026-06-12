@@ -1516,6 +1516,11 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   dateScale: real("date_scale"),
   titleScale: real("title_scale"),
   bodyScale: real("body_scale"),
+  // Independent header-corner sizes (separate from the per-session card
+  // roles above). Nullable so existing rows keep the built-in defaults
+  // (header date 0.9, header clock 1.3).
+  headerDateScale: real("header_date_scale"),
+  headerClockScale: real("header_clock_scale"),
   backgroundUrl: text("background_url"),
   eventName: text("event_name"),
   showDescription: boolean("show_description").notNull().default(true),
@@ -1571,6 +1576,8 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
     dateScale: z.number().min(0.3).max(4).nullable().optional(),
     titleScale: z.number().min(0.3).max(4).nullable().optional(),
     bodyScale: z.number().min(0.3).max(4).nullable().optional(),
+    headerDateScale: z.number().min(0.3).max(4).nullable().optional(),
+    headerClockScale: z.number().min(0.3).max(4).nullable().optional(),
   });
 export type InsertAgendaWidgetConfig = z.infer<typeof insertAgendaWidgetConfigSchema>;
 export type AgendaWidgetConfig = typeof agendaWidgetConfigs.$inferSelect;

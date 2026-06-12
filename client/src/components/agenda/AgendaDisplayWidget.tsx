@@ -190,20 +190,29 @@ export const AGENDA_ROLE_SIZE_DEFAULTS = {
   date: 0.6,
   title: 1.15,
   body: 0.75,
+  // Header-corner elements (top-right day/date line + clock). These are
+  // independent of the per-session card roles above and default to the
+  // header's historical fixed sizes so untouched displays look identical.
+  headerDate: 0.9,
+  headerClock: 1.3,
 } as const;
 
-// Resolve the four role multipliers for a config, applying built-in fallbacks.
+// Resolve the role multipliers for a config, applying built-in fallbacks.
 export function resolveAgendaRoleSizes(config: {
   timeScale?: number | null;
   dateScale?: number | null;
   titleScale?: number | null;
   bodyScale?: number | null;
+  headerDateScale?: number | null;
+  headerClockScale?: number | null;
 }) {
   return {
     time: config.timeScale ?? AGENDA_ROLE_SIZE_DEFAULTS.time,
     date: config.dateScale ?? AGENDA_ROLE_SIZE_DEFAULTS.date,
     title: config.titleScale ?? AGENDA_ROLE_SIZE_DEFAULTS.title,
     body: config.bodyScale ?? AGENDA_ROLE_SIZE_DEFAULTS.body,
+    headerDate: config.headerDateScale ?? AGENDA_ROLE_SIZE_DEFAULTS.headerDate,
+    headerClock: config.headerClockScale ?? AGENDA_ROLE_SIZE_DEFAULTS.headerClock,
   };
 }
 
@@ -906,6 +915,7 @@ export function AgendaDisplayWidget({
     : {};
 
   const roleColors = resolveRoleColors(config);
+  const roleSizes = resolveAgendaRoleSizes(config);
   const fontStack = resolveFontStackForConfig(config);
   const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
   const timeStyle = timeRoleStyle(config, roleColors.time);
@@ -966,7 +976,7 @@ export function AgendaDisplayWidget({
                 {(config.showDayName || config.showDate) && (
                   <p
                     className="leading-tight"
-                    style={{ fontSize: scale * 0.9 }}
+                    style={{ fontSize: scale * roleSizes.headerDate }}
                     data-testid="agenda-day-date"
                   >
                     {config.showDayName && (
@@ -987,7 +997,7 @@ export function AgendaDisplayWidget({
                 {config.showCurrentTime && (
                   <p
                     className="font-mono"
-                    style={{ fontSize: scale * 1.3, ...timeStyle }}
+                    style={{ fontSize: scale * roleSizes.headerClock, ...timeStyle }}
                     data-testid="agenda-clock"
                   >
                     {formatNow(timezone, now)}

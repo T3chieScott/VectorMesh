@@ -103,6 +103,8 @@ const configFormSchema = z.object({
   dateScale: z.coerce.number().min(0.3).max(4),
   titleScale: z.coerce.number().min(0.3).max(4),
   bodyScale: z.coerce.number().min(0.3).max(4),
+  headerDateScale: z.coerce.number().min(0.3).max(4),
+  headerClockScale: z.coerce.number().min(0.3).max(4),
   eventName: z.string().optional(),
   backgroundUrl: z.string().optional(),
   roomFilter: z.string().optional(),
@@ -143,6 +145,8 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     dateScale: c?.dateScale ?? AGENDA_ROLE_SIZE_DEFAULTS.date,
     titleScale: c?.titleScale ?? AGENDA_ROLE_SIZE_DEFAULTS.title,
     bodyScale: c?.bodyScale ?? AGENDA_ROLE_SIZE_DEFAULTS.body,
+    headerDateScale: c?.headerDateScale ?? AGENDA_ROLE_SIZE_DEFAULTS.headerDate,
+    headerClockScale: c?.headerClockScale ?? AGENDA_ROLE_SIZE_DEFAULTS.headerClock,
     eventName: c?.eventName ?? "",
     backgroundUrl: c?.backgroundUrl ?? "",
     roomFilter: (c?.roomFilter ?? []).join(", "),
@@ -184,6 +188,8 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     dateScale: values.dateScale,
     titleScale: values.titleScale,
     bodyScale: values.bodyScale,
+    headerDateScale: values.headerDateScale,
+    headerClockScale: values.headerClockScale,
     eventName: values.eventName || null,
     backgroundUrl: values.backgroundUrl || null,
     roomFilter: values.roomFilter ? values.roomFilter.split(",").map((s) => s.trim()).filter(Boolean) : [],
@@ -481,6 +487,8 @@ function ConfigEditor({
                     { key: "dateScale", label: "Day / Date", help: "The date shown under the time", def: AGENDA_ROLE_SIZE_DEFAULTS.date },
                     { key: "titleScale", label: "Title", help: "Session titles", def: AGENDA_ROLE_SIZE_DEFAULTS.title },
                     { key: "bodyScale", label: "Body / details", help: "Room, presenter, description, status text", def: AGENDA_ROLE_SIZE_DEFAULTS.body },
+                    { key: "headerDateScale", label: "Header date", help: "The date in the top corner (e.g. 12 September 2025)", def: AGENDA_ROLE_SIZE_DEFAULTS.headerDate },
+                    { key: "headerClockScale", label: "Header clock", help: "The day + time clock in the top corner (e.g. Fri 09:30)", def: AGENDA_ROLE_SIZE_DEFAULTS.headerClock },
                   ] as const
                 ).map(({ key, label, help, def }) => (
                   <FormField
