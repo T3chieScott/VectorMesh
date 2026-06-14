@@ -134,7 +134,7 @@ import {
   MonitorPlay,
   Wifi,
 } from "lucide-react";
-import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client, AgendaWidgetConfig } from "@shared/schema";
+import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client, AgendaWidgetConfig, SweepstakeWidgetConfig } from "@shared/schema";
 import { buildMediaImgSnippet } from "@shared/media-refs";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { resolveLayoutUploadClientId } from "@/lib/layoutUploadClientId";
@@ -586,6 +586,7 @@ const zoneTypeIcons: Record<string, React.ElementType> = {
   aircraft_radar: Radar,
   youtube_live: MonitorPlay,
   webrtc_stream: Wifi,
+  sweepstake: Trophy,
 };
 
 const zoneTypeLabels: Record<string, string> = {
@@ -615,11 +616,12 @@ const zoneTypeLabels: Record<string, string> = {
   youtube_live: "YouTube Live",
   webrtc_stream: "WebRTC Stream (ultra-low latency)",
   agenda: "Agenda Display",
+  sweepstake: "Sweepstake Wall",
 };
 
 const zoneFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar", "youtube_live", "webrtc_stream", "agenda"]),
+  type: z.enum(["media", "ticker", "clock", "logo", "html", "weather", "news", "text", "shader", "montage", "qrcode", "countdown", "shape", "schedule", "media_player", "football_table", "premier_league_fixtures", "heathrow_arrivals", "heathrow_departures", "weather_forecast", "spacex_launch", "earthquakes", "aircraft_radar", "youtube_live", "webrtc_stream", "agenda", "sweepstake"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   width: z.number().min(0.01).max(100),
@@ -865,6 +867,7 @@ const zoneFormSchema = z.object({
   scheduleEndHour: z.number().min(1).max(24).optional(),
   scheduleHeaderText: z.string().optional(),
   agendaConfigId: z.string().optional(),
+  sweepstakeConfigId: z.string().optional(),
 }).refine((data) => {
   // Require lat/lng for weather zones
   if (data.type === "weather") {
@@ -1137,6 +1140,88 @@ function AgendaConfigPickerSection({
               Pick a specific layout on the design itself (not "Auto") if you need a particular
               variant inside this zone.
             </p>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+    </div>
+  );
+}
+
+// Picker shown when a zone's type is "sweepstake". Lists the site's
+// sweepstake designs (sweepstake_widget_configs) and writes the chosen id
+// to the zone's `sweepstakeConfigId` field. The zone then renders the same
+// SweepstakeDisplayWidget that powers the public /display/sweepstake page.
+function SweepstakeConfigPickerSection({
+  form,
+}: {
+  form: any;
+}) {
+  const sweepstakeConfigsQuery = useSiteFilteredQuery<SweepstakeWidgetConfig[]>(
+    "/api/sweepstake/configs",
+  );
+  const { data: configs, isLoading } = useQuery<SweepstakeWidgetConfig[]>({
+    ...sweepstakeConfigsQuery,
+  });
+  const selectedId = form.watch("sweepstakeConfigId") as string | undefined;
+  const selected = (configs || []).find((c) => c.id === selectedId);
+
+  return (
+    <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <Trophy className="h-4 w-4" />
+        Sweepstake Wall Settings
+      </div>
+      <FormField
+        control={form.control}
+        name="sweepstakeConfigId"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Sweepstake Design</FormLabel>
+            <Select onValueChange={field.onChange} value={field.value || ""}>
+              <FormControl>
+                <SelectTrigger data-testid="select-sweepstake-config">
+                  <SelectValue
+                    placeholder={isLoading ? "Loading…" : "Select a sweepstake design"}
+                  />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent>
+                {(configs || []).map((cfg) => (
+                  <SelectItem key={cfg.id} value={cfg.id}>
+                    <div
+                      className="flex flex-col"
+                      data-testid={`sweepstake-config-option-${cfg.id}`}
+                    >
+                      <span className="font-medium">{cfg.name}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {cfg.tournamentName}
+                        {" · "}
+                        {cfg.theme}
+                        {" · "}
+                        {cfg.layoutMode}
+                      </span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {(configs || []).length === 0 && !isLoading && (
+              <p className="text-xs text-muted-foreground pt-1">
+                No sweepstake designs yet. Create one on the Sweepstake Wall page
+                first.
+              </p>
+            )}
+            {selected && (
+              <div
+                className="flex flex-wrap gap-2 pt-1"
+                data-testid={`sweepstake-config-summary-${selected.id}`}
+              >
+                <Badge variant="secondary">{selected.tournamentName}</Badge>
+                <Badge variant="outline">Theme: {selected.theme}</Badge>
+                <Badge variant="outline">Layout: {selected.layoutMode}</Badge>
+              </div>
+            )}
             <FormMessage />
           </FormItem>
         )}
@@ -2012,6 +2097,7 @@ function ZoneEditorDialog({
       scheduleEndHour: 18,
       scheduleHeaderText: "",
       agendaConfigId: "",
+      sweepstakeConfigId: "",
     },
   });
 
@@ -2274,6 +2360,7 @@ function ZoneEditorDialog({
           scheduleEndHour: zone.scheduleEndHour ?? 18,
           scheduleHeaderText: zone.scheduleHeaderText || "",
           agendaConfigId: zone.agendaConfigId || "",
+          sweepstakeConfigId: zone.sweepstakeConfigId || "",
         });
       } else {
         form.reset({
@@ -2496,6 +2583,7 @@ function ZoneEditorDialog({
           scheduleEndHour: 18,
           scheduleHeaderText: "",
           agendaConfigId: "",
+      sweepstakeConfigId: "",
         });
       }
     }
@@ -7906,6 +7994,10 @@ function ZoneEditorDialog({
 
             {form.watch("type") === "agenda" && (
               <AgendaConfigPickerSection form={form} layout={layout} />
+            )}
+
+            {form.watch("type") === "sweepstake" && (
+              <SweepstakeConfigPickerSection form={form} />
             )}
 
             {form.watch("type") === "webrtc_stream" && (

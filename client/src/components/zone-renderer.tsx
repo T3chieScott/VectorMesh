@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { AgendaConfigZoneWidget } from "./agenda/AgendaConfigZoneWidget";
+import { SweepstakeConfigZoneWidget } from "./sweepstake/SweepstakeConfigZoneWidget";
 import { buildZoneBaseStyle } from "./zone-base-style";
 export { buildZoneBaseStyle } from "./zone-base-style";
 // `useSyncedSecondTick` was removed from this file when ClockWidget
@@ -5960,6 +5961,10 @@ export function ZoneRenderer({
       case "agenda":
         return (
           <AgendaConfigZoneWidget configId={zone.agendaConfigId || ""} atIso={agendaTestAt} />
+        );
+      case "sweepstake":
+        return (
+          <SweepstakeConfigZoneWidget configId={zone.sweepstakeConfigId || ""} />
         );
       case "webrtc_stream": {
         const webrtcFullUrl = zone.webrtcSignallingUrl && zone.webrtcStreamKey
