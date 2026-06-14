@@ -4721,7 +4721,7 @@ export async function registerRoutes(
   });
 
   // Temporary endpoint to serve deployment files
-  app.get("/api/deploy-package", async (_req, res) => {
+  app.get("/api/deploy-package", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const tarPath = path.join(os.tmpdir(), "upload-fix.tar.gz");
       const exists = await fs.promises.access(tarPath).then(() => true).catch(() => false);
