@@ -1,0 +1,266 @@
+Build a new VectorMesh widget called World Cup Sweepstake Wall.
+
+Purpose:
+Create a fun, bright, informative internal staff engagement widget for the football World Cup. Staff members are randomly assigned to World Cup teams. As teams are knocked out, the assigned staff member is also knocked out. The person assigned to the winning team becomes the overall sweepstake winner.
+
+Important:
+Do not remove or break existing VectorMesh functionality.
+Do not use protected FIFA branding, logos, mascots or official artwork unless supplied/licensed.
+Use neutral naming such as “World Football Sweepstake” or “Tournament Sweepstake Wall”.
+
+Data sources:
+Create a provider abstraction for live tournament data.
+Support:
+- Sportmonks
+- API-Football / API-Sports
+- football-data.org
+- manual data fallback
+
+Store API keys only in environment variables.
+Do not expose API keys to the frontend.
+Fetch data server-side and cache in the database.
+Displays must read cached data only.
+
+Data required:
+- teams
+- groups
+- fixtures
+- match status
+- results
+- group tables
+- knockout status
+- eliminated teams
+- tournament winner
+- team flags/badges where legally usable
+- fallback to ISO country flags or uploaded graphics
+
+Database tables:
+Create:
+1. tournament_teams
+- id
+- name
+- countryCode
+- groupName
+- flagUrl
+- badgeUrl
+- primaryColour
+- secondaryColour
+- status: active, eliminated, winner
+- eliminatedAt
+- createdAt
+- updatedAt
+
+2. tournament_matches
+- id
+- providerMatchId
+- homeTeamId
+- awayTeamId
+- stage
+- groupName
+- venue
+- kickoffTime
+- status: scheduled, live, finished, postponed
+- homeScore
+- awayScore
+- winnerTeamId
+- createdAt
+- updatedAt
+
+3. tournament_standings
+- id
+- teamId
+- groupName
+- position
+- played
+- won
+- drawn
+- lost
+- goalsFor
+- goalsAgainst
+- goalDifference
+- points
+- updatedAt
+
+4. sweepstake_participants
+- id
+- name
+- email optional
+- department optional
+- assignedTeamId
+- status: active, eliminated, winner
+- eliminatedAt
+- createdAt
+- updatedAt
+
+5. sweepstake_widget_configs
+- id
+- name
+- layoutMode: auto, landscape, portrait, totem, ultrawide
+- rotationIntervalSeconds
+- showFixtures
+- showResults
+- showStandings
+- showSweepstake
+- showEliminations
+- showFunFacts
+- showCountdown
+- themeVariant
+- refreshIntervalSeconds
+- createdAt
+- updatedAt
+
+Admin UI:
+Add a World Cup / Sweepstake admin section.
+
+User must be able to:
+- choose data provider
+- configure API key via environment variable guidance
+- manually sync tournament data
+- view teams, fixtures, results and standings
+- add staff names manually
+- import staff names from CSV
+- randomly assign staff to teams
+- support multiple staff per team if staff count exceeds team count
+- reset assignments with confirmation
+- manually override team assignments
+- mark teams eliminated manually if API data is unavailable
+- export sweepstake assignments as CSV
+
+Sweepstake assignment logic:
+- Randomly assign teams fairly.
+- If staff count is lower than team count, leave some teams unassigned.
+- If staff count is higher than team count, distribute evenly across teams.
+- Do not assign the same person twice.
+- Include a dramatic reveal mode showing one staff member and team at a time.
+
+Elimination logic:
+- During group stage, use standings/qualification rules where available.
+- During knockout stage, eliminate losing teams automatically after final result.
+- When a team is eliminated, update assigned staff status to eliminated.
+- When the tournament winner is known, mark assigned staff as winner.
+
+Display route:
+Add full-screen route:
+/display/world-cup-sweepstake/:configId
+
+Display slides:
+Create rotating full-screen slides:
+
+1. Tournament countdown
+- next match
+- kickoff time
+- bright tournament-style visual
+
+2. Today’s fixtures
+- team flags
+- kickoff times
+- group/stage
+- venue
+
+3. Recent results
+- scores
+- match status
+- winning team highlight
+
+4. Group tables
+- group name
+- team
+- played
+- goal difference
+- points
+- highlight staff-assigned teams
+
+5. Sweepstake wall
+- staff member
+- assigned team
+- team flag
+- team status
+
+6. Knockout/elimination wall
+- eliminated team
+- eliminated staff member
+- fun message such as “Thanks for playing!”
+
+7. Team spotlight
+- team name
+- assigned staff
+- next fixture
+- current status
+- fun fact
+
+8. Winner celebration
+- winning team
+- winning staff member
+- animated celebration layout
+
+Design:
+Make it fun, bright and energetic.
+Use bold typography, colourful team cards, flag graphics and animated transitions.
+Suitable for office screens, reception screens, portrait totems and landscape displays.
+Prioritise readability from distance.
+Do not cram too much text onto one screen.
+
+Responsive behaviour:
+Auto-select layout:
+- Landscape: multi-card dashboard
+- Portrait/totem: large single-card rotation
+- Ultrawide: fixtures + standings + sweepstake strip
+- Small zones: next match or current sweepstake highlight only
+
+API endpoints:
+GET /api/sweepstake/teams
+GET /api/sweepstake/matches
+GET /api/sweepstake/standings
+GET /api/sweepstake/participants
+POST /api/sweepstake/participants
+POST /api/sweepstake/participants/import
+POST /api/sweepstake/assign
+POST /api/sweepstake/reset
+POST /api/sweepstake/sync
+GET /api/sweepstake/display/:configId
+
+Provider abstraction:
+Create helper functions:
+- syncTeamsFromProvider()
+- syncFixturesFromProvider()
+- syncResultsFromProvider()
+- syncStandingsFromProvider()
+- updateEliminations()
+- assignSweepstakeTeams()
+- getDisplayRotationData()
+
+Manual fallback:
+If no API provider is configured, allow manual entry/import of:
+- teams
+- fixtures
+- results
+- standings
+- eliminations
+
+Caching:
+External API sync should happen server-side only.
+Cache all returned data.
+Respect rate limits.
+If API fails, keep showing last known good data.
+
+Testing:
+Add tests for:
+- fair random assignment
+- more staff than teams
+- fewer staff than teams
+- duplicate staff prevention
+- elimination updates
+- winner detection
+- display data generation
+
+Done criteria:
+- Staff can be imported.
+- Teams can be synced or manually entered.
+- Staff can be randomly assigned to teams.
+- Fixtures/results/standings can be synced from provider or entered manually.
+- Eliminated teams eliminate assigned staff.
+- Winning team produces a winning staff member.
+- Display route shows rotating full-screen sweepstake visuals.
+- API keys are not exposed to frontend.
+- Existing app functionality remains intact.
+- Build passes.
