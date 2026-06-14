@@ -454,11 +454,11 @@ function CreateOverrideDialog({
               name="layoutTemplateId"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Layout Template (optional)</FormLabel>
+                  <FormLabel>Scene (optional)</FormLabel>
                   <Select onValueChange={field.onChange} defaultValue={field.value}>
                     <FormControl>
                       <SelectTrigger data-testid="select-override-layout">
-                        <SelectValue placeholder="Use default layout" />
+                        <SelectValue placeholder="Use default scene" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>

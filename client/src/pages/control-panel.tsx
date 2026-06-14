@@ -361,7 +361,7 @@ function PresetFormDialog({
         <DialogHeader>
           <DialogTitle>{editPreset ? "Edit Preset" : "Create Preset"}</DialogTitle>
           <DialogDescription>
-            {editPreset ? "Update this preset's name, layout, and zone assignments." : "Create a new preset button for quick content switching."}
+            {editPreset ? "Update this preset's name, scene, and zone assignments." : "Create a new preset button for quick content switching."}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -384,11 +384,11 @@ function PresetFormDialog({
               name="layoutTemplateId"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Layout</FormLabel>
+                  <FormLabel>Scene</FormLabel>
                   <Select onValueChange={field.onChange} value={field.value || ""}>
                     <FormControl>
                       <SelectTrigger data-testid="select-preset-layout">
-                        <SelectValue placeholder="Select a layout" />
+                        <SelectValue placeholder="Select a scene" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
@@ -415,7 +415,7 @@ function PresetFormDialog({
                 </div>
                 <div className="space-y-2">
                   <Label className="text-sm font-medium">Playlist Zone Mapping</Label>
-                  <p className="text-xs text-muted-foreground">Assign playlists to media player zones in this layout</p>
+                  <p className="text-xs text-muted-foreground">Assign playlists to media player zones in this scene</p>
                   {mediaPlayerZones.map((zone) => (
                     <div key={zone.id} className="flex items-center gap-3" data-testid={`zone-mapping-${zone.id}`}>
                       <div className="flex items-center gap-2 min-w-[120px]">
@@ -592,7 +592,7 @@ function TargetPresets({
             <h3 className="font-medium text-muted-foreground mb-1">No presets yet</h3>
             <p className="text-sm text-muted-foreground/70 max-w-sm">
               {canManage
-                ? `Create presets to quickly switch this ${targetType === "screen" ? "screen" : "group"} between different layouts with a single tap.`
+                ? `Create presets to quickly switch this ${targetType === "screen" ? "screen" : "group"} between different scenes with a single tap.`
                 : "No presets have been configured for this target yet. Ask an admin to create presets."}
             </p>
             {canManage && (
@@ -614,7 +614,7 @@ function TargetPresets({
             <PresetButton
               key={preset.id}
               preset={preset}
-              layoutName={preset.layoutTemplateId ? (layoutMap.get(preset.layoutTemplateId) || "Unknown Layout") : "No layout assigned"}
+              layoutName={preset.layoutTemplateId ? (layoutMap.get(preset.layoutTemplateId) || "Unknown Scene") : "No scene assigned"}
               onActivate={() => activateMutation.mutate(preset.id)}
               onDeactivate={() => deactivateMutation.mutate(preset.id)}
               onEdit={() => { setEditingPreset(preset); setFormOpen(true); }}
@@ -720,7 +720,7 @@ export default function ControlPanelPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Control Panel</h1>
         <p className="text-muted-foreground mt-1">
-          Quickly switch screens between preset layouts. Configure these buttons for use with a Stream Deck or any touch device.
+          Quickly switch screens between preset scenes. Configure these buttons for use with a Stream Deck or any touch device.
         </p>
       </div>
 

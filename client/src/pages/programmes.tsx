@@ -556,15 +556,15 @@ export function BlockEditorDialog({
               name="layoutTemplateId"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Layout Template</FormLabel>
+                  <FormLabel>Scene</FormLabel>
                   <Select onValueChange={field.onChange} value={field.value || "none"}>
                     <FormControl>
                       <SelectTrigger data-testid="select-block-layout">
-                        <SelectValue placeholder="Select layout" />
+                        <SelectValue placeholder="Select scene" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="none">No layout</SelectItem>
+                      <SelectItem value="none">No scene</SelectItem>
                       {layouts.map((layout) => (
                         <SelectItem key={layout.id} value={layout.id}>
                           {layout.name}
@@ -587,7 +587,7 @@ export function BlockEditorDialog({
                 {mediaPlayerZones.length > 0 && (
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Playlist Zone Mapping</Label>
-                    <p className="text-xs text-muted-foreground">Assign playlists to media player zones in this layout</p>
+                    <p className="text-xs text-muted-foreground">Assign playlists to media player zones in this scene</p>
                     {mediaPlayerZones.map((zone: any) => (
                       <div key={zone.id} className="flex items-center gap-3" data-testid={`zone-mapping-${zone.id}`}>
                         <div className="flex items-center gap-2 min-w-[120px]">
@@ -623,7 +623,7 @@ export function BlockEditorDialog({
                   <Monitor className="h-4 w-4 text-muted-foreground" />
                   <span className="font-medium">Fullscreen Playlist</span>
                 </div>
-                <p className="text-xs text-muted-foreground">Without a layout, select a playlist to play fullscreen on target screens.</p>
+                <p className="text-xs text-muted-foreground">Without a scene, select a playlist to play fullscreen on target screens.</p>
                 <Select
                   value={fallbackPlaylistId || "none"}
                   onValueChange={(v) => {
@@ -655,7 +655,7 @@ export function BlockEditorDialog({
                   <span className="font-medium">Agenda Display</span>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Or, target a saved agenda widget config directly. The player renders it fullscreen — no layout needed.
+                  Or, target a saved agenda widget config directly. The player renders it fullscreen — no scene needed.
                 </p>
                 <Select
                   value={agendaConfigId || "none"}

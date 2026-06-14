@@ -207,7 +207,7 @@ function PresetFormDialog({
         <DialogHeader>
           <DialogTitle>{editPreset ? "Edit Preset" : "Create Preset"}</DialogTitle>
           <DialogDescription>
-            {editPreset ? "Update this preset's name, layout, and zone assignments." : "Create a new preset for quick content switching."}
+            {editPreset ? "Update this preset's name, scene, and zone assignments." : "Create a new preset for quick content switching."}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -230,11 +230,11 @@ function PresetFormDialog({
               name="layoutTemplateId"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Layout</FormLabel>
+                  <FormLabel>Scene</FormLabel>
                   <Select onValueChange={field.onChange} value={field.value || ""}>
                     <FormControl>
                       <SelectTrigger data-testid="select-preset-layout">
-                        <SelectValue placeholder="Select a layout" />
+                        <SelectValue placeholder="Select a scene" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>

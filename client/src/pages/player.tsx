@@ -1482,7 +1482,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         <p className="text-xl font-semibold mb-2">No Content Assigned</p>
         <p className="text-white/50 text-sm">{content.screen.name}</p>
         <p className="text-white/30 text-xs mt-4">
-          Assign a layout or programme to this screen in VectorMesh
+          Assign a scene or programme to this screen in VectorMesh
         </p>
       </div>
     );

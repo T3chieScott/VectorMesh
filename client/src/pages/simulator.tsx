@@ -299,15 +299,15 @@ function PlayerDisplay({
           <div className="text-center">
             <Layers className="h-12 w-12 mx-auto mb-3 opacity-50" />
             <p className="text-lg">No zones defined</p>
-            <p className="text-sm">Add zones to this layout to see content</p>
+            <p className="text-sm">Add zones to this scene to see content</p>
           </div>
         </div>
       ) : (
         <div className="absolute inset-0 flex items-center justify-center text-white/50">
           <div className="text-center">
             <Tv2 className="h-16 w-16 mx-auto mb-4" />
-            <p className="text-lg">No layout selected</p>
-            <p className="text-sm">Select a screen or layout to preview</p>
+            <p className="text-lg">No scene selected</p>
+            <p className="text-sm">Select a screen or scene to preview</p>
           </div>
         </div>
       )}
@@ -630,8 +630,8 @@ export default function SimulatorPage() {
   const layoutSourceLabel = isAutoMode && resolvedContent
     ? resolvedContent.layoutSource === "live_override" ? "Live Override"
       : resolvedContent.layoutSource === "scheduled" ? `Scheduled: ${resolvedContent.layoutSourceDetail || "Block"}`
-      : resolvedContent.layoutSource === "fallback" ? (resolvedContent.layoutSourceDetail === "Fallback Playlist" ? "Fallback Playlist" : "Fallback Layout")
-      : "No Layout Resolved"
+      : resolvedContent.layoutSource === "fallback" ? (resolvedContent.layoutSourceDetail === "Fallback Playlist" ? "Fallback Playlist" : "Fallback Scene")
+      : "No Scene Resolved"
     : null;
 
   // Check for active live override for selected screen
@@ -823,7 +823,7 @@ export default function SimulatorPage() {
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-simulator-title">Player Simulator</h1>
           <p className="text-muted-foreground">
-            Preview how content appears on screens with zone-based layouts
+            Preview how content appears on screens with zone-based scenes
           </p>
         </div>
       </div>
@@ -862,14 +862,14 @@ export default function SimulatorPage() {
 
             {/* Layout Selection */}
             <div className="space-y-2">
-              <Label className="text-sm font-medium">Layout</Label>
+              <Label className="text-sm font-medium">Scene</Label>
               <Select value={selectedLayoutId} onValueChange={setSelectedLayoutId}>
                 <SelectTrigger data-testid="select-simulator-layout">
-                  <SelectValue placeholder="Select a layout" />
+                  <SelectValue placeholder="Select a scene" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="auto">Auto (from screen)</SelectItem>
-                  <SelectItem value="none">No layout</SelectItem>
+                  <SelectItem value="none">No scene</SelectItem>
                   {layouts.map((layout) => (
                     <SelectItem key={layout.id} value={layout.id}>
                       {layout.name} ({((layout.zones as LayoutZone[])?.length || 0)} zones)
@@ -889,7 +889,7 @@ export default function SimulatorPage() {
                 </div>
               )}
               {isAutoMode && selectedScreenId === "none" && (
-                <p className="text-xs text-muted-foreground">Select a screen to auto-resolve its layout</p>
+                <p className="text-xs text-muted-foreground">Select a screen to auto-resolve its scene</p>
               )}
             </div>
 
@@ -932,7 +932,7 @@ export default function SimulatorPage() {
                 <div className="text-xs text-muted-foreground">
                   {previewSortedItems.length} item{previewSortedItems.length !== 1 ? "s" : ""} in playlist
                   {previewHasLayoutItems && (
-                    <span className="ml-1">(includes layouts)</span>
+                    <span className="ml-1">(includes scenes)</span>
                   )}
                 </div>
               )}
@@ -1057,7 +1057,7 @@ export default function SimulatorPage() {
                     <span>
                       No display profile assigned —{" "}
                       {selectedLayout
-                        ? "using the layout's dimensions"
+                        ? "using the scene's dimensions"
                         : "using a default 1920×1080"}
                       . Assign a profile for an accurate physical preview.
                     </span>
@@ -1074,7 +1074,7 @@ export default function SimulatorPage() {
               >
                 <AlertTriangle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
                 <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
-                  Layout {layoutSizeWarning.layoutW}×{layoutSizeWarning.layoutH}{" "}
+                  Scene {layoutSizeWarning.layoutW}×{layoutSizeWarning.layoutH}{" "}
                   doesn't match {layoutSizeWarning.targetLabel}{" "}
                   {layoutSizeWarning.targetW}×{layoutSizeWarning.targetH} —
                   content will be scaled or cropped.
@@ -1108,7 +1108,7 @@ export default function SimulatorPage() {
               {!isPlaylistPreview && selectedLayout && (
                 <>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Layout</span>
+                    <span className="text-muted-foreground">Scene</span>
                     <span className="font-medium truncate max-w-[140px]" data-testid="text-active-layout-name">{selectedLayout.name}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
@@ -1165,7 +1165,7 @@ export default function SimulatorPage() {
                   {isPlaylistPreview && previewHasLayoutItems && previewSortedItems.length > 0 && (
                     <Badge variant="outline" className="text-[10px] ml-1 font-normal tabular-nums" data-testid="badge-rotation-index">
                       {(previewRotationIndex % previewSortedItems.length) + 1}/{previewSortedItems.length}
-                      {currentPreviewIsLayout ? " (layout)" : " (media)"}
+                      {currentPreviewIsLayout ? " (scene)" : " (media)"}
                     </Badge>
                   )}
                   {!isPlaylistPreview && selectedScreen?.canvasEnabled && (
@@ -1208,7 +1208,7 @@ export default function SimulatorPage() {
                   <div className="text-center text-muted-foreground">
                     <ListVideo className="h-12 w-12 mx-auto mb-3 opacity-50" />
                     <p className="text-lg font-medium">No items in playlist</p>
-                    <p className="text-sm">Add media or layout items to this playlist to preview it</p>
+                    <p className="text-sm">Add media or scene items to this playlist to preview it</p>
                   </div>
                 </div>
               ) : (

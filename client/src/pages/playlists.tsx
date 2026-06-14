@@ -73,7 +73,7 @@ const mediaItemFormSchema = z.object({
 const layoutItemFormSchema = z.object({
   itemType: z.literal("layout"),
   mediaAssetId: z.string().optional(),
-  layoutTemplateId: z.string().min(1, "Layout is required"),
+  layoutTemplateId: z.string().min(1, "Scene is required"),
   duration: z.number().min(1, "Duration must be at least 1 second").optional(),
   order: z.number().min(0).optional(),
 });
@@ -209,7 +209,7 @@ function ItemEditorDialog({
                       data-testid="button-type-layout"
                     >
                       <LayoutGrid className="mr-2 h-4 w-4" />
-                      Layout
+                      Scene
                     </Button>
                   </div>
                 </FormItem>
@@ -249,11 +249,11 @@ function ItemEditorDialog({
                 name="layoutTemplateId"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Layout</FormLabel>
+                    <FormLabel>Scene</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger data-testid="select-item-layout">
-                          <SelectValue placeholder="Select layout" />
+                          <SelectValue placeholder="Select scene" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -278,7 +278,7 @@ function ItemEditorDialog({
                   <FormLabel>
                     Duration (seconds)
                     {itemType === "media" && isVideo ? " — optional" : ""}
-                    {itemType === "layout" ? " — how long to show this layout" : ""}
+                    {itemType === "layout" ? " — how long to show this scene" : ""}
                   </FormLabel>
                   <FormControl>
                     <div className="flex gap-2">
@@ -321,7 +321,7 @@ function ItemEditorDialog({
                     <p className="text-xs text-muted-foreground">Leave empty to play the full video</p>
                   )}
                   {itemType === "layout" && (
-                    <p className="text-xs text-muted-foreground">How many seconds to display this layout before rotating to the next item</p>
+                    <p className="text-xs text-muted-foreground">How many seconds to display this scene before rotating to the next item</p>
                   )}
                   <FormMessage />
                 </FormItem>
@@ -396,11 +396,11 @@ function SortablePlaylistItem({
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium leading-tight truncate" data-testid={`text-item-name-${item.id}`}>
-          {isLayout ? (layoutTemplate?.name || "Unknown layout") : (mediaAsset?.name || "Unknown media")}
+          {isLayout ? (layoutTemplate?.name || "Unknown scene") : (mediaAsset?.name || "Unknown media")}
         </p>
         <div className="flex items-center gap-1.5">
           {isLayout ? (
-            <span className="text-[10px] text-muted-foreground">Layout{layoutTemplate?.aspectRatio ? ` · ${layoutTemplate.aspectRatio}` : ""}</span>
+            <span className="text-[10px] text-muted-foreground">Scene{layoutTemplate?.aspectRatio ? ` · ${layoutTemplate.aspectRatio}` : ""}</span>
           ) : mediaAsset?.mediaType ? (
             <span className="text-[10px] text-muted-foreground capitalize">{mediaAsset.mediaType}</span>
           ) : null}
@@ -699,7 +699,7 @@ function PlaylistItemsSection({
             )}
             {draftItems.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-2">
-                No items yet. Add media or layouts to this playlist.
+                No items yet. Add media or scenes to this playlist.
               </p>
             ) : (
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -742,7 +742,7 @@ function PlaylistItemsSection({
               >
                 <Plus className="mr-1 h-4 w-4" />
                 <LayoutGrid className="mr-1 h-3.5 w-3.5" />
-                Add Layout
+                Add Scene
               </Button>
             </div>
           </div>
@@ -1367,7 +1367,7 @@ export default function PlaylistsPage() {
             <h3 className="text-lg font-semibold mb-2">No playlists yet</h3>
             <p className="text-sm text-muted-foreground mb-4 max-w-sm">
               Create playlists to organise media for rotating content in your
-              layout zones.
+              scene zones.
             </p>
             <CreatePlaylistDialog events={events} />
           </CardContent>

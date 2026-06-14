@@ -80,7 +80,7 @@ const ENTITY_LABELS: Record<string, string> = {
   screen_group: "Screen Group",
   display_profile: "Display Profile",
   media: "Media",
-  layout: "Layout",
+  layout: "Scene",
   programme: "Programme",
   playlist: "Playlist",
   live_override: "Live Override",

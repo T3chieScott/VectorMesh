@@ -8779,7 +8779,7 @@ function CopyMoveDialog({ layout, mode, open, onOpenChange }: { layout: LayoutTe
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{mode === "copy" ? "Copy" : (layout.clientId ? "Move" : "Assign")} Layout to Site</DialogTitle>
+          <DialogTitle>{mode === "copy" ? "Copy" : (layout.clientId ? "Move" : "Assign")} Scene to Site</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
@@ -8897,10 +8897,10 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
       setEditOpen(false);
-      toast({ title: "Layout updated successfully" });
+      toast({ title: "Scene updated successfully" });
     },
     onError: () => {
-      toast({ title: "Failed to update layout", variant: "destructive" });
+      toast({ title: "Failed to update scene", variant: "destructive" });
     },
   });
 
@@ -8908,10 +8908,10 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
     mutationFn: () => apiRequest("DELETE", `/api/layouts/${layout.id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
-      toast({ title: "Layout deleted successfully" });
+      toast({ title: "Scene deleted successfully" });
     },
     onError: (error: any) => {
-      toast({ title: error?.message || "Failed to delete layout", variant: "destructive" });
+      toast({ title: error?.message || "Failed to delete scene", variant: "destructive" });
     },
   });
 
@@ -8920,7 +8920,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
       apiRequest("POST", `/api/layouts/${layout.id}/lock`, { locked }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
-      toast({ title: layout.locked ? "Layout unlocked" : "Layout locked" });
+      toast({ title: layout.locked ? "Scene unlocked" : "Scene locked" });
     },
     onError: () => {
       toast({ title: "Failed to toggle lock", variant: "destructive" });
@@ -8939,10 +8939,10 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
-      toast({ title: "Layout duplicated successfully" });
+      toast({ title: "Scene duplicated successfully" });
     },
     onError: () => {
-      toast({ title: "Failed to duplicate layout", variant: "destructive" });
+      toast({ title: "Failed to duplicate scene", variant: "destructive" });
     },
   });
 
@@ -8953,10 +8953,10 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
       setHasUnsavedChanges(false);
-      toast({ title: "Layout saved successfully" });
+      toast({ title: "Scene saved successfully" });
     },
     onError: () => {
-      toast({ title: "Failed to save layout", variant: "destructive" });
+      toast({ title: "Failed to save scene", variant: "destructive" });
     },
   });
 
@@ -9036,7 +9036,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                 </DialogTrigger>
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>Edit Layout</DialogTitle>
+                    <DialogTitle>Edit Scene</DialogTitle>
                   </DialogHeader>
                   <Form {...form}>
                     <form
@@ -9090,7 +9090,7 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
                             <Select onValueChange={field.onChange} defaultValue={field.value}>
                               <FormControl>
                                 <SelectTrigger data-testid="select-edit-layout-event">
-                                  <SelectValue placeholder="Global layout" />
+                                  <SelectValue placeholder="Global scene" />
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
@@ -9371,10 +9371,10 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
       setOpen(false);
       form.reset();
-      toast({ title: "Layout created successfully" });
+      toast({ title: "Scene created successfully" });
     },
     onError: () => {
-      toast({ title: "Failed to create layout", variant: "destructive" });
+      toast({ title: "Failed to create scene", variant: "destructive" });
     },
   });
 
@@ -9383,12 +9383,12 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
       <DialogTrigger asChild>
         <Button data-testid="button-create-layout">
           <Plus className="mr-2 h-4 w-4" />
-          Add Layout
+          Add Scene
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create New Layout</DialogTitle>
+          <DialogTitle>Create New Scene</DialogTitle>
         </DialogHeader>
         <Form {...form}>
           <form
@@ -9402,7 +9402,7 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
                 <FormItem>
                   <FormLabel>Name</FormLabel>
                   <FormControl>
-                    <Input placeholder="e.g., Main Stage Layout" {...field} data-testid="input-layout-name" />
+                    <Input placeholder="e.g., Main Stage Scene" {...field} data-testid="input-layout-name" />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -9442,7 +9442,7 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
                   <Select onValueChange={field.onChange} defaultValue={field.value}>
                     <FormControl>
                       <SelectTrigger data-testid="select-layout-event">
-                        <SelectValue placeholder="Global layout" />
+                        <SelectValue placeholder="Global scene" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
@@ -9536,7 +9536,7 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
                 Cancel
               </Button>
               <Button type="submit" disabled={createMutation.isPending} data-testid="button-submit-layout">
-                {createMutation.isPending ? "Creating..." : "Create Layout"}
+                {createMutation.isPending ? "Creating..." : "Create Scene"}
               </Button>
             </div>
           </form>
@@ -9618,7 +9618,7 @@ function VariableResolvedBadge({
           <div className="text-xs">
             Couldn't evaluate tokens for {previewScreenName || "this screen"}.
             The screen may be missing or the player-vars endpoint failed.
-            Tokens used by this layout:
+            Tokens used by this scene:
             <ul className="mt-1 space-y-0.5">
               {tokens.map((t) => (
                 <li key={t}>
@@ -9948,10 +9948,10 @@ function LayoutEditorPanel({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
       setEditOpen(false);
-      toast({ title: "Layout updated successfully" });
+      toast({ title: "Scene updated successfully" });
     },
     onError: () => {
-      toast({ title: "Failed to update layout", variant: "destructive" });
+      toast({ title: "Failed to update scene", variant: "destructive" });
     },
   });
 
@@ -9960,10 +9960,10 @@ function LayoutEditorPanel({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
       onLayoutChange();
-      toast({ title: "Layout deleted successfully" });
+      toast({ title: "Scene deleted successfully" });
     },
     onError: () => {
-      toast({ title: "Failed to delete layout", variant: "destructive" });
+      toast({ title: "Failed to delete scene", variant: "destructive" });
     },
   });
 
@@ -9972,7 +9972,7 @@ function LayoutEditorPanel({
       apiRequest("POST", `/api/layouts/${layout.id}/lock`, { locked }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
-      toast({ title: layout.locked ? "Layout unlocked" : "Layout locked" });
+      toast({ title: layout.locked ? "Scene unlocked" : "Scene locked" });
     },
     onError: () => {
       toast({ title: "Failed to toggle lock", variant: "destructive" });
@@ -9991,10 +9991,10 @@ function LayoutEditorPanel({
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
-      toast({ title: "Layout duplicated successfully" });
+      toast({ title: "Scene duplicated successfully" });
     },
     onError: () => {
-      toast({ title: "Failed to duplicate layout", variant: "destructive" });
+      toast({ title: "Failed to duplicate scene", variant: "destructive" });
     },
   });
 
@@ -10217,7 +10217,7 @@ function LayoutEditorPanel({
                       <AlertDialogHeader>
                         <AlertDialogTitle>Delete Zone</AlertDialogTitle>
                         <AlertDialogDescription>
-                          Remove "{zone.name}" from this layout? You can discard the change before saving.
+                          Remove "{zone.name}" from this scene? You can discard the change before saving.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
@@ -10250,7 +10250,7 @@ function LayoutEditorPanel({
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Layout</DialogTitle>
+            <DialogTitle>Edit Scene</DialogTitle>
           </DialogHeader>
           <Form {...form}>
             <form
@@ -10691,10 +10691,10 @@ export default function LayoutsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
       setHasUnsavedChanges(false);
-      toast({ title: "Layout saved successfully" });
+      toast({ title: "Scene saved successfully" });
     },
     onError: () => {
-      toast({ title: "Failed to save layout", variant: "destructive" });
+      toast({ title: "Failed to save scene", variant: "destructive" });
     },
   });
 
@@ -10747,9 +10747,9 @@ export default function LayoutsPage() {
         <Card className="max-w-md py-12">
           <CardContent className="flex flex-col items-center justify-center text-center">
             <Layout className="h-12 w-12 text-muted-foreground/50 mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No layouts yet</h3>
+            <h3 className="text-lg font-semibold mb-2">No scenes yet</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Create layout templates to define how content appears on your
+              Create scenes to define how content appears on your
               screens with zones for media, tickers, and widgets.
             </p>
             <CreateLayoutDialog events={events} />
@@ -10856,7 +10856,7 @@ export default function LayoutsPage() {
         <div className="flex-1 flex items-center justify-center text-muted-foreground">
           <div className="text-center">
             <Layout className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p>Select a layout to edit</p>
+            <p>Select a scene to edit</p>
           </div>
         </div>
       )}

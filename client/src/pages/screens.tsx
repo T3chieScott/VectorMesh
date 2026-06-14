@@ -1241,7 +1241,7 @@ function WhyBlankDialog({
               >
                 Outcome: {(data.outcome as any).source}
                 {(data.outcome as any).layoutName
-                  ? ` → layout "${(data.outcome as any).layoutName}"`
+                  ? ` → scene "${(data.outcome as any).layoutName}"`
                   : ""}
                 {(data.outcome as any).blockName
                   ? ` (from block "${(data.outcome as any).blockName}")`
@@ -1287,7 +1287,7 @@ function TraceStepRow({ step }: { step: ContentTraceStep }) {
                 : "never"}
             </div>
             <div>
-              Fallback layout: {step.fallbackLayoutId ?? "—"}; Fallback playlist:{" "}
+              Fallback scene: {step.fallbackLayoutId ?? "—"}; Fallback playlist:{" "}
               {step.fallbackPlaylistId ?? "—"}
             </div>
           </div>
@@ -1390,7 +1390,7 @@ function TraceStepRow({ step }: { step: ContentTraceStep }) {
           <div>
             <div className="font-medium">
               {step.kind === "fallback-layout"
-                ? "Screen fallback layout"
+                ? "Screen fallback scene"
                 : "Screen fallback playlist"}
             </div>
             <div className="text-muted-foreground text-xs">{step.reason}</div>
@@ -2191,7 +2191,7 @@ function ScreenCard({
                             >
                               <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                               <span>
-                                This screen has no display profile assigned. The simulator will fall back to the layout's dimensions, which may not match the real display. Pick a profile above to fix this.
+                                This screen has no display profile assigned. The simulator will fall back to the scene's dimensions, which may not match the real display. Pick a profile above to fix this.
                               </span>
                             </div>
                           )}
@@ -2205,7 +2205,7 @@ function ScreenCard({
                       name="fallbackLayoutId"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Fallback Layout</FormLabel>
+                          <FormLabel>Fallback Scene</FormLabel>
                           <Select
                             onValueChange={(val) => field.onChange(val === "__none__" ? null : val)}
                             defaultValue={field.value || "__none__"}
@@ -2252,7 +2252,7 @@ function ScreenCard({
                               ))}
                             </SelectContent>
                           </Select>
-                          <p className="text-xs text-muted-foreground">Used when no scheduled layout or fallback layout is active</p>
+                          <p className="text-xs text-muted-foreground">Used when no scheduled scene or fallback scene is active</p>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -2989,7 +2989,7 @@ function CreateScreenDialog({
                     >
                       <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                       <span>
-                        No display profile selected. The simulator will fall back to the layout's dimensions, which may not match the real display. Pick a profile above to avoid a misconfigured screen.
+                        No display profile selected. The simulator will fall back to the scene's dimensions, which may not match the real display. Pick a profile above to avoid a misconfigured screen.
                       </span>
                     </div>
                   )}

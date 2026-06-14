@@ -257,7 +257,7 @@ function getBlockSummary(
   }
 
   const layoutName = block.layoutTemplateId
-    ? (ctx.layouts.find(l => l.id === block.layoutTemplateId)?.name || "Unknown layout")
+    ? (ctx.layouts.find(l => l.id === block.layoutTemplateId)?.name || "Unknown scene")
     : null;
 
   const zoneSources = (block.zoneSources as ZoneSource[]) || [];
@@ -333,7 +333,7 @@ function getBlockIssues(
   }
 
   if (block.layoutTemplateId && !ctx.layouts.find(l => l.id === block.layoutTemplateId)) {
-    issues.push({ kind: "missing-layout", message: "The layout this block uses no longer exists." });
+    issues.push({ kind: "missing-layout", message: "The scene this block uses no longer exists." });
   }
 
   const hasContent =
@@ -342,7 +342,7 @@ function getBlockIssues(
     summary.zoneMappings.length > 0 ||
     !!summary.fallbackPlaylistName;
   if (!hasContent) {
-    issues.push({ kind: "no-content", message: "No layout or playlist set on this block — nothing will play." });
+    issues.push({ kind: "no-content", message: "No scene or playlist set on this block — nothing will play." });
   }
 
   // Block whose entire firing window is in the past will never play again.
@@ -614,7 +614,7 @@ function TimeBlockRenderer({
   const showLayoutLine = height > 32;
   const showPlaylistLine = height > 50;
   const showTimeLine = height > 68;
-  const layoutLabel = summary.layoutName || (summary.fallbackPlaylistName ? "Playlist only" : "No layout");
+  const layoutLabel = summary.layoutName || (summary.fallbackPlaylistName ? "Playlist only" : "No scene");
   const playlistLabel = summary.primaryPlaylistName
     || (summary.zoneMappings.length > 0 ? `${summary.zoneMappings.length} zone playlist${summary.zoneMappings.length > 1 ? "s" : ""}` : null);
 
@@ -748,8 +748,8 @@ function TimeBlockRenderer({
 
                 <Layers className="h-4 w-4 mt-0.5 text-muted-foreground" />
                 <div>
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">Layout</div>
-                  <div>{summary.layoutName || <span className="text-muted-foreground italic">No layout (playlist-only)</span>}</div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">Scene</div>
+                  <div>{summary.layoutName || <span className="text-muted-foreground italic">No scene (playlist-only)</span>}</div>
                 </div>
 
                 <PlayCircle className="h-4 w-4 mt-0.5 text-muted-foreground" />
@@ -1613,15 +1613,15 @@ function ScheduleBlockEditor({
               name="layoutTemplateId"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Layout Template</FormLabel>
+                  <FormLabel>Scene</FormLabel>
                   <Select value={field.value || "none"} onValueChange={(v) => field.onChange(v === "none" ? "" : v)}>
                     <FormControl>
                       <SelectTrigger data-testid="select-layout">
-                        <SelectValue placeholder="Select a layout" />
+                        <SelectValue placeholder="Select a scene" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="none">No layout</SelectItem>
+                      <SelectItem value="none">No scene</SelectItem>
                       {layouts.map((layout) => (
                         <SelectItem key={layout.id} value={layout.id}>
                           {layout.name}
@@ -1646,7 +1646,7 @@ function ScheduleBlockEditor({
                 {mediaPlayerZones.length > 0 && (
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Playlist Zone Mapping</Label>
-                    <p className="text-xs text-muted-foreground">Assign playlists to media player zones in this layout</p>
+                    <p className="text-xs text-muted-foreground">Assign playlists to media player zones in this scene</p>
                     {mediaPlayerZones.map((zone: any) => (
                       <div key={zone.id} className="flex items-center gap-3" data-testid={`zone-mapping-${zone.id}`}>
                         <div className="flex items-center gap-2 min-w-[120px]">
@@ -1682,7 +1682,7 @@ function ScheduleBlockEditor({
                   <Monitor className="h-4 w-4 text-muted-foreground" />
                   <span className="font-medium">Fullscreen Playlist</span>
                 </div>
-                <p className="text-xs text-muted-foreground">Without a layout, select a playlist to play fullscreen on target screens.</p>
+                <p className="text-xs text-muted-foreground">Without a scene, select a playlist to play fullscreen on target screens.</p>
                 <Select
                   value={fallbackPlaylistId || "none"}
                   onValueChange={(v) => setFallbackPlaylistId(v === "none" ? "" : v)}
@@ -1995,8 +1995,8 @@ function PlaybackHealthBanner({
   const reasonLabels: Record<Reason, string> = {
     "missing-target": "broken targets",
     "no-target-screens": "no targeted screens",
-    "missing-layout": "missing layouts",
-    "no-content": "no layout or playlist set",
+    "missing-layout": "missing scenes",
+    "no-content": "no scene or playlist set",
     "block-in-past": `date range already ended in ${tz}`,
     "no-booking-covers-block": "no screen booking covers the next 7 days",
     "no-firing-day": `schedule has no firing day this week in ${tz}`,
@@ -2763,10 +2763,10 @@ export default function SchedulePage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <Label className="text-xs text-muted-foreground mb-2 block">Layouts</Label>
+                <Label className="text-xs text-muted-foreground mb-2 block">Scenes</Label>
                 <div className="space-y-1.5 max-h-[180px] overflow-y-auto">
                   {layouts.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No layouts yet</p>
+                    <p className="text-sm text-muted-foreground">No scenes yet</p>
                   ) : (
                     layouts.map((layout) => (
                       <DragItem key={layout.id} item={layout} type="layout" />

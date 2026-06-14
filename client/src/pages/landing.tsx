@@ -23,9 +23,9 @@ const features = [
   },
   {
     icon: Layers,
-    title: "Flexible Layouts",
+    title: "Flexible Scenes",
     description:
-      "Create zone-based templates with media, tickers, clocks, logos, and HTML widgets for any screen configuration.",
+      "Create zone-based scenes with media, tickers, clocks, logos, and HTML widgets for any screen configuration.",
   },
   {
     icon: Zap,

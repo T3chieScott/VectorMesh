@@ -15,7 +15,7 @@ A practical guide to running VectorMesh — the onsite display management platfo
 7. [Day-to-Day Workflow](#7-day-to-day-workflow)
 8. [Media Library](#8-media-library)
 9. [Custom Fonts](#9-custom-fonts)
-10. [Layouts](#10-layouts)
+10. [Scenes](#10-scenes)
 11. [HTML/CSS Widgets](#11-htmlcss-widgets)
 12. [Playlists](#12-playlists)
 13. [Screens](#13-screens)
@@ -47,8 +47,8 @@ A practical guide to running VectorMesh — the onsite display management platfo
 VectorMesh is a web application that controls what appears on the screens around a venue — meeting-room boards, public-area displays, foyer signage, large external LED walls, and video-wall arrays. From a single browser, an operator can:
 
 - Upload images, video and GIFs to a shared media library, and upload custom brand fonts.
-- Build zone-based **layouts** that combine media with widgets (clocks, tickers, schedules, agendas, weather, flight boards, QR codes, countdowns, HTML/CSS panels, live streams, etc.).
-- Schedule which layout plays on which screen at what time — in each site's own timezone.
+- Build zone-based **scenes** that combine media with widgets (clocks, tickers, schedules, agendas, weather, flight boards, QR codes, countdowns, HTML/CSS panels, live streams, etc.).
+- Schedule which scene plays on which screen at what time — in each site's own timezone.
 - Publish a session **agenda** to screens, fed by manual entry or an automatic spreadsheet/calendar sync.
 - Push a **live override** instantly when something needs to change right now (an emergency notice, a sponsor takeover, a session change).
 - Trigger pre-built **presets** with one click — or from a Stream Deck via Bitfocus Companion.
@@ -63,25 +63,25 @@ Each physical display runs the VectorMesh **player** in a browser (typically a R
 | Term | Meaning |
 |---|---|
 | **Site (Client)** | A tenant — usually one venue or one customer. All content is owned by a site. The Site Switcher in the sidebar filters everything you see. Each site has its own **timezone** used for scheduling. |
-| **Event** | A named happening inside a site (e.g. "ISE 2026", "Spring Conference"), with a start and end date. Screens are **booked** into events over time, and media/layouts/programmes can be organised around them. |
+| **Event** | A named happening inside a site (e.g. "ISE 2026", "Spring Conference"), with a start and end date. Screens are **booked** into events over time, and media/scenes/programmes can be organised around them. |
 | **Screen Booking** | A dated assignment of one screen to one event (`starts → ends`). A screen can be booked into many events over time; the booking that contains "now" decides the screen's *active* event. |
 | **Media Asset** | A single image, video or GIF in the library. |
 | **Custom Font** | A brand typeface (one or more weight/style files) uploaded to a site and selectable in agenda configs and text/HTML zones. |
-| **Layout (Template)** | A canvas of **zones** (boxes) at a given aspect ratio. A zone can be a media region, a widget, an agenda, an HTML panel, or a playlist player. |
-| **Zone** | One element inside a layout — clock, ticker, image, video, QR, countdown, schedule, agenda, weather, flight board, HTML/CSS panel, etc. |
-| **Playlist** | An ordered list of items that rotate on a timer. Each item is either a media asset or a whole layout. |
-| **Screen** | One physical display. Has resolution, aspect ratio, optional canvas position, a fallback layout and/or fallback playlist, event bookings, and a pairing token. |
+| **Scene (Template)** | A canvas of **zones** (boxes) at a given aspect ratio. A zone can be a media region, a widget, an agenda, an HTML panel, or a playlist player. |
+| **Zone** | One element inside a scene — clock, ticker, image, video, QR, countdown, schedule, agenda, weather, flight board, HTML/CSS panel, etc. |
+| **Playlist** | An ordered list of items that rotate on a timer. Each item is either a media asset or a whole scene. |
+| **Screen** | One physical display. Has resolution, aspect ratio, optional canvas position, a fallback scene and/or fallback playlist, event bookings, and a pairing token. |
 | **Screen Group** | A named bundle of screens used to push the same content to many at once. |
 | **Display Profile** | A reusable hardware profile (resolution, orientation) that can be applied to many screens. |
-| **Programme** | A container for **schedule blocks** — time-rule entries that say "show layout X on screen/group Y from 09:00 to 17:00 on weekdays". |
+| **Programme** | A container for **schedule blocks** — time-rule entries that say "show scene X on screen/group Y from 09:00 to 17:00 on weekdays". |
 | **Schedule Block** | A single timed entry inside a programme. |
-| **Agenda Display** | A configurable session-schedule widget (its own look + filters) fed by **agenda items**, shown in a layout zone or as a standalone full-screen page. |
-| **Live Override** | A high-priority command that forces a layout (or playlist) onto a screen or group **right now**, bypassing the schedule. |
-| **Preset** | A saved "screen + layout (and optional zone overrides)" pairing that can be activated with one click and becomes a Live Override under the hood. |
-| **Fallback Layout / Playlist** | What a screen falls back to when nothing scheduled applies. |
-| **Brand Palette** | Per-event colours, fonts and logos (set on the Events page) used to keep layouts on-brand. |
+| **Agenda Display** | A configurable session-schedule widget (its own look + filters) fed by **agenda items**, shown in a scene zone or as a standalone full-screen page. |
+| **Live Override** | A high-priority command that forces a scene (or playlist) onto a screen or group **right now**, bypassing the schedule. |
+| **Preset** | A saved "screen + scene (and optional zone overrides)" pairing that can be activated with one click and becomes a Live Override under the hood. |
+| **Fallback Scene / Playlist** | What a screen falls back to when nothing scheduled applies. |
+| **Brand Palette** | Per-event colours, fonts and logos (set on the Events page) used to keep scenes on-brand. |
 | **Pairing Token** | A short code generated for an unpaired screen; used by the player device to bind itself to that screen. |
-| **Heartbeat** | A periodic "I'm alive" ping the player sends to the server, with status, current layout, uptime and version. |
+| **Heartbeat** | A periodic "I'm alive" ping the player sends to the server, with status, current scene, uptime and version. |
 | **Snapshot** | A JPEG screenshot of what the player is currently rendering, captured by the browser and uploaded periodically. |
 | **API Token** | A long-lived bearer credential a user mints to allow external tools (Stream Deck, scripts) to call the API on their behalf. |
 | **Canvas** | A virtual coordinate space larger than a single screen, used to map physical video walls. The screen renders only its **AOI** (Area of Interest) — the rectangle that falls on its physical pixels. |
@@ -95,11 +95,11 @@ VectorMesh has three roles, set per user:
 ### Admin
 - Sees and edits **everything** across **all sites**.
 - Manages users, sites, system settings, audit/activity log, alerts, deployment.
-- Can copy/move layouts between sites, lock screens and clients, and clear audit history.
+- Can copy/move scenes between sites, lock screens and clients, and clear audit history.
 
 ### Account Manager
 - Manages users **within their assigned sites**.
-- Has full content control on those sites (media, fonts, layouts, playlists, screens, programmes, agendas, presets, live override).
+- Has full content control on those sites (media, fonts, scenes, playlists, screens, programmes, agendas, presets, live override).
 - Can mint API tokens.
 - Cannot edit sites they aren't assigned to and cannot change system settings.
 
@@ -143,7 +143,7 @@ Click **Forgot password** on the login screen. If SMTP is configured the system 
 
 The dropdown at the top of the left sidebar selects the **active site**. It controls what almost every page shows:
 
-- Media, fonts, layouts, playlists, screens, screen groups, programmes, agendas — all filter by the active site.
+- Media, fonts, scenes, playlists, screens, screen groups, programmes, agendas — all filter by the active site.
 - Creating new content assigns it to the active site automatically.
 - Admins can pick **All Sites** to see everything at once.
 
@@ -156,7 +156,7 @@ Always check the switcher first when something seems missing — you're probably
 The sidebar groups pages so related tools sit together:
 
 - **Overview** — Dashboard, Clients (Sites), Events.
-- **Content** — Media Library, Layouts, Fonts, Playlists.
+- **Content** — Media Library, Scenes, Fonts, Playlists.
 - **Display** — Screens, Screen Groups, Programmes, Schedule Timeline, Live Override, Control Panel, Player Simulator.
 - **Agenda** — Agenda Items, Agenda Displays.
 - **System** — Display Profiles, Diagnostics, Settings.
@@ -172,7 +172,7 @@ A typical event-day routine:
 1. **Morning check** — open **Screens**. Every tile should be green (online) and the snapshot thumbnail should match what you expect.
 2. **Confirm today's programme** — open **Schedule Timeline** and look at today's blocks. If a session moved, edit the block's start/end time or push a **Live Override**.
 3. **Refresh the agenda** — if you run an agenda feed, confirm the latest sync succeeded (Agenda Items page) and the items look right.
-4. **Pre-stage announcements** — build any one-off layouts (e.g. "Lunch break" slate) and save them as **Presets** so you can fire them from the Control Panel or a Stream Deck.
+4. **Pre-stage announcements** — build any one-off scenes (e.g. "Lunch break" slate) and save them as **Presets** so you can fire them from the Control Panel or a Stream Deck.
 5. **During sessions** — use **Control Panel** or a Stream Deck button to switch foyer screens between welcome / sponsor / session-info / wayfinding presets.
 6. **Emergencies** — **Live Override** with a high priority (≥ 200) targeted at the right screens or groups; clear it when the situation passes.
 7. **End of day** — review **Activity Log** for anything unexpected; clear lingering overrides.
@@ -210,21 +210,21 @@ Upload your brand typefaces so agendas and text/HTML zones can use them instead 
 
 ### Using a font
 - In **Agenda Displays**, pick it from the **Font Family** dropdown.
-- In the **Layout editor**, choose it on text and HTML zones.
+- In the **Scene editor**, choose it on text and HTML zones.
 
-Uploaded fonts are loaded in the admin previews (layout editor, agenda preview) and on the live player, so what you design matches what shows on the wall.
+Uploaded fonts are loaded in the admin previews (scene editor, agenda preview) and on the live player, so what you design matches what shows on the wall.
 
 ---
 
-## 10. Layouts
+## 10. Scenes
 
-**Sidebar → Layouts.**
+**Sidebar → Scenes.**
 
-A layout is a canvas at a fixed **aspect ratio** with one or more **zones** placed on it.
+A scene is a canvas at a fixed **aspect ratio** with one or more **zones** placed on it.
 
-### Creating a layout
-1. **Add Layout** → name it, choose the aspect ratio (16:9, 9:16, 21:9, 4:3, custom, etc.) and resolution.
-2. The layout editor opens. Drag zones onto the canvas and resize them.
+### Creating a scene
+1. **Add Scene** → name it, choose the aspect ratio (16:9, 9:16, 21:9, 4:3, custom, etc.) and resolution.
+2. The scene editor opens. Drag zones onto the canvas and resize them.
 3. Each zone has a **type** and a config panel. Available zone types include:
    - **Media region** — single image/video/GIF.
    - **Media player** — a playlist with transitions and controls.
@@ -243,31 +243,31 @@ A layout is a canvas at a fixed **aspect ratio** with one or more **zones** plac
    - **Earthquakes** — global recent events.
    - **Aircraft overhead** — radar list or map view.
    - **SRT live feed / WebRTC stream** — from OvenMediaEngine.
-4. **Save**. The layout is now selectable in screens, programmes and presets.
+4. **Save**. The scene is now selectable in screens, programmes and presets.
 
-### Layout actions
+### Scene actions
 - **Duplicate** — copy as a starting point.
-- **Copy / Move to site** (Admin only, from the dropdown) — share a layout across tenants.
+- **Copy / Move to site** (Admin only, from the dropdown) — share a scene across tenants.
 - **Delete** — only allowed if no schedule block, screen fallback or preset references it.
 
 ### Multi-screen canvas
-For video walls, switch on **Canvas positioning** in the screen settings (not the layout). The layout is rendered across the full canvas; each screen shows only its AOI rectangle.
+For video walls, switch on **Canvas positioning** in the screen settings (not the scene). The scene is rendered across the full canvas; each screen shows only its AOI rectangle.
 
 ---
 
 ## 11. HTML/CSS Widgets
 
-A layout zone of type **HTML/CSS widget** lets you hand-author a panel with your own markup and styles — handy for custom tables, branded slates, or anything the standard widgets don't cover.
+A scene zone of type **HTML/CSS widget** lets you hand-author a panel with your own markup and styles — handy for custom tables, branded slates, or anything the standard widgets don't cover.
 
 ### Filling it in
 - **HTML body** — the markup for the panel. The **Insert Variable** button adds [player variables](#33-player-variables) (e.g. `{{event_name}}`), and **Insert Image** drops in a media-library asset.
 - **CSS** — styles for the panel.
 
 ### The authoring contract
-Design for a **1920-pixel-wide reference canvas**. VectorMesh renders your HTML at that width and then scales it proportionally to fill the real zone, so the same panel looks identical in the editor's live preview, on the layout canvas, and on a physical screen. A 16:9 zone renders at native 1920×1080. Pixel sizes you set lay out the same everywhere; the vertical axis simply follows the zone's aspect ratio.
+Design for a **1920-pixel-wide reference canvas**. VectorMesh renders your HTML at that width and then scales it proportionally to fill the real zone, so the same panel looks identical in the editor's live preview, on the scene canvas, and on a physical screen. A 16:9 zone renders at native 1920×1080. Pixel sizes you set lay out the same everywhere; the vertical axis simply follows the zone's aspect ratio.
 
 ### Safety
-HTML widgets are sandboxed: scripts and inline event handlers are stripped and never run, on the device or in the editor. Use them for layout and styling, not interactive scripting.
+HTML widgets are sandboxed: scripts and inline event handlers are stripped and never run, on the device or in the editor. Use them for structure and styling, not interactive scripting.
 
 ---
 
@@ -281,11 +281,11 @@ Playlists rotate items on a timer. They can be assigned as a **fallback playlist
 - **Media item** — an image, video or GIF. Default duration:
   - Images / GIFs: 10 seconds (override per item).
   - Videos: full length unless you set a duration.
-- **Layout item** — an entire layout. Duration defaults to 30 seconds. The player rotates through the layouts; identical zones across consecutive layouts (clock, ticker, video) stay mounted so they don't restart.
+- **Scene item** — an entire scene. Duration defaults to 30 seconds. The player rotates through the scenes; identical zones across consecutive scenes (clock, ticker, video) stay mounted so they don't restart.
 
 ### Editing
 - **Manage Items** (collapsible inside each playlist card) — add, edit, remove, **drag to reorder**.
-- Use **Add Media** for a media item, **Add Layout** for a layout item.
+- Use **Add Media** for a media item, **Add Scene** for a scene item.
 - Per item you can set a custom duration; for videos leave it blank to play the full length.
 
 ---
@@ -299,12 +299,12 @@ Each tile represents one physical display.
 ### Creating a screen
 1. **Add Screen** → name, location, resolution, aspect ratio, optional **display profile**.
 2. (Optional) Enable **Canvas positioning** for video walls and enter canvas size + this screen's `(x, y)` and AOI dimensions.
-3. (Optional) Set a **Fallback Layout** and/or **Fallback Playlist** — what plays when nothing is scheduled.
+3. (Optional) Set a **Fallback Scene** and/or **Fallback Playlist** — what plays when nothing is scheduled.
 4. (Optional) Add **event bookings** — which events this screen belongs to and when (see [Events & Screen Bookings](#16-events--screen-bookings)).
 5. Save. A **pairing token** is generated.
 
 ### Screen card controls
-Each card shows status (online/offline), last heartbeat, current layout source, and exposes:
+Each card shows status (online/offline), last heartbeat, current scene source, and exposes:
 
 - **Pairing code** — paste into the player on first boot.
 - **Regenerate pairing code** — invalidates the old token (use after a hardware swap).
@@ -345,7 +345,7 @@ Reusable "this is the hardware spec" templates so you don't re-type resolution/o
 
 **Sidebar → Events.**
 
-An **event** groups work around a named happening (a conference, an exhibition) with start and end dates. On the Events page you can also set the event's **brand palette** — primary/secondary/accent/background/text colours, fonts and logos — so layouts stay on-brand.
+An **event** groups work around a named happening (a conference, an exhibition) with start and end dates. On the Events page you can also set the event's **brand palette** — primary/secondary/accent/background/text colours, fonts and logos — so scenes stay on-brand.
 
 ### Screen bookings
 A screen can be used by different events at different times. Rather than a single "current event", VectorMesh records **bookings**: each booking ties one screen to one event for a date range (`starts → ends`). The booking whose range contains "now" is the screen's **active event**, which is what drives `{{event_name}}` and other event-based player variables, allowed-client filtering, and alerts.
@@ -365,7 +365,7 @@ Bookings for the same screen **cannot overlap in time** — the UI blocks a clas
 
 A **programme** is a folder of **schedule blocks**. A block answers:
 
-- **Which layout?**
+- **Which scene?**
 - **Which target?** (one screen, several screens, or a group)
 - **When?** (start/end time, date range)
 - **How often?** (one-off, daily, specific days of the week)
@@ -375,7 +375,7 @@ All times are interpreted in the **site's timezone** (see [Site Timezones](#18-s
 
 ### Creating a block
 1. Open a programme → **Add Block**.
-2. Pick the layout, target screen(s)/group, set start/end and recurrence (e.g. Mon–Fri 09:00–17:00).
+2. Pick the scene, target screen(s)/group, set start/end and recurrence (e.g. Mon–Fri 09:00–17:00).
 3. Set a priority. The default 100 is fine for normal scheduled content.
 4. Save.
 
@@ -403,9 +403,9 @@ The **Schedule Timeline** header shows the active timezone (and its current offs
 
 **Sidebar → Live Override.**
 
-A live override pushes a layout (or playlist) onto a screen/group **immediately**, bypassing the scheduled programme.
+A live override pushes a scene (or playlist) onto a screen/group **immediately**, bypassing the scheduled programme.
 
-- Pick the layout / playlist, target screen(s) or group, and a **priority** (higher beats other overrides).
+- Pick the scene / playlist, target screen(s) or group, and a **priority** (higher beats other overrides).
 - Add an optional message and expiry.
 - **Activate** — the player switches within seconds.
 - **Clear** — removes the override; the player returns to scheduled content.
@@ -418,12 +418,12 @@ Use cases: emergency announcements, last-minute room changes, ad-hoc sponsor tak
 
 ## 20. Presets & the Control Panel
 
-A **preset** is a saved "play this layout on this screen/group" that you can fire with one click. Internally, activating a preset creates a high-priority (200) live override; deactivating clears it.
+A **preset** is a saved "play this scene on this screen/group" that you can fire with one click. Internally, activating a preset creates a high-priority (200) live override; deactivating clears it.
 
 ### Saving a preset
 On a screen card or screen-group card, expand **Manage Presets**:
 
-1. Choose a layout (or playlist).
+1. Choose a scene (or playlist).
 2. Optionally override individual zones (e.g. swap the media in zone "Centre Wall" to today's sponsor reel).
 3. Name the preset and save.
 
@@ -439,7 +439,7 @@ The Control Panel mirrors what a Stream Deck triggers. See [Bitfocus Companion /
 
 ## 21. Agenda Displays
 
-VectorMesh can publish a **session agenda** to screens — a styled, auto-updating list of what's on, where and when. There are three pieces: the **items** (the data), the **sync** (optional automatic feed), and the **display config** (the look). You then show a config in a layout zone or as a full-screen page.
+VectorMesh can publish a **session agenda** to screens — a styled, auto-updating list of what's on, where and when. There are three pieces: the **items** (the data), the **sync** (optional automatic feed), and the **display config** (the look). You then show a config in a scene zone or as a full-screen page.
 
 ### Agenda Items
 **Sidebar → Agenda Items.**
@@ -481,7 +481,7 @@ A config defines how the agenda looks and which items it shows. Settings include
 A **live preview** panel renders the config at different screen presets (Landscape, Portrait, Totem) and lets you set a **test date** to see how a future day will look.
 
 ### Showing an agenda
-- **In a layout** — add a zone, set its type to **Agenda**, and pick a saved config from the dropdown. The zone updates itself on the player.
+- **In a scene** — add a zone, set its type to **Agenda**, and pick a saved config from the dropdown. The zone updates itself on the player.
 - **As a full-screen page** — point a screen's browser at `/display/agenda/<configId>`. This is a chromeless, no-login display page ideal for a dedicated agenda board. Append `?at=<ISO date-time>` to preview a specific moment.
 
 ---
@@ -494,15 +494,15 @@ A browser-side preview that resolves and renders exactly what the chosen screen 
 
 1. Live override
 2. Scheduled programme block
-3. Fallback layout
+3. Fallback scene
 4. Fallback playlist
 
-A **source badge** tells you which step won. Use it to dry-run schedule changes, verify a preset, or check a layout at the exact resolution and aspect ratio.
+A **source badge** tells you which step won. Use it to dry-run schedule changes, verify a preset, or check a scene at the exact resolution and aspect ratio.
 
 For canvas-enabled screens the simulator has a **Full Canvas / Screen AOI** toggle:
 
-- **Full Canvas** — entire virtual canvas with the layout positioned inside the AOI rectangle and black elsewhere. Matches what the real player renders end-to-end.
-- **Screen AOI** — just the screen's viewport, layout filling it. Matches what the physical display shows.
+- **Full Canvas** — entire virtual canvas with the scene positioned inside the AOI rectangle and black elsewhere. Matches what the real player renders end-to-end.
+- **Screen AOI** — just the screen's viewport, scene filling it. Matches what the physical display shows.
 
 ---
 
@@ -512,16 +512,16 @@ The player on each device polls the server periodically and resolves what to sho
 
 1. **Live override** targeting this screen (or any group it belongs to). Highest-priority override wins; on a tie, the most recent.
 2. **Scheduled programme block** whose time rule matches now (in the site timezone). Highest-priority block wins; on a tie, the most recent.
-3. **Fallback layout** configured on the screen.
+3. **Fallback scene** configured on the screen.
 4. **Fallback playlist** configured on the screen, rendered full-screen via a synthetic media player zone.
 
 If none of these resolve, the screen shows a "no content" placeholder.
 
 ### Offline resilience
-The player ships a Service Worker that caches the layout JSON and pre-fetches all media assets in the background. If the internet drops, the player keeps running from cache and shows an **Offline** badge. Once connectivity returns it silently resumes polling and updates content.
+The player ships a Service Worker that caches the scene JSON and pre-fetches all media assets in the background. If the internet drops, the player keeps running from cache and shows an **Offline** badge. Once connectivity returns it silently resumes polling and updates content.
 
 ### Zone stability during rotation
-When a playlist contains multiple layouts, zones with identical config (type, position, size) are kept mounted across rotations — videos keep playing, tickers keep scrolling, clocks keep ticking. Only changed zones re-render.
+When a playlist contains multiple scenes, zones with identical config (type, position, size) are kept mounted across rotations — videos keep playing, tickers keep scrolling, clocks keep ticking. Only changed zones re-render.
 
 ### Audio is muted by default
 Every player-side video is **muted unless an operator explicitly opts in** to audio on that zone. This is deliberate: a muted video can't be paused by the browser when another tab grabs audio focus, which keeps playback smooth on always-on displays. Only turn audio on where you actually need sound.
@@ -551,7 +551,7 @@ With the **Enable snapshots** toggle ON, the player captures a compressed JPEG o
 You can also force-request a fresh snapshot from the screen card.
 
 ### Heartbeats
-Every player sends a heartbeat with: online status, current layout, browser/OS, version, uptime, network info. **Sidebar → Diagnostics** shows recent heartbeats per screen and any errors the player has reported.
+Every player sends a heartbeat with: online status, current scene, browser/OS, version, uptime, network info. **Sidebar → Diagnostics** shows recent heartbeats per screen and any errors the player has reported.
 
 ### Activity Log
 **Admin → Activity Log.** Live feed of mutating actions and authentication events for sites you can see. Useful for "who changed that?". The **Dashboard** also shows a recent-activity card.
@@ -693,7 +693,7 @@ Most endpoints return JSON; a few return other content types (e.g. `GET /api/man
 - `GET /api/media/:id/file` · `GET /api/media/:id/thumbnail`
 - `GET /api/media/:id/shares` · `POST /api/media/:id/share` · `DELETE /api/media/:id/share/:clientId`
 
-### Layouts
+### Scenes
 - `GET /api/layout-templates?clientId=...`
 - `POST /api/layout-templates` · `PATCH /api/layout-templates/:id` · `DELETE /api/layout-templates/:id`
 - `POST /api/layout-templates/:id/copy` · `POST /api/layout-templates/:id/move`
@@ -727,7 +727,7 @@ Most endpoints return JSON; a few return other content types (e.g. `GET /api/man
 - `GET /api/screen-presets/active`
 
 ### Player (device-token authenticated)
-- `GET /api/player/:screenId/content` — returns layout, screen config, site-scoped `media`, `layoutTemplates` map, override info.
+- `GET /api/player/:screenId/content` — returns scene, screen config, site-scoped `media`, `layoutTemplates` map, override info.
 - `POST /api/player/heartbeat` · `POST /api/player/snapshot`
 - `GET /api/player/widgets/...` — flight boards, weather, fixtures, earthquakes, aircraft, SpaceX, etc.
 
@@ -809,7 +809,7 @@ VectorMesh runs on Replit during active development and on a Plesk-managed serve
 | **Schedule fires at the wrong clock time** | Clients → Timezone; Schedule header | The site timezone is wrong. Set the correct IANA timezone on the site. |
 | Companion shows **0 presets** | Settings → API Tokens; preset list | Token's owner can't see any presets (wrong site, or none defined). Mint a token from a user who can see them. |
 | Email alerts not arriving | Alerts; SMTP env | Recipient list empty, cooldown active, or SMTP creds wrong. |
-| Layout edits don't appear on player | Refresh button on screen card | Player cache; click **Refresh** or wait for next poll cycle. |
+| Scene edits don't appear on player | Refresh button on screen card | Player cache; click **Refresh** or wait for next poll cycle. |
 | Video wall geometry looks wrong | Screen edit → Canvas section; Simulator (Full Canvas) | AOI coordinates don't match physical install. Fix `canvasX`, `canvasY`, `canvasWidth`, `canvasHeight`. |
 | Deploy package endpoint returns 401 | Token scope | The token must belong to an Admin user. |
 
@@ -817,7 +817,7 @@ VectorMesh runs on Replit during active development and on a Plesk-managed serve
 
 ## 33. Player Variables
 
-VectorMesh supports a small set of **template tokens** that are replaced at runtime with real values from the player's context. Use them anywhere they're supported to keep one layout reusable across many screens, rooms, events, and clients.
+VectorMesh supports a small set of **template tokens** that are replaced at runtime with real values from the player's context. Use them anywhere they're supported to keep one scene reusable across many screens, rooms, events, and clients.
 
 ### Supported tokens
 
@@ -840,7 +840,7 @@ VectorMesh supports a small set of **template tokens** that are replaced at runt
 
 ### Where you can use them
 
-Click **Insert Variable** next to any of these fields in the layout editor:
+Click **Insert Variable** next to any of these fields in the scene editor:
 
 - Ticker text
 - Text widget content
@@ -857,7 +857,7 @@ Schedule entry titles also resolve tokens at render time.
 
 - **Empty fallback.** If the screen has no active event, `{{event_name}}` becomes an empty string — never the literal token. Same for `{{room_name}}`, `{{client_name}}`, etc.
 - **Live refresh.** `{{date}}`, `{{time}}` and `{{day}}` re-render automatically while the player is running (within ~30 s). No reload needed.
-- **Editor previews.** In the layout editor and Player Simulator, tokens render as friendly sample values (e.g. `Tech Summit 2025`) so you can see the layout. Only the live player substitutes real screen-specific data.
+- **Editor previews.** In the scene editor and Player Simulator, tokens render as friendly sample values (e.g. `Tech Summit 2025`) so you can see the scene. Only the live player substitutes real screen-specific data.
 - **Case sensitive.** Tokens are lowercase with underscores: `{{event_name}}`, not `{{EventName}}`.
 
 ---

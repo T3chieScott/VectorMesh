@@ -111,7 +111,7 @@ function previewBadge(status: PreviewStatus, droppedCount: number) {
       return (
         <Badge variant="outline" className="gap-1 border-muted-foreground/40 text-muted-foreground">
           <XCircle className="h-3 w-3" />
-          Skipped — layout
+          Skipped — scene
         </Badge>
       );
     case "skipped-playlist":
@@ -142,7 +142,7 @@ function serverBadge(result: ServerResult) {
   }
   const label =
     result.code === "forbidden_layout"
-      ? "No access — layout"
+      ? "No access — scene"
       : result.code === "forbidden_playlist"
       ? "No access — playlist"
       : result.code === "forbidden_target"
