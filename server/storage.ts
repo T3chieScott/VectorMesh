@@ -87,6 +87,21 @@ import {
   type InsertAgendaWidgetConfig,
   type AgendaSyncConfig,
   type InsertAgendaSyncConfig,
+  sweepstakeWidgetConfigs,
+  tournamentTeams,
+  tournamentMatches,
+  tournamentStandings,
+  sweepstakeParticipants,
+  type SweepstakeWidgetConfig,
+  type InsertSweepstakeWidgetConfig,
+  type TournamentTeam,
+  type InsertTournamentTeam,
+  type TournamentMatch,
+  type InsertTournamentMatch,
+  type TournamentStanding,
+  type InsertTournamentStanding,
+  type SweepstakeParticipant,
+  type InsertSweepstakeParticipant,
 } from "@shared/schema";
 import { users, userSites, passwordResetTokens, type User, type UpsertUser, type UserSite, type PasswordResetToken } from "@shared/models/auth";
 import { apiTokens, apiTokenKnownIps, type ApiToken, type InsertApiToken } from "@shared/schema";
@@ -215,6 +230,29 @@ export interface IStorage {
     configId: string,
     now: Date,
   ): Promise<{ config: AgendaWidgetConfig; items: AgendaItem[] } | undefined>;
+
+  // Sweepstake widget (Task #286)
+  getSweepstakeConfigs(clientId?: string): Promise<SweepstakeWidgetConfig[]>;
+  getSweepstakeConfig(id: string): Promise<SweepstakeWidgetConfig | undefined>;
+  createSweepstakeConfig(data: InsertSweepstakeWidgetConfig): Promise<SweepstakeWidgetConfig>;
+  updateSweepstakeConfig(id: string, data: Partial<InsertSweepstakeWidgetConfig> & { lastSyncedAt?: Date | null; lastSyncError?: string | null }): Promise<SweepstakeWidgetConfig | undefined>;
+  deleteSweepstakeConfig(id: string): Promise<boolean>;
+  getTournamentTeams(configId: string): Promise<TournamentTeam[]>;
+  getTournamentTeam(id: string): Promise<TournamentTeam | undefined>;
+  createTournamentTeam(data: InsertTournamentTeam): Promise<TournamentTeam>;
+  updateTournamentTeam(id: string, data: Partial<InsertTournamentTeam> & { eliminatedAt?: Date | null }): Promise<TournamentTeam | undefined>;
+  setTournamentWinner(configId: string, teamId: string | null): Promise<void>;
+  replaceTournamentTeams(configId: string, teams: InsertTournamentTeam[]): Promise<TournamentTeam[]>;
+  getTournamentMatches(configId: string): Promise<TournamentMatch[]>;
+  replaceTournamentMatches(configId: string, matches: InsertTournamentMatch[]): Promise<TournamentMatch[]>;
+  getTournamentStandings(configId: string): Promise<TournamentStanding[]>;
+  replaceTournamentStandings(configId: string, standings: InsertTournamentStanding[]): Promise<TournamentStanding[]>;
+  getSweepstakeParticipants(configId: string): Promise<SweepstakeParticipant[]>;
+  getSweepstakeParticipant(id: string): Promise<SweepstakeParticipant | undefined>;
+  createSweepstakeParticipant(data: InsertSweepstakeParticipant): Promise<SweepstakeParticipant>;
+  updateSweepstakeParticipant(id: string, data: Partial<InsertSweepstakeParticipant>): Promise<SweepstakeParticipant | undefined>;
+  deleteSweepstakeParticipant(id: string): Promise<boolean>;
+  deleteSweepstakeParticipantsForConfig(configId: string): Promise<number>;
 
   // Screen Groups
   getScreenGroups(): Promise<ScreenGroup[]>;
@@ -3005,6 +3043,172 @@ export class DatabaseStorage implements IStorage {
       tz: client?.timezone ?? null,
     });
     return { config, items };
+  }
+
+  // ===== Sweepstake widget (Task #286) =====
+  async getSweepstakeConfigs(clientId?: string): Promise<SweepstakeWidgetConfig[]> {
+    if (clientId) {
+      return db.select().from(sweepstakeWidgetConfigs)
+        .where(eq(sweepstakeWidgetConfigs.clientId, clientId))
+        .orderBy(sweepstakeWidgetConfigs.name);
+    }
+    return db.select().from(sweepstakeWidgetConfigs).orderBy(sweepstakeWidgetConfigs.name);
+  }
+
+  async getSweepstakeConfig(id: string): Promise<SweepstakeWidgetConfig | undefined> {
+    const [row] = await db.select().from(sweepstakeWidgetConfigs).where(eq(sweepstakeWidgetConfigs.id, id));
+    return row;
+  }
+
+  async createSweepstakeConfig(data: InsertSweepstakeWidgetConfig): Promise<SweepstakeWidgetConfig> {
+    const [row] = await db.insert(sweepstakeWidgetConfigs).values(data).returning();
+    return row;
+  }
+
+  async updateSweepstakeConfig(
+    id: string,
+    data: Partial<InsertSweepstakeWidgetConfig> & { lastSyncedAt?: Date | null; lastSyncError?: string | null },
+  ): Promise<SweepstakeWidgetConfig | undefined> {
+    const [row] = await db.update(sweepstakeWidgetConfigs)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(sweepstakeWidgetConfigs.id, id))
+      .returning();
+    return row;
+  }
+
+  async deleteSweepstakeConfig(id: string): Promise<boolean> {
+    const result = await db.delete(sweepstakeWidgetConfigs).where(eq(sweepstakeWidgetConfigs.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getTournamentTeams(configId: string): Promise<TournamentTeam[]> {
+    return db.select().from(tournamentTeams)
+      .where(eq(tournamentTeams.configId, configId))
+      .orderBy(tournamentTeams.groupName, tournamentTeams.name);
+  }
+
+  async getTournamentTeam(id: string): Promise<TournamentTeam | undefined> {
+    const [row] = await db.select().from(tournamentTeams).where(eq(tournamentTeams.id, id));
+    return row;
+  }
+
+  async createTournamentTeam(data: InsertTournamentTeam): Promise<TournamentTeam> {
+    const [row] = await db.insert(tournamentTeams).values(data).returning();
+    return row;
+  }
+
+  async updateTournamentTeam(
+    id: string,
+    data: Partial<InsertTournamentTeam> & { eliminatedAt?: Date | null },
+  ): Promise<TournamentTeam | undefined> {
+    const [row] = await db.update(tournamentTeams)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(tournamentTeams.id, id))
+      .returning();
+    return row;
+  }
+
+  // Enforce a single winner per config: flag the given team (if any) as the
+  // winner and clear isWinner on every other team in the same config. Runs in
+  // one transaction so a config never persists two simultaneous winners.
+  async setTournamentWinner(configId: string, teamId: string | null): Promise<void> {
+    await db.transaction(async (tx) => {
+      await tx.update(tournamentTeams)
+        .set({ isWinner: false, updatedAt: new Date() })
+        .where(and(eq(tournamentTeams.configId, configId), eq(tournamentTeams.isWinner, true)));
+      if (teamId) {
+        await tx.update(tournamentTeams)
+          .set({ isWinner: true, eliminated: false, eliminatedAt: null, updatedAt: new Date() })
+          .where(and(eq(tournamentTeams.id, teamId), eq(tournamentTeams.configId, configId)));
+      }
+    });
+  }
+
+  // Replace-all sync: preserves elimination/winner flags by name match so a
+  // provider refresh never clobbers locally-tracked sweepstake progress.
+  async replaceTournamentTeams(configId: string, teams: InsertTournamentTeam[]): Promise<TournamentTeam[]> {
+    return db.transaction(async (tx) => {
+      const existing = await tx.select().from(tournamentTeams).where(eq(tournamentTeams.configId, configId));
+      const prev = new Map(existing.map((t) => [(t.externalId ?? t.name).toLowerCase(), t]));
+      await tx.delete(tournamentTeams).where(eq(tournamentTeams.configId, configId));
+      if (teams.length === 0) return [];
+      const rows = teams.map((t) => {
+        const match = prev.get((t.externalId ?? t.name).toLowerCase());
+        return {
+          ...t,
+          configId,
+          eliminated: t.eliminated ?? match?.eliminated ?? false,
+          eliminatedAt: match?.eliminatedAt ?? null,
+          isWinner: t.isWinner ?? match?.isWinner ?? false,
+        };
+      });
+      return tx.insert(tournamentTeams).values(rows).returning();
+    });
+  }
+
+  async getTournamentMatches(configId: string): Promise<TournamentMatch[]> {
+    return db.select().from(tournamentMatches)
+      .where(eq(tournamentMatches.configId, configId))
+      .orderBy(tournamentMatches.kickoffAt);
+  }
+
+  async replaceTournamentMatches(configId: string, matches: InsertTournamentMatch[]): Promise<TournamentMatch[]> {
+    return db.transaction(async (tx) => {
+      await tx.delete(tournamentMatches).where(eq(tournamentMatches.configId, configId));
+      if (matches.length === 0) return [];
+      return tx.insert(tournamentMatches).values(matches.map((m) => ({ ...m, configId }))).returning();
+    });
+  }
+
+  async getTournamentStandings(configId: string): Promise<TournamentStanding[]> {
+    return db.select().from(tournamentStandings)
+      .where(eq(tournamentStandings.configId, configId))
+      .orderBy(tournamentStandings.groupName, tournamentStandings.position);
+  }
+
+  async replaceTournamentStandings(configId: string, standings: InsertTournamentStanding[]): Promise<TournamentStanding[]> {
+    return db.transaction(async (tx) => {
+      await tx.delete(tournamentStandings).where(eq(tournamentStandings.configId, configId));
+      if (standings.length === 0) return [];
+      return tx.insert(tournamentStandings).values(standings.map((s) => ({ ...s, configId }))).returning();
+    });
+  }
+
+  async getSweepstakeParticipants(configId: string): Promise<SweepstakeParticipant[]> {
+    return db.select().from(sweepstakeParticipants)
+      .where(eq(sweepstakeParticipants.configId, configId))
+      .orderBy(sweepstakeParticipants.name);
+  }
+
+  async getSweepstakeParticipant(id: string): Promise<SweepstakeParticipant | undefined> {
+    const [row] = await db.select().from(sweepstakeParticipants).where(eq(sweepstakeParticipants.id, id));
+    return row;
+  }
+
+  async createSweepstakeParticipant(data: InsertSweepstakeParticipant): Promise<SweepstakeParticipant> {
+    const [row] = await db.insert(sweepstakeParticipants).values(data).returning();
+    return row;
+  }
+
+  async updateSweepstakeParticipant(
+    id: string,
+    data: Partial<InsertSweepstakeParticipant>,
+  ): Promise<SweepstakeParticipant | undefined> {
+    const [row] = await db.update(sweepstakeParticipants)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(sweepstakeParticipants.id, id))
+      .returning();
+    return row;
+  }
+
+  async deleteSweepstakeParticipant(id: string): Promise<boolean> {
+    const result = await db.delete(sweepstakeParticipants).where(eq(sweepstakeParticipants.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async deleteSweepstakeParticipantsForConfig(configId: string): Promise<number> {
+    const result = await db.delete(sweepstakeParticipants).where(eq(sweepstakeParticipants.configId, configId)).returning();
+    return result.length;
   }
 }
 

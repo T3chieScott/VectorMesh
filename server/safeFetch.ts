@@ -111,6 +111,12 @@ export interface SafeFetchOptions {
   fetchImpl?: typeof fetch;
   /** DNS-resolver override for tests. */
   lookupImpl?: (hostname: string) => Promise<Array<{ address: string; family: number }>>;
+  /**
+   * Extra request headers merged on top of the default browser-like
+   * user-agent/accept (e.g. an API auth token header). Used by trusted
+   * server-side callers only — never populated from user-controlled input.
+   */
+  headers?: Record<string, string>;
 }
 
 export interface SafeFetchResponse {
@@ -191,6 +197,7 @@ export async function safeFetch(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
           accept:
             "text/html,application/xhtml+xml,application/xml;q=0.9,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*;q=0.8",
+          ...(opts.headers ?? {}),
         },
       });
 

@@ -1582,6 +1582,244 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
 export type InsertAgendaWidgetConfig = z.infer<typeof insertAgendaWidgetConfigSchema>;
 export type AgendaWidgetConfig = typeof agendaWidgetConfigs.$inferSelect;
 
+// ============ WORLD FOOTBALL SWEEPSTAKE WALL (Task #286) ============
+// A self-contained signage widget that randomly assigns staff to
+// tournament teams and shows live tournament progress, sweepstake
+// assignments, eliminations and a winner celebration. Tournament data
+// (teams/matches/standings) is cached external data scoped to the owning
+// config; configs + participants are tenant-scoped via clientId so data
+// cannot leak across sites.
+
+// Data providers. Keys live ONLY in server-side env vars and are never
+// returned to the frontend. "manual" needs no key — operators type the
+// teams/results in by hand.
+export const SWEEPSTAKE_PROVIDERS = [
+  "manual",
+  "football_data",
+  "api_football",
+  "sportmonks",
+] as const;
+export type SweepstakeProvider = (typeof SWEEPSTAKE_PROVIDERS)[number];
+
+export const SWEEPSTAKE_PROVIDER_LABELS: Record<SweepstakeProvider, string> = {
+  manual: "Manual (type results in by hand)",
+  football_data: "football-data.org",
+  api_football: "API-Football (API-Sports)",
+  sportmonks: "Sportmonks",
+};
+
+// The env var that holds each provider's API key. Surfaced to the admin UI
+// so operators know which secret to set, but the value is never exposed.
+export const SWEEPSTAKE_PROVIDER_ENV_VARS: Record<SweepstakeProvider, string | null> = {
+  manual: null,
+  football_data: "FOOTBALL_DATA_API_KEY",
+  api_football: "API_FOOTBALL_KEY",
+  sportmonks: "SPORTMONKS_API_TOKEN",
+};
+
+export const SWEEPSTAKE_LAYOUT_MODES = [
+  "auto",
+  "landscape",
+  "portrait",
+  "totem",
+  "ultrawide",
+  "room_door",
+] as const;
+export type SweepstakeLayoutMode = (typeof SWEEPSTAKE_LAYOUT_MODES)[number];
+
+export const SWEEPSTAKE_THEMES = ["bright", "dark", "stadium"] as const;
+export type SweepstakeTheme = (typeof SWEEPSTAKE_THEMES)[number];
+
+// The rotating slide types shown on the display. Operators can choose a
+// subset; an empty list means "show all".
+export const SWEEPSTAKE_SLIDE_TYPES = [
+  "countdown",
+  "fixtures",
+  "results",
+  "standings",
+  "sweepstake",
+  "eliminations",
+  "spotlight",
+  "winner",
+] as const;
+export type SweepstakeSlideType = (typeof SWEEPSTAKE_SLIDE_TYPES)[number];
+
+export const SWEEPSTAKE_SLIDE_LABELS: Record<SweepstakeSlideType, string> = {
+  countdown: "Kick-off countdown",
+  fixtures: "Today's fixtures",
+  results: "Recent results",
+  standings: "Group tables",
+  sweepstake: "Sweepstake wall",
+  eliminations: "Elimination wall",
+  spotlight: "Team spotlight",
+  winner: "Winner celebration",
+};
+
+export const SWEEPSTAKE_PARTICIPANT_STATUSES = ["active", "eliminated", "winner"] as const;
+export type SweepstakeParticipantStatus = (typeof SWEEPSTAKE_PARTICIPANT_STATUSES)[number];
+
+export const SWEEPSTAKE_MATCH_STATUSES = ["scheduled", "in_play", "finished"] as const;
+export type SweepstakeMatchStatus = (typeof SWEEPSTAKE_MATCH_STATUSES)[number];
+
+export const sweepstakeWidgetConfigs = pgTable("sweepstake_widget_configs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  // Neutral tournament name shown on screen (no licensed branding).
+  tournamentName: text("tournament_name").notNull().default("World Football Sweepstake"),
+  provider: text("provider").notNull().default("manual"),
+  // Provider-specific competition identifier (e.g. football-data "WC").
+  competitionCode: text("competition_code"),
+  season: text("season"),
+  // Optional first-match kick-off for the countdown slide.
+  kickoffAt: timestamp("kickoff_at"),
+  // Display behaviour.
+  layoutMode: text("layout_mode").notNull().default("auto"),
+  theme: text("theme").notNull().default("bright"),
+  accentColor: text("accent_color").notNull().default("#16a34a"),
+  refreshIntervalSeconds: integer("refresh_interval_seconds").notNull().default(30),
+  rotationIntervalSeconds: integer("rotation_interval_seconds").notNull().default(12),
+  // Which slides to rotate through. Empty = all.
+  slideTypes: text("slide_types").array().notNull().default(sql`'{}'::text[]`),
+  lastSyncedAt: timestamp("last_synced_at"),
+  lastSyncError: text("last_sync_error"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const tournamentTeams = pgTable("tournament_teams", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  configId: varchar("config_id").notNull().references(() => sweepstakeWidgetConfigs.id, { onDelete: "cascade" }),
+  externalId: text("external_id"),
+  name: text("name").notNull(),
+  shortName: text("short_name"),
+  // ISO 3166-1 alpha-2 country code for a fallback flag image.
+  countryCode: text("country_code"),
+  groupName: text("group_name"),
+  crestUrl: text("crest_url"),
+  eliminated: boolean("eliminated").notNull().default(false),
+  eliminatedAt: timestamp("eliminated_at"),
+  isWinner: boolean("is_winner").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const tournamentMatches = pgTable("tournament_matches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  configId: varchar("config_id").notNull().references(() => sweepstakeWidgetConfigs.id, { onDelete: "cascade" }),
+  externalId: text("external_id"),
+  stage: text("stage"),
+  groupName: text("group_name"),
+  homeTeamId: varchar("home_team_id").references(() => tournamentTeams.id, { onDelete: "set null" }),
+  awayTeamId: varchar("away_team_id").references(() => tournamentTeams.id, { onDelete: "set null" }),
+  homeTeamName: text("home_team_name"),
+  awayTeamName: text("away_team_name"),
+  homeScore: integer("home_score"),
+  awayScore: integer("away_score"),
+  status: text("status").notNull().default("scheduled"),
+  kickoffAt: timestamp("kickoff_at"),
+  winnerTeamId: varchar("winner_team_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const tournamentStandings = pgTable("tournament_standings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  configId: varchar("config_id").notNull().references(() => sweepstakeWidgetConfigs.id, { onDelete: "cascade" }),
+  teamId: varchar("team_id").references(() => tournamentTeams.id, { onDelete: "set null" }),
+  teamName: text("team_name").notNull(),
+  groupName: text("group_name"),
+  position: integer("position"),
+  played: integer("played").notNull().default(0),
+  won: integer("won").notNull().default(0),
+  draw: integer("draw").notNull().default(0),
+  lost: integer("lost").notNull().default(0),
+  goalsFor: integer("goals_for").notNull().default(0),
+  goalsAgainst: integer("goals_against").notNull().default(0),
+  goalDifference: integer("goal_difference").notNull().default(0),
+  points: integer("points").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const sweepstakeParticipants = pgTable("sweepstake_participants", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  configId: varchar("config_id").notNull().references(() => sweepstakeWidgetConfigs.id, { onDelete: "cascade" }),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  email: text("email"),
+  department: text("department"),
+  teamId: varchar("team_id").references(() => tournamentTeams.id, { onDelete: "set null" }),
+  status: text("status").notNull().default("active"),
+  // When true, the random-assign pass leaves this person's team alone.
+  manualOverride: boolean("manual_override").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const sweepstakeWidgetConfigsRelations = relations(sweepstakeWidgetConfigs, ({ one, many }) => ({
+  client: one(clients, { fields: [sweepstakeWidgetConfigs.clientId], references: [clients.id] }),
+  teams: many(tournamentTeams),
+  matches: many(tournamentMatches),
+  standings: many(tournamentStandings),
+  participants: many(sweepstakeParticipants),
+}));
+
+export const insertSweepstakeWidgetConfigSchema = createInsertSchema(sweepstakeWidgetConfigs)
+  .omit({ id: true, createdAt: true, updatedAt: true, lastSyncedAt: true, lastSyncError: true })
+  .extend({
+    name: z.string().min(1, "Name is required"),
+    tournamentName: z.string().min(1).default("World Football Sweepstake"),
+    provider: z.enum(SWEEPSTAKE_PROVIDERS).default("manual"),
+    competitionCode: z.string().nullable().optional(),
+    season: z.string().nullable().optional(),
+    kickoffAt: z.coerce.date().nullable().optional(),
+    layoutMode: z.enum(SWEEPSTAKE_LAYOUT_MODES).default("auto"),
+    theme: z.enum(SWEEPSTAKE_THEMES).default("bright"),
+    accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#16a34a"),
+    refreshIntervalSeconds: z.number().int().min(5).max(3600).default(30),
+    rotationIntervalSeconds: z.number().int().min(3).max(3600).default(12),
+    slideTypes: z.array(z.enum(SWEEPSTAKE_SLIDE_TYPES)).default([]),
+  });
+export type InsertSweepstakeWidgetConfig = z.infer<typeof insertSweepstakeWidgetConfigSchema>;
+export type SweepstakeWidgetConfig = typeof sweepstakeWidgetConfigs.$inferSelect;
+
+export const insertTournamentTeamSchema = createInsertSchema(tournamentTeams)
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .extend({
+    name: z.string().min(1, "Team name is required"),
+    countryCode: z.string().max(3).nullable().optional(),
+  });
+export type InsertTournamentTeam = z.infer<typeof insertTournamentTeamSchema>;
+export type TournamentTeam = typeof tournamentTeams.$inferSelect;
+
+export const insertTournamentMatchSchema = createInsertSchema(tournamentMatches)
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .extend({
+    status: z.enum(SWEEPSTAKE_MATCH_STATUSES).default("scheduled"),
+    kickoffAt: z.coerce.date().nullable().optional(),
+  });
+export type InsertTournamentMatch = z.infer<typeof insertTournamentMatchSchema>;
+export type TournamentMatch = typeof tournamentMatches.$inferSelect;
+
+export const insertTournamentStandingSchema = createInsertSchema(tournamentStandings)
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .extend({
+    teamName: z.string().min(1),
+  });
+export type InsertTournamentStanding = z.infer<typeof insertTournamentStandingSchema>;
+export type TournamentStanding = typeof tournamentStandings.$inferSelect;
+
+export const insertSweepstakeParticipantSchema = createInsertSchema(sweepstakeParticipants)
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .extend({
+    name: z.string().min(1, "Name is required"),
+    email: z.string().email().nullable().optional().or(z.literal("")),
+    status: z.enum(SWEEPSTAKE_PARTICIPANT_STATUSES).default("active"),
+  });
+export type InsertSweepstakeParticipant = z.infer<typeof insertSweepstakeParticipantSchema>;
+export type SweepstakeParticipant = typeof sweepstakeParticipants.$inferSelect;
+
 // ============ PLAYER CONTENT API CONTRACT ============
 // Shape of the JSON payload returned by GET /api/player/:screenId/content
 // (see server/routes.ts ~3493-3713). Declared here so the player client

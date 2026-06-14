@@ -25,6 +25,7 @@ import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
 import { setupAuth, isAuthenticated, isAuthenticatedOrToken, hashApiToken } from "./auth";
 import { mountTestAuthRoute } from "./testAuthRoute";
 import { mountAgendaRoutes } from "./agendaRoutes";
+import { mountSweepstakeRoutes } from "./sweepstakeRoutes";
 import { fetchMicrosoftXlsxBytes } from "./microsoftGraph";
 import { mountMediaLayoutRoutes } from "./mediaLayoutRoutes";
 import { mountCustomerDataRoutes } from "./customerDataRoutes";
@@ -4755,6 +4756,17 @@ export async function registerRoutes(
     logAudit,
     resolveStoredPath: (p) => fileStorage.getAbsolutePath(p),
     graphFetch: (cfg) => fetchMicrosoftXlsxBytes(cfg),
+  });
+
+  mountSweepstakeRoutes(app, {
+    storage,
+    auth: {
+      canAccessClient: (req, clientId) => canAccessClient(req, clientId),
+      getAllowedClientIds: (req) => getAllowedClientIds(req),
+    },
+    requireAuth,
+    loadUserContext,
+    logAudit,
   });
 
   return httpServer;

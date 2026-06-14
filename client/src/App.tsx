@@ -46,6 +46,8 @@ import HelpPage from "@/pages/help";
 import AgendaItemsPage from "@/pages/agenda-items";
 import AgendaConfigsPage from "@/pages/agenda-configs";
 import DisplayAgendaPage from "@/pages/display-agenda";
+import SweepstakePage from "@/pages/sweepstake";
+import DisplaySweepstakePage from "@/pages/display-sweepstake";
 import FontsPage from "@/pages/fonts";
 
 function AdminRoute({ component: Component }: { component: () => JSX.Element }) {
@@ -81,6 +83,7 @@ function AuthenticatedRouter() {
       <Route path="/control-panel" component={ControlPanelPage} />
       <Route path="/agenda" component={AgendaItemsPage} />
       <Route path="/agenda/displays" component={AgendaConfigsPage} />
+      <Route path="/sweepstake" component={SweepstakePage} />
       <Route path="/fonts" component={FontsPage} />
       <Route path="/admin/streaming">{() => <AdminRoute component={StreamingServerPage} />}</Route>
       <Route component={NotFound} />
@@ -164,6 +167,12 @@ function AppContent() {
   const [isAgendaDisplayRoute] = useRoute("/display/agenda/:configId");
   if (isAgendaDisplayRoute) {
     return <DisplayAgendaPage />;
+  }
+
+  // Task #286 — chromeless public sweepstake display, no auth/sidebar.
+  const [isSweepstakeDisplayRoute] = useRoute("/display/sweepstake/:configId");
+  if (isSweepstakeDisplayRoute) {
+    return <DisplaySweepstakePage />;
   }
 
   const [isLoginRoute] = useRoute("/login");

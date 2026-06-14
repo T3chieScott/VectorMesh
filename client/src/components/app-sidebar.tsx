@@ -24,6 +24,7 @@ import {
   HelpCircle,
   CalendarDays,
   Type,
+  Trophy,
 } from "lucide-react";
 import {
   Sidebar,
@@ -138,6 +139,14 @@ const agendaNavItems = [
     title: "Agenda Displays",
     url: "/agenda/displays",
     icon: SlidersHorizontal,
+  },
+];
+
+const sweepstakeNavItems = [
+  {
+    title: "Sweepstake Wall",
+    url: "/sweepstake",
+    icon: Trophy,
   },
 ];
 
@@ -310,6 +319,7 @@ export function AppSidebar() {
         <NavGroup label="Content" items={contentNavItems} />
         <NavGroup label="Display" items={displayNavItems} />
         <NavGroup label="Agenda" items={agendaNavItems} />
+        <NavGroup label="Sweepstake" items={sweepstakeNavItems} />
         <NavGroup label="System" items={systemNavItems} />
         {(user?.role === "admin" || user?.role === "account_manager") && (
           <NavGroup label="Admin" items={adminNavItems} />
