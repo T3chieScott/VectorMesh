@@ -74,7 +74,7 @@ const contentNavItems = [
     icon: Image,
   },
   {
-    title: "Layouts",
+    title: "Scenes",
     url: "/layouts",
     icon: Layout,
   },

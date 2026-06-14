@@ -10765,7 +10765,7 @@ export default function LayoutsPage() {
         <div className="w-80 min-w-80 flex-shrink-0 border-r flex flex-col overflow-hidden bg-background">
           <div className="p-4 border-b space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <h1 className="font-semibold" data-testid="text-layouts-title">Layouts</h1>
+              <h1 className="font-semibold" data-testid="text-layouts-title">Scenes</h1>
               <CreateLayoutDialog events={events} />
             </div>
             <div>
