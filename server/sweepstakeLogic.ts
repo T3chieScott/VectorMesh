@@ -11,8 +11,15 @@ import type {
   TournamentMatch,
   TournamentStanding,
   SweepstakeSlideType,
+  SweepstakeLivePanel,
 } from "@shared/schema";
-import { SWEEPSTAKE_SLIDE_TYPES } from "@shared/schema";
+import { SWEEPSTAKE_SLIDE_TYPES, SWEEPSTAKE_LIVE_PANELS } from "@shared/schema";
+import type {
+  NormLiveMatch,
+  NormLiveEvent,
+  NormLiveTeam,
+  NormStandingRow,
+} from "./sportmonksLive";
 
 export type Rng = () => number;
 
@@ -280,5 +287,222 @@ export function buildDisplayData(input: BuildDisplayInput): SweepstakeDisplayDat
     matches,
     standings,
     winner,
+  };
+}
+
+// ---------- Live World Cup panels (Task #287) ----------
+//
+// Joins the normalised Sportmonks live data to the sweepstake's persisted
+// teams + participant assignments so every team is always shown next to the
+// colleague(s) who drew it. Pure — the routes layer supplies fetched data.
+
+export interface LiveTeamView {
+  /** Persisted tournament_teams.id, if the live team matched one. */
+  teamId: string | null;
+  name: string;
+  shortName: string | null;
+  crestUrl: string | null;
+  countryCode: string | null;
+  /** Names of the staff who drew this team. */
+  participants: string[];
+  eliminated: boolean;
+  isWinner: boolean;
+}
+
+export interface LiveEventView {
+  minute: number | null;
+  kind: NormLiveEvent["kind"];
+  side: "home" | "away" | null;
+  teamName: string | null;
+  playerName: string | null;
+  detail: string | null;
+  /** Staff linked to the team involved in the event. */
+  participants: string[];
+}
+
+export interface LiveMatchView {
+  id: string;
+  stateLabel: string;
+  isLive: boolean;
+  finished: boolean;
+  minute: number | null;
+  groupName: string | null;
+  stage: string | null;
+  startingAt: string | null;
+  home: LiveTeamView | null;
+  away: LiveTeamView | null;
+  homeScore: number | null;
+  awayScore: number | null;
+  events: LiveEventView[];
+}
+
+export interface LiveStandingView {
+  team: LiveTeamView;
+  groupName: string | null;
+  position: number | null;
+  played: number;
+  won: number;
+  draw: number;
+  lost: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  points: number;
+}
+
+export interface SweepstakeLiveData {
+  enabled: boolean;
+  /** False → the widget shows "Data temporarily unavailable". */
+  available: boolean;
+  /** True → serving last-known-good cached data after an upstream failure. */
+  stale: boolean;
+  updatedAt: string | null;
+  /** How often the display should re-poll while live mode is on (seconds). */
+  refreshSeconds: number;
+  panels: SweepstakeLivePanel[];
+  liveMatches: LiveMatchView[];
+  nextMatch: LiveMatchView | null;
+  standings: LiveStandingView[];
+}
+
+export interface BuildLiveInput {
+  /** Requested panels; empty = all live panels. */
+  panels: SweepstakeLivePanel[];
+  refreshSeconds: number;
+  teams: Pick<TournamentTeam, "id" | "externalId" | "name" | "shortName" | "countryCode" | "crestUrl" | "eliminated" | "isWinner">[];
+  participants: Pick<SweepstakeParticipant, "name" | "teamId">[];
+  inplay: NormLiveMatch[];
+  fixtures: NormLiveMatch[];
+  standings: NormStandingRow[];
+  available: boolean;
+  stale: boolean;
+  updatedAt: number | null;
+}
+
+export function buildLiveData(input: BuildLiveInput): SweepstakeLiveData {
+  const panels = (input.panels.length > 0 ? input.panels : SWEEPSTAKE_LIVE_PANELS) as SweepstakeLivePanel[];
+
+  // Match live teams to persisted teams by the stored Sportmonks external id,
+  // then attach the staff assigned to each persisted team.
+  const teamByExternal = new Map<string, BuildLiveInput["teams"][number]>();
+  for (const t of input.teams) {
+    if (t.externalId) teamByExternal.set(String(t.externalId), t);
+  }
+  const participantsByTeam = new Map<string, string[]>();
+  for (const p of input.participants) {
+    if (!p.teamId) continue;
+    const list = participantsByTeam.get(p.teamId) ?? [];
+    list.push(p.name);
+    participantsByTeam.set(p.teamId, list);
+  }
+
+  function resolveTeam(norm: NormLiveTeam | null): LiveTeamView | null {
+    if (!norm) return null;
+    const persisted = teamByExternal.get(norm.sportmonksId);
+    return {
+      teamId: persisted?.id ?? null,
+      name: persisted?.name ?? norm.name,
+      shortName: norm.shortName ?? persisted?.shortName ?? null,
+      crestUrl: norm.crestUrl ?? persisted?.crestUrl ?? null,
+      countryCode: persisted?.countryCode ?? null,
+      participants: persisted ? participantsByTeam.get(persisted.id) ?? [] : [],
+      eliminated: persisted?.eliminated ?? false,
+      isWinner: persisted?.isWinner ?? false,
+    };
+  }
+
+  function toMatchView(m: NormLiveMatch): LiveMatchView {
+    const home = resolveTeam(m.home);
+    const away = resolveTeam(m.away);
+    const events: LiveEventView[] = m.events.map((e) => {
+      const team = e.side === "home" ? home : e.side === "away" ? away : null;
+      return {
+        minute: e.minute,
+        kind: e.kind,
+        side: e.side,
+        teamName: team?.name ?? null,
+        playerName: e.playerName,
+        detail: e.detail,
+        participants: team?.participants ?? [],
+      };
+    });
+    return {
+      id: m.id,
+      stateLabel: m.stateLabel,
+      isLive: m.isLive,
+      finished: m.finished,
+      minute: m.minute,
+      groupName: m.groupName,
+      stage: m.stage,
+      startingAt: m.startingAt,
+      home,
+      away,
+      homeScore: m.homeScore,
+      awayScore: m.awayScore,
+      events,
+    };
+  }
+
+  const wantNowNext = panels.includes("now_next");
+  const wantScore = panels.includes("live_score");
+  const wantStandings = panels.includes("live_standings");
+
+  // Currently in-play World Cup matches, live first.
+  const liveMatches = (wantNowNext || wantScore)
+    ? input.inplay
+        .filter((m) => m.isLive || (!m.finished && m.homeScore != null))
+        .map(toMatchView)
+    : [];
+
+  // Soonest upcoming fixture for the "Next" half of the now/next panel.
+  let nextMatch: LiveMatchView | null = null;
+  if (wantNowNext) {
+    const nowTs = (input.updatedAt ?? Date.now());
+    const upcoming = input.fixtures
+      .filter((m) => !m.isLive && !m.finished && (m.startingAtTs == null || m.startingAtTs * 1000 >= nowTs - 60_000))
+      .sort((a, b) => (a.startingAtTs ?? Infinity) - (b.startingAtTs ?? Infinity));
+    nextMatch = upcoming.length > 0 ? toMatchView(upcoming[0]) : null;
+  }
+
+  const standings: LiveStandingView[] = wantStandings
+    ? input.standings
+        .map((s): LiveStandingView => {
+          const team = resolveTeam({
+            sportmonksId: s.sportmonksTeamId,
+            name: s.teamName,
+            shortName: s.teamShortName,
+            crestUrl: s.teamCrestUrl,
+          });
+          return {
+            team: team as LiveTeamView,
+            groupName: s.groupName,
+            position: s.position,
+            played: s.played,
+            won: s.won,
+            draw: s.draw,
+            lost: s.lost,
+            goalsFor: s.goalsFor,
+            goalsAgainst: s.goalsAgainst,
+            goalDifference: s.goalDifference,
+            points: s.points,
+          };
+        })
+        .sort((a, b) => {
+          const g = (a.groupName ?? "").localeCompare(b.groupName ?? "");
+          if (g !== 0) return g;
+          return (a.position ?? 99) - (b.position ?? 99);
+        })
+    : [];
+
+  return {
+    enabled: true,
+    available: input.available,
+    stale: input.stale,
+    updatedAt: input.updatedAt ? new Date(input.updatedAt).toISOString() : null,
+    refreshSeconds: input.refreshSeconds,
+    panels,
+    liveMatches,
+    nextMatch,
+    standings,
   };
 }

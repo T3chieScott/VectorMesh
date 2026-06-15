@@ -23,7 +23,16 @@ import {
   computeParticipantStatuses,
   detectWinnerTeamName,
   buildDisplayData,
+  buildLiveData,
+  type SweepstakeLiveData,
 } from "./sweepstakeLogic";
+import {
+  getLiveInplayMatches,
+  getSeasonFixtures,
+  getLiveStandings,
+  isSportmonksLiveConfigured,
+} from "./sportmonksLive";
+import { SWEEPSTAKE_LIVE_PANELS, type SweepstakeLivePanel } from "@shared/schema";
 
 export interface SweepstakeRoutesStorage {
   getSweepstakeConfigs(clientId?: string): Promise<SweepstakeWidgetConfig[]>;
@@ -81,6 +90,87 @@ export const PUBLIC_SWEEPSTAKE_CONFIG_FIELDS = [
   "kickoffAt",
   "lastSyncedAt",
 ] as const;
+
+// Resolve the live World Cup panels for the public display payload. Returns
+// null when the config has live mode off (so the payload is unchanged for
+// every existing sweepstake). Never throws — any upstream failure degrades to
+// `{ enabled: true, available: false }` so the widget shows a friendly
+// "Data temporarily unavailable" message. The API token never leaves the
+// server: only the joined view models are returned.
+async function resolveLiveData(
+  config: SweepstakeWidgetConfig,
+  teams: TournamentTeam[],
+  participants: SweepstakeParticipant[],
+): Promise<SweepstakeLiveData | null> {
+  if (!config.liveEnabled || config.provider !== "sportmonks") return null;
+
+  const panels = (config.livePanels && config.livePanels.length > 0
+    ? config.livePanels.filter((p): p is SweepstakeLivePanel =>
+        (SWEEPSTAKE_LIVE_PANELS as readonly string[]).includes(p))
+    : [...SWEEPSTAKE_LIVE_PANELS]) as SweepstakeLivePanel[];
+
+  const refreshSeconds = Math.min(300, Math.max(5, config.liveRefreshSeconds ?? 15));
+
+  if (!isSportmonksLiveConfigured()) {
+    return {
+      enabled: true,
+      available: false,
+      stale: false,
+      updatedAt: null,
+      refreshSeconds,
+      panels,
+      liveMatches: [],
+      nextMatch: null,
+      standings: [],
+    };
+  }
+
+  const wantNowNext = panels.includes("now_next");
+  const wantScore = panels.includes("live_score");
+  const wantStandings = panels.includes("live_standings");
+
+  try {
+    const [inplayRes, fixturesRes, standingsRes] = await Promise.all([
+      wantNowNext || wantScore ? getLiveInplayMatches() : Promise.resolve(null),
+      wantNowNext ? getSeasonFixtures() : Promise.resolve(null),
+      wantStandings ? getLiveStandings() : Promise.resolve(null),
+    ]);
+
+    const requested = [inplayRes, fixturesRes, standingsRes].filter((r) => r !== null);
+    const available = requested.length === 0 || requested.some((r) => r!.ok);
+    const stale = requested.some((r) => r!.stale);
+    const updatedAt = requested.reduce<number | null>((max, r) => {
+      if (r!.updatedAt == null) return max;
+      return max == null ? r!.updatedAt : Math.max(max, r!.updatedAt);
+    }, null);
+
+    return buildLiveData({
+      panels,
+      refreshSeconds,
+      teams,
+      participants,
+      inplay: inplayRes?.data ?? [],
+      fixtures: fixturesRes?.data ?? [],
+      standings: standingsRes?.data ?? [],
+      available,
+      stale,
+      updatedAt,
+    });
+  } catch (error) {
+    console.error("Error resolving sweepstake live data:", error instanceof Error ? error.message : error);
+    return {
+      enabled: true,
+      available: false,
+      stale: false,
+      updatedAt: null,
+      refreshSeconds,
+      panels,
+      liveMatches: [],
+      nextMatch: null,
+      standings: [],
+    };
+  }
+}
 
 export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) {
   const { storage, auth, requireAuth, loadUserContext } = deps;
@@ -407,8 +497,11 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
         storage.getSweepstakeParticipants(config.id),
       ]);
       const data = buildDisplayData({ config, teams, matches, standings, participants });
+      const live = await resolveLiveData(config, teams, participants);
       res.setHeader("Cache-Control", "no-store");
-      res.json({ ...data, serverTime: Date.now() });
+      // Only attach `live` when live mode is on, so payloads for every
+      // existing (live-off) sweepstake stay byte-identical to before.
+      res.json({ ...data, ...(live ? { live } : {}), serverTime: Date.now() });
     } catch (error) {
       console.error("Error serving sweepstake display:", error);
       res.status(500).json({ error: "Failed to serve sweepstake" });

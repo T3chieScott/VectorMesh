@@ -1220,6 +1220,14 @@ function SweepstakeConfigPickerSection({
                 <Badge variant="secondary">{selected.tournamentName}</Badge>
                 <Badge variant="outline">Theme: {selected.theme}</Badge>
                 <Badge variant="outline">Layout: {selected.layoutMode}</Badge>
+                {selected.liveEnabled && (
+                  <Badge
+                    variant="default"
+                    data-testid={`sweepstake-config-live-${selected.id}`}
+                  >
+                    Live World Cup
+                  </Badge>
+                )}
               </div>
             )}
             <FormMessage />

@@ -63,7 +63,10 @@ export default function DisplaySweepstakePage() {
             setError(null);
             setRetired(false);
             lastGoodAtRef.current = Date.now();
-            intervalRef.current = payload.refreshIntervalSeconds ?? 30;
+            intervalRef.current =
+              payload.live?.enabled && payload.live.refreshSeconds
+                ? payload.live.refreshSeconds
+                : payload.refreshIntervalSeconds ?? 30;
           }
         }
       } catch (e) {

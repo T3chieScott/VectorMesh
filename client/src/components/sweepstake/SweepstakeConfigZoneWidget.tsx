@@ -50,7 +50,10 @@ export function SweepstakeConfigZoneWidget({
             setData(payload);
             setError(null);
             lastGoodAt = Date.now();
-            intervalSec = payload.refreshIntervalSeconds ?? 30;
+            intervalSec =
+              payload.live?.enabled && payload.live.refreshSeconds
+                ? payload.live.refreshSeconds
+                : payload.refreshIntervalSeconds ?? 30;
           }
         }
       } catch (e) {

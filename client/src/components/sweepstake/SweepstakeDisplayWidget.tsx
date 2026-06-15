@@ -62,6 +62,73 @@ export interface DisplayStanding {
   points: number;
 }
 
+// ----- Live World Cup panels (Task #287). Mirror server SweepstakeLiveData. -----
+
+export type LivePanel = "now_next" | "live_score" | "live_standings";
+
+export interface LiveTeamView {
+  teamId: string | null;
+  name: string;
+  shortName: string | null;
+  crestUrl: string | null;
+  countryCode: string | null;
+  participants: string[];
+  eliminated: boolean;
+  isWinner: boolean;
+}
+
+export interface LiveEventView {
+  minute: number | null;
+  kind: string;
+  side: "home" | "away" | null;
+  teamName: string | null;
+  playerName: string | null;
+  detail: string | null;
+  participants: string[];
+}
+
+export interface LiveMatchView {
+  id: string;
+  stateLabel: string;
+  isLive: boolean;
+  finished: boolean;
+  minute: number | null;
+  groupName: string | null;
+  stage: string | null;
+  startingAt: string | null;
+  home: LiveTeamView | null;
+  away: LiveTeamView | null;
+  homeScore: number | null;
+  awayScore: number | null;
+  events: LiveEventView[];
+}
+
+export interface LiveStandingView {
+  team: LiveTeamView;
+  groupName: string | null;
+  position: number | null;
+  played: number;
+  won: number;
+  draw: number;
+  lost: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  points: number;
+}
+
+export interface SweepstakeLiveData {
+  enabled: boolean;
+  available: boolean;
+  stale: boolean;
+  updatedAt: string | null;
+  refreshSeconds: number;
+  panels: LivePanel[];
+  liveMatches: LiveMatchView[];
+  nextMatch: LiveMatchView | null;
+  standings: LiveStandingView[];
+}
+
 export interface SweepstakeDisplayData {
   tournamentName: string;
   theme: string;
@@ -77,6 +144,7 @@ export interface SweepstakeDisplayData {
   matches: DisplayMatch[];
   standings: DisplayStanding[];
   winner: { teamName: string; participants: string[] } | null;
+  live?: SweepstakeLiveData | null;
 }
 
 interface ThemeTokens {
@@ -117,7 +185,12 @@ function themeTokens(theme: string): ThemeTokens {
   }
 }
 
-const SLIDE_TITLES: Record<SlideType, string> = {
+// A rotation slot is either a configured sweepstake slide or a live panel
+// (plus a synthetic "unavailable" slot shown when live mode is on but the
+// upstream data can't be reached).
+type RotationSlide = SlideType | LivePanel | "live_unavailable";
+
+const SLIDE_TITLES: Record<RotationSlide, string> = {
   countdown: "Kick-off countdown",
   fixtures: "Fixtures",
   results: "Recent results",
@@ -126,6 +199,10 @@ const SLIDE_TITLES: Record<SlideType, string> = {
   eliminations: "Knocked out",
   spotlight: "Teams in the hat",
   winner: "We have a winner!",
+  now_next: "Now & next",
+  live_score: "Live scores",
+  live_standings: "Live group tables",
+  live_unavailable: "Live updates",
 };
 
 function useCountdown(targetIso: string | null) {
@@ -380,8 +457,42 @@ function StandingsSlide({ data, tokens, accent }: SlideProps) {
   );
 }
 
+// Per-team live status, keyed by persisted teamId, derived from the live
+// matches in the payload. Lets the sweepstake grid show each colleague's team
+// score live, right next to their name.
+interface TeamLiveStatus {
+  scoreLabel: string;
+  minuteLabel: string;
+  isLive: boolean;
+  goalsFor: number;
+  goalsAgainst: number;
+}
+
+function liveStatusByTeamId(live?: SweepstakeLiveData | null): Map<string, TeamLiveStatus> {
+  const map = new Map<string, TeamLiveStatus>();
+  if (!live) return map;
+  for (const m of live.liveMatches) {
+    const sides: { team: LiveTeamView | null; gf: number | null; ga: number | null }[] = [
+      { team: m.home, gf: m.homeScore, ga: m.awayScore },
+      { team: m.away, gf: m.awayScore, ga: m.homeScore },
+    ];
+    for (const s of sides) {
+      if (!s.team?.teamId) continue;
+      map.set(s.team.teamId, {
+        scoreLabel: `${s.gf ?? 0}–${s.ga ?? 0}`,
+        minuteLabel: m.isLive ? (m.minute != null ? `${m.minute}'` : m.stateLabel) : m.stateLabel,
+        isLive: m.isLive,
+        goalsFor: s.gf ?? 0,
+        goalsAgainst: s.ga ?? 0,
+      });
+    }
+  }
+  return map;
+}
+
 function SweepstakeSlide({ data, tokens, accent }: SlideProps) {
   const assigned = data.participants.filter((p) => p.teamName);
+  const liveByTeam = useMemo(() => liveStatusByTeamId(data.live), [data.live]);
   if (assigned.length === 0) return <CenterMessage tokens={tokens} title="Draw not made yet" subtitle="Names will appear once teams are drawn" />;
   return (
     <div
@@ -395,27 +506,54 @@ function SweepstakeSlide({ data, tokens, accent }: SlideProps) {
       }}
       data-testid="slide-sweepstake"
     >
-      {assigned.slice(0, 48).map((p) => (
-        <div
-          key={p.id}
-          style={{
-            background: tokens.panel,
-            border: `1px solid ${p.status === "winner" ? accent : tokens.border}`,
-            borderRadius: 16,
-            padding: "1.6vmin 2vmin",
-            opacity: p.status === "eliminated" ? 0.45 : 1,
-            textDecoration: p.status === "eliminated" ? "line-through" : "none",
-          }}
-          data-testid={`card-participant-${p.id}`}
-        >
-          <div style={{ fontSize: "2.6vmin", fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {p.name}
+      {assigned.slice(0, 48).map((p) => {
+        const status = p.teamId ? liveByTeam.get(p.teamId) : undefined;
+        const winning = status ? status.goalsFor > status.goalsAgainst : false;
+        return (
+          <div
+            key={p.id}
+            style={{
+              background: tokens.panel,
+              border: `1px solid ${p.status === "winner" ? accent : status?.isLive ? "#ef4444" : tokens.border}`,
+              borderRadius: 16,
+              padding: "1.6vmin 2vmin",
+              opacity: p.status === "eliminated" ? 0.45 : 1,
+              textDecoration: p.status === "eliminated" ? "line-through" : "none",
+            }}
+            data-testid={`card-participant-${p.id}`}
+          >
+            <div style={{ fontSize: "2.6vmin", fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {p.name}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "1vmin", justifyContent: "space-between" }}>
+              <span style={{ fontSize: "2vmin", color: accent, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {p.teamName}
+              </span>
+              {status && (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.6vmin",
+                    fontSize: "1.8vmin",
+                    fontWeight: 900,
+                    fontVariantNumeric: "tabular-nums",
+                    color: status.isLive ? (winning ? "#22c55e" : tokens.text) : tokens.subtle,
+                    whiteSpace: "nowrap",
+                  }}
+                  data-testid={`live-status-${p.id}`}
+                >
+                  {status.isLive && (
+                    <span style={{ width: "1.1vmin", height: "1.1vmin", borderRadius: 999, background: "#ef4444", display: "inline-block" }} aria-hidden />
+                  )}
+                  {status.scoreLabel}
+                  <span style={{ color: tokens.subtle, fontWeight: 700 }}>{status.minuteLabel}</span>
+                </span>
+              )}
+            </div>
           </div>
-          <div style={{ fontSize: "2vmin", color: accent, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {p.teamName}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -507,6 +645,179 @@ function WinnerSlide({ data, tokens, accent }: SlideProps) {
   );
 }
 
+// ----- Live panel slides (Task #287) -----
+
+function eventIcon(kind: string): string {
+  switch (kind) {
+    case "goal":
+    case "penalty":
+      return "⚽";
+    case "own_goal":
+      return "🥅";
+    case "missed_penalty":
+      return "❌";
+    case "yellowcard":
+      return "🟨";
+    case "redcard":
+    case "yellowred":
+      return "🟥";
+    case "substitution":
+      return "🔁";
+    default:
+      return "•";
+  }
+}
+
+function LiveTeamColumn({ team, tokens, accent, align }: { team: LiveTeamView | null; tokens: ThemeTokens; accent: string; align: "left" | "right" }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "1.2vmin", textAlign: "center" }}>
+      {team?.crestUrl ? (
+        <img src={team.crestUrl} alt="" style={{ width: "10vmin", height: "10vmin", objectFit: "contain" }} />
+      ) : (
+        <span style={{ fontSize: "9vmin", lineHeight: 1 }} aria-hidden>
+          {flagEmoji(team?.countryCode ?? null) ?? "🏳️"}
+        </span>
+      )}
+      <div style={{ fontSize: "3.2vmin", fontWeight: 900 }}>{team?.name ?? "TBC"}</div>
+      {team && team.participants.length > 0 && (
+        <div style={{ fontSize: "2vmin", color: accent, fontWeight: 700, maxWidth: "30vmin" }}>{team.participants.join(" · ")}</div>
+      )}
+    </div>
+  );
+}
+
+function MatchHero({ match, tokens, accent, label }: { match: LiveMatchView; tokens: ThemeTokens; accent: string; label: string }) {
+  return (
+    <div style={{ background: tokens.panel, border: `1px solid ${match.isLive ? "#ef4444" : tokens.border}`, borderRadius: 22, padding: "3vmin", display: "flex", flexDirection: "column", gap: "2vmin" }}>
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "1.2vmin" }}>
+        {match.isLive && <span style={{ width: "1.4vmin", height: "1.4vmin", borderRadius: 999, background: "#ef4444", display: "inline-block" }} aria-hidden />}
+        <span style={{ fontSize: "2.2vmin", fontWeight: 800, color: match.isLive ? "#ef4444" : tokens.subtle, textTransform: "uppercase", letterSpacing: "0.12em" }}>
+          {label}
+        </span>
+        <span style={{ fontSize: "2vmin", color: tokens.subtle }}>{match.groupName || match.stage || ""}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: "2vmin" }}>
+        <LiveTeamColumn team={match.home} tokens={tokens} accent={accent} align="right" />
+        <div style={{ textAlign: "center" }}>
+          {match.isLive || match.finished ? (
+            <div style={{ fontSize: "8vmin", fontWeight: 900, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
+              {match.homeScore ?? 0}<span style={{ color: tokens.subtle }}> – </span>{match.awayScore ?? 0}
+            </div>
+          ) : (
+            <div style={{ fontSize: "4vmin", fontWeight: 900, color: accent }}>{kickoffTime(match.startingAt)}</div>
+          )}
+          <div style={{ fontSize: "2.2vmin", color: tokens.subtle, marginTop: "0.6vmin" }}>
+            {match.isLive && match.minute != null ? `${match.minute}'` : match.stateLabel}
+          </div>
+        </div>
+        <LiveTeamColumn team={match.away} tokens={tokens} accent={accent} align="left" />
+      </div>
+    </div>
+  );
+}
+
+function NowNextSlide({ data, tokens, accent }: SlideProps) {
+  const live = data.live;
+  const now = live?.liveMatches[0] ?? null;
+  const next = live?.nextMatch ?? null;
+  if (!now && !next) return <CenterMessage tokens={tokens} title="No matches to show" subtitle="Check back at kick-off time" />;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "3vmin", height: "100%", justifyContent: "center" }} data-testid="slide-now-next">
+      {now && <MatchHero match={now} tokens={tokens} accent={accent} label="Now playing" />}
+      {next && <MatchHero match={next} tokens={tokens} accent={accent} label="Up next" />}
+    </div>
+  );
+}
+
+function LiveScoreSlide({ data, tokens, accent }: SlideProps) {
+  const live = data.live;
+  const matches = live?.liveMatches ?? [];
+  if (matches.length === 0) return <CenterMessage tokens={tokens} title="No live matches right now" subtitle="Scores will appear when a game kicks off" />;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "2vmin", height: "100%", justifyContent: "center", overflow: "hidden" }} data-testid="slide-live-score">
+      {matches.slice(0, 3).map((m) => (
+        <div key={m.id} style={{ background: tokens.panel, border: `1px solid ${m.isLive ? "#ef4444" : tokens.border}`, borderRadius: 18, padding: "2vmin 3vmin" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: "2vmin" }}>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: "3vmin", fontWeight: 800 }}>{m.home?.name ?? "TBC"}</div>
+              {m.home && m.home.participants.length > 0 && <div style={{ fontSize: "1.7vmin", color: accent }}>{m.home.participants.join(" · ")}</div>}
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "4.4vmin", fontWeight: 900, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
+                {m.homeScore ?? 0} – {m.awayScore ?? 0}
+              </div>
+              <div style={{ fontSize: "1.8vmin", color: m.isLive ? "#ef4444" : tokens.subtle, fontWeight: 800 }}>
+                {m.isLive && m.minute != null ? `${m.minute}'` : m.stateLabel}
+              </div>
+            </div>
+            <div style={{ textAlign: "left" }}>
+              <div style={{ fontSize: "3vmin", fontWeight: 800 }}>{m.away?.name ?? "TBC"}</div>
+              {m.away && m.away.participants.length > 0 && <div style={{ fontSize: "1.7vmin", color: accent }}>{m.away.participants.join(" · ")}</div>}
+            </div>
+          </div>
+          {m.events.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "1.2vmin", marginTop: "1.4vmin", justifyContent: "center" }}>
+              {m.events.slice(-6).map((e, i) => (
+                <span key={i} style={{ fontSize: "1.7vmin", color: tokens.subtle, background: "rgba(127,127,127,0.12)", borderRadius: 999, padding: "0.4vmin 1.2vmin", whiteSpace: "nowrap" }}>
+                  {eventIcon(e.kind)} {e.minute != null ? `${e.minute}' ` : ""}{e.playerName || e.teamName || ""}
+                  {e.participants.length > 0 ? ` — ${e.participants.join(", ")}` : ""}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LiveStandingsSlide({ data, tokens, accent }: SlideProps) {
+  const live = data.live;
+  const groups = useMemo(() => {
+    const byGroup = new Map<string, LiveStandingView[]>();
+    for (const s of live?.standings ?? []) {
+      const key = s.groupName || "Table";
+      if (!byGroup.has(key)) byGroup.set(key, []);
+      byGroup.get(key)!.push(s);
+    }
+    return Array.from(byGroup.entries()).slice(0, 4);
+  }, [live?.standings]);
+  if (groups.length === 0) return <CenterMessage tokens={tokens} title="No live tables yet" />;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: groups.length > 1 ? "1fr 1fr" : "1fr", gap: "3vmin", height: "100%", alignContent: "center" }} data-testid="slide-live-standings">
+      {groups.map(([name, rows]) => (
+        <div key={name} style={{ background: tokens.panel, border: `1px solid ${tokens.border}`, borderRadius: 18, padding: "2vmin 2.5vmin" }}>
+          <div style={{ fontSize: "2.6vmin", fontWeight: 800, color: accent, marginBottom: "1.2vmin" }}>{name}</div>
+          {rows.slice(0, 4).map((r, i) => (
+            <div
+              key={r.team.teamId ?? r.team.name}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "auto 1fr auto auto",
+                gap: "1.6vmin",
+                alignItems: "center",
+                padding: "1vmin 0",
+                borderTop: i === 0 ? "none" : `1px solid ${tokens.border}`,
+                fontSize: "2.2vmin",
+              }}
+            >
+              <span style={{ color: tokens.subtle, width: "3vmin" }}>{r.position ?? i + 1}</span>
+              <span style={{ overflow: "hidden" }}>
+                <span style={{ fontWeight: 700 }}>{r.team.name}</span>
+                {r.team.participants.length > 0 && (
+                  <span style={{ color: accent, fontSize: "1.6vmin", marginLeft: "1vmin" }}>{r.team.participants.join(" · ")}</span>
+                )}
+              </span>
+              <span style={{ color: tokens.subtle, fontVariantNumeric: "tabular-nums" }}>{r.won}-{r.draw}-{r.lost}</span>
+              <span style={{ fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>{r.points}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function CenterMessage({
   tokens,
   title,
@@ -526,7 +837,7 @@ function CenterMessage({
   );
 }
 
-function renderSlide(slide: SlideType, props: SlideProps) {
+function renderSlide(slide: RotationSlide, props: SlideProps) {
   switch (slide) {
     case "countdown":
       return <CountdownSlide {...props} />;
@@ -544,9 +855,41 @@ function renderSlide(slide: SlideType, props: SlideProps) {
       return <SpotlightSlide {...props} />;
     case "winner":
       return <WinnerSlide {...props} />;
+    case "now_next":
+      return <NowNextSlide {...props} />;
+    case "live_score":
+      return <LiveScoreSlide {...props} />;
+    case "live_standings":
+      return <LiveStandingsSlide {...props} />;
+    case "live_unavailable":
+      return (
+        <CenterMessage
+          tokens={props.tokens}
+          title="Live data temporarily unavailable"
+          subtitle="We'll reconnect automatically"
+        />
+      );
     default:
       return null;
   }
+}
+
+// Build the effective rotation: the configured sweepstake slides, plus any
+// live panels that currently have something to show. If live mode is on but
+// the upstream feed is unreachable, a single "unavailable" slot is appended
+// so operators can see the feed is down (rather than silently dropping it).
+function buildRotation(data: SweepstakeDisplayData): RotationSlide[] {
+  const base: RotationSlide[] = data.slides.length > 0 ? [...data.slides] : ["sweepstake"];
+  const live = data.live;
+  if (!live || !live.enabled) return base;
+  if (!live.available) return [...base, "live_unavailable"];
+  const livePanels: RotationSlide[] = [];
+  for (const panel of live.panels) {
+    if (panel === "now_next" && (live.liveMatches.length > 0 || live.nextMatch)) livePanels.push("now_next");
+    else if (panel === "live_score" && live.liveMatches.length > 0) livePanels.push("live_score");
+    else if (panel === "live_standings" && live.standings.length > 0) livePanels.push("live_standings");
+  }
+  return [...base, ...livePanels];
 }
 
 function kickoffTime(iso: string | null): string {
@@ -565,7 +908,8 @@ interface WidgetProps {
 export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
   const tokens = themeTokens(data.theme);
   const accent = data.accentColor || "#16a34a";
-  const slides = data.slides.length > 0 ? data.slides : (["sweepstake"] as SlideType[]);
+  const slides = useMemo(() => buildRotation(data), [data]);
+  const slidesKey = slides.join(",");
   const [index, setIndex] = useState(0);
   const indexRef = useRef(0);
 
@@ -576,6 +920,7 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
     if (forcedSlide) return;
     if (slides.length <= 1) {
       setIndex(0);
+      indexRef.current = 0;
       return;
     }
     const ms = Math.max(3, data.rotationIntervalSeconds) * 1000;
@@ -584,9 +929,9 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
       setIndex(indexRef.current);
     }, ms);
     return () => window.clearInterval(id);
-  }, [forcedSlide, slides.length, data.rotationIntervalSeconds, data.slides.join(",")]);
+  }, [forcedSlide, slides.length, data.rotationIntervalSeconds, slidesKey]);
 
-  const activeSlide: SlideType = forcedSlide ?? slides[Math.min(index, slides.length - 1)] ?? "sweepstake";
+  const activeSlide: RotationSlide = forcedSlide ?? slides[Math.min(index, slides.length - 1)] ?? "sweepstake";
   const slideProps: SlideProps = { data, tokens, accent };
 
   return (

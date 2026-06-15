@@ -1659,6 +1659,18 @@ export const SWEEPSTAKE_SLIDE_LABELS: Record<SweepstakeSlideType, string> = {
   winner: "Winner celebration",
 };
 
+// Task #287 — live World Cup panels that can be mixed into the rotation. These
+// are NOT persisted in `slideTypes`; they are driven by `livePanels` below and
+// only appear when the config uses Sportmonks and live data is available.
+export const SWEEPSTAKE_LIVE_PANELS = ["now_next", "live_score", "live_standings"] as const;
+export type SweepstakeLivePanel = (typeof SWEEPSTAKE_LIVE_PANELS)[number];
+
+export const SWEEPSTAKE_LIVE_PANEL_LABELS: Record<SweepstakeLivePanel, string> = {
+  now_next: "Now / Next match",
+  live_score: "Live score & event ticker",
+  live_standings: "Live group standings",
+};
+
 export const SWEEPSTAKE_PARTICIPANT_STATUSES = ["active", "eliminated", "winner"] as const;
 export type SweepstakeParticipantStatus = (typeof SWEEPSTAKE_PARTICIPANT_STATUSES)[number];
 
@@ -1685,6 +1697,12 @@ export const sweepstakeWidgetConfigs = pgTable("sweepstake_widget_configs", {
   rotationIntervalSeconds: integer("rotation_interval_seconds").notNull().default(12),
   // Which slides to rotate through. Empty = all.
   slideTypes: text("slide_types").array().notNull().default(sql`'{}'::text[]`),
+  // Task #287 — live World Cup panels (Sportmonks only). Additive.
+  liveEnabled: boolean("live_enabled").notNull().default(false),
+  // Which live panels to mix into the rotation. Empty = all live panels.
+  livePanels: text("live_panels").array().notNull().default(sql`'{}'::text[]`),
+  // How often the display re-polls for live data (seconds).
+  liveRefreshSeconds: integer("live_refresh_seconds").notNull().default(15),
   lastSyncedAt: timestamp("last_synced_at"),
   lastSyncError: text("last_sync_error"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -1784,6 +1802,9 @@ export const insertSweepstakeWidgetConfigSchema = createInsertSchema(sweepstakeW
     refreshIntervalSeconds: z.number().int().min(5).max(3600).default(30),
     rotationIntervalSeconds: z.number().int().min(3).max(3600).default(12),
     slideTypes: z.array(z.enum(SWEEPSTAKE_SLIDE_TYPES)).default([]),
+    liveEnabled: z.boolean().default(false),
+    livePanels: z.array(z.enum(SWEEPSTAKE_LIVE_PANELS)).default([]),
+    liveRefreshSeconds: z.number().int().min(5).max(300).default(15),
   });
 export type InsertSweepstakeWidgetConfig = z.infer<typeof insertSweepstakeWidgetConfigSchema>;
 export type SweepstakeWidgetConfig = typeof sweepstakeWidgetConfigs.$inferSelect;

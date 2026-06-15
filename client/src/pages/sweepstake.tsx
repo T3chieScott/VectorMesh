@@ -72,6 +72,8 @@ import {
   SWEEPSTAKE_THEMES,
   SWEEPSTAKE_SLIDE_TYPES,
   SWEEPSTAKE_SLIDE_LABELS,
+  SWEEPSTAKE_LIVE_PANELS,
+  SWEEPSTAKE_LIVE_PANEL_LABELS,
   type SweepstakeWidgetConfig,
   type TournamentTeam,
   type SweepstakeParticipant,
@@ -106,6 +108,9 @@ const configFormSchema = z.object({
   refreshIntervalSeconds: z.coerce.number().int().min(5).max(3600),
   rotationIntervalSeconds: z.coerce.number().int().min(3).max(3600),
   slideTypes: z.array(z.enum(SWEEPSTAKE_SLIDE_TYPES)).default([]),
+  liveEnabled: z.boolean().default(false),
+  livePanels: z.array(z.enum(SWEEPSTAKE_LIVE_PANELS)).default([]),
+  liveRefreshSeconds: z.coerce.number().int().min(5).max(300),
 });
 type ConfigFormValues = z.infer<typeof configFormSchema>;
 
@@ -123,6 +128,9 @@ function defaultConfigForm(c?: SweepstakeWidgetConfig): ConfigFormValues {
     refreshIntervalSeconds: c?.refreshIntervalSeconds ?? 30,
     rotationIntervalSeconds: c?.rotationIntervalSeconds ?? 12,
     slideTypes: (c?.slideTypes as any) ?? [],
+    liveEnabled: c?.liveEnabled ?? false,
+    livePanels: (c?.livePanels as any) ?? [],
+    liveRefreshSeconds: c?.liveRefreshSeconds ?? 15,
   };
 }
 
@@ -148,6 +156,9 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     refreshIntervalSeconds: values.refreshIntervalSeconds,
     rotationIntervalSeconds: values.rotationIntervalSeconds,
     slideTypes: values.slideTypes,
+    liveEnabled: values.liveEnabled,
+    livePanels: values.livePanels,
+    liveRefreshSeconds: values.liveRefreshSeconds,
   };
 }
 
@@ -439,6 +450,83 @@ function ConfigDialog({
                 </FormItem>
               )}
             />
+
+            <div className="rounded-lg border p-4 space-y-3">
+              <FormField
+                control={form.control}
+                name="liveEnabled"
+                render={({ field }) => (
+                  <FormItem className="flex items-start justify-between gap-4">
+                    <div>
+                      <FormLabel>Live World Cup updates</FormLabel>
+                      <FormDescription>
+                        {provider === "sportmonks"
+                          ? "Show live scores and tables next to each colleague's team. Requires the World Cup season to be configured on the server."
+                          : "Switch the data source to Sportmonks to enable live World Cup updates."}
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Checkbox
+                        checked={field.value}
+                        disabled={provider !== "sportmonks"}
+                        onCheckedChange={(v) => field.onChange(!!v)}
+                        data-testid="checkbox-live-enabled"
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              {form.watch("liveEnabled") && provider === "sportmonks" && (
+                <>
+                  <FormField
+                    control={form.control}
+                    name="livePanels"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Live panels to show</FormLabel>
+                        <FormDescription>Leave all unchecked to rotate through every live panel that has data.</FormDescription>
+                        <div className="grid grid-cols-1 gap-2 pt-1">
+                          {SWEEPSTAKE_LIVE_PANELS.map((p) => {
+                            const checked = field.value?.includes(p);
+                            return (
+                              <label key={p} className="flex items-center gap-2 text-sm cursor-pointer">
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(v) => {
+                                    const set = new Set(field.value ?? []);
+                                    if (v) set.add(p);
+                                    else set.delete(p);
+                                    field.onChange(Array.from(set));
+                                  }}
+                                  data-testid={`checkbox-live-panel-${p}`}
+                                />
+                                {SWEEPSTAKE_LIVE_PANEL_LABELS[p]}
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="liveRefreshSeconds"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Live refresh (seconds)</FormLabel>
+                        <FormDescription>How often the display polls for fresh live data (5–300s).</FormDescription>
+                        <FormControl>
+                          <Input type="number" {...field} data-testid="input-live-refresh" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </>
+              )}
+            </div>
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
