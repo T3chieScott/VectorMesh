@@ -1,0 +1,243 @@
+Build and expand my existing World Cup 2026 hype screen widget using Sportmonks Football API v3.
+
+Context:
+I have a Sportmonks World Cup 2026 account.
+Use Replit Secrets for the API token:
+SPORTMONKS_TOKEN=your_token_here
+
+Use this base URL:
+https://api.sportmonks.com/v3/football
+
+World Cup league_id:
+732
+
+Important:
+Do not expose the Sportmonks token in frontend JavaScript.
+Create backend proxy routes in Express.
+Use caching so the screen does not hammer the Sportmonks API.
+Use local SVG flags/logos where possible rather than hotlinking remote images.
+Do not remove existing widget functionality when adding new features.
+
+Required backend structure:
+Create or update an Express backend with these routes:
+
+/api/worldcup/live
+/api/worldcup/today
+/api/worldcup/schedule
+/api/worldcup/fixture/:id
+/api/worldcup/standings
+/api/worldcup/live-standings
+/api/worldcup/topscorers
+
+Create a reusable Sportmonks helper:
+
+const BASE = "https://api.sportmonks.com/v3/football";
+
+async function sportmonks(path, params = {}) {
+  const url = new URL(BASE + path);
+
+  url.searchParams.set("api_token", process.env.SPORTMONKS_TOKEN);
+
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
+
+  const res = await fetch(url);
+
+  if (!res.ok) {
+    throw new Error(`Sportmonks error ${res.status}`);
+  }
+
+  return res.json();
+}
+
+Add basic memory caching per route:
+- live/latest: 10–15 seconds
+- today: 30 seconds
+- fixture detail: 15–30 seconds
+- schedule: 1 hour
+- standings: 60 seconds
+- top scorers: 5 minutes
+
+Core Sportmonks API calls to integrate:
+
+1. Latest updated live scores:
+
+GET /livescores/latest
+params:
+filters=fixtureLeagues:732
+include=participants;scores;state;events;statistics;periods
+
+Example route:
+app.get("/api/worldcup/live", async (req, res) => {
+  const data = await sportmonks("/livescores/latest", {
+    filters: "fixtureLeagues:732",
+    include: "participants;scores;state;events;statistics;periods"
+  });
+
+  res.json(data);
+});
+
+2. In-play matches:
+
+GET /livescores/inplay
+params:
+filters=fixtureLeagues:732
+include=participants;scores;state;events;statistics;periods
+
+3. Today’s live score window:
+
+GET /livescores
+params:
+filters=fixtureLeagues:732
+include=participants;scores;state;events;statistics;venue;periods
+
+4. Full World Cup schedule:
+
+GET /schedules/seasons/{SEASON_ID}
+
+Create a placeholder constant:
+const WORLD_CUP_SEASON_ID = process.env.WORLD_CUP_SEASON_ID || "REPLACE_WITH_SEASON_ID";
+
+Add this as a Replit Secret too:
+WORLD_CUP_SEASON_ID=your_season_id_here
+
+Route:
+/api/worldcup/schedule
+
+5. Single fixture detail:
+
+GET /fixtures/{FIXTURE_ID}
+params:
+include=participants;scores;state;events;lineups;formations;statistics;venue;referees;periods;metadata
+
+Route:
+/api/worldcup/fixture/:id
+
+6. Group standings:
+
+GET /standings/seasons/{SEASON_ID}
+
+Route:
+/api/worldcup/standings
+
+7. Live standings:
+
+GET /standings/live/leagues/732
+
+Route:
+/api/worldcup/live-standings
+
+Frontend requirements:
+Create or update the widget UI with these panels:
+
+1. Now / Next Match panel
+- Show live match if available
+- Otherwise show next scheduled match
+- Display team names, short codes, flags, score, match state and kick-off time
+
+2. Live Score panel
+- Show score
+- Match clock/state
+- Goal scorers/events ticker
+- Cards/substitutions if available
+
+3. Match Stats panel
+- Possession
+- Shots
+- Shots on target
+- Corners
+- Fouls
+- Yellow/red cards
+Use graceful fallbacks if a stat is missing.
+
+4. Group Standings panel
+- Team
+- Played
+- Wins
+- Draws
+- Losses
+- Goals For
+- Goals Against
+- Goal Difference
+- Points
+
+5. Fixtures panel
+- Today’s matches
+- Upcoming matches
+- Completed matches
+- Status labels: scheduled, live, half-time, full-time
+
+6. Optional detail screen/card
+When a user clicks a fixture, call:
+/api/worldcup/fixture/:id
+and show:
+- line-ups
+- formations
+- venue
+- referee
+- event timeline
+- detailed statistics
+
+Data normalisation:
+Add helper functions so frontend components are not tied directly to raw Sportmonks response shape.
+
+Create helpers like:
+
+normaliseFixture(fixture)
+normaliseParticipants(participants)
+normaliseScores(scores)
+normaliseEvents(events)
+normaliseStatistics(statistics)
+getTeamFlagPath(teamCode)
+
+Flag/SVG handling:
+Use local files under:
+public/flags/
+
+Example:
+public/flags/eng.svg
+public/flags/fra.svg
+public/flags/bra.svg
+
+Use:
+const flagPath = `/flags/${teamCode.toLowerCase()}.svg`;
+
+If no flag exists, show a fallback circle with the team code.
+
+Frontend polling:
+- Poll /api/worldcup/live every 10–15 seconds
+- Poll /api/worldcup/today every 30 seconds
+- Poll standings every 60 seconds
+- Do not reload the whole page
+- Update only the relevant parts of the DOM
+
+Error handling:
+- Show “Data temporarily unavailable” on the widget, not raw errors
+- Log detailed errors in the backend console
+- Return clean JSON errors from backend:
+{ "error": true, "message": "Unable to fetch live scores" }
+
+Visual style:
+Create a clean internal hype-screen design suitable for large office/event screens:
+- dark background
+- large scores
+- bold country names
+- animated live indicator
+- event ticker
+- responsive 16:9 layout
+- readable from distance
+- avoid clutter
+
+Suggested files:
+
+server.js
+public/index.html
+public/app.js
+public/styles.css
+public/flags/
+
+Do not break any existing code.
+If existing files already exist, carefully merge changes.
+Add comments where useful.
+Make the first working version simple, then expand it modularly.
