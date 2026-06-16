@@ -1146,12 +1146,11 @@ function RivalriesSlide({ data, tokens, accent, ctx }: SlideProps) {
   const list = ctx.rivalries;
   const boxRef = useRef<HTMLDivElement>(null);
   const { w, h } = useBoxSize(boxRef);
-  // Keep at most 6 compact rivalry cards per page so the slide doesn't fan out
-  // into dozens of pages. Wide boxes get two columns, narrow ones a single one.
+  // 6 rivalry cards per page (2x3 on wide zones, 1x6 on narrow ones) so the
+  // slide doesn't fan out into dozens of pages.
   const cols = w > 760 ? 2 : 1;
-  const rowsFit = h > 0 ? clamp(Math.floor(h / 110), 1, 6) : 3;
-  const rows = Math.min(rowsFit, Math.ceil(6 / cols));
-  const perPage = Math.max(1, Math.min(6, cols * rows));
+  const rows = Math.ceil(6 / cols);
+  const perPage = cols * rows;
   const { page, pageCount } = usePagedSlide(list.length, perPage);
   const items = chunk(list, perPage)[page] ?? [];
 
@@ -1169,19 +1168,23 @@ function RivalriesSlide({ data, tokens, accent, ctx }: SlideProps) {
             <div key={match.id} style={{ ...cardBase(tokens), padding: "1.4cqmin 2cqmin", display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: "1.6cqmin", minHeight: 0, overflow: "hidden" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "1.2cqmin", minWidth: 0 }}>
                 <Flag team={homeTeam} size={5} tokens={tokens} />
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: "2cqmin", fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{joinNames(home, 2)}</div>
-                  <div style={{ fontSize: "1.5cqmin", color: tokens.subtle, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{match.homeTeamName}</div>
+                <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "0.15cqmin" }}>
+                  {home.map((n, i) => (
+                    <div key={i} style={{ fontSize: "1.8cqmin", fontWeight: 900, lineHeight: 1.15, overflowWrap: "anywhere" }}>{n}</div>
+                  ))}
+                  <div style={{ fontSize: "1.4cqmin", color: tokens.subtle, fontWeight: 700, marginTop: "0.2cqmin" }}>{match.homeTeamName}</div>
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.3cqmin" }}>
                 <span style={{ fontSize: "2.2cqmin", fontWeight: 900, color: tokens.subtle }}>VS</span>
                 <span style={{ fontSize: "1.4cqmin", fontWeight: 800, color: accent, whiteSpace: "nowrap" }}>{shortDate(match.kickoffAt)} · {kickoffTime(match.kickoffAt)}</span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: "1.2cqmin", minWidth: 0, justifyContent: "flex-end", textAlign: "right" }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: "2cqmin", fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{joinNames(away, 2)}</div>
-                  <div style={{ fontSize: "1.5cqmin", color: tokens.subtle, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{match.awayTeamName}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: "1.2cqmin", minWidth: 0, justifyContent: "flex-end" }}>
+                <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "0.15cqmin", alignItems: "flex-end", textAlign: "right" }}>
+                  {away.map((n, i) => (
+                    <div key={i} style={{ fontSize: "1.8cqmin", fontWeight: 900, lineHeight: 1.15, overflowWrap: "anywhere" }}>{n}</div>
+                  ))}
+                  <div style={{ fontSize: "1.4cqmin", color: tokens.subtle, fontWeight: 700, marginTop: "0.2cqmin" }}>{match.awayTeamName}</div>
                 </div>
                 <Flag team={awayTeam} size={5} tokens={tokens} />
               </div>
