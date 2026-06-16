@@ -398,10 +398,14 @@ function ConfigDialog({
                 name="rotationIntervalSeconds"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Slide rotation (seconds)</FormLabel>
+                    <FormLabel>Page rotation (seconds)</FormLabel>
                     <FormControl>
                       <Input type="number" {...field} data-testid="input-rotation-interval" />
                     </FormControl>
+                    <FormDescription>
+                      How long each page is shown. Slides with several pages stay
+                      up until every page has been displayed before moving on.
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

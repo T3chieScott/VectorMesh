@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 // Task #286/#287 — World Football Sweepstake display widget.
 //
@@ -312,24 +312,24 @@ function useBoxSize(ref: React.RefObject<HTMLElement>) {
   return size;
 }
 
-// Persist the current page of each paginated slide across slide rotations so,
-// over time, the whole roster / team list is shown even as the deck rotates
-// away and back. Keyed per config + slide.
-const pagerMemory = new Map<string, number>();
+// Pagination is coordinated by the deck (see SweepstakeDisplayWidget): a single
+// timer advances one page per tick, and the deck only rotates to the next slide
+// once the active slide's last page has been shown — so a multi-page slide is
+// never cut off mid-way. Each paginated slide reports its page count up through
+// this context and reads the current page back down.
+interface PagerControl {
+  page: number;
+  setPageCount: (n: number) => void;
+}
+const PagerContext = createContext<PagerControl>({ page: 0, setPageCount: () => {} });
 
-function usePager(total: number, perPage: number, rotationSeconds: number, memKey: string) {
+function usePagedSlide(total: number, perPage: number) {
   const pageCount = Math.max(1, Math.ceil(total / Math.max(1, perPage)));
-  const [page, setPage] = useState(() => pagerMemory.get(memKey) ?? 0);
+  const { page, setPageCount } = useContext(PagerContext);
   useEffect(() => {
-    if (pageCount <= 1) return;
-    const ms = Math.max(5, rotationSeconds) * 1000;
-    const id = window.setInterval(() => setPage((p) => (p + 1) % pageCount), ms);
-    return () => window.clearInterval(id);
-  }, [pageCount, rotationSeconds]);
-  const safePage = pageCount > 0 ? Math.min(page, pageCount - 1) : 0;
-  useEffect(() => {
-    pagerMemory.set(memKey, safePage);
-  }, [memKey, safePage]);
+    setPageCount(pageCount);
+  }, [pageCount, setPageCount]);
+  const safePage = Math.min(page, pageCount - 1);
   return { page: safePage, pageCount };
 }
 
@@ -832,7 +832,7 @@ function FixturesSlide({ data, tokens, accent, ctx }: SlideProps) {
   const cols = w > 0 ? clamp(Math.round(w / 580), 1, 3) : 1;
   const rows = h > 0 ? clamp(Math.floor(h / 132), 1, 6) : 4;
   const perPage = cols * rows;
-  const { page, pageCount } = usePager(list.length, perPage, data.rotationIntervalSeconds, `${data.tournamentName}:fixtures`);
+  const { page, pageCount } = usePagedSlide(list.length, perPage);
   const items = chunk(list, perPage)[page] ?? [];
 
   if (list.length === 0) return <CenterMessage tokens={tokens} title="No upcoming fixtures" subtitle="Check back soon" icon="📅" />;
@@ -866,7 +866,7 @@ function ResultsSlide({ data, tokens, accent, ctx }: SlideProps) {
   const cols = w > 0 ? clamp(Math.round(w / 580), 1, 3) : 1;
   const rows = h > 0 ? clamp(Math.floor(h / 132), 1, 6) : 4;
   const perPage = cols * rows;
-  const { page, pageCount } = usePager(list.length, perPage, data.rotationIntervalSeconds, `${data.tournamentName}:results`);
+  const { page, pageCount } = usePagedSlide(list.length, perPage);
   const items = chunk(list, perPage)[page] ?? [];
 
   if (list.length === 0) return <CenterMessage tokens={tokens} title="No results yet" subtitle="Scores will appear after the first matches" icon="⚽" />;
@@ -936,7 +936,7 @@ function StandingsSlide({ data, tokens, accent, ctx }: SlideProps) {
   const cols = w > 0 ? clamp(Math.round(w / 520), 1, 4) : 2;
   const rows = h > 0 ? clamp(Math.floor(h / 230), 1, 3) : 2;
   const perPage = Math.max(1, cols * rows);
-  const { page, pageCount } = usePager(groups.length, perPage, data.rotationIntervalSeconds, `${data.tournamentName}:standings`);
+  const { page, pageCount } = usePagedSlide(groups.length, perPage);
   const shown = chunk(groups, perPage)[page] ?? [];
 
   if (groups.length === 0) return <CenterMessage tokens={tokens} title="No tables yet" subtitle="Group standings appear once matches are played" icon="📋" />;
@@ -979,7 +979,7 @@ function SweepstakeSlide({ data, tokens, accent, ctx }: SlideProps) {
   const cols = w > 0 ? clamp(Math.round(w / 240), 2, 7) : 4;
   const rows = h > 0 ? clamp(Math.floor(h / 86), 2, 12) : 8;
   const perPage = Math.max(1, cols * rows);
-  const { page, pageCount } = usePager(assigned.length, perPage, data.rotationIntervalSeconds, `${data.tournamentName}:wall`);
+  const { page, pageCount } = usePagedSlide(assigned.length, perPage);
   const items = chunk(assigned, perPage)[page] ?? [];
 
   if (assigned.length === 0)
@@ -1073,7 +1073,7 @@ function AllTeamsSlide({ data, tokens, accent, ctx }: SlideProps) {
   // clean 4x3 = 12 grid and cqmin-sized card content never clips.
   const rows = w > 0 && h > 0 ? clamp(Math.round((h * cols * 2) / w), 2, 3) : 3;
   const perPage = Math.max(1, cols * rows);
-  const { page, pageCount } = usePager(teams.length, perPage, data.rotationIntervalSeconds, `${data.tournamentName}:teams`);
+  const { page, pageCount } = usePagedSlide(teams.length, perPage);
   const items = chunk(teams, perPage)[page] ?? [];
 
   if (teams.length === 0) return <CenterMessage tokens={tokens} title="No teams yet" icon="🌍" />;
@@ -1140,7 +1140,7 @@ function RivalriesSlide({ data, tokens, accent, ctx }: SlideProps) {
   const cols = w > 0 ? clamp(Math.round(w / 540), 1, 3) : 1;
   const rows = h > 0 ? clamp(Math.floor(h / 150), 1, 5) : 3;
   const perPage = Math.max(1, cols * rows);
-  const { page, pageCount } = usePager(list.length, perPage, data.rotationIntervalSeconds, `${data.tournamentName}:rivalries`);
+  const { page, pageCount } = usePagedSlide(list.length, perPage);
   const items = chunk(list, perPage)[page] ?? [];
 
   if (list.length === 0)
@@ -1525,25 +1525,48 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
   const ctx = useMemo(() => buildContext(data, motion), [data, motion]);
   const slides = useMemo(() => buildRotation(data), [data]);
   const slidesKey = slides.join(",");
-  const [index, setIndex] = useState(0);
-  const indexRef = useRef(0);
+  // The deck advances one page per tick and only moves to the next slide once
+  // the active slide's last page has been shown, so multi-page slides are never
+  // cut off early. `pageCountRef` holds the page count reported by the active
+  // slide (1 for slides that don't paginate). See PagerContext / usePagedSlide.
+  const [pos, setPos] = useState({ index: 0, page: 0 });
+  const pageCountRef = useRef(1);
+  const setPageCount = useCallback((n: number) => {
+    pageCountRef.current = Math.max(1, n);
+  }, []);
+
+  const activeSlide: RotationSlide = forcedSlide ?? slides[Math.min(pos.index, slides.length - 1)] ?? "sweepstake";
+
+  // Reset the reported page count whenever the active slide changes. This is a
+  // ref write done in the render phase on purpose: it must run before the new
+  // slide's effect re-reports its real count. Slides that don't paginate never
+  // report, so they correctly stay at a single page.
+  const slotRef = useRef<string | null>(null);
+  const slot = `${forcedSlide ?? ""}#${pos.index}#${activeSlide}`;
+  if (slotRef.current !== slot) {
+    slotRef.current = slot;
+    pageCountRef.current = 1;
+  }
+
+  // Jump back to the first page when the preview's forced slide changes (deck
+  // rotation already resets the page when it advances the slide itself).
+  useEffect(() => {
+    setPos((p) => (p.page === 0 ? p : { ...p, page: 0 }));
+  }, [forcedSlide]);
 
   useEffect(() => {
-    if (forcedSlide) return;
-    if (slides.length <= 1) {
-      setIndex(0);
-      indexRef.current = 0;
-      return;
-    }
     const ms = Math.max(3, data.rotationIntervalSeconds) * 1000;
     const id = window.setInterval(() => {
-      indexRef.current = (indexRef.current + 1) % slides.length;
-      setIndex(indexRef.current);
+      setPos(({ index, page }) => {
+        const pc = Math.max(1, pageCountRef.current);
+        if (page + 1 < pc) return { index, page: page + 1 };
+        if (forcedSlide || slides.length <= 1) return { index, page: 0 };
+        return { index: (index + 1) % slides.length, page: 0 };
+      });
     }, ms);
     return () => window.clearInterval(id);
   }, [forcedSlide, slides.length, data.rotationIntervalSeconds, slidesKey]);
 
-  const activeSlide: RotationSlide = forcedSlide ?? slides[Math.min(index, slides.length - 1)] ?? "sweepstake";
   const slideProps: SlideProps = { data, tokens, accent, ctx };
   const s = ctx.survivor;
 
@@ -1600,7 +1623,9 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
           </div>
         </header>
         <main key={activeSlide} style={{ flex: 1, minHeight: 0, animation: motion ? "vmFadeUp 0.45s ease" : undefined }}>
-          {renderSlide(activeSlide, slideProps)}
+          <PagerContext.Provider value={{ page: pos.page, setPageCount }}>
+            {renderSlide(activeSlide, slideProps)}
+          </PagerContext.Provider>
         </main>
         {!forcedSlide && slides.length > 1 && (
           <footer style={{ display: "flex", justifyContent: "center", gap: "1.2cqmin", marginTop: "2cqmin" }}>
@@ -1608,10 +1633,10 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
               <span
                 key={sl}
                 style={{
-                  width: i === Math.min(index, slides.length - 1) ? "4cqmin" : "1.4cqmin",
+                  width: i === Math.min(pos.index, slides.length - 1) ? "4cqmin" : "1.4cqmin",
                   height: "1.4cqmin",
                   borderRadius: 999,
-                  background: i === Math.min(index, slides.length - 1) ? accent : tokens.border,
+                  background: i === Math.min(pos.index, slides.length - 1) ? accent : tokens.border,
                   transition: "width 0.3s ease",
                 }}
               />
