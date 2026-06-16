@@ -3,6 +3,7 @@
 - [Dev server OOM](dev-server-oom.md) — XLSX OOM is exceljs full-load materializing every cell into live heap; fix = streaming reader (WorkbookReader), never load(). Bigger heap doesn't fix it.
 - [OneDrive Graph file listing](onedrive-graph-file-listing.md) — `/me/drive/recent` near-empty on business accounts; list `root/children`; share-link 403 = account can't access link.
 - [XLSX fast preview vs full read parity](dev-server-oom.md) — jszip+saxes preview reader must match exceljs full-read grid shape (trailing styled-blank col widths, truncation) or preview-picked mappings diverge from sync.
+- [Signage widget container sizing](signage-widget-container-sizing.md) — full-screen display widgets must use container-query units (cqmin) + containerType:size, not vmin, so they scale inside embedded preview/zone boxes.
 - [Sportmonks v3 quirks](sportmonks-v3-quirks.md) — league id ≠ season id; wrong id returns 200+empty (silent 0); no /fixtures/seasons/:id (use filtered /fixtures or /fixtures/between); season teams include placeholders.
 - [Additive public payload fields](additive-public-payload.md) — feature-flagged new keys on shared/public responses must be OMITTED when off (byte-identical legacy shape); gate "configured" on ALL required env, not one.
 - [Scene vs Layout naming](scene-layout-naming.md) — UI says "Scene" but all code/routes/testids say "layout"; a SECOND agenda "layoutMode" concept must NOT be swept in a Scene rename.

@@ -282,12 +282,12 @@ function Stat({ label, value, tokens }: { label: string; value: string | number;
         background: tokens.panel,
         border: `1px solid ${tokens.border}`,
         borderRadius: 20,
-        padding: "1.5vmin 2.5vmin",
+        padding: "1.5cqmin 2.5cqmin",
         textAlign: "center",
       }}
     >
-      <div style={{ fontSize: "5.5vmin", fontWeight: 900, lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: "1.8vmin", color: tokens.subtle, marginTop: "0.6vmin", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+      <div style={{ fontSize: "5.5cqmin", fontWeight: 900, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: "1.8cqmin", color: tokens.subtle, marginTop: "0.6cqmin", textTransform: "uppercase", letterSpacing: "0.1em" }}>
         {label}
       </div>
     </div>
@@ -309,14 +309,14 @@ function CountdownSlide({ data, tokens, accent }: SlideProps) {
     { label: "Seconds", value: cd.seconds },
   ];
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: "4vmin" }}>
-      <div style={{ fontSize: "3.5vmin", color: tokens.subtle, textTransform: "uppercase", letterSpacing: "0.18em" }}>Kick-off in</div>
-      <div style={{ display: "flex", gap: "3vmin" }} data-testid="slide-countdown">
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: "4cqmin" }}>
+      <div style={{ fontSize: "3.5cqmin", color: tokens.subtle, textTransform: "uppercase", letterSpacing: "0.18em" }}>Kick-off in</div>
+      <div style={{ display: "flex", gap: "3cqmin" }} data-testid="slide-countdown">
         {cells.map((c) => (
           <div key={c.label} style={{ textAlign: "center" }}>
             <div
               style={{
-                fontSize: "16vmin",
+                fontSize: "16cqmin",
                 fontWeight: 900,
                 lineHeight: 1,
                 color: accent,
@@ -325,7 +325,7 @@ function CountdownSlide({ data, tokens, accent }: SlideProps) {
             >
               {String(c.value).padStart(2, "0")}
             </div>
-            <div style={{ fontSize: "2.4vmin", color: tokens.subtle, textTransform: "uppercase", letterSpacing: "0.12em" }}>{c.label}</div>
+            <div style={{ fontSize: "2.4cqmin", color: tokens.subtle, textTransform: "uppercase", letterSpacing: "0.12em" }}>{c.label}</div>
           </div>
         ))}
       </div>
@@ -340,7 +340,7 @@ function FixturesSlide({ data, tokens, accent }: SlideProps) {
     .slice(0, 8);
   if (fixtures.length === 0) return <CenterMessage tokens={tokens} title="No upcoming fixtures" />;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "2vmin", height: "100%", justifyContent: "center" }} data-testid="slide-fixtures">
+    <div style={{ display: "flex", flexDirection: "column", gap: "2cqmin", height: "100%", justifyContent: "center" }} data-testid="slide-fixtures">
       {fixtures.map((m) => (
         <div
           key={m.id}
@@ -348,21 +348,21 @@ function FixturesSlide({ data, tokens, accent }: SlideProps) {
             display: "grid",
             gridTemplateColumns: "1fr auto 1fr",
             alignItems: "center",
-            gap: "3vmin",
+            gap: "3cqmin",
             background: tokens.panel,
             border: `1px solid ${tokens.border}`,
             borderRadius: 18,
-            padding: "2vmin 3vmin",
+            padding: "2cqmin 3cqmin",
           }}
         >
-          <div style={{ textAlign: "right", fontSize: "3.4vmin", fontWeight: 700 }}>{m.homeTeamName ?? "TBC"}</div>
+          <div style={{ textAlign: "right", fontSize: "3.4cqmin", fontWeight: 700 }}>{m.homeTeamName ?? "TBC"}</div>
           <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: "2vmin", color: accent, fontWeight: 800 }}>
+            <div style={{ fontSize: "2cqmin", color: accent, fontWeight: 800 }}>
               {m.status === "in_play" ? "LIVE" : kickoffTime(m.kickoffAt)}
             </div>
-            <div style={{ fontSize: "1.5vmin", color: tokens.subtle }}>{m.stage || m.groupName || ""}</div>
+            <div style={{ fontSize: "1.5cqmin", color: tokens.subtle }}>{m.stage || m.groupName || ""}</div>
           </div>
-          <div style={{ textAlign: "left", fontSize: "3.4vmin", fontWeight: 700 }}>{m.awayTeamName ?? "TBC"}</div>
+          <div style={{ textAlign: "left", fontSize: "3.4cqmin", fontWeight: 700 }}>{m.awayTeamName ?? "TBC"}</div>
         </div>
       ))}
     </div>
@@ -376,7 +376,7 @@ function ResultsSlide({ data, tokens }: SlideProps) {
     .slice(0, 8);
   if (results.length === 0) return <CenterMessage tokens={tokens} title="No results yet" />;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "2vmin", height: "100%", justifyContent: "center" }} data-testid="slide-results">
+    <div style={{ display: "flex", flexDirection: "column", gap: "2cqmin", height: "100%", justifyContent: "center" }} data-testid="slide-results">
       {results.map((m) => (
         <div
           key={m.id}
@@ -384,18 +384,18 @@ function ResultsSlide({ data, tokens }: SlideProps) {
             display: "grid",
             gridTemplateColumns: "1fr auto 1fr",
             alignItems: "center",
-            gap: "3vmin",
+            gap: "3cqmin",
             background: tokens.panel,
             border: `1px solid ${tokens.border}`,
             borderRadius: 18,
-            padding: "2vmin 3vmin",
+            padding: "2cqmin 3cqmin",
           }}
         >
-          <div style={{ textAlign: "right", fontSize: "3.2vmin", fontWeight: 700 }}>{m.homeTeamName ?? "TBC"}</div>
-          <div style={{ textAlign: "center", fontSize: "4vmin", fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>
+          <div style={{ textAlign: "right", fontSize: "3.2cqmin", fontWeight: 700 }}>{m.homeTeamName ?? "TBC"}</div>
+          <div style={{ textAlign: "center", fontSize: "4cqmin", fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>
             {m.homeScore ?? 0} – {m.awayScore ?? 0}
           </div>
-          <div style={{ textAlign: "left", fontSize: "3.2vmin", fontWeight: 700 }}>{m.awayTeamName ?? "TBC"}</div>
+          <div style={{ textAlign: "left", fontSize: "3.2cqmin", fontWeight: 700 }}>{m.awayTeamName ?? "TBC"}</div>
         </div>
       ))}
     </div>
@@ -421,29 +421,29 @@ function StandingsSlide({ data, tokens, accent }: SlideProps) {
       style={{
         display: "grid",
         gridTemplateColumns: groups.length > 1 ? "1fr 1fr" : "1fr",
-        gap: "3vmin",
+        gap: "3cqmin",
         height: "100%",
         alignContent: "center",
       }}
       data-testid="slide-standings"
     >
       {groups.map(([name, rows]) => (
-        <div key={name} style={{ background: tokens.panel, border: `1px solid ${tokens.border}`, borderRadius: 18, padding: "2vmin 2.5vmin" }}>
-          <div style={{ fontSize: "2.6vmin", fontWeight: 800, color: accent, marginBottom: "1.2vmin" }}>{name}</div>
+        <div key={name} style={{ background: tokens.panel, border: `1px solid ${tokens.border}`, borderRadius: 18, padding: "2cqmin 2.5cqmin" }}>
+          <div style={{ fontSize: "2.6cqmin", fontWeight: 800, color: accent, marginBottom: "1.2cqmin" }}>{name}</div>
           {rows.slice(0, 4).map((r, i) => (
             <div
               key={r.teamName}
               style={{
                 display: "grid",
                 gridTemplateColumns: "auto 1fr auto auto",
-                gap: "2vmin",
+                gap: "2cqmin",
                 alignItems: "center",
-                padding: "1vmin 0",
+                padding: "1cqmin 0",
                 borderTop: i === 0 ? "none" : `1px solid ${tokens.border}`,
-                fontSize: "2.4vmin",
+                fontSize: "2.4cqmin",
               }}
             >
-              <span style={{ color: tokens.subtle, width: "3vmin" }}>{r.position ?? i + 1}</span>
+              <span style={{ color: tokens.subtle, width: "3cqmin" }}>{r.position ?? i + 1}</span>
               <span style={{ fontWeight: 700 }}>{r.teamName}</span>
               <span style={{ color: tokens.subtle, fontVariantNumeric: "tabular-nums" }}>
                 {r.won}-{r.draw}-{r.lost}
@@ -498,8 +498,8 @@ function SweepstakeSlide({ data, tokens, accent }: SlideProps) {
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(22vmin, 1fr))",
-        gap: "1.6vmin",
+        gridTemplateColumns: "repeat(auto-fill, minmax(22cqmin, 1fr))",
+        gap: "1.6cqmin",
         height: "100%",
         alignContent: "center",
         overflow: "hidden",
@@ -516,17 +516,17 @@ function SweepstakeSlide({ data, tokens, accent }: SlideProps) {
               background: tokens.panel,
               border: `1px solid ${p.status === "winner" ? accent : status?.isLive ? "#ef4444" : tokens.border}`,
               borderRadius: 16,
-              padding: "1.6vmin 2vmin",
+              padding: "1.6cqmin 2cqmin",
               opacity: p.status === "eliminated" ? 0.45 : 1,
               textDecoration: p.status === "eliminated" ? "line-through" : "none",
             }}
             data-testid={`card-participant-${p.id}`}
           >
-            <div style={{ fontSize: "2.6vmin", fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <div style={{ fontSize: "2.6cqmin", fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {p.name}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "1vmin", justifyContent: "space-between" }}>
-              <span style={{ fontSize: "2vmin", color: accent, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "1cqmin", justifyContent: "space-between" }}>
+              <span style={{ fontSize: "2cqmin", color: accent, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {p.teamName}
               </span>
               {status && (
@@ -534,8 +534,8 @@ function SweepstakeSlide({ data, tokens, accent }: SlideProps) {
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: "0.6vmin",
-                    fontSize: "1.8vmin",
+                    gap: "0.6cqmin",
+                    fontSize: "1.8cqmin",
                     fontWeight: 900,
                     fontVariantNumeric: "tabular-nums",
                     color: status.isLive ? (winning ? "#22c55e" : tokens.text) : tokens.subtle,
@@ -544,7 +544,7 @@ function SweepstakeSlide({ data, tokens, accent }: SlideProps) {
                   data-testid={`live-status-${p.id}`}
                 >
                   {status.isLive && (
-                    <span style={{ width: "1.1vmin", height: "1.1vmin", borderRadius: 999, background: "#ef4444", display: "inline-block" }} aria-hidden />
+                    <span style={{ width: "1.1cqmin", height: "1.1cqmin", borderRadius: 999, background: "#ef4444", display: "inline-block" }} aria-hidden />
                   )}
                   {status.scoreLabel}
                   <span style={{ color: tokens.subtle, fontWeight: 700 }}>{status.minuteLabel}</span>
@@ -562,23 +562,23 @@ function EliminationsSlide({ data, tokens }: SlideProps) {
   const out = data.participants.filter((p) => p.status === "eliminated");
   const still = data.participants.filter((p) => p.status !== "eliminated" && p.teamName);
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3vmin", height: "100%", alignContent: "center" }} data-testid="slide-eliminations">
-      <div style={{ background: tokens.panel, border: `1px solid ${tokens.border}`, borderRadius: 18, padding: "2.5vmin" }}>
-        <div style={{ fontSize: "3vmin", fontWeight: 900, color: "#ef4444", marginBottom: "1.5vmin" }}>Knocked out ({out.length})</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "1.2vmin" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3cqmin", height: "100%", alignContent: "center" }} data-testid="slide-eliminations">
+      <div style={{ background: tokens.panel, border: `1px solid ${tokens.border}`, borderRadius: 18, padding: "2.5cqmin" }}>
+        <div style={{ fontSize: "3cqmin", fontWeight: 900, color: "#ef4444", marginBottom: "1.5cqmin" }}>Knocked out ({out.length})</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "1.2cqmin" }}>
           {out.slice(0, 30).map((p) => (
-            <span key={p.id} style={{ fontSize: "2.4vmin", textDecoration: "line-through", opacity: 0.7 }}>
+            <span key={p.id} style={{ fontSize: "2.4cqmin", textDecoration: "line-through", opacity: 0.7 }}>
               {p.name}
             </span>
           ))}
-          {out.length === 0 && <span style={{ color: tokens.subtle, fontSize: "2.4vmin" }}>Nobody yet — everyone's still in!</span>}
+          {out.length === 0 && <span style={{ color: tokens.subtle, fontSize: "2.4cqmin" }}>Nobody yet — everyone's still in!</span>}
         </div>
       </div>
-      <div style={{ background: tokens.panel, border: `1px solid ${tokens.border}`, borderRadius: 18, padding: "2.5vmin" }}>
-        <div style={{ fontSize: "3vmin", fontWeight: 900, color: "#22c55e", marginBottom: "1.5vmin" }}>Still standing ({still.length})</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "1.2vmin" }}>
+      <div style={{ background: tokens.panel, border: `1px solid ${tokens.border}`, borderRadius: 18, padding: "2.5cqmin" }}>
+        <div style={{ fontSize: "3cqmin", fontWeight: 900, color: "#22c55e", marginBottom: "1.5cqmin" }}>Still standing ({still.length})</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "1.2cqmin" }}>
           {still.slice(0, 30).map((p) => (
-            <span key={p.id} style={{ fontSize: "2.4vmin", fontWeight: 700 }}>
+            <span key={p.id} style={{ fontSize: "2.4cqmin", fontWeight: 700 }}>
               {p.name}
             </span>
           ))}
@@ -595,8 +595,8 @@ function SpotlightSlide({ data, tokens, accent }: SlideProps) {
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(20vmin, 1fr))",
-        gap: "2vmin",
+        gridTemplateColumns: "repeat(auto-fill, minmax(20cqmin, 1fr))",
+        gap: "2cqmin",
         height: "100%",
         alignContent: "center",
       }}
@@ -609,16 +609,16 @@ function SpotlightSlide({ data, tokens, accent }: SlideProps) {
             background: tokens.panel,
             border: `1px solid ${tokens.border}`,
             borderRadius: 16,
-            padding: "2vmin",
+            padding: "2cqmin",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
-            gap: "1.2vmin",
+            gap: "1.2cqmin",
           }}
         >
           <TeamBadge team={t} size={64} />
-          <div style={{ fontSize: "2.4vmin", fontWeight: 800, textAlign: "center" }}>{t.name}</div>
-          {t.groupName && <div style={{ fontSize: "1.8vmin", color: accent }}>{t.groupName}</div>}
+          <div style={{ fontSize: "2.4cqmin", fontWeight: 800, textAlign: "center" }}>{t.name}</div>
+          {t.groupName && <div style={{ fontSize: "1.8cqmin", color: accent }}>{t.groupName}</div>}
         </div>
       ))}
     </div>
@@ -629,16 +629,16 @@ function WinnerSlide({ data, tokens, accent }: SlideProps) {
   if (!data.winner) return <CenterMessage tokens={tokens} title="No winner yet" />;
   return (
     <div
-      style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: "3vmin", textAlign: "center" }}
+      style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: "3cqmin", textAlign: "center" }}
       data-testid="slide-winner"
     >
-      <div style={{ fontSize: "5vmin" }}>🏆</div>
-      <div style={{ fontSize: "3vmin", color: tokens.subtle, textTransform: "uppercase", letterSpacing: "0.2em" }}>Champions</div>
-      <div style={{ fontSize: "10vmin", fontWeight: 900, color: accent, lineHeight: 1 }}>{data.winner.teamName}</div>
+      <div style={{ fontSize: "5cqmin" }}>🏆</div>
+      <div style={{ fontSize: "3cqmin", color: tokens.subtle, textTransform: "uppercase", letterSpacing: "0.2em" }}>Champions</div>
+      <div style={{ fontSize: "10cqmin", fontWeight: 900, color: accent, lineHeight: 1 }}>{data.winner.teamName}</div>
       {data.winner.participants.length > 0 && (
         <>
-          <div style={{ fontSize: "2.6vmin", color: tokens.subtle }}>Congratulations to</div>
-          <div style={{ fontSize: "4vmin", fontWeight: 800, maxWidth: "80%" }}>{data.winner.participants.join(" · ")}</div>
+          <div style={{ fontSize: "2.6cqmin", color: tokens.subtle }}>Congratulations to</div>
+          <div style={{ fontSize: "4cqmin", fontWeight: 800, maxWidth: "80%" }}>{data.winner.participants.join(" · ")}</div>
         </>
       )}
     </div>
@@ -670,17 +670,17 @@ function eventIcon(kind: string): string {
 
 function LiveTeamColumn({ team, tokens, accent, align }: { team: LiveTeamView | null; tokens: ThemeTokens; accent: string; align: "left" | "right" }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "1.2vmin", textAlign: "center" }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "1.2cqmin", textAlign: "center" }}>
       {team?.crestUrl ? (
-        <img src={team.crestUrl} alt="" style={{ width: "10vmin", height: "10vmin", objectFit: "contain" }} />
+        <img src={team.crestUrl} alt="" style={{ width: "10cqmin", height: "10cqmin", objectFit: "contain" }} />
       ) : (
-        <span style={{ fontSize: "9vmin", lineHeight: 1 }} aria-hidden>
+        <span style={{ fontSize: "9cqmin", lineHeight: 1 }} aria-hidden>
           {flagEmoji(team?.countryCode ?? null) ?? "🏳️"}
         </span>
       )}
-      <div style={{ fontSize: "3.2vmin", fontWeight: 900 }}>{team?.name ?? "TBC"}</div>
+      <div style={{ fontSize: "3.2cqmin", fontWeight: 900 }}>{team?.name ?? "TBC"}</div>
       {team && team.participants.length > 0 && (
-        <div style={{ fontSize: "2vmin", color: accent, fontWeight: 700, maxWidth: "30vmin" }}>{team.participants.join(" · ")}</div>
+        <div style={{ fontSize: "2cqmin", color: accent, fontWeight: 700, maxWidth: "30cqmin" }}>{team.participants.join(" · ")}</div>
       )}
     </div>
   );
@@ -688,25 +688,25 @@ function LiveTeamColumn({ team, tokens, accent, align }: { team: LiveTeamView | 
 
 function MatchHero({ match, tokens, accent, label }: { match: LiveMatchView; tokens: ThemeTokens; accent: string; label: string }) {
   return (
-    <div style={{ background: tokens.panel, border: `1px solid ${match.isLive ? "#ef4444" : tokens.border}`, borderRadius: 22, padding: "3vmin", display: "flex", flexDirection: "column", gap: "2vmin" }}>
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "1.2vmin" }}>
-        {match.isLive && <span style={{ width: "1.4vmin", height: "1.4vmin", borderRadius: 999, background: "#ef4444", display: "inline-block" }} aria-hidden />}
-        <span style={{ fontSize: "2.2vmin", fontWeight: 800, color: match.isLive ? "#ef4444" : tokens.subtle, textTransform: "uppercase", letterSpacing: "0.12em" }}>
+    <div style={{ background: tokens.panel, border: `1px solid ${match.isLive ? "#ef4444" : tokens.border}`, borderRadius: 22, padding: "3cqmin", display: "flex", flexDirection: "column", gap: "2cqmin" }}>
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "1.2cqmin" }}>
+        {match.isLive && <span style={{ width: "1.4cqmin", height: "1.4cqmin", borderRadius: 999, background: "#ef4444", display: "inline-block" }} aria-hidden />}
+        <span style={{ fontSize: "2.2cqmin", fontWeight: 800, color: match.isLive ? "#ef4444" : tokens.subtle, textTransform: "uppercase", letterSpacing: "0.12em" }}>
           {label}
         </span>
-        <span style={{ fontSize: "2vmin", color: tokens.subtle }}>{match.groupName || match.stage || ""}</span>
+        <span style={{ fontSize: "2cqmin", color: tokens.subtle }}>{match.groupName || match.stage || ""}</span>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: "2vmin" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: "2cqmin" }}>
         <LiveTeamColumn team={match.home} tokens={tokens} accent={accent} align="right" />
         <div style={{ textAlign: "center" }}>
           {match.isLive || match.finished ? (
-            <div style={{ fontSize: "8vmin", fontWeight: 900, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
+            <div style={{ fontSize: "8cqmin", fontWeight: 900, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
               {match.homeScore ?? 0}<span style={{ color: tokens.subtle }}> – </span>{match.awayScore ?? 0}
             </div>
           ) : (
-            <div style={{ fontSize: "4vmin", fontWeight: 900, color: accent }}>{kickoffTime(match.startingAt)}</div>
+            <div style={{ fontSize: "4cqmin", fontWeight: 900, color: accent }}>{kickoffTime(match.startingAt)}</div>
           )}
-          <div style={{ fontSize: "2.2vmin", color: tokens.subtle, marginTop: "0.6vmin" }}>
+          <div style={{ fontSize: "2.2cqmin", color: tokens.subtle, marginTop: "0.6cqmin" }}>
             {match.isLive && match.minute != null ? `${match.minute}'` : match.stateLabel}
           </div>
         </div>
@@ -722,7 +722,7 @@ function NowNextSlide({ data, tokens, accent }: SlideProps) {
   const next = live?.nextMatch ?? null;
   if (!now && !next) return <CenterMessage tokens={tokens} title="No matches to show" subtitle="Check back at kick-off time" />;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "3vmin", height: "100%", justifyContent: "center" }} data-testid="slide-now-next">
+    <div style={{ display: "flex", flexDirection: "column", gap: "3cqmin", height: "100%", justifyContent: "center" }} data-testid="slide-now-next">
       {now && <MatchHero match={now} tokens={tokens} accent={accent} label="Now playing" />}
       {next && <MatchHero match={next} tokens={tokens} accent={accent} label="Up next" />}
     </div>
@@ -734,31 +734,31 @@ function LiveScoreSlide({ data, tokens, accent }: SlideProps) {
   const matches = live?.liveMatches ?? [];
   if (matches.length === 0) return <CenterMessage tokens={tokens} title="No live matches right now" subtitle="Scores will appear when a game kicks off" />;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "2vmin", height: "100%", justifyContent: "center", overflow: "hidden" }} data-testid="slide-live-score">
+    <div style={{ display: "flex", flexDirection: "column", gap: "2cqmin", height: "100%", justifyContent: "center", overflow: "hidden" }} data-testid="slide-live-score">
       {matches.slice(0, 3).map((m) => (
-        <div key={m.id} style={{ background: tokens.panel, border: `1px solid ${m.isLive ? "#ef4444" : tokens.border}`, borderRadius: 18, padding: "2vmin 3vmin" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: "2vmin" }}>
+        <div key={m.id} style={{ background: tokens.panel, border: `1px solid ${m.isLive ? "#ef4444" : tokens.border}`, borderRadius: 18, padding: "2cqmin 3cqmin" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: "2cqmin" }}>
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: "3vmin", fontWeight: 800 }}>{m.home?.name ?? "TBC"}</div>
-              {m.home && m.home.participants.length > 0 && <div style={{ fontSize: "1.7vmin", color: accent }}>{m.home.participants.join(" · ")}</div>}
+              <div style={{ fontSize: "3cqmin", fontWeight: 800 }}>{m.home?.name ?? "TBC"}</div>
+              {m.home && m.home.participants.length > 0 && <div style={{ fontSize: "1.7cqmin", color: accent }}>{m.home.participants.join(" · ")}</div>}
             </div>
             <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: "4.4vmin", fontWeight: 900, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
+              <div style={{ fontSize: "4.4cqmin", fontWeight: 900, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
                 {m.homeScore ?? 0} – {m.awayScore ?? 0}
               </div>
-              <div style={{ fontSize: "1.8vmin", color: m.isLive ? "#ef4444" : tokens.subtle, fontWeight: 800 }}>
+              <div style={{ fontSize: "1.8cqmin", color: m.isLive ? "#ef4444" : tokens.subtle, fontWeight: 800 }}>
                 {m.isLive && m.minute != null ? `${m.minute}'` : m.stateLabel}
               </div>
             </div>
             <div style={{ textAlign: "left" }}>
-              <div style={{ fontSize: "3vmin", fontWeight: 800 }}>{m.away?.name ?? "TBC"}</div>
-              {m.away && m.away.participants.length > 0 && <div style={{ fontSize: "1.7vmin", color: accent }}>{m.away.participants.join(" · ")}</div>}
+              <div style={{ fontSize: "3cqmin", fontWeight: 800 }}>{m.away?.name ?? "TBC"}</div>
+              {m.away && m.away.participants.length > 0 && <div style={{ fontSize: "1.7cqmin", color: accent }}>{m.away.participants.join(" · ")}</div>}
             </div>
           </div>
           {m.events.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "1.2vmin", marginTop: "1.4vmin", justifyContent: "center" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "1.2cqmin", marginTop: "1.4cqmin", justifyContent: "center" }}>
               {m.events.slice(-6).map((e, i) => (
-                <span key={i} style={{ fontSize: "1.7vmin", color: tokens.subtle, background: "rgba(127,127,127,0.12)", borderRadius: 999, padding: "0.4vmin 1.2vmin", whiteSpace: "nowrap" }}>
+                <span key={i} style={{ fontSize: "1.7cqmin", color: tokens.subtle, background: "rgba(127,127,127,0.12)", borderRadius: 999, padding: "0.4cqmin 1.2cqmin", whiteSpace: "nowrap" }}>
                   {eventIcon(e.kind)} {e.minute != null ? `${e.minute}' ` : ""}{e.playerName || e.teamName || ""}
                   {e.participants.length > 0 ? ` — ${e.participants.join(", ")}` : ""}
                 </span>
@@ -784,28 +784,28 @@ function LiveStandingsSlide({ data, tokens, accent }: SlideProps) {
   }, [live?.standings]);
   if (groups.length === 0) return <CenterMessage tokens={tokens} title="No live tables yet" />;
   return (
-    <div style={{ display: "grid", gridTemplateColumns: groups.length > 1 ? "1fr 1fr" : "1fr", gap: "3vmin", height: "100%", alignContent: "center" }} data-testid="slide-live-standings">
+    <div style={{ display: "grid", gridTemplateColumns: groups.length > 1 ? "1fr 1fr" : "1fr", gap: "3cqmin", height: "100%", alignContent: "center" }} data-testid="slide-live-standings">
       {groups.map(([name, rows]) => (
-        <div key={name} style={{ background: tokens.panel, border: `1px solid ${tokens.border}`, borderRadius: 18, padding: "2vmin 2.5vmin" }}>
-          <div style={{ fontSize: "2.6vmin", fontWeight: 800, color: accent, marginBottom: "1.2vmin" }}>{name}</div>
+        <div key={name} style={{ background: tokens.panel, border: `1px solid ${tokens.border}`, borderRadius: 18, padding: "2cqmin 2.5cqmin" }}>
+          <div style={{ fontSize: "2.6cqmin", fontWeight: 800, color: accent, marginBottom: "1.2cqmin" }}>{name}</div>
           {rows.slice(0, 4).map((r, i) => (
             <div
               key={r.team.teamId ?? r.team.name}
               style={{
                 display: "grid",
                 gridTemplateColumns: "auto 1fr auto auto",
-                gap: "1.6vmin",
+                gap: "1.6cqmin",
                 alignItems: "center",
-                padding: "1vmin 0",
+                padding: "1cqmin 0",
                 borderTop: i === 0 ? "none" : `1px solid ${tokens.border}`,
-                fontSize: "2.2vmin",
+                fontSize: "2.2cqmin",
               }}
             >
-              <span style={{ color: tokens.subtle, width: "3vmin" }}>{r.position ?? i + 1}</span>
+              <span style={{ color: tokens.subtle, width: "3cqmin" }}>{r.position ?? i + 1}</span>
               <span style={{ overflow: "hidden" }}>
                 <span style={{ fontWeight: 700 }}>{r.team.name}</span>
                 {r.team.participants.length > 0 && (
-                  <span style={{ color: accent, fontSize: "1.6vmin", marginLeft: "1vmin" }}>{r.team.participants.join(" · ")}</span>
+                  <span style={{ color: accent, fontSize: "1.6cqmin", marginLeft: "1cqmin" }}>{r.team.participants.join(" · ")}</span>
                 )}
               </span>
               <span style={{ color: tokens.subtle, fontVariantNumeric: "tabular-nums" }}>{r.won}-{r.draw}-{r.lost}</span>
@@ -830,9 +830,9 @@ function CenterMessage({
   accent?: string;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: "2vmin", textAlign: "center" }}>
-      <div style={{ fontSize: "5vmin", fontWeight: 900, color: accent ?? tokens.text }}>{title}</div>
-      {subtitle && <div style={{ fontSize: "2.6vmin", color: tokens.subtle }}>{subtitle}</div>}
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: "2cqmin", textAlign: "center" }}>
+      <div style={{ fontSize: "5cqmin", fontWeight: 900, color: accent ?? tokens.text }}>{title}</div>
+      {subtitle && <div style={{ fontSize: "2.6cqmin", color: tokens.subtle }}>{subtitle}</div>}
     </div>
   );
 }
@@ -939,34 +939,42 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
       style={{
         width: "100%",
         height: "100%",
+        containerType: "size",
+        background: tokens.bg,
+      }}
+    >
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
         background: tokens.bg,
         color: tokens.text,
         display: "flex",
         flexDirection: "column",
-        padding: "4vmin",
+        padding: "4cqmin",
         boxSizing: "border-box",
         fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
         overflow: "hidden",
       }}
       data-testid="sweepstake-display"
     >
-      <header style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: "3vmin" }}>
-        <div style={{ fontSize: "4vmin", fontWeight: 900, color: accent }} data-testid="text-tournament-name">
+      <header style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: "3cqmin" }}>
+        <div style={{ fontSize: "4cqmin", fontWeight: 900, color: accent }} data-testid="text-tournament-name">
           {data.tournamentName}
         </div>
-        <div style={{ fontSize: "2.4vmin", color: tokens.subtle, textTransform: "uppercase", letterSpacing: "0.12em" }}>
+        <div style={{ fontSize: "2.4cqmin", color: tokens.subtle, textTransform: "uppercase", letterSpacing: "0.12em" }}>
           {SLIDE_TITLES[activeSlide]}
         </div>
       </header>
       <main style={{ flex: 1, minHeight: 0 }}>{renderSlide(activeSlide, slideProps)}</main>
       {!forcedSlide && slides.length > 1 && (
-        <footer style={{ display: "flex", justifyContent: "center", gap: "1.2vmin", marginTop: "2.5vmin" }}>
+        <footer style={{ display: "flex", justifyContent: "center", gap: "1.2cqmin", marginTop: "2.5cqmin" }}>
           {slides.map((s, i) => (
             <span
               key={s}
               style={{
-                width: i === Math.min(index, slides.length - 1) ? "4vmin" : "1.4vmin",
-                height: "1.4vmin",
+                width: i === Math.min(index, slides.length - 1) ? "4cqmin" : "1.4cqmin",
+                height: "1.4cqmin",
                 borderRadius: 999,
                 background: i === Math.min(index, slides.length - 1) ? accent : tokens.border,
                 transition: "width 0.3s ease",
@@ -975,6 +983,7 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
           ))}
         </footer>
       )}
+    </div>
     </div>
   );
 }
