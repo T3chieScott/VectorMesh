@@ -1067,7 +1067,11 @@ function AllTeamsSlide({ data, tokens, accent, ctx }: SlideProps) {
   const boxRef = useRef<HTMLDivElement>(null);
   const { w, h } = useBoxSize(boxRef);
   const cols = w > 0 ? clamp(Math.round(w / 215), 2, 8) : 4;
-  const rows = h > 0 ? clamp(Math.floor(h / 168), 1, 6) : 3;
+  // Derive rows from the card's aspect relative to the box (not absolute px) so
+  // the layout is identical in the small preview and on a full-screen device:
+  // each card targets ~2:1 (w:h). Capped at 3 rows so a 16:9 box lands on a
+  // clean 4x3 = 12 grid and cqmin-sized card content never clips.
+  const rows = w > 0 && h > 0 ? clamp(Math.round((h * cols * 2) / w), 2, 3) : 3;
   const perPage = Math.max(1, cols * rows);
   const { page, pageCount } = usePager(teams.length, perPage, data.rotationIntervalSeconds, `${data.tournamentName}:teams`);
   const items = chunk(teams, perPage)[page] ?? [];
