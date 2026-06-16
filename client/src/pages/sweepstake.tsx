@@ -52,6 +52,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Pencil,
   Plus,
@@ -63,6 +64,7 @@ import {
   Users,
   CheckCircle2,
   XCircle,
+  Upload,
 } from "lucide-react";
 import {
   SWEEPSTAKE_PROVIDERS,
@@ -585,6 +587,8 @@ function ManageDialog({
 
   const [newTeam, setNewTeam] = useState("");
   const [newParticipant, setNewParticipant] = useState("");
+  const [csvOpen, setCsvOpen] = useState(false);
+  const [csvText, setCsvText] = useState("");
 
   const addTeam = useMutation({
     mutationFn: async (name: string) => apiRequest("POST", `/api/sweepstake/configs/${config.id}/teams`, { name }),
@@ -622,6 +626,19 @@ function ManageDialog({
     mutationFn: async (id: string) => apiRequest("DELETE", `/api/sweepstake/participants/${id}`),
     onSuccess: invalidate,
     onError: (e: any) => toast({ title: "Delete failed", description: String(e?.message ?? e), variant: "destructive" }),
+  });
+
+  const importCsv = useMutation({
+    mutationFn: async (csv: string) =>
+      apiRequest("POST", `/api/sweepstake/configs/${config.id}/participants/import-csv`, { csv }),
+    onSuccess: async (res: any) => {
+      const body = await res.json().catch(() => ({}));
+      toast({ title: "Staff imported", description: `${body.added ?? 0} added, ${body.skipped ?? 0} skipped.` });
+      setCsvText("");
+      setCsvOpen(false);
+      invalidate();
+    },
+    onError: (e: any) => toast({ title: "Import failed", description: String(e?.message ?? e), variant: "destructive" }),
   });
 
   const sync = useMutation({
@@ -760,6 +777,17 @@ function ManageDialog({
                 <Plus className="w-4 h-4" />
               </Button>
             </div>
+            <div className="mb-3">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={() => setCsvOpen(true)}
+                data-testid="button-import-staff-csv"
+              >
+                <Upload className="w-4 h-4 mr-2" /> Import staff from CSV
+              </Button>
+            </div>
             <div className="space-y-1 max-h-72 overflow-y-auto">
               {participantsQuery.isLoading && <Skeleton className="h-8 w-full" />}
               {participants.map((p) => (
@@ -790,6 +818,51 @@ function ManageDialog({
             </div>
           </div>
         </div>
+
+        <Dialog open={csvOpen} onOpenChange={setCsvOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Import staff from CSV</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Paste a list of names (one per line), or a CSV with a header row using any of:
+                <span className="font-medium"> name</span>,<span className="font-medium"> email</span>,
+                <span className="font-medium"> department</span>. Names already in the list are skipped.
+              </p>
+              <Input
+                type="file"
+                accept=".csv,text/csv,.txt,text/plain"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (file) setCsvText(await file.text());
+                  e.target.value = "";
+                }}
+                data-testid="input-staff-csv-file"
+              />
+              <Textarea
+                value={csvText}
+                onChange={(e) => setCsvText(e.target.value)}
+                placeholder={"Jane Smith\nJohn Doe\nname,email,department\nAlex Lee,alex@acme.com,Sales"}
+                rows={8}
+                className="font-mono text-sm"
+                data-testid="textarea-staff-csv"
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setCsvOpen(false)} data-testid="button-cancel-import-csv">
+                Cancel
+              </Button>
+              <Button
+                onClick={() => csvText.trim() && importCsv.mutate(csvText)}
+                disabled={importCsv.isPending || !csvText.trim()}
+                data-testid="button-confirm-import-csv"
+              >
+                {importCsv.isPending ? "Importing…" : "Import"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </DialogContent>
     </Dialog>
   );

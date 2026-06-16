@@ -17,6 +17,7 @@ import {
   type InsertSweepstakeParticipant,
 } from "@shared/schema";
 import { getPathParam } from "./requestParams";
+import { parseCsvToGrid } from "@shared/spreadsheet-mapping";
 import { fetchTournament, isProviderKeyConfigured, ProviderError } from "./sweepstakeProviders";
 import {
   computeAssignments,
@@ -425,6 +426,88 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
       console.error("Error creating participant:", error);
       res.status(500).json({ error: "Failed to add participant" });
+    }
+  });
+
+  // Bulk-import staff from pasted/uploaded CSV. Accepts either a single column
+  // of names or a header row with name / email / department columns. Existing
+  // names (case-insensitive) are skipped so re-importing the same list is safe.
+  app.post("/api/sweepstake/configs/:id/participants/import-csv", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const config = await loadOwnedConfig(req, res, getPathParam(req, "id"));
+      if (!config) return;
+      const csv = typeof req.body?.csv === "string" ? req.body.csv : "";
+      if (!csv.trim()) {
+        return res.status(400).json({ error: "Paste some CSV text or choose a file first." });
+      }
+      const grid = parseCsvToGrid(csv);
+      if (grid.length === 0) return res.json({ added: 0, skipped: 0 });
+
+      // Detect an optional header row.
+      const NAME_HEADERS = ["name", "full name", "fullname", "staff", "staff name", "person"];
+      const EMAIL_HEADERS = ["email", "e-mail", "email address"];
+      const DEPT_HEADERS = ["department", "dept", "team", "division"];
+      const headerCells = grid[0].map((c) => String(c ?? "").trim().toLowerCase());
+      const hasHeader = headerCells.some(
+        (h) => [...NAME_HEADERS, ...EMAIL_HEADERS, ...DEPT_HEADERS].includes(h),
+      );
+      let nameCol = 0;
+      let emailCol = -1;
+      let deptCol = -1;
+      if (hasHeader) {
+        headerCells.forEach((h, i) => {
+          if (NAME_HEADERS.includes(h)) nameCol = i;
+          else if (EMAIL_HEADERS.includes(h)) emailCol = i;
+          else if (DEPT_HEADERS.includes(h)) deptCol = i;
+        });
+      }
+      const dataRows = hasHeader ? grid.slice(1) : grid;
+
+      const existing = await storage.getSweepstakeParticipants(config.id);
+      const seen = new Set(existing.map((p) => p.name.trim().toLowerCase()));
+
+      const MAX_ROWS = 2000;
+      const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      let added = 0;
+      let skipped = 0;
+      for (const row of dataRows.slice(0, MAX_ROWS)) {
+        const name = String(row[nameCol] ?? "").trim();
+        if (!name) {
+          skipped++;
+          continue;
+        }
+        const key = name.toLowerCase();
+        if (seen.has(key)) {
+          skipped++;
+          continue;
+        }
+        seen.add(key);
+        const rawEmail = emailCol >= 0 ? String(row[emailCol] ?? "").trim() : "";
+        const email = rawEmail && emailRe.test(rawEmail) ? rawEmail : null;
+        const department = deptCol >= 0 ? String(row[deptCol] ?? "").trim() || null : null;
+        try {
+          const data = insertSweepstakeParticipantSchema.parse({
+            configId: config.id,
+            clientId: config.clientId,
+            name,
+            email,
+            department,
+          });
+          await storage.createSweepstakeParticipant({
+            ...data,
+            configId: config.id,
+            clientId: config.clientId,
+          });
+          added++;
+        } catch {
+          skipped++;
+        }
+      }
+      audit(req, "create", "sweepstake_participant", config.id, { imported: added, skipped });
+      res.json({ added, skipped });
+    } catch (error) {
+      console.error("Error importing participants:", error);
+      res.status(500).json({ error: "Failed to import staff" });
     }
   });
 
