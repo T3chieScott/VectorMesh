@@ -490,70 +490,228 @@ function liveStatusByTeamId(live?: SweepstakeLiveData | null): Map<string, TeamL
   return map;
 }
 
+// Persist the wall's current page across slide rotations so, over time, every
+// staff member is shown even when the deck rotates away and back. Keyed by the
+// tournament name (stable per config in practice).
+const wallPageMemory = new Map<string, number>();
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  if (size <= 0) return [arr];
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+// Distinct, evenly-spaced hue per group letter (A→0°, B→45°, …) so cards carry
+// a splash of colour that also encodes which group each team is in.
+function groupHue(groupName: string | null | undefined): number | null {
+  if (!groupName) return null;
+  const letter = groupName.trim().slice(-1).toUpperCase();
+  const idx = letter.charCodeAt(0) - 65;
+  if (idx < 0 || idx > 25) return null;
+  return (idx * 45) % 360;
+}
+
+function ParticipantFlag({ team }: { team?: DisplayTeam }) {
+  if (team?.crestUrl) {
+    return <img src={team.crestUrl} alt="" style={{ width: "4.6cqmin", height: "4.6cqmin", objectFit: "contain", flexShrink: 0 }} />;
+  }
+  const flag = flagEmoji(team?.countryCode ?? null);
+  if (flag) {
+    return (
+      <span style={{ fontSize: "4cqmin", lineHeight: 1, flexShrink: 0 }} aria-hidden>
+        {flag}
+      </span>
+    );
+  }
+  return (
+    <span
+      style={{
+        width: "4.6cqmin",
+        height: "4.6cqmin",
+        flexShrink: 0,
+        borderRadius: 8,
+        background: "rgba(127,127,127,0.18)",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: "1.7cqmin",
+        fontWeight: 800,
+      }}
+      aria-hidden
+    >
+      {(team?.shortName || team?.name || "?").slice(0, 3).toUpperCase()}
+    </span>
+  );
+}
+
 function SweepstakeSlide({ data, tokens, accent }: SlideProps) {
   const assigned = data.participants.filter((p) => p.teamName);
   const liveByTeam = useMemo(() => liveStatusByTeamId(data.live), [data.live]);
+  const teamById = useMemo(() => {
+    const m = new Map<string, DisplayTeam>();
+    for (const t of data.teams) m.set(t.id, t);
+    return m;
+  }, [data.teams]);
+
+  // Measure the grid box and derive a column/row count that fills it, so we can
+  // paginate every staff member across pages instead of truncating at a cap.
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const [cap, setCap] = useState({ cols: 4, rows: 8 });
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w <= 0 || h <= 0) return;
+      const cols = Math.min(7, Math.max(2, Math.round(w / 240)));
+      const rows = Math.min(12, Math.max(2, Math.floor(h / 88)));
+      setCap((prev) => (prev.cols === cols && prev.rows === rows ? prev : { cols, rows }));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const pageSize = Math.max(1, cap.cols * cap.rows);
+  const pages = useMemo(() => chunk(assigned, pageSize), [assigned, pageSize]);
+  const pageCount = pages.length;
+
+  const memKey = data.tournamentName || "default";
+  const [page, setPage] = useState(() => wallPageMemory.get(memKey) ?? 0);
+
+  // Auto-advance through pages so the whole roster is shown over time.
+  useEffect(() => {
+    if (pageCount <= 1) return;
+    const ms = Math.max(5, data.rotationIntervalSeconds) * 1000;
+    const id = window.setInterval(() => {
+      setPage((p) => (p + 1) % pageCount);
+    }, ms);
+    return () => window.clearInterval(id);
+  }, [pageCount, data.rotationIntervalSeconds]);
+
+  // Keep the page in range and remember it across remounts.
+  const safePage = pageCount > 0 ? Math.min(page, pageCount - 1) : 0;
+  useEffect(() => {
+    wallPageMemory.set(memKey, safePage);
+  }, [memKey, safePage]);
+
   if (assigned.length === 0) return <CenterMessage tokens={tokens} title="Draw not made yet" subtitle="Names will appear once teams are drawn" />;
+
+  const items = pages[safePage] ?? [];
+
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(22cqmin, 1fr))",
-        gap: "1.6cqmin",
-        height: "100%",
-        alignContent: "center",
-        overflow: "hidden",
-      }}
-      data-testid="slide-sweepstake"
-    >
-      {assigned.slice(0, 48).map((p) => {
-        const status = p.teamId ? liveByTeam.get(p.teamId) : undefined;
-        const winning = status ? status.goalsFor > status.goalsAgainst : false;
-        return (
-          <div
-            key={p.id}
-            style={{
-              background: tokens.panel,
-              border: `1px solid ${p.status === "winner" ? accent : status?.isLive ? "#ef4444" : tokens.border}`,
-              borderRadius: 16,
-              padding: "1.6cqmin 2cqmin",
-              opacity: p.status === "eliminated" ? 0.45 : 1,
-              textDecoration: p.status === "eliminated" ? "line-through" : "none",
-            }}
-            data-testid={`card-participant-${p.id}`}
-          >
-            <div style={{ fontSize: "2.6cqmin", fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {p.name}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "1cqmin", justifyContent: "space-between" }}>
-              <span style={{ fontSize: "2cqmin", color: accent, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {p.teamName}
-              </span>
-              {status && (
-                <span
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: "1.2cqmin" }}>
+      <div
+        ref={gridRef}
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(${cap.cols}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${cap.rows}, minmax(0, 1fr))`,
+          gap: "1.4cqmin",
+          flex: 1,
+          minHeight: 0,
+          overflow: "hidden",
+        }}
+        data-testid="slide-sweepstake"
+      >
+        {items.map((p) => {
+          const team = p.teamId ? teamById.get(p.teamId) : undefined;
+          const status = p.teamId ? liveByTeam.get(p.teamId) : undefined;
+          const winning = status ? status.goalsFor > status.goalsAgainst : false;
+          const hue = groupHue(team?.groupName);
+          const stripe =
+            p.status === "winner"
+              ? accent
+              : status?.isLive
+                ? "#ef4444"
+                : hue !== null
+                  ? `hsl(${hue} 70% 55%)`
+                  : accent;
+          return (
+            <div
+              key={p.id}
+              style={{
+                background: tokens.panel,
+                border: `1px solid ${p.status === "winner" ? accent : status?.isLive ? "#ef4444" : tokens.border}`,
+                borderLeft: `0.9cqmin solid ${stripe}`,
+                borderRadius: 14,
+                padding: "1cqmin 1.6cqmin",
+                display: "flex",
+                alignItems: "center",
+                gap: "1.4cqmin",
+                minWidth: 0,
+                overflow: "hidden",
+                opacity: p.status === "eliminated" ? 0.45 : 1,
+              }}
+              data-testid={`card-participant-${p.id}`}
+            >
+              <ParticipantFlag team={team} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
                   style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.6cqmin",
-                    fontSize: "1.8cqmin",
-                    fontWeight: 900,
-                    fontVariantNumeric: "tabular-nums",
-                    color: status.isLive ? (winning ? "#22c55e" : tokens.text) : tokens.subtle,
+                    fontSize: "2.4cqmin",
+                    fontWeight: 800,
                     whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    textDecoration: p.status === "eliminated" ? "line-through" : "none",
                   }}
-                  data-testid={`live-status-${p.id}`}
                 >
-                  {status.isLive && (
-                    <span style={{ width: "1.1cqmin", height: "1.1cqmin", borderRadius: 999, background: "#ef4444", display: "inline-block" }} aria-hidden />
+                  {p.name}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.8cqmin", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: "1.9cqmin", color: accent, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {p.teamName}
+                  </span>
+                  {status && (
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "0.6cqmin",
+                        fontSize: "1.8cqmin",
+                        fontWeight: 900,
+                        fontVariantNumeric: "tabular-nums",
+                        color: status.isLive ? (winning ? "#22c55e" : tokens.text) : tokens.subtle,
+                        whiteSpace: "nowrap",
+                      }}
+                      data-testid={`live-status-${p.id}`}
+                    >
+                      {status.isLive && (
+                        <span style={{ width: "1.1cqmin", height: "1.1cqmin", borderRadius: 999, background: "#ef4444", display: "inline-block" }} aria-hidden />
+                      )}
+                      {status.scoreLabel}
+                      <span style={{ color: tokens.subtle, fontWeight: 700 }}>{status.minuteLabel}</span>
+                    </span>
                   )}
-                  {status.scoreLabel}
-                  <span style={{ color: tokens.subtle, fontWeight: 700 }}>{status.minuteLabel}</span>
-                </span>
-              )}
+                </div>
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+      {pageCount > 1 && (
+        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "1cqmin" }} data-testid="wall-pagination">
+          {pages.map((_, i) => (
+            <span
+              key={i}
+              style={{
+                width: i === safePage ? "3cqmin" : "1cqmin",
+                height: "1cqmin",
+                borderRadius: 999,
+                background: i === safePage ? accent : tokens.border,
+                transition: "width 0.3s ease",
+              }}
+            />
+          ))}
+          <span style={{ fontSize: "1.6cqmin", color: tokens.subtle, marginLeft: "1.5cqmin", fontWeight: 700 }}>
+            {safePage + 1} / {pageCount}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
