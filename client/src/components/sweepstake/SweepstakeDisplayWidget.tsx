@@ -510,13 +510,22 @@ function buildContext(data: SweepstakeDisplayData, motion: boolean): SweepstakeC
   }
 
   // Office rivalries: upcoming matches where BOTH sides have assigned staff.
-  const rivalries = upcoming
+  // To keep the slide from fanning out into dozens of pages, only show derbies
+  // kicking off within the next week. If none fall in that window, fall back to
+  // the soonest few so the slide isn't wrongly empty when rivalries do exist.
+  const RIVALRY_WINDOW_DAYS = 7;
+  const rivalryWindowEnd = new Date(refDay.getTime() + RIVALRY_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const allRivalries = upcoming
     .map((m) => {
       const home = m.homeTeamName ? staffByTeam.get(m.homeTeamName.toLowerCase()) ?? [] : [];
       const away = m.awayTeamName ? staffByTeam.get(m.awayTeamName.toLowerCase()) ?? [] : [];
       return { match: m, home, away };
     })
     .filter((r) => r.home.length > 0 && r.away.length > 0);
+  const rivalriesInWindow = allRivalries.filter(
+    (r) => r.match.kickoffAt != null && new Date(r.match.kickoffAt) <= rivalryWindowEnd,
+  );
+  const rivalries = rivalriesInWindow.length > 0 ? rivalriesInWindow : allRivalries.slice(0, 6);
 
   const assigned = data.participants.filter((p) => p.teamName);
   const survivor = {
@@ -1137,9 +1146,12 @@ function RivalriesSlide({ data, tokens, accent, ctx }: SlideProps) {
   const list = ctx.rivalries;
   const boxRef = useRef<HTMLDivElement>(null);
   const { w, h } = useBoxSize(boxRef);
-  const cols = w > 0 ? clamp(Math.round(w / 540), 1, 3) : 1;
-  const rows = h > 0 ? clamp(Math.floor(h / 150), 1, 5) : 3;
-  const perPage = Math.max(1, cols * rows);
+  // Keep at most 6 compact rivalry cards per page so the slide doesn't fan out
+  // into dozens of pages. Wide boxes get two columns, narrow ones a single one.
+  const cols = w > 760 ? 2 : 1;
+  const rowsFit = h > 0 ? clamp(Math.floor(h / 110), 1, 6) : 3;
+  const rows = Math.min(rowsFit, Math.ceil(6 / cols));
+  const perPage = Math.max(1, Math.min(6, cols * rows));
   const { page, pageCount } = usePagedSlide(list.length, perPage);
   const items = chunk(list, perPage)[page] ?? [];
 
@@ -1149,28 +1161,29 @@ function RivalriesSlide({ data, tokens, accent, ctx }: SlideProps) {
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: "1cqmin" }} data-testid="slide-rivalries">
       <SlideHeading title="Office rivalries" subtitle="Colleagues whose teams are about to clash" accent={accent} tokens={tokens} right={<span style={{ fontSize: "6cqmin" }} aria-hidden>🔥</span>} />
-      <div ref={boxRef} style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridAutoRows: "1fr", gap: "1.6cqmin", overflow: "hidden" }}>
+      <div ref={boxRef} style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridAutoRows: "1fr", gap: "1.4cqmin", overflow: "hidden" }}>
         {items.map(({ match, home, away }) => {
           const homeTeam = teamFromName(ctx, match.homeTeamName);
           const awayTeam = teamFromName(ctx, match.awayTeamName);
           return (
-            <div key={match.id} style={{ ...cardBase(tokens), padding: "1.8cqmin 2.2cqmin", display: "flex", flexDirection: "column", justifyContent: "center", gap: "1.2cqmin", minHeight: 0, overflow: "hidden" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span style={{ fontSize: "1.6cqmin", fontWeight: 900, color: "#fff", background: "linear-gradient(90deg,#f59e0b,#ef4444)", borderRadius: 999, padding: "0.2cqmin 1.2cqmin" }}>🔥 DERBY</span>
-                <span style={{ fontSize: "1.8cqmin", fontWeight: 800, color: accent }}>{shortDate(match.kickoffAt)} · {kickoffTime(match.kickoffAt)}</span>
+            <div key={match.id} style={{ ...cardBase(tokens), padding: "1.4cqmin 2cqmin", display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: "1.6cqmin", minHeight: 0, overflow: "hidden" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "1.2cqmin", minWidth: 0 }}>
+                <Flag team={homeTeam} size={5} tokens={tokens} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: "2cqmin", fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{joinNames(home, 2)}</div>
+                  <div style={{ fontSize: "1.5cqmin", color: tokens.subtle, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{match.homeTeamName}</div>
+                </div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: "1.6cqmin" }}>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.6cqmin", minWidth: 0 }}>
-                  <Flag team={homeTeam} size={6.5} tokens={tokens} />
-                  <span style={{ fontSize: "2.2cqmin", fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{joinNames(home, 2)}</span>
-                  <span style={{ fontSize: "1.7cqmin", color: tokens.subtle, fontWeight: 700 }}>{match.homeTeamName}</span>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.3cqmin" }}>
+                <span style={{ fontSize: "2.2cqmin", fontWeight: 900, color: tokens.subtle }}>VS</span>
+                <span style={{ fontSize: "1.4cqmin", fontWeight: 800, color: accent, whiteSpace: "nowrap" }}>{shortDate(match.kickoffAt)} · {kickoffTime(match.kickoffAt)}</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "1.2cqmin", minWidth: 0, justifyContent: "flex-end", textAlign: "right" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: "2cqmin", fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{joinNames(away, 2)}</div>
+                  <div style={{ fontSize: "1.5cqmin", color: tokens.subtle, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{match.awayTeamName}</div>
                 </div>
-                <div style={{ fontSize: "3cqmin", fontWeight: 900, color: tokens.subtle }}>VS</div>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.6cqmin", minWidth: 0 }}>
-                  <Flag team={awayTeam} size={6.5} tokens={tokens} />
-                  <span style={{ fontSize: "2.2cqmin", fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{joinNames(away, 2)}</span>
-                  <span style={{ fontSize: "1.7cqmin", color: tokens.subtle, fontWeight: 700 }}>{match.awayTeamName}</span>
-                </div>
+                <Flag team={awayTeam} size={5} tokens={tokens} />
               </div>
             </div>
           );
