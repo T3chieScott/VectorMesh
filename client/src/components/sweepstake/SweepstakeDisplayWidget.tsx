@@ -767,7 +767,7 @@ function CountdownSlide({ data, tokens, accent }: SlideProps) {
   );
 }
 
-function MatchCard({ match, tokens, accent, ctx, mode }: { match: DisplayMatch; tokens: ThemeTokens; accent: string; ctx: SweepstakeCtx; mode: "fixture" | "result" }) {
+function MatchCard({ match, tokens, accent, ctx, mode, showStaff = true }: { match: DisplayMatch; tokens: ThemeTokens; accent: string; ctx: SweepstakeCtx; mode: "fixture" | "result"; showStaff?: boolean }) {
   const home = teamFromName(ctx, match.homeTeamName);
   const away = teamFromName(ctx, match.awayTeamName);
   const homeStaff = staffFor(ctx, match.homeTeamName);
@@ -789,9 +789,11 @@ function MatchCard({ match, tokens, accent, ctx, mode }: { match: DisplayMatch; 
         </span>
         {win && <span style={{ fontSize: "2.4cqmin", flexShrink: 0 }} aria-hidden>✓</span>}
       </div>
-      <div style={{ width: "100%", display: "flex", justifyContent: align === "right" ? "flex-end" : "flex-start" }}>
-        <StaffChips names={staff} accent={accent} tokens={tokens} max={2} />
-      </div>
+      {showStaff && (
+        <div style={{ width: "100%", display: "flex", justifyContent: align === "right" ? "flex-end" : "flex-start" }}>
+          <StaffChips names={staff} accent={accent} tokens={tokens} max={2} />
+        </div>
+      )}
     </div>
   );
 
@@ -910,7 +912,7 @@ function ResultsSlide({ data, tokens, accent, ctx }: SlideProps) {
           else impact = { text: `${joinNames([...homeStaff, ...awayStaff])} watching on`, color: accent };
           return (
             <div key={m.id} style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
-              <MatchCard match={m} tokens={tokens} accent={accent} ctx={ctx} mode="result" />
+              <MatchCard match={m} tokens={tokens} accent={accent} ctx={ctx} mode="result" showStaff={false} />
               <div style={{ display: "flex", alignItems: "center", gap: "0.8cqmin", padding: "0.6cqmin 2.4cqmin 0", fontSize: "1.7cqmin", fontWeight: 800, color: impact.color }}>
                 <span aria-hidden>•</span>
                 <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{impact.text}</span>
