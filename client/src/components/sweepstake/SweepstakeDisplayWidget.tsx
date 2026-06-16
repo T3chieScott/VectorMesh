@@ -502,9 +502,16 @@ function buildContext(data: SweepstakeDisplayData, motion: boolean): SweepstakeC
     .sort((a, b) => (a.kickoffAt ?? "").localeCompare(b.kickoffAt ?? ""));
 
   const refDay = new Date();
-  const today = upcoming.filter((m) => isSameLocalDay(m.kickoffAt, refDay));
+  // "today" for the fixtures slide includes games already played today (with
+  // their results), live games, and games still to come — soonest first.
+  const today = data.matches
+    .filter((m) => isSameLocalDay(m.kickoffAt, refDay))
+    .sort((a, b) => (a.kickoffAt ?? "").localeCompare(b.kickoffAt ?? ""));
+  // playingToday still means "has a match STILL to come today" for the
+  // participant badges, so derive it from upcoming-only.
   const playingToday = new Set<string>();
-  for (const m of today) {
+  for (const m of upcoming) {
+    if (!isSameLocalDay(m.kickoffAt, refDay)) continue;
     if (m.homeTeamName) playingToday.add(m.homeTeamName.toLowerCase());
     if (m.awayTeamName) playingToday.add(m.awayTeamName.toLowerCase());
   }
@@ -814,7 +821,7 @@ function MatchCard({ match, tokens, accent, ctx, mode }: { match: DisplayMatch; 
         </span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: "2cqmin" }}>
-        <TeamSide team={home} name={match.homeTeamName} staff={homeStaff} win={homeWin} align="right" />
+        <TeamSide team={home} name={match.homeTeamName} staff={homeStaff} win={homeWin} align="left" />
         <div style={{ textAlign: "center", minWidth: "12cqmin" }}>
           {mode === "result" || live ? (
             <div style={{ fontSize: "5.2cqmin", fontWeight: 900, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
@@ -827,7 +834,7 @@ function MatchCard({ match, tokens, accent, ctx, mode }: { match: DisplayMatch; 
             {live ? "● LIVE" : mode === "result" ? "FT" : "KO"}
           </div>
         </div>
-        <TeamSide team={away} name={match.awayTeamName} staff={awayStaff} win={awayWin} align="left" />
+        <TeamSide team={away} name={match.awayTeamName} staff={awayStaff} win={awayWin} align="right" />
       </div>
     </div>
   );
@@ -836,11 +843,9 @@ function MatchCard({ match, tokens, accent, ctx, mode }: { match: DisplayMatch; 
 function FixturesSlide({ data, tokens, accent, ctx }: SlideProps) {
   const usingToday = ctx.today.length > 0;
   const list = usingToday ? ctx.today : ctx.upcoming;
-  const boxRef = useRef<HTMLDivElement>(null);
-  const { w, h } = useBoxSize(boxRef);
-  const cols = w > 0 ? clamp(Math.round(w / 580), 1, 3) : 1;
-  const rows = h > 0 ? clamp(Math.floor(h / 132), 1, 6) : 4;
-  const perPage = cols * rows;
+  // 3 matches per page, stacked full-width.
+  const cols = 1;
+  const perPage = 3;
   const { page, pageCount } = usePagedSlide(list.length, perPage);
   const items = chunk(list, perPage)[page] ?? [];
 
@@ -856,11 +861,10 @@ function FixturesSlide({ data, tokens, accent, ctx }: SlideProps) {
         right={<span style={{ fontSize: "6cqmin" }} aria-hidden>{usingToday ? "🔥" : "📅"}</span>}
       />
       <div
-        ref={boxRef}
         style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridAutoRows: "1fr", gap: "1.4cqmin", overflow: "hidden" }}
       >
         {items.map((m) => (
-          <MatchCard key={m.id} match={m} tokens={tokens} accent={accent} ctx={ctx} mode="fixture" />
+          <MatchCard key={m.id} match={m} tokens={tokens} accent={accent} ctx={ctx} mode={m.status === "finished" ? "result" : "fixture"} />
         ))}
       </div>
       <PageDots page={page} pageCount={pageCount} accent={accent} tokens={tokens} testId="fixtures-pagination" />
