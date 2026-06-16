@@ -772,7 +772,6 @@ function MatchCard({ match, tokens, accent, ctx, mode }: { match: DisplayMatch; 
   const away = teamFromName(ctx, match.awayTeamName);
   const homeStaff = staffFor(ctx, match.homeTeamName);
   const awayStaff = staffFor(ctx, match.awayTeamName);
-  const rivalry = homeStaff.length > 0 && awayStaff.length > 0;
   const group = match.groupName || groupFor(ctx, match.homeTeamName) || match.stage;
   const live = match.status === "in_play";
 
@@ -783,7 +782,7 @@ function MatchCard({ match, tokens, accent, ctx, mode }: { match: DisplayMatch; 
 
   const TeamSide = ({ team, name, staff, win, align }: { team?: DisplayTeam; name: string | null; staff: string[]; win: boolean; align: "left" | "right" }) => (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.8cqmin", alignItems: align === "right" ? "flex-end" : "flex-start", minWidth: 0 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "1.4cqmin", flexDirection: align === "right" ? "row-reverse" : "row", minWidth: 0, width: "100%", justifyContent: align === "right" ? "flex-end" : "flex-start" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "1.4cqmin", flexDirection: align === "right" ? "row-reverse" : "row", minWidth: 0, width: "100%", justifyContent: "flex-start" }}>
         <Flag team={team} size={6} tokens={tokens} />
         <span style={{ fontSize: "2.6cqmin", fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, opacity: win || mode === "fixture" ? 1 : 0.65 }}>
           {name ?? "TBC"}
@@ -811,11 +810,6 @@ function MatchCard({ match, tokens, accent, ctx, mode }: { match: DisplayMatch; 
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1cqmin" }}>
         <GroupPill group={group} tokens={tokens} accent={accent} />
-        {rivalry && (
-          <span style={{ fontSize: "1.5cqmin", fontWeight: 900, color: "#fff", background: "linear-gradient(90deg,#f59e0b,#ef4444)", borderRadius: 999, padding: "0.2cqmin 1.2cqmin", whiteSpace: "nowrap" }}>
-            🔥 OFFICE DERBY
-          </span>
-        )}
         <span style={{ fontSize: "1.6cqmin", color: tokens.subtle, fontWeight: 700, whiteSpace: "nowrap" }}>
           {mode === "result" ? shortDate(match.kickoffAt) : ""}
         </span>
@@ -858,7 +852,7 @@ function FixturesSlide({ data, tokens, accent, ctx }: SlideProps) {
         subtitle={usingToday ? `${ctx.today.length} match${ctx.today.length === 1 ? "" : "es"} on today` : "Next fixtures in the tournament"}
         accent={accent}
         tokens={tokens}
-        right={<span style={{ fontSize: "6cqmin" }} aria-hidden>{usingToday ? "🔥" : "📅"}</span>}
+        right={<span style={{ fontSize: "6cqmin" }} aria-hidden>📅</span>}
       />
       <div
         style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridAutoRows: "1fr", gap: "1.4cqmin", overflow: "hidden" }}
@@ -1163,7 +1157,7 @@ function RivalriesSlide({ data, tokens, accent, ctx }: SlideProps) {
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: "1cqmin" }} data-testid="slide-rivalries">
-      <SlideHeading title="Office rivalries" subtitle="Colleagues whose teams are about to clash" accent={accent} tokens={tokens} right={<span style={{ fontSize: "6cqmin" }} aria-hidden>🔥</span>} />
+      <SlideHeading title="Office rivalries" subtitle="Colleagues whose teams are about to clash" accent={accent} tokens={tokens} />
       <div ref={boxRef} style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridAutoRows: "1fr", gap: "1.4cqmin", overflow: "hidden" }}>
         {items.map(({ match, home, away }) => {
           const homeTeam = teamFromName(ctx, match.homeTeamName);
