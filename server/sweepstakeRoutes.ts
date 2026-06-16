@@ -173,6 +173,97 @@ async function resolveLiveData(
   }
 }
 
+// Recompute every team's winner flag (from finished matches) and cascade team
+// fate onto participant statuses. Idempotent. Module-level so both the request
+// handlers and the periodic scheduler can call it.
+export async function recomputeSweepstakeProgress(
+  storage: SweepstakeRoutesStorage,
+  configId: string,
+): Promise<void> {
+  const [teams, matches, participants] = await Promise.all([
+    storage.getTournamentTeams(configId),
+    storage.getTournamentMatches(configId),
+    storage.getSweepstakeParticipants(configId),
+  ]);
+  const winnerName = detectWinnerTeamName(matches);
+  if (winnerName) {
+    const winnerTeam = teams.find((t) => t.name.toLowerCase() === winnerName.toLowerCase());
+    if (winnerTeam) {
+      // Canonicalize winner state: flag this team and clear every other,
+      // collapsing any pre-existing multi-winner drift to exactly one.
+      await storage.setTournamentWinner(configId, winnerTeam.id);
+      for (const t of teams) {
+        t.isWinner = t.id === winnerTeam.id;
+        if (t.id === winnerTeam.id) t.eliminated = false;
+      }
+    }
+  }
+  const updates = computeParticipantStatuses(participants, teams);
+  for (const u of updates) {
+    await storage.updateSweepstakeParticipant(u.participantId, { status: u.status });
+  }
+}
+
+// Core provider sync: pull teams/matches/standings from the provider, replace
+// the stored snapshot, recompute progress and stamp lastSyncedAt. Shared by the
+// manual sync route and the periodic auto-sync scheduler. Throws on failure.
+export async function runSweepstakeSync(
+  storage: SweepstakeRoutesStorage,
+  config: SweepstakeWidgetConfig,
+): Promise<{ teams: number; matches: number; standings: number }> {
+  const data = await fetchTournament(config.provider as any, {
+    competitionCode: config.competitionCode,
+    season: config.season,
+  });
+  await storage.replaceTournamentTeams(
+    config.id,
+    data.teams.map((t) => ({ ...t, configId: config.id })),
+  );
+  await storage.replaceTournamentMatches(
+    config.id,
+    data.matches.map((m) => ({ ...m, configId: config.id })),
+  );
+  await storage.replaceTournamentStandings(
+    config.id,
+    data.standings.map((s) => ({ ...s, configId: config.id })),
+  );
+  await recomputeSweepstakeProgress(storage, config.id);
+  await storage.updateSweepstakeConfig(config.id, { lastSyncedAt: new Date(), lastSyncError: null });
+  return { teams: data.teams.length, matches: data.matches.length, standings: data.standings.length };
+}
+
+// Periodic scheduler: sync every auto-sync-enabled, non-manual config whose
+// interval has elapsed. On failure it stamps lastSyncedAt too, so a persistently
+// failing feed waits a full interval instead of hammering the provider each tick.
+export async function runDueSweepstakeSyncs(
+  storage: SweepstakeRoutesStorage,
+  now: Date = new Date(),
+): Promise<{ ran: number; results: Array<{ configId: string; ok: boolean; error?: string }> }> {
+  const configs = await storage.getSweepstakeConfigs();
+  const due = configs.filter((c) => {
+    if (!c.autoSyncEnabled || c.provider === "manual") return false;
+    const intervalMs = Math.max(5, c.syncIntervalMinutes ?? 30) * 60_000;
+    if (!c.lastSyncedAt) return true;
+    return now.getTime() - new Date(c.lastSyncedAt).getTime() >= intervalMs;
+  });
+  const results: Array<{ configId: string; ok: boolean; error?: string }> = [];
+  for (const config of due) {
+    try {
+      await runSweepstakeSync(storage, config);
+      results.push({ configId: config.id, ok: true });
+    } catch (error) {
+      const message =
+        error instanceof ProviderError
+          ? error.message
+          : "Auto-sync failed. Check the competition settings and API key.";
+      await storage.updateSweepstakeConfig(config.id, { lastSyncedAt: now, lastSyncError: message });
+      console.error(`[sweepstake-sync] config ${config.id} failed:`, error);
+      results.push({ configId: config.id, ok: false, error: message });
+    }
+  }
+  return { ran: due.length, results };
+}
+
 export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) {
   const { storage, auth, requireAuth, loadUserContext } = deps;
   const audit: NonNullable<typeof deps.logAudit> = deps.logAudit ?? (() => {});
@@ -193,31 +284,9 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
   }
 
   // Recompute every team's winner flag (from finished matches) and cascade
-  // team fate onto participant statuses. Idempotent.
-  async function recomputeProgress(configId: string): Promise<void> {
-    const [teams, matches, participants] = await Promise.all([
-      storage.getTournamentTeams(configId),
-      storage.getTournamentMatches(configId),
-      storage.getSweepstakeParticipants(configId),
-    ]);
-    const winnerName = detectWinnerTeamName(matches);
-    if (winnerName) {
-      const winnerTeam = teams.find((t) => t.name.toLowerCase() === winnerName.toLowerCase());
-      if (winnerTeam) {
-        // Canonicalize winner state: flag this team and clear every other,
-        // collapsing any pre-existing multi-winner drift to exactly one.
-        await storage.setTournamentWinner(configId, winnerTeam.id);
-        for (const t of teams) {
-          t.isWinner = t.id === winnerTeam.id;
-          if (t.id === winnerTeam.id) t.eliminated = false;
-        }
-      }
-    }
-    const updates = computeParticipantStatuses(participants, teams);
-    for (const u of updates) {
-      await storage.updateSweepstakeParticipant(u.participantId, { status: u.status });
-    }
-  }
+  // team fate onto participant statuses. Idempotent. Delegates to the
+  // module-level implementation shared with the periodic scheduler.
+  const recomputeProgress = (configId: string) => recomputeSweepstakeProgress(storage, configId);
 
   // ----- Configs -----
   app.get("/api/sweepstake/configs", requireAuth, loadUserContext, async (req, res) => {
@@ -363,34 +432,12 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
       return res.status(400).json({ error: "Manual sweepstakes are edited by hand and cannot sync." });
     }
     try {
-      const data = await fetchTournament(config.provider as any, {
-        competitionCode: config.competitionCode,
-        season: config.season,
-      });
-      await storage.replaceTournamentTeams(
-        config.id,
-        data.teams.map((t) => ({ ...t, configId: config.id })),
-      );
-      await storage.replaceTournamentMatches(
-        config.id,
-        data.matches.map((m) => ({ ...m, configId: config.id })),
-      );
-      await storage.replaceTournamentStandings(
-        config.id,
-        data.standings.map((s) => ({ ...s, configId: config.id })),
-      );
-      await recomputeProgress(config.id);
-      await storage.updateSweepstakeConfig(config.id, { lastSyncedAt: new Date(), lastSyncError: null });
+      const result = await runSweepstakeSync(storage, config);
       audit(req, "sync", "sweepstake_config", config.id, {
-        teams: data.teams.length,
-        matches: data.matches.length,
+        teams: result.teams,
+        matches: result.matches,
       });
-      res.json({
-        ok: true,
-        teams: data.teams.length,
-        matches: data.matches.length,
-        standings: data.standings.length,
-      });
+      res.json({ ok: true, ...result });
     } catch (error) {
       const message = error instanceof ProviderError ? error.message : "Sync failed. Check the competition settings and API key.";
       await storage.updateSweepstakeConfig(config.id, { lastSyncError: message });

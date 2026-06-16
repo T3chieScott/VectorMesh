@@ -1709,6 +1709,9 @@ export const sweepstakeWidgetConfigs = pgTable("sweepstake_widget_configs", {
   liveRefreshSeconds: integer("live_refresh_seconds").notNull().default(15),
   lastSyncedAt: timestamp("last_synced_at"),
   lastSyncError: text("last_sync_error"),
+  // Task #287 — automatic periodic provider sync (additive).
+  autoSyncEnabled: boolean("auto_sync_enabled").notNull().default(false),
+  syncIntervalMinutes: integer("sync_interval_minutes").notNull().default(30),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1809,6 +1812,8 @@ export const insertSweepstakeWidgetConfigSchema = createInsertSchema(sweepstakeW
     liveEnabled: z.boolean().default(false),
     livePanels: z.array(z.enum(SWEEPSTAKE_LIVE_PANELS)).default([]),
     liveRefreshSeconds: z.number().int().min(5).max(300).default(15),
+    autoSyncEnabled: z.boolean().default(false),
+    syncIntervalMinutes: z.number().int().min(5).max(1440).default(30),
   });
 export type InsertSweepstakeWidgetConfig = z.infer<typeof insertSweepstakeWidgetConfigSchema>;
 export type SweepstakeWidgetConfig = typeof sweepstakeWidgetConfigs.$inferSelect;

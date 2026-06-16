@@ -113,6 +113,8 @@ const configFormSchema = z.object({
   liveEnabled: z.boolean().default(false),
   livePanels: z.array(z.enum(SWEEPSTAKE_LIVE_PANELS)).default([]),
   liveRefreshSeconds: z.coerce.number().int().min(5).max(300),
+  autoSyncEnabled: z.boolean().default(false),
+  syncIntervalMinutes: z.coerce.number().int().min(5).max(1440),
 });
 type ConfigFormValues = z.infer<typeof configFormSchema>;
 
@@ -133,6 +135,8 @@ function defaultConfigForm(c?: SweepstakeWidgetConfig): ConfigFormValues {
     liveEnabled: c?.liveEnabled ?? false,
     livePanels: (c?.livePanels as any) ?? [],
     liveRefreshSeconds: c?.liveRefreshSeconds ?? 15,
+    autoSyncEnabled: c?.autoSyncEnabled ?? false,
+    syncIntervalMinutes: c?.syncIntervalMinutes ?? 30,
   };
 }
 
@@ -161,6 +165,8 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     liveEnabled: values.liveEnabled,
     livePanels: values.livePanels,
     liveRefreshSeconds: values.liveRefreshSeconds,
+    autoSyncEnabled: values.autoSyncEnabled,
+    syncIntervalMinutes: values.syncIntervalMinutes,
   };
 }
 
@@ -308,6 +314,49 @@ function ConfigDialog({
                     </FormItem>
                   )}
                 />
+              </div>
+            )}
+
+            {provider !== "manual" && (
+              <div className="rounded-lg border p-4 space-y-3">
+                <FormField
+                  control={form.control}
+                  name="autoSyncEnabled"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center justify-between gap-4">
+                      <div className="space-y-0.5">
+                        <FormLabel>Automatic sync</FormLabel>
+                        <FormDescription>
+                          Pull fresh scores and fixtures from the provider on a schedule, so results
+                          update on their own without clicking "Sync from provider".
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                          data-testid="switch-auto-sync"
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                {form.watch("autoSyncEnabled") && (
+                  <FormField
+                    control={form.control}
+                    name="syncIntervalMinutes"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Sync every (minutes)</FormLabel>
+                        <FormControl>
+                          <Input type="number" min={5} max={1440} {...field} data-testid="input-sync-interval" />
+                        </FormControl>
+                        <FormDescription>Between 5 minutes and 24 hours (1440).</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
               </div>
             )}
 

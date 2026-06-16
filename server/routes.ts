@@ -25,7 +25,7 @@ import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
 import { setupAuth, isAuthenticated, isAuthenticatedOrToken, hashApiToken } from "./auth";
 import { mountTestAuthRoute } from "./testAuthRoute";
 import { mountAgendaRoutes } from "./agendaRoutes";
-import { mountSweepstakeRoutes } from "./sweepstakeRoutes";
+import { mountSweepstakeRoutes, runDueSweepstakeSyncs } from "./sweepstakeRoutes";
 import { fetchMicrosoftXlsxBytes } from "./microsoftGraph";
 import { mountMediaLayoutRoutes } from "./mediaLayoutRoutes";
 import { mountCustomerDataRoutes } from "./customerDataRoutes";
@@ -1011,6 +1011,29 @@ export async function registerRoutes(
   // Don't await — boot must not block on an upstream that's slow or
   // unreachable. The first tick fires AGENDA_SYNC_TICK_MS later.
   setInterval(tickAgendaSync, AGENDA_SYNC_TICK_MS);
+
+  // Sweepstake auto-sync: refresh provider data for configs that have
+  // automatic periodic sync enabled and whose interval has elapsed.
+  const SWEEPSTAKE_SYNC_TICK_MS = 60_000;
+  let sweepstakeSyncInFlight = false;
+  const tickSweepstakeSync = async () => {
+    if (sweepstakeSyncInFlight) return; // skip if the previous tick is still running
+    sweepstakeSyncInFlight = true;
+    try {
+      const { ran, results } = await runDueSweepstakeSyncs(storage);
+      if (ran > 0) {
+        const failed = results.filter((r) => !r.ok).length;
+        console.log(
+          `[sweepstake-sync] ran ${ran} config(s), ${ran - failed} ok, ${failed} failed`,
+        );
+      }
+    } catch (err) {
+      console.error("[sweepstake-sync] tick failed:", err);
+    } finally {
+      sweepstakeSyncInFlight = false;
+    }
+  };
+  setInterval(tickSweepstakeSync, SWEEPSTAKE_SYNC_TICK_MS);
 
   // ============ HEALTH CHECK ============
   app.get("/api/manual", requireAuth, async (_req, res) => {
