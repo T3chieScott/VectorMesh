@@ -3,6 +3,7 @@
 - [Dev server OOM](dev-server-oom.md) — XLSX OOM is exceljs full-load materializing every cell into live heap; fix = streaming reader (WorkbookReader), never load(). Bigger heap doesn't fix it.
 - [OneDrive Graph file listing](onedrive-graph-file-listing.md) — `/me/drive/recent` near-empty on business accounts; list `root/children`; share-link 403 = account can't access link.
 - [XLSX fast preview vs full read parity](dev-server-oom.md) — jszip+saxes preview reader must match exceljs full-read grid shape (trailing styled-blank col widths, truncation) or preview-picked mappings diverge from sync.
+- [Sportmonks results-only sync](sportmonks-results-only-sync.md) — periodic sweepstake sync = date-window /fixtures/between merge by externalId (never /fixtures/latest, never full re-pull).
 - [Replace-all sync wipes FKs](replace-all-sync-fk-wipe.md) — delete-all+reinsert-with-new-ids nulls every ON DELETE SET NULL FK; reconcile in place (match→update keeping id) instead.
 - [Sweepstake display payload](sweepstake-display-payload.md) — teams have null group; derive group from matches/standings; join staff by lowercased team name.
 - [Signage widget container sizing](signage-widget-container-sizing.md) — full-screen display widgets must use container-query units (cqmin) + containerType:size, not vmin, so they scale inside embedded preview/zone boxes.

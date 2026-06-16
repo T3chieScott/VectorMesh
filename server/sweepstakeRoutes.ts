@@ -18,7 +18,7 @@ import {
 } from "@shared/schema";
 import { getPathParam } from "./requestParams";
 import { parseCsvToGrid } from "@shared/spreadsheet-mapping";
-import { fetchTournament, isProviderKeyConfigured, ProviderError } from "./sweepstakeProviders";
+import { fetchTournament, fetchSportmonksResults, isProviderKeyConfigured, ProviderError } from "./sweepstakeProviders";
 import {
   computeAssignments,
   computeParticipantStatuses,
@@ -55,6 +55,7 @@ export interface SweepstakeRoutesStorage {
   replaceTournamentTeams(configId: string, teams: InsertTournamentTeam[]): Promise<TournamentTeam[]>;
   getTournamentMatches(configId: string): Promise<TournamentMatch[]>;
   replaceTournamentMatches(configId: string, matches: InsertTournamentMatch[]): Promise<TournamentMatch[]>;
+  mergeTournamentMatches(configId: string, matches: InsertTournamentMatch[]): Promise<TournamentMatch[]>;
   getTournamentStandings(configId: string): Promise<TournamentStanding[]>;
   replaceTournamentStandings(configId: string, standings: InsertTournamentStanding[]): Promise<TournamentStanding[]>;
   getSweepstakeParticipants(configId: string): Promise<SweepstakeParticipant[]>;
@@ -232,6 +233,38 @@ export async function runSweepstakeSync(
   return { teams: data.teams.length, matches: data.matches.length, standings: data.standings.length };
 }
 
+// Lightweight results-only refresh for the periodic scheduler. Instead of
+// re-pulling the whole season (all teams + every fixture page), it fetches just
+// the fixtures inside a small rolling date window and MERGES their scores/state
+// into the existing matches by externalId — leaving teams, the draw and any
+// out-of-window matches untouched. Only Sportmonks configs that have already
+// been fully synced (teams + matches present) take this path; everything else
+// falls back to the full sync. Throws on provider failure.
+export async function runSweepstakePeriodicSync(
+  storage: SweepstakeRoutesStorage,
+  config: SweepstakeWidgetConfig,
+): Promise<{ teams: number; matches: number; standings: number; mode: "results" | "full" }> {
+  if (config.provider === "sportmonks") {
+    const existing = await storage.getTournamentMatches(config.id);
+    const hasSyncedMatches = existing.some((m) => m.externalId);
+    if (hasSyncedMatches) {
+      const results = await fetchSportmonksResults({
+        competitionCode: config.competitionCode,
+        season: config.season,
+      });
+      await storage.mergeTournamentMatches(
+        config.id,
+        results.map((m) => ({ ...m, configId: config.id })),
+      );
+      await recomputeSweepstakeProgress(storage, config.id);
+      await storage.updateSweepstakeConfig(config.id, { lastSyncedAt: new Date(), lastSyncError: null });
+      return { teams: 0, matches: results.length, standings: 0, mode: "results" };
+    }
+  }
+  const full = await runSweepstakeSync(storage, config);
+  return { ...full, mode: "full" };
+}
+
 // Periodic scheduler: sync every auto-sync-enabled, non-manual config whose
 // interval has elapsed. On failure it stamps lastSyncedAt too, so a persistently
 // failing feed waits a full interval instead of hammering the provider each tick.
@@ -249,7 +282,7 @@ export async function runDueSweepstakeSyncs(
   const results: Array<{ configId: string; ok: boolean; error?: string }> = [];
   for (const config of due) {
     try {
-      await runSweepstakeSync(storage, config);
+      await runSweepstakePeriodicSync(storage, config);
       results.push({ configId: config.id, ok: true });
     } catch (error) {
       const message =

@@ -254,58 +254,104 @@ async function fetchSportmonks(params: ProviderFetchParams): Promise<NormalizedT
   // /fixtures endpoint (the /fixtures/seasons/:id path does not exist), with
   // participants + scores included so we can resolve team names and results.
   // The response is paginated; walk pages until has_more is false (capped).
+  const matches = await fetchSportmonksFixturesPaged(base, auth, `fixtureSeasons:${seasonId}`);
+  return { teams, matches, standings: [] };
+}
+
+// Normalise a single Sportmonks v3 fixture (with participants;scores;state
+// included) into our match shape. Shared by the full season pull and the
+// lightweight results-only refresh so both produce identical rows.
+function mapSportmonksFixture(f: any): Omit<InsertTournamentMatch, "configId"> {
+  const parts: any[] = Array.isArray(f.participants) ? f.participants : [];
+  const home = parts.find((p) => p?.meta?.location === "home");
+  const away = parts.find((p) => p?.meta?.location === "away");
+  const scores: any[] = Array.isArray(f.scores) ? f.scores : [];
+  const goalsFor = (loc: string): number | null => {
+    const entry = scores.find(
+      (s) => s?.description === "CURRENT" && s?.score?.participant === loc,
+    );
+    const g = entry?.score?.goals;
+    return typeof g === "number" ? g : null;
+  };
+  return {
+    externalId: String(f.id),
+    stage: f.stage?.name ?? null,
+    groupName: f.group?.name ?? null,
+    homeTeamId: null,
+    awayTeamId: null,
+    homeTeamName: home?.name ?? null,
+    awayTeamName: away?.name ?? null,
+    homeScore: goalsFor("home"),
+    awayScore: goalsFor("away"),
+    status: toStatus(f.state?.state),
+    kickoffAt: f.starting_at_timestamp
+      ? new Date(f.starting_at_timestamp * 1000)
+      : f.starting_at
+        ? new Date(`${String(f.starting_at).replace(" ", "T")}Z`)
+        : null,
+    winnerTeamId: null,
+  };
+}
+
+// Walk a paginated Sportmonks fixtures listing (any path that returns the
+// standard { data, pagination } envelope) collecting normalised matches. A
+// first-page HTTP error throws (so a transient failure never looks like an
+// empty tournament); later-page errors stop paging with what we have.
+async function fetchSportmonksFixturesPaged(
+  base: string,
+  auth: string,
+  filter: string,
+  path = "/fixtures",
+  maxPages = 20,
+): Promise<Omit<InsertTournamentMatch, "configId">[]> {
   const matches: Omit<InsertTournamentMatch, "configId">[] = [];
   const include = encodeURIComponent("participants;scores;stage;group;state");
-  const filters = encodeURIComponent(`fixtureSeasons:${seasonId}`);
-  const MAX_PAGES = 20;
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const fixturesRes = await safeFetch(
-      `${base}/fixtures?filters=${filters}&include=${include}&per_page=50&page=${page}&${auth}`,
+  const filters = encodeURIComponent(filter);
+  for (let page = 1; page <= maxPages; page++) {
+    const res = await safeFetch(
+      `${base}${path}?filters=${filters}&include=${include}&per_page=50&page=${page}&${auth}`,
     );
-    if (fixturesRes.status !== 200) {
-      // A first-page failure means we'd otherwise sync zero matches silently
-      // (and, with removeMissingItems, wipe existing ones). Surface it instead.
+    if (res.status !== 200) {
       if (page === 1) {
-        throw new ProviderError(`Sportmonks fixtures request failed (HTTP ${fixturesRes.status}).`);
+        throw new ProviderError(`Sportmonks fixtures request failed (HTTP ${res.status}).`);
       }
       break;
     }
-    const fj = JSON.parse(fixturesRes.text);
-    for (const f of fj.data ?? []) {
-      const parts: any[] = Array.isArray(f.participants) ? f.participants : [];
-      const home = parts.find((p) => p?.meta?.location === "home");
-      const away = parts.find((p) => p?.meta?.location === "away");
-      const scores: any[] = Array.isArray(f.scores) ? f.scores : [];
-      const goalsFor = (loc: string): number | null => {
-        const entry = scores.find(
-          (s) => s?.description === "CURRENT" && s?.score?.participant === loc,
-        );
-        const g = entry?.score?.goals;
-        return typeof g === "number" ? g : null;
-      };
-      matches.push({
-        externalId: String(f.id),
-        stage: f.stage?.name ?? null,
-        groupName: f.group?.name ?? null,
-        homeTeamId: null,
-        awayTeamId: null,
-        homeTeamName: home?.name ?? null,
-        awayTeamName: away?.name ?? null,
-        homeScore: goalsFor("home"),
-        awayScore: goalsFor("away"),
-        status: toStatus(f.state?.state),
-        kickoffAt: f.starting_at_timestamp
-          ? new Date(f.starting_at_timestamp * 1000)
-          : f.starting_at
-            ? new Date(`${String(f.starting_at).replace(" ", "T")}Z`)
-            : null,
-        winnerTeamId: null,
-      });
-    }
+    const fj = JSON.parse(res.text);
+    for (const f of fj.data ?? []) matches.push(mapSportmonksFixture(f));
     if (!fj.pagination?.has_more) break;
   }
+  return matches;
+}
 
-  return { teams, matches, standings: [] };
+// Results-only refresh: fetch just the fixtures inside a small rolling date
+// window (recently played + upcoming) instead of re-pulling the entire season.
+// Sportmonks' literal "updated within 10s" endpoint (/fixtures/latest) is only
+// useful for ~10s polling; for our minute-cadence periodic sync a short date
+// window reliably captures every score/state change in one or two calls.
+// Returns matches only — teams/standings are owned by the full sync.
+export async function fetchSportmonksResults(
+  params: ProviderFetchParams,
+  windowDaysBack = 3,
+  windowDaysAhead = 1,
+  now: Date = new Date(),
+): Promise<Omit<InsertTournamentMatch, "configId">[]> {
+  const token = requireKey("sportmonks");
+  const seasonId = params.season?.trim() || params.competitionCode?.trim();
+  if (!seasonId) {
+    throw new ProviderError("Sportmonks needs a season id in the season field.");
+  }
+  const base = "https://api.sportmonks.com/v3/football";
+  const auth = `api_token=${encodeURIComponent(token)}`;
+  const day = 86_400_000;
+  const start = new Date(now.getTime() - windowDaysBack * day).toISOString().slice(0, 10);
+  const end = new Date(now.getTime() + windowDaysAhead * day).toISOString().slice(0, 10);
+  return fetchSportmonksFixturesPaged(
+    base,
+    auth,
+    `fixtureSeasons:${seasonId}`,
+    `/fixtures/between/${start}/${end}`,
+  );
 }
 
 export async function fetchTournament(

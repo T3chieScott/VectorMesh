@@ -245,6 +245,7 @@ export interface IStorage {
   replaceTournamentTeams(configId: string, teams: InsertTournamentTeam[]): Promise<TournamentTeam[]>;
   getTournamentMatches(configId: string): Promise<TournamentMatch[]>;
   replaceTournamentMatches(configId: string, matches: InsertTournamentMatch[]): Promise<TournamentMatch[]>;
+  mergeTournamentMatches(configId: string, matches: InsertTournamentMatch[]): Promise<TournamentMatch[]>;
   getTournamentStandings(configId: string): Promise<TournamentStanding[]>;
   replaceTournamentStandings(configId: string, standings: InsertTournamentStanding[]): Promise<TournamentStanding[]>;
   getSweepstakeParticipants(configId: string): Promise<SweepstakeParticipant[]>;
@@ -3226,6 +3227,53 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(tournamentMatches).where(eq(tournamentMatches.configId, configId));
       if (matches.length === 0) return [];
       return tx.insert(tournamentMatches).values(matches.map((m) => ({ ...m, configId }))).returning();
+    });
+  }
+
+  // Results-only merge: upsert the incoming matches by (configId, externalId)
+  // WITHOUT deleting anything. Existing rows keep their id/createdAt and only
+  // have their mutable result fields refreshed; genuinely new fixtures are
+  // inserted. Used by the lightweight periodic refresh so a small date-window
+  // pull never wipes the matches that fall outside the window.
+  async mergeTournamentMatches(configId: string, matches: InsertTournamentMatch[]): Promise<TournamentMatch[]> {
+    // Dedupe by externalId (last write wins) so a repeated provider page can
+    // never produce a duplicate insert for the same fixture.
+    const byId = new Map<string, InsertTournamentMatch>();
+    for (const m of matches) {
+      if (m.externalId != null && m.externalId !== "") byId.set(m.externalId, m);
+    }
+    const incoming = [...byId.values()];
+    if (incoming.length === 0) return this.getTournamentMatches(configId);
+    return db.transaction(async (tx) => {
+      const existing = await tx.select().from(tournamentMatches).where(eq(tournamentMatches.configId, configId));
+      const byExternalId = new Map(existing.filter((e) => e.externalId).map((e) => [e.externalId as string, e]));
+      const toInsert: InsertTournamentMatch[] = [];
+      for (const m of incoming) {
+        const prior = byExternalId.get(m.externalId as string);
+        if (prior) {
+          await tx.update(tournamentMatches)
+            .set({
+              stage: m.stage,
+              groupName: m.groupName,
+              homeTeamName: m.homeTeamName,
+              awayTeamName: m.awayTeamName,
+              homeScore: m.homeScore,
+              awayScore: m.awayScore,
+              status: m.status,
+              kickoffAt: m.kickoffAt,
+              updatedAt: new Date(),
+            })
+            .where(eq(tournamentMatches.id, prior.id));
+        } else {
+          toInsert.push({ ...m, configId });
+        }
+      }
+      if (toInsert.length > 0) {
+        await tx.insert(tournamentMatches).values(toInsert);
+      }
+      return tx.select().from(tournamentMatches)
+        .where(eq(tournamentMatches.configId, configId))
+        .orderBy(tournamentMatches.kickoffAt);
     });
   }
 
