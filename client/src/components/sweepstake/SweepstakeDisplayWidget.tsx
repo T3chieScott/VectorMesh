@@ -907,15 +907,15 @@ function ResultsSlide({ data, tokens, accent, ctx }: SlideProps) {
           const winStaff = hs > as ? homeStaff : as > hs ? awayStaff : [];
           let impact: { text: string; color: string } | null = null;
           if (homeStaff.length === 0 && awayStaff.length === 0) impact = { text: "No staff assigned", color: tokens.subtle };
-          else if (outStaff.length > 0) impact = { text: `${joinNames(outStaff)} knocked out`, color: LIVE_RED };
-          else if (winStaff.length > 0) impact = { text: `${joinNames(winStaff)} celebrating`, color: "#22c55e" };
-          else impact = { text: `${joinNames([...homeStaff, ...awayStaff])} watching on`, color: accent };
+          else if (outStaff.length > 0) impact = { text: `${joinNames(outStaff, Infinity)} knocked out`, color: LIVE_RED };
+          else if (winStaff.length > 0) impact = { text: `${joinNames(winStaff, Infinity)} celebrating`, color: "#22c55e" };
+          else impact = { text: `${joinNames([...homeStaff, ...awayStaff], Infinity)} watching on`, color: accent };
           return (
             <div key={m.id} style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
               <MatchCard match={m} tokens={tokens} accent={accent} ctx={ctx} mode="result" showStaff={false} />
               <div style={{ display: "flex", alignItems: "center", gap: "0.8cqmin", padding: "0.6cqmin 2.4cqmin 0", fontSize: "1.7cqmin", fontWeight: 800, color: impact.color }}>
                 <span aria-hidden>•</span>
-                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{impact.text}</span>
+                <span>{impact.text}</span>
               </div>
             </div>
           );
