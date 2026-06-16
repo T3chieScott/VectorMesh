@@ -368,8 +368,17 @@ export async function getLiveInplayMatches(): Promise<LiveResult<NormLiveMatch[]
 export async function getSeasonFixtures(): Promise<LiveResult<NormLiveMatch[]>> {
   const season = getWorldCupSeasonId();
   if (!season) return { data: [], stale: false, updatedAt: null, ok: false };
-  const url = buildUrl(`/fixtures/seasons/${encodeURIComponent(season)}`, {
+  // Sportmonks v3 has no /fixtures/seasons/:id path; list the league's fixtures
+  // in a rolling date window (yesterday → +14 days) so the now/next panel always
+  // has the soonest upcoming games. The window is kept small so the soonest
+  // fixtures fall on the first page of results.
+  const day = 86_400_000;
+  const start = new Date(Date.now() - day).toISOString().slice(0, 10);
+  const end = new Date(Date.now() + 14 * day).toISOString().slice(0, 10);
+  const url = buildUrl(`/fixtures/between/${start}/${end}`, {
+    filters: `fixtureLeagues:${WORLD_CUP_LEAGUE_ID}`,
     include: "participants;scores;state;group;stage",
+    per_page: "50",
   });
   return cachedFetch("fixtures", FIXTURES_TTL, url, normalizeLiveFixtures);
 }

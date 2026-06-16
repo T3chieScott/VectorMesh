@@ -222,9 +222,12 @@ async function fetchApiFootball(params: ProviderFetchParams): Promise<Normalized
 // ---------- Sportmonks ----------
 async function fetchSportmonks(params: ProviderFetchParams): Promise<NormalizedTournament> {
   const token = requireKey("sportmonks");
-  const seasonId = params.competitionCode?.trim();
+  // Sportmonks fetches by SEASON id (e.g. 26618), not league id (732). Prefer the
+  // dedicated season field; fall back to the competition code for older configs
+  // that stored the season id there.
+  const seasonId = params.season?.trim() || params.competitionCode?.trim();
   if (!seasonId) {
-    throw new ProviderError("Sportmonks needs a season id in the competition code field.");
+    throw new ProviderError("Sportmonks needs a season id in the season field.");
   }
   const base = "https://api.sportmonks.com/v3/football";
   const auth = `api_token=${encodeURIComponent(token)}`;
@@ -234,35 +237,72 @@ async function fetchSportmonks(params: ProviderFetchParams): Promise<NormalizedT
     throw new ProviderError(`Sportmonks teams request failed (HTTP ${teamsRes.status}).`);
   }
   const tj = JSON.parse(teamsRes.text);
-  const teams: Omit<InsertTournamentTeam, "configId">[] = (tj.data ?? []).map((t: any) => ({
-    externalId: String(t.id),
-    name: t.name ?? "Unknown",
-    shortName: t.short_code ?? null,
-    countryCode: null,
-    groupName: null,
-    crestUrl: t.image_path ?? null,
-  }));
+  // The season's team list also contains bracket placeholders ("Winner
+  // Quarter-final 1", "1st Group L", …). Keep only real teams for the draw.
+  const teams: Omit<InsertTournamentTeam, "configId">[] = (tj.data ?? [])
+    .filter((t: any) => t?.placeholder !== true)
+    .map((t: any) => ({
+      externalId: String(t.id),
+      name: t.name ?? "Unknown",
+      shortName: t.short_code ?? null,
+      countryCode: null,
+      groupName: null,
+      crestUrl: t.image_path ?? null,
+    }));
 
-  const fixturesRes = await safeFetch(`${base}/fixtures/seasons/${encodeURIComponent(seasonId)}?${auth}`);
+  // Fixtures: Sportmonks v3 lists a season's fixtures via the filtered
+  // /fixtures endpoint (the /fixtures/seasons/:id path does not exist), with
+  // participants + scores included so we can resolve team names and results.
+  // The response is paginated; walk pages until has_more is false (capped).
   const matches: Omit<InsertTournamentMatch, "configId">[] = [];
-  if (fixturesRes.status === 200) {
+  const include = encodeURIComponent("participants;scores;stage;group;state");
+  const filters = encodeURIComponent(`fixtureSeasons:${seasonId}`);
+  const MAX_PAGES = 20;
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const fixturesRes = await safeFetch(
+      `${base}/fixtures?filters=${filters}&include=${include}&per_page=50&page=${page}&${auth}`,
+    );
+    if (fixturesRes.status !== 200) {
+      // A first-page failure means we'd otherwise sync zero matches silently
+      // (and, with removeMissingItems, wipe existing ones). Surface it instead.
+      if (page === 1) {
+        throw new ProviderError(`Sportmonks fixtures request failed (HTTP ${fixturesRes.status}).`);
+      }
+      break;
+    }
     const fj = JSON.parse(fixturesRes.text);
     for (const f of fj.data ?? []) {
+      const parts: any[] = Array.isArray(f.participants) ? f.participants : [];
+      const home = parts.find((p) => p?.meta?.location === "home");
+      const away = parts.find((p) => p?.meta?.location === "away");
+      const scores: any[] = Array.isArray(f.scores) ? f.scores : [];
+      const goalsFor = (loc: string): number | null => {
+        const entry = scores.find(
+          (s) => s?.description === "CURRENT" && s?.score?.participant === loc,
+        );
+        const g = entry?.score?.goals;
+        return typeof g === "number" ? g : null;
+      };
       matches.push({
         externalId: String(f.id),
         stage: f.stage?.name ?? null,
         groupName: f.group?.name ?? null,
         homeTeamId: null,
         awayTeamId: null,
-        homeTeamName: null,
-        awayTeamName: null,
-        homeScore: null,
-        awayScore: null,
+        homeTeamName: home?.name ?? null,
+        awayTeamName: away?.name ?? null,
+        homeScore: goalsFor("home"),
+        awayScore: goalsFor("away"),
         status: toStatus(f.state?.state),
-        kickoffAt: f.starting_at ? new Date(f.starting_at) : null,
+        kickoffAt: f.starting_at_timestamp
+          ? new Date(f.starting_at_timestamp * 1000)
+          : f.starting_at
+            ? new Date(`${String(f.starting_at).replace(" ", "T")}Z`)
+            : null,
         winnerTeamId: null,
       });
     }
+    if (!fj.pagination?.has_more) break;
   }
 
   return { teams, matches, standings: [] };
