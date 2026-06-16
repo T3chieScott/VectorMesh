@@ -895,7 +895,7 @@ function PreviewDialog({ config, open, onOpenChange }: { config: SweepstakeWidge
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="auto">Auto rotate</SelectItem>
-              {(data?.slides ?? SWEEPSTAKE_SLIDE_TYPES).map((s) => (
+              {SWEEPSTAKE_SLIDE_TYPES.map((s) => (
                 <SelectItem key={s} value={s}>
                   {SWEEPSTAKE_SLIDE_LABELS[s as keyof typeof SWEEPSTAKE_SLIDE_LABELS] ?? s}
                 </SelectItem>

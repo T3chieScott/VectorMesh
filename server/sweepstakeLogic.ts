@@ -260,12 +260,27 @@ export function buildDisplayData(input: BuildDisplayInput): SweepstakeDisplayDat
   const now = Date.now();
   const hasUpcomingFixtures = matches.some((m) => m.status !== "finished");
   const hasResults = matches.some((m) => m.status === "finished");
+  // Office rivalries: any upcoming match where both sides have drawn staff.
+  const teamNameToStaffCount = new Map<string, number>();
+  for (const p of participants) {
+    if (!p.teamName) continue;
+    const key = p.teamName.toLowerCase();
+    teamNameToStaffCount.set(key, (teamNameToStaffCount.get(key) ?? 0) + 1);
+  }
+  const hasRivalries = matches.some(
+    (m) =>
+      m.status !== "finished" &&
+      (m.homeTeamName ? (teamNameToStaffCount.get(m.homeTeamName.toLowerCase()) ?? 0) > 0 : false) &&
+      (m.awayTeamName ? (teamNameToStaffCount.get(m.awayTeamName.toLowerCase()) ?? 0) > 0 : false),
+  );
   const hasContent: Record<SweepstakeSlideType, boolean> = {
     countdown: Boolean(config.kickoffAt && config.kickoffAt.getTime() > now),
     fixtures: hasUpcomingFixtures,
     results: hasResults,
     standings: standings.length > 0,
     sweepstake: participants.length > 0,
+    rivalries: hasRivalries,
+    survivors: participants.some((p) => p.teamName),
     eliminations: participants.some((p) => p.status !== "active") || teams.some((t) => t.eliminated),
     spotlight: teams.length > 0,
     winner: winner !== null,

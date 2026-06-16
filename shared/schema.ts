@@ -1642,6 +1642,8 @@ export const SWEEPSTAKE_SLIDE_TYPES = [
   "results",
   "standings",
   "sweepstake",
+  "rivalries",
+  "survivors",
   "eliminations",
   "spotlight",
   "winner",
@@ -1654,8 +1656,10 @@ export const SWEEPSTAKE_SLIDE_LABELS: Record<SweepstakeSlideType, string> = {
   results: "Recent results",
   standings: "Group tables",
   sweepstake: "Sweepstake wall",
+  rivalries: "Office rivalries",
+  survivors: "Survivor board",
   eliminations: "Elimination wall",
-  spotlight: "Team spotlight",
+  spotlight: "All teams",
   winner: "Winner celebration",
 };
 
