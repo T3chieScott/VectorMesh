@@ -836,6 +836,54 @@ function MatchCard({ match, tokens, accent, ctx, mode, showStaff = true }: { mat
   );
 }
 
+// A small calendar graphic that shows today's real month + day. Replaces the
+// 📅 emoji, whose Apple glyph is permanently fixed to "JUL 17".
+function CalendarIcon({ accent }: { accent: string }) {
+  const d = new Date();
+  const month = d.toLocaleDateString([], { month: "short" }).toUpperCase();
+  const day = d.getDate();
+  return (
+    <div
+      aria-hidden
+      style={{
+        width: "8cqmin",
+        borderRadius: "1.2cqmin",
+        overflow: "hidden",
+        background: "#ffffff",
+        boxShadow: "0 0.4cqmin 1.2cqmin rgba(0,0,0,0.25)",
+        lineHeight: 1,
+        flex: "0 0 auto",
+      }}
+      data-testid="calendar-today"
+    >
+      <div
+        style={{
+          background: accent,
+          color: "#ffffff",
+          fontSize: "2.1cqmin",
+          fontWeight: 900,
+          letterSpacing: "0.1cqmin",
+          textAlign: "center",
+          padding: "0.7cqmin 0",
+        }}
+      >
+        {month}
+      </div>
+      <div
+        style={{
+          color: "#0f172a",
+          fontSize: "4.6cqmin",
+          fontWeight: 900,
+          textAlign: "center",
+          padding: "0.6cqmin 0 1cqmin",
+        }}
+      >
+        {day}
+      </div>
+    </div>
+  );
+}
+
 function FixturesSlide({ data, tokens, accent, ctx }: SlideProps) {
   const usingToday = ctx.today.length > 0;
   const list = usingToday ? ctx.today : ctx.upcoming;
@@ -854,7 +902,7 @@ function FixturesSlide({ data, tokens, accent, ctx }: SlideProps) {
         subtitle={usingToday ? `${ctx.today.length} match${ctx.today.length === 1 ? "" : "es"} on today` : "Next fixtures in the tournament"}
         accent={accent}
         tokens={tokens}
-        right={<span style={{ fontSize: "6cqmin" }} aria-hidden>📅</span>}
+        right={<CalendarIcon accent={accent} />}
       />
       <div
         style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridAutoRows: "1fr", gap: "1.4cqmin", overflow: "hidden" }}
