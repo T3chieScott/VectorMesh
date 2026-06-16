@@ -3124,25 +3124,94 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  // Replace-all sync: preserves elimination/winner flags by name match so a
+  // In-place reconcile sync: matching teams keep their row id (so drawn
+  // participant pairings survive) and their elimination/winner flags, so a
   // provider refresh never clobbers locally-tracked sweepstake progress.
   async replaceTournamentTeams(configId: string, teams: InsertTournamentTeam[]): Promise<TournamentTeam[]> {
     return db.transaction(async (tx) => {
       const existing = await tx.select().from(tournamentTeams).where(eq(tournamentTeams.configId, configId));
-      const prev = new Map(existing.map((t) => [(t.externalId ?? t.name).toLowerCase(), t]));
-      await tx.delete(tournamentTeams).where(eq(tournamentTeams.configId, configId));
-      if (teams.length === 0) return [];
-      const rows = teams.map((t) => {
-        const match = prev.get((t.externalId ?? t.name).toLowerCase());
-        return {
-          ...t,
-          configId,
-          eliminated: t.eliminated ?? match?.eliminated ?? false,
-          eliminatedAt: match?.eliminatedAt ?? null,
-          isWinner: t.isWinner ?? match?.isWinner ?? false,
-        };
-      });
-      return tx.insert(tournamentTeams).values(rows).returning();
+
+      if (teams.length === 0) {
+        await tx.delete(tournamentTeams).where(eq(tournamentTeams.configId, configId));
+        return [];
+      }
+
+      // Reconcile in place rather than delete-all + re-insert. Matching teams
+      // keep their existing row id, so foreign keys that point at a team — most
+      // importantly each sweepstake participant's drawn team
+      // (sweepstakeParticipants.teamId, ON DELETE SET NULL) — survive a sync.
+      // A delete-all here would null every drawn pairing on every sync.
+      //
+      // Identity is resolved robustly so a provider that renames a team (same
+      // external id, new name) or one that drops/adds the external id (same
+      // name) still matches the existing row instead of deleting it: try the
+      // external id first, then fall back to a case-insensitive name match.
+      const byExternalId = new Map<string, typeof existing[number]>();
+      const byName = new Map<string, typeof existing[number]>();
+      for (const e of existing) {
+        if (e.externalId) byExternalId.set(e.externalId, e);
+        const nameKey = e.name.toLowerCase();
+        if (!byName.has(nameKey)) byName.set(nameKey, e);
+      }
+
+      const consumed = new Set<string>(); // existing row ids reused this run
+      const seen = new Set<string>();      // dedupe duplicate incoming rows
+      const result: TournamentTeam[] = [];
+
+      for (const t of teams) {
+        const dedupeKey = (t.externalId ?? t.name).toLowerCase();
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+
+        let match: typeof existing[number] | undefined;
+        if (t.externalId && byExternalId.has(t.externalId)) {
+          match = byExternalId.get(t.externalId);
+        } else {
+          match = byName.get(t.name.toLowerCase());
+        }
+        if (match && consumed.has(match.id)) match = undefined; // already taken
+
+        if (match) {
+          consumed.add(match.id);
+          const [row] = await tx.update(tournamentTeams)
+            .set({
+              externalId: t.externalId ?? match.externalId,
+              name: t.name,
+              shortName: t.shortName ?? null,
+              countryCode: t.countryCode ?? null,
+              groupName: t.groupName ?? null,
+              crestUrl: t.crestUrl ?? null,
+              eliminated: t.eliminated ?? match.eliminated ?? false,
+              eliminatedAt: match.eliminatedAt ?? null,
+              isWinner: t.isWinner ?? match.isWinner ?? false,
+              updatedAt: new Date(),
+            })
+            .where(eq(tournamentTeams.id, match.id))
+            .returning();
+          result.push(row);
+        } else {
+          const [row] = await tx.insert(tournamentTeams)
+            .values({
+              ...t,
+              configId,
+              eliminated: t.eliminated ?? false,
+              isWinner: t.isWinner ?? false,
+            })
+            .returning();
+          result.push(row);
+        }
+      }
+
+      // Remove only existing teams that no row in the incoming list matched.
+      // This nulls any participant drawn to a now-absent team, which is correct
+      // — that team genuinely no longer exists in the tournament.
+      for (const e of existing) {
+        if (!consumed.has(e.id)) {
+          await tx.delete(tournamentTeams).where(eq(tournamentTeams.id, e.id));
+        }
+      }
+
+      return result;
     });
   }
 
