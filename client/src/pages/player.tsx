@@ -263,6 +263,12 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const [layoutRotationIndex, setLayoutRotationIndex] = useState(0);
   const layoutRotationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentHashRef = useRef<string>("");
+  // Audit gap #2: last ETag returned by /content. Sent back as
+  // If-None-Match so the server can answer 304 (unchanged) and skip
+  // re-sending the full payload. The server never 304s while a
+  // refresh/screenshot signal is pending, so a 304 always means
+  // "nothing to do this poll".
+  const contentEtagRef = useRef<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -475,7 +481,15 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     // decision logic.
     const t1 = Date.now();
     try {
-      res = await playerFetch(`/api/player/${screenId}/content`, token);
+      res = await playerFetch(`/api/player/${screenId}/content`, token, {
+        // Bypass the browser HTTP cache so we control revalidation
+        // explicitly: a 304 must surface to JS (not be transparently
+        // turned back into a cached 200 with a stale serverTime).
+        cache: "no-store",
+        headers: contentEtagRef.current
+          ? { "If-None-Match": contentEtagRef.current }
+          : undefined,
+      });
     } catch (err: any) {
       // Network failure: leave strike count untouched so a later 401
       // after a network blip still escalates. See playerAuthStrike.ts.
@@ -548,9 +562,22 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       }
       // outcome.action === "continue": any non-auth status. Strike
       // counter has already been reset by evaluateAuthHttpStatus.
+      // 304 Not Modified: content unchanged since our last ETag and the
+      // server confirmed no refresh/screenshot signal is pending, so
+      // there's nothing to apply. Keep the current content; the 30s
+      // heartbeat keeps the server-time offset warm.
+      if (res.status === 304) {
+        setIsConnected(true);
+        setIsOffline(false);
+        setError(null);
+        return;
+      }
       if (!res.ok) {
         throw new Error(`Failed to fetch content: ${res.status}`);
       }
+      // Remember this payload's ETag to revalidate on the next poll.
+      const respEtag = res.headers.get("ETag");
+      if (respEtag) contentEtagRef.current = respEtag;
       const data: PlayerContentData = await res.json();
       // t2 is captured after res.json() resolves; JSON parse time
       // is ~1ms for our payloads. The estimator's rolling-median

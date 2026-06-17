@@ -430,6 +430,37 @@ const pendingPlayerRefreshes = new Map<string, number>();
 const pendingScreenshotRequests = new Map<string, number>();
 const REFRESH_SIGNAL_TTL = 60_000;
 
+// ===== Player content cache (audit gap #2) =====
+// `GET /api/player/:screenId/content` does a lot of DB work per poll
+// (resolveScreenContent + media + playlists + per-playlist items +
+// layout templates + canvas members). With ~50 screens polling every
+// ~7s that's a constant DB load serving payloads that rarely change.
+//
+// We memoise the *stable* part of the payload (everything except the
+// per-request volatile fields: refreshRequested, screenshotRequested,
+// timestamp, serverTime) for a short TTL, keyed by screenId, and attach
+// a content ETag so unchanged polls can short-circuit with 304.
+//
+// The TTL is deliberately tiny (well under the player's poll interval)
+// so worst-case staleness is bounded; forced refreshes (override
+// activate/deactivate, programme publish, manual refresh) call
+// invalidatePlayerContentCache() to drop the entry immediately.
+const PLAYER_CONTENT_CACHE_TTL = 3_000;
+type PlayerContentCacheEntry = { body: Record<string, unknown>; etag: string; expires: number };
+const playerContentCache = new Map<string, PlayerContentCacheEntry>();
+function invalidatePlayerContentCache(screenId: string) {
+  playerContentCache.delete(screenId);
+}
+// Opportunistic sweep of expired entries (called on cache miss, which is
+// the only path that grows the map). The entry count is bounded by the
+// number of actively-polled screens, but a deleted/retired screen would
+// otherwise leave a stale entry lingering until process restart.
+function prunePlayerContentCache(now: number) {
+  for (const [key, entry] of playerContentCache) {
+    if (entry.expires <= now) playerContentCache.delete(key);
+  }
+}
+
 async function refreshScreensForVersion(versionId: string) {
   try {
     const version = await storage.getProgrammeVersion(versionId);
@@ -444,6 +475,7 @@ async function refreshScreensForVersion(versionId: string) {
       const activeEvent = await storage.getCurrentEventForScreen(s.id, nowDate);
       if (activeEvent?.id === programme.eventId) {
         pendingPlayerRefreshes.set(s.id, now);
+        invalidatePlayerContentCache(s.id);
       }
     }
   } catch (err) {
@@ -1583,6 +1615,7 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Access denied" });
       }
       pendingPlayerRefreshes.set(screen.id, Date.now());
+      invalidatePlayerContentCache(screen.id);
       logAudit(req, "refresh", "screen", screen.id, { name: screen.name });
       res.json({ success: true });
     } catch (error) {
@@ -3411,6 +3444,17 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Screen not found" });
       }
 
+      // Audit gap #2: serve the stable payload from a short-TTL memo
+      // when it's still fresh, skipping all the DB work below. Volatile
+      // signals + serverTime are still computed per-request further down.
+      const screenId = screen.id;
+      const cachedEntry = playerContentCache.get(screenId);
+      let stableBody: Record<string, unknown>;
+      let etag: string;
+      if (cachedEntry && cachedEntry.expires > Date.now()) {
+        stableBody = cachedEntry.body;
+        etag = cachedEntry.etag;
+      } else {
       const now = new Date();
 
       // The block / target / time-rule / fallback resolution lives in
@@ -3535,24 +3579,6 @@ export async function registerRoutes(
         weatherSummary,
       };
 
-      let refreshRequested = false;
-      const refreshTs = pendingPlayerRefreshes.get(screen.id);
-      if (refreshTs && (Date.now() - refreshTs) < REFRESH_SIGNAL_TTL) {
-        refreshRequested = true;
-        pendingPlayerRefreshes.delete(screen.id);
-      } else if (refreshTs) {
-        pendingPlayerRefreshes.delete(screen.id);
-      }
-
-      let screenshotRequested = false;
-      const ssTs = pendingScreenshotRequests.get(screen.id);
-      if (ssTs && (Date.now() - ssTs) < REFRESH_SIGNAL_TTL) {
-        screenshotRequested = true;
-        pendingScreenshotRequests.delete(screen.id);
-      } else if (ssTs) {
-        pendingScreenshotRequests.delete(screen.id);
-      }
-
       // Layer the org-wide "hide 'No Content' message" switch on top of the
       // per-screen value (Task #153). The DB row is never mutated; we only
       // OR-merge into the response copy. The player's content-change hash
@@ -3656,7 +3682,7 @@ export async function registerRoutes(
         };
       }
 
-      res.json({
+      stableBody = {
         screen: screenForResponse,
         profile,
         // Task #244: strip script vectors from HTML-widget zone bodies before
@@ -3683,14 +3709,68 @@ export async function registerRoutes(
         event,
         client,
         playerVars,
-        timestamp: now.toISOString(),
-        refreshRequested,
         screenshotEnabled: screen.screenshotEnabled || false,
-        screenshotRequested,
         canvas: canvasPayload,
-        // Highest-frequency time-sync sample (~every 7s).
-        serverTime: Date.now(),
+      };
+      etag = `W/"${crypto.createHash("sha1").update(JSON.stringify(stableBody)).digest("base64")}"`;
+      const cacheNow = Date.now();
+      prunePlayerContentCache(cacheNow);
+      playerContentCache.set(screenId, {
+        body: stableBody,
+        etag,
+        expires: cacheNow + PLAYER_CONTENT_CACHE_TTL,
       });
+      } // end stable-payload build (cache miss)
+
+      // ===== Per-request volatile signals (never cached) =====
+      // These consume one-shot refresh/screenshot flags and must run on
+      // every poll, including cache hits, so an admin "refresh" / "take
+      // screenshot" action is never swallowed by the memo.
+      let refreshRequested = false;
+      const refreshTs = pendingPlayerRefreshes.get(screenId);
+      if (refreshTs && (Date.now() - refreshTs) < REFRESH_SIGNAL_TTL) {
+        refreshRequested = true;
+        pendingPlayerRefreshes.delete(screenId);
+      } else if (refreshTs) {
+        pendingPlayerRefreshes.delete(screenId);
+      }
+
+      let screenshotRequested = false;
+      const ssTs = pendingScreenshotRequests.get(screenId);
+      if (ssTs && (Date.now() - ssTs) < REFRESH_SIGNAL_TTL) {
+        screenshotRequested = true;
+        pendingScreenshotRequests.delete(screenId);
+      } else if (ssTs) {
+        pendingScreenshotRequests.delete(screenId);
+      }
+
+      // Conditional GET: when the player already holds this exact stable
+      // payload (ETag match) and there's no pending signal to deliver,
+      // return 304 and skip serialising/sending the body. We must never
+      // 304 while a refresh/screenshot signal is pending or the player
+      // would never receive it. `no-cache` makes the browser revalidate
+      // every poll (sending If-None-Match) rather than serving stale.
+      res.setHeader("ETag", etag);
+      res.setHeader("Cache-Control", "private, no-cache");
+      const ifNoneMatch = req.headers["if-none-match"];
+      if (ifNoneMatch === etag && !refreshRequested && !screenshotRequested) {
+        return res.status(304).end();
+      }
+
+      // Use res.end (not res.json) so Express doesn't overwrite our
+      // content-stable ETag with a body-derived one that would include
+      // the always-changing serverTime/timestamp and defeat revalidation.
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(
+        JSON.stringify({
+          ...stableBody,
+          timestamp: new Date().toISOString(),
+          refreshRequested,
+          screenshotRequested,
+          // Highest-frequency time-sync sample (~every 7s).
+          serverTime: Date.now(),
+        }),
+      );
     } catch (error) {
       console.error("Error fetching player content:", error);
       res.status(500).json({ error: "Failed to fetch player content" });
