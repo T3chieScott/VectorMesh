@@ -26,6 +26,13 @@ import { setupAuth, isAuthenticated, isAuthenticatedOrToken, hashApiToken } from
 import { mountTestAuthRoute } from "./testAuthRoute";
 import { mountAgendaRoutes } from "./agendaRoutes";
 import { mountSweepstakeRoutes, runDueSweepstakeSyncs } from "./sweepstakeRoutes";
+import {
+  pruneExpired as pruneExpiredSharedCache,
+  clearNamespace as clearSharedCacheNamespace,
+  refreshEntry as refreshSharedCacheEntry,
+  CACHE_NAMESPACES,
+  STALE_GRACE_MS,
+} from "./sharedCache";
 import { fetchMicrosoftXlsxBytes } from "./microsoftGraph";
 import { mountMediaLayoutRoutes } from "./mediaLayoutRoutes";
 import { mountCustomerDataRoutes } from "./customerDataRoutes";
@@ -1066,6 +1073,23 @@ export async function registerRoutes(
     }
   };
   setInterval(tickSweepstakeSync, SWEEPSTAKE_SYNC_TICK_MS);
+
+  // Task #290 — shared-cache garbage collection. Periodically prune rows
+  // whose expiry is older than the stale grace window so the table doesn't
+  // grow without bound. Recently-expired rows survive as last-known-good
+  // (serve-stale) until they age past STALE_GRACE_MS.
+  const SHARED_CACHE_GC_TICK_MS = 60 * 60_000; // hourly
+  const tickSharedCacheGc = async () => {
+    try {
+      const pruned = await pruneExpiredSharedCache(STALE_GRACE_MS);
+      if (pruned > 0) {
+        console.log(`[shared-cache] pruned ${pruned} expired entr(y/ies)`);
+      }
+    } catch (err) {
+      console.error("[shared-cache] gc tick failed:", err);
+    }
+  };
+  setInterval(tickSharedCacheGc, SHARED_CACHE_GC_TICK_MS);
 
   // ============ HEALTH CHECK ============
   app.get("/api/manual", requireAuth, async (_req, res) => {
@@ -4522,6 +4546,159 @@ export async function registerRoutes(
       res.status(500).json({ error: "Failed to fetch player display settings" });
     }
   });
+
+  // ============ SHARED CACHE ADMIN (Task #290) ============
+  // Admin-only viewer over the Postgres L2 shared cache. Entries are
+  // site-scoped via metadata.clientId: full-access users (admins) see
+  // every entry including global ones (no clientId), while a site-scoped
+  // caller would only see entries for clients they can access. Global
+  // entries (no clientId, e.g. sportmonks) are visible only to full
+  // access. The stored value bodies never contain secrets/tokens/signed
+  // URLs (the cache layer only ever stores scrubbed public payloads).
+  const canViewCacheEntry = (req: Request, entry: { metadata: unknown }): boolean => {
+    const allowed = getAllowedClientIds(req); // null = full access
+    if (allowed === null) return true;
+    const clientId =
+      entry.metadata && typeof entry.metadata === "object"
+        ? (entry.metadata as Record<string, unknown>).clientId
+        : undefined;
+    if (typeof clientId !== "string") return false; // global entry: full access only
+    return allowed.includes(clientId);
+  };
+  const byteSize = (entry: { valueJson: unknown; valueText: string | null }): number => {
+    try {
+      if (entry.valueText != null) return Buffer.byteLength(entry.valueText, "utf8");
+      if (entry.valueJson != null) return Buffer.byteLength(JSON.stringify(entry.valueJson), "utf8");
+    } catch {
+      /* ignore */
+    }
+    return 0;
+  };
+
+  app.get("/api/admin/shared-cache", requireAuth, loadUserContext, requireAdminOrAccountManager, async (req, res) => {
+    try {
+      const namespaceRaw = getQueryString(req, "namespace", res);
+      if (namespaceRaw === null) return; // repeated param → 400 already sent
+      const namespace = namespaceRaw || undefined;
+      const entries = await storage.listSharedCacheEntries(namespace);
+      const now = Date.now();
+      const visible = entries
+        .filter((e) => canViewCacheEntry(req, e))
+        .map((e) => ({
+          id: e.id,
+          namespace: e.namespace,
+          cacheKey: e.cacheKey,
+          status: e.status,
+          source: e.source,
+          expiresAt: e.expiresAt,
+          lastUpdatedAt: e.lastUpdatedAt,
+          updatedAt: e.updatedAt,
+          metadata: e.metadata,
+          errorMessage: e.errorMessage,
+          sizeBytes: byteSize(e),
+          expired: e.expiresAt ? new Date(e.expiresAt).getTime() <= now : false,
+        }));
+      res.json({ namespaces: Object.values(CACHE_NAMESPACES), entries: visible });
+    } catch (error) {
+      console.error("Error listing shared cache:", error);
+      res.status(500).json({ error: "Failed to list shared cache" });
+    }
+  });
+
+  app.get(
+    "/api/admin/shared-cache/:namespace/:cacheKey",
+    requireAuth,
+    loadUserContext,
+    requireAdminOrAccountManager,
+    async (req, res) => {
+      try {
+        const namespace = getPathParam(req, "namespace");
+        const cacheKey = decodeURIComponent(getPathParam(req, "cacheKey"));
+        const entry = await storage.getSharedCacheEntry(namespace, cacheKey);
+        if (!entry) return res.status(404).json({ error: "Cache entry not found" });
+        if (!canViewCacheEntry(req, entry)) {
+          return res.status(403).json({ error: "Access denied to this cache entry" });
+        }
+        res.json(entry);
+      } catch (error) {
+        console.error("Error fetching shared cache entry:", error);
+        res.status(500).json({ error: "Failed to fetch cache entry" });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/admin/shared-cache/:namespace/:cacheKey",
+    requireAuth,
+    loadUserContext,
+    requireAdminOrAccountManager,
+    async (req, res) => {
+      try {
+        const namespace = getPathParam(req, "namespace");
+        const cacheKey = decodeURIComponent(getPathParam(req, "cacheKey"));
+        const entry = await storage.getSharedCacheEntry(namespace, cacheKey);
+        if (!entry) return res.status(404).json({ error: "Cache entry not found" });
+        if (!canViewCacheEntry(req, entry)) {
+          return res.status(403).json({ error: "Access denied to this cache entry" });
+        }
+        await storage.deleteSharedCacheEntry(namespace, cacheKey);
+        res.status(204).send();
+      } catch (error) {
+        console.error("Error deleting shared cache entry:", error);
+        res.status(500).json({ error: "Failed to delete cache entry" });
+      }
+    },
+  );
+
+  // Force-recompute a single entry. Namespaces with a registered refresher
+  // (agenda / sweepstake displays) recompute fresh and write back; others fall
+  // back to a purge so the next display request rebuilds it. Site-scoped.
+  app.post(
+    "/api/admin/shared-cache/:namespace/:cacheKey/refresh",
+    requireAuth,
+    loadUserContext,
+    requireAdminOrAccountManager,
+    async (req, res) => {
+      try {
+        const namespace = getPathParam(req, "namespace");
+        const cacheKey = decodeURIComponent(getPathParam(req, "cacheKey"));
+        const entry = await storage.getSharedCacheEntry(namespace, cacheKey);
+        if (!entry) return res.status(404).json({ error: "Cache entry not found" });
+        if (!canViewCacheEntry(req, entry)) {
+          return res.status(403).json({ error: "Access denied to this cache entry" });
+        }
+        const outcome = await refreshSharedCacheEntry(namespace, cacheKey);
+        res.json(outcome);
+      } catch (error) {
+        console.error("Error refreshing shared cache entry:", error);
+        res.status(500).json({ error: "Failed to refresh cache entry" });
+      }
+    },
+  );
+
+  // Clear an entire namespace. Restricted to full-access users since a
+  // namespace can span multiple tenants; site-scoped callers must delete
+  // individual entries instead.
+  app.post(
+    "/api/admin/shared-cache/clear-namespace",
+    requireAuth,
+    loadUserContext,
+    requireAdmin,
+    async (req, res) => {
+      try {
+        if (getAllowedClientIds(req) !== null) {
+          return res.status(403).json({ error: "Full access required to clear a namespace" });
+        }
+        const namespace = typeof req.body?.namespace === "string" ? req.body.namespace : "";
+        if (!namespace) return res.status(400).json({ error: "namespace is required" });
+        const cleared = await clearSharedCacheNamespace(namespace);
+        res.json({ cleared });
+      } catch (error) {
+        console.error("Error clearing shared cache namespace:", error);
+        res.status(500).json({ error: "Failed to clear namespace" });
+      }
+    },
+  );
 
   // ============ SYSTEM SETTINGS ============
   app.get("/api/system-settings", requireAuth, loadUserContext, requireAdmin, async (req, res) => {

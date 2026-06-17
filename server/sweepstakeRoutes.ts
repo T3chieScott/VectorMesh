@@ -34,6 +34,18 @@ import {
   isSportmonksLiveConfigured,
 } from "./sportmonksLive";
 import { SWEEPSTAKE_LIVE_PANELS, type SweepstakeLivePanel } from "@shared/schema";
+import { getOrSet, set, del, buildCacheKey, registerRefresher, CACHE_NAMESPACES, DEFAULT_TTLS } from "./sharedCache";
+
+// Task #290 — drop the cached computed display payload for a sweepstake so the
+// next public poll recomputes from fresh DB rows. Tenant-scoped key. Best
+// effort: a cache miss/error must never break a write.
+export async function invalidateSweepstakeDisplayCache(clientId: string, configId: string): Promise<void> {
+  try {
+    await del(CACHE_NAMESPACES.SWEEPSTAKE_DISPLAY, buildCacheKey(clientId, configId));
+  } catch (err) {
+    console.error("[sweepstake] display cache invalidation failed:", err instanceof Error ? err.message : err);
+  }
+}
 
 export interface SweepstakeRoutesStorage {
   getSweepstakeConfigs(clientId?: string): Promise<SweepstakeWidgetConfig[]>;
@@ -230,6 +242,7 @@ export async function runSweepstakeSync(
   );
   await recomputeSweepstakeProgress(storage, config.id);
   await storage.updateSweepstakeConfig(config.id, { lastSyncedAt: new Date(), lastSyncError: null });
+  await invalidateSweepstakeDisplayCache(config.clientId, config.id);
   return { teams: data.teams.length, matches: data.matches.length, standings: data.standings.length };
 }
 
@@ -258,6 +271,7 @@ export async function runSweepstakePeriodicSync(
       );
       await recomputeSweepstakeProgress(storage, config.id);
       await storage.updateSweepstakeConfig(config.id, { lastSyncedAt: new Date(), lastSyncError: null });
+      await invalidateSweepstakeDisplayCache(config.clientId, config.id);
       return { teams: 0, matches: results.length, standings: 0, mode: "results" };
     }
   }
@@ -372,6 +386,10 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
         return res.status(403).json({ error: "Access denied to target site" });
       }
       const config = await storage.updateSweepstakeConfig(id, data);
+      await invalidateSweepstakeDisplayCache(existing.clientId, id);
+      if (data.clientId && data.clientId !== existing.clientId) {
+        await invalidateSweepstakeDisplayCache(data.clientId, id);
+      }
       audit(req, "update", "sweepstake_config", id, { name: config?.name });
       res.json(config);
     } catch (error) {
@@ -387,6 +405,7 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
       const existing = await loadOwnedConfig(req, res, id);
       if (!existing) return;
       await storage.deleteSweepstakeConfig(id);
+      await invalidateSweepstakeDisplayCache(existing.clientId, id);
       audit(req, "delete", "sweepstake_config", id, { name: existing.name });
       res.status(204).send();
     } catch (error) {
@@ -415,6 +434,7 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
         team.isWinner = true;
         team.eliminated = false;
       }
+      await invalidateSweepstakeDisplayCache(config.clientId, config.id);
       audit(req, "create", "sweepstake_team", team.id, { name: team.name });
       res.status(201).json(team);
     } catch (error) {
@@ -448,6 +468,7 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
         updated = await storage.updateTournamentTeam(team.id, data);
       }
       await recomputeProgress(config.id);
+      await invalidateSweepstakeDisplayCache(config.clientId, config.id);
       audit(req, "update", "sweepstake_team", team.id, { name: updated?.name });
       res.json(updated);
     } catch (error) {
@@ -500,6 +521,7 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
         configId: config.id,
         clientId: config.clientId,
       });
+      await invalidateSweepstakeDisplayCache(config.clientId, config.id);
       audit(req, "create", "sweepstake_participant", participant.id, { name: participant.name });
       res.status(201).json(participant);
     } catch (error) {
@@ -583,6 +605,7 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
           skipped++;
         }
       }
+      if (added > 0) await invalidateSweepstakeDisplayCache(config.clientId, config.id);
       audit(req, "create", "sweepstake_participant", config.id, { imported: added, skipped });
       res.json({ added, skipped });
     } catch (error) {
@@ -600,6 +623,7 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
       // clientId/configId are immutable from the client.
       const patch = insertSweepstakeParticipantSchema.partial().omit({ configId: true, clientId: true }).parse(req.body);
       const updated = await storage.updateSweepstakeParticipant(participant.id, patch);
+      await invalidateSweepstakeDisplayCache(config.clientId, config.id);
       audit(req, "update", "sweepstake_participant", participant.id, { name: updated?.name });
       res.json(updated);
     } catch (error) {
@@ -616,6 +640,7 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
       const config = await loadOwnedConfig(req, res, participant.configId);
       if (!config) return;
       await storage.deleteSweepstakeParticipant(participant.id);
+      await invalidateSweepstakeDisplayCache(config.clientId, config.id);
       audit(req, "delete", "sweepstake_participant", participant.id, { name: participant.name });
       res.status(204).send();
     } catch (error) {
@@ -639,6 +664,7 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
         await storage.updateSweepstakeParticipant(a.participantId, { teamId: a.teamId });
       }
       await recomputeProgress(config.id);
+      await invalidateSweepstakeDisplayCache(config.clientId, config.id);
       audit(req, "assign", "sweepstake_config", config.id, { assigned: assignments.length });
       res.json({ ok: true, assigned: assignments.length });
     } catch (error) {
@@ -653,14 +679,44 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
     try {
       const config = await storage.getSweepstakeConfig(getPathParam(req, "configId"));
       if (!config) return res.status(404).json({ error: "Sweepstake not found" });
-      const [teams, matches, standings, participants] = await Promise.all([
-        storage.getTournamentTeams(config.id),
-        storage.getTournamentMatches(config.id),
-        storage.getTournamentStandings(config.id),
-        storage.getSweepstakeParticipants(config.id),
-      ]);
-      const data = buildDisplayData({ config, teams, matches, standings, participants });
-      const live = await resolveLiveData(config, teams, participants);
+
+      // Task #290 — cache the DB-derived computed display payload (short TTL,
+      // serve-stale-while-revalidate) so high-frequency device polls don't run
+      // four queries + buildDisplayData every time. Key is tenant-scoped. The
+      // payload here contains NO secrets and no internal-only config fields.
+      const result = await getOrSet({
+        namespace: CACHE_NAMESPACES.SWEEPSTAKE_DISPLAY,
+        key: buildCacheKey(config.clientId, config.id),
+        ttlMs: DEFAULT_TTLS.SWEEPSTAKE_DISPLAY,
+        source: "sweepstake:display",
+        metadata: { clientId: config.clientId },
+        fetcher: async () => {
+          const [teams, matches, standings, participants] = await Promise.all([
+            storage.getTournamentTeams(config.id),
+            storage.getTournamentMatches(config.id),
+            storage.getTournamentStandings(config.id),
+            storage.getSweepstakeParticipants(config.id),
+          ]);
+          return buildDisplayData({ config, teams, matches, standings, participants });
+        },
+      });
+      if (result.data == null) {
+        return res.status(500).json({ error: "Failed to serve sweepstake" });
+      }
+      const data = result.data;
+
+      // Live World Cup panels are time-sensitive and resolved every poll. They
+      // ride on the Sportmonks L2 cache, so this is cheap. Only live configs
+      // need the raw teams/participants, so live-off configs stay query-free.
+      let live: SweepstakeLiveData | null = null;
+      if (config.liveEnabled && config.provider === "sportmonks") {
+        const [teams, participants] = await Promise.all([
+          storage.getTournamentTeams(config.id),
+          storage.getSweepstakeParticipants(config.id),
+        ]);
+        live = await resolveLiveData(config, teams, participants);
+      }
+
       res.setHeader("Cache-Control", "no-store");
       // Only attach `live` when live mode is on, so payloads for every
       // existing (live-off) sweepstake stay byte-identical to before.
@@ -669,5 +725,31 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
       console.error("Error serving sweepstake display:", error);
       res.status(500).json({ error: "Failed to serve sweepstake" });
     }
+  });
+
+  // Task #290 — admin "refresh" for a sweepstake display cache entry. Recomputes
+  // buildDisplayData from fresh DB rows and writes it back even when still fresh.
+  // The cacheKey is buildCacheKey(clientId, configId); re-derive the configId.
+  registerRefresher(CACHE_NAMESPACES.SWEEPSTAKE_DISPLAY, async (entry) => {
+    const parts = entry.cacheKey.split(":");
+    const configId = parts.length > 1 ? parts[1] : parts[0];
+    const config = await storage.getSweepstakeConfig(configId);
+    if (!config) {
+      await del(CACHE_NAMESPACES.SWEEPSTAKE_DISPLAY, entry.cacheKey);
+      return null;
+    }
+    const [teams, matches, standings, participants] = await Promise.all([
+      storage.getTournamentTeams(config.id),
+      storage.getTournamentMatches(config.id),
+      storage.getTournamentStandings(config.id),
+      storage.getSweepstakeParticipants(config.id),
+    ]);
+    const data = buildDisplayData({ config, teams, matches, standings, participants });
+    await set(CACHE_NAMESPACES.SWEEPSTAKE_DISPLAY, entry.cacheKey, data, {
+      ttlMs: DEFAULT_TTLS.SWEEPSTAKE_DISPLAY,
+      source: "sweepstake:display",
+      metadata: { clientId: config.clientId },
+    });
+    return { data, status: "fresh", stale: false, ok: true, updatedAt: new Date(), source: "sweepstake:display" };
   });
 }

@@ -14,6 +14,7 @@
 //    stale data instead of an error (mirroring server/premierLeague.ts).
 
 import { safeFetch } from "./safeFetch";
+import { getOrSet, CACHE_NAMESPACES } from "./sharedCache";
 
 export const WORLD_CUP_LEAGUE_ID = 732;
 const BASE = "https://api.sportmonks.com/v3/football";
@@ -332,29 +333,46 @@ async function fetchJson(url: string): Promise<any> {
   return JSON.parse(res.text);
 }
 
+// Two-tier cache (Task #290): in-memory L1 (fast, per-process) in front of the
+// PostgreSQL L2 shared cache. The L2 layer adds cross-process last-known-good
+// and single-flight stampede protection. The token is never persisted — only
+// the normalised, token-free view model goes into the shared cache.
 async function cachedFetch<T>(
   key: string,
   ttl: number,
   url: string,
   normalise: (raw: any) => T,
 ): Promise<LiveResult<T>> {
+  // L1 fast path.
   const cached = caches.get(key) as CacheEntry<T> | undefined;
   if (cached && Date.now() - cached.timestamp < ttl) {
     return { data: cached.data, stale: false, updatedAt: cached.timestamp, ok: true };
   }
-  try {
-    const raw = await fetchJson(url);
-    const data = normalise(raw);
-    const entry: CacheEntry<T> = { data, timestamp: Date.now() };
-    caches.set(key, entry);
-    return { data, stale: false, updatedAt: entry.timestamp, ok: true };
-  } catch (err) {
-    console.error(`[sportmonks-live] ${key} fetch failed:`, err instanceof Error ? err.message : err);
-    if (cached) {
-      return { data: cached.data, stale: true, updatedAt: cached.timestamp, ok: true };
-    }
-    return { data: normalise({}), stale: false, updatedAt: null, ok: false };
+
+  // L2 + upstream (single-flight, serve-stale-on-error). Block on refresh when
+  // expired (preserves the previous blocking semantics) but fall back to the
+  // shared last-known-good if the provider is down.
+  const result = await getOrSet<T>({
+    namespace: CACHE_NAMESPACES.SPORTMONKS,
+    key,
+    ttlMs: ttl,
+    source: `sportmonks:${key}`,
+    staleWhileRevalidate: false,
+    serveStaleOnError: true,
+    fetcher: async () => normalise(await fetchJson(url)),
+  });
+
+  if (result.ok && result.data != null) {
+    const ts = result.updatedAt ? result.updatedAt.getTime() : Date.now();
+    caches.set(key, { data: result.data, timestamp: ts });
+    return { data: result.data, stale: result.stale, updatedAt: ts, ok: true };
   }
+
+  // L2 had nothing usable — fall back to any in-memory last-known-good.
+  if (cached) {
+    return { data: cached.data, stale: true, updatedAt: cached.timestamp, ok: true };
+  }
+  return { data: normalise({}), stale: false, updatedAt: null, ok: false };
 }
 
 export async function getLiveInplayMatches(): Promise<LiveResult<NormLiveMatch[]>> {

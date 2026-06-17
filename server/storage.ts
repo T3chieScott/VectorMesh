@@ -102,6 +102,9 @@ import {
   type InsertTournamentStanding,
   type SweepstakeParticipant,
   type InsertSweepstakeParticipant,
+  sharedCache,
+  type SharedCacheEntry,
+  type InsertSharedCacheEntry,
 } from "@shared/schema";
 import { users, userSites, passwordResetTokens, type User, type UpsertUser, type UserSite, type PasswordResetToken } from "@shared/models/auth";
 import { apiTokens, apiTokenKnownIps, type ApiToken, type InsertApiToken } from "@shared/schema";
@@ -653,6 +656,14 @@ export interface IStorage {
   getRecentNewIpEventsForTokens(tokenIds: string[]): Promise<Map<string, { lastIp: string | null; lastAt: Date | null; count: number }>>;
   getLatestAckActorsForTokens(tokenIds: string[]): Promise<Map<string, { at: Date; userId: string | null; firstName: string | null; lastName: string | null; email: string | null }>>;
   acknowledgeApiTokenNewIp(tokenId: string, at: Date): Promise<void>;
+
+  // Shared cache (Task #290) — PostgreSQL L2 cache.
+  getSharedCacheEntry(namespace: string, cacheKey: string): Promise<SharedCacheEntry | undefined>;
+  upsertSharedCacheEntry(data: InsertSharedCacheEntry): Promise<SharedCacheEntry>;
+  deleteSharedCacheEntry(namespace: string, cacheKey: string): Promise<boolean>;
+  clearSharedCacheNamespace(namespace: string): Promise<number>;
+  listSharedCacheEntries(namespace?: string): Promise<SharedCacheEntry[]>;
+  pruneExpiredSharedCache(now: Date, gracePeriodMs: number): Promise<number>;
 }
 
 /**
@@ -3325,6 +3336,74 @@ export class DatabaseStorage implements IStorage {
 
   async deleteSweepstakeParticipantsForConfig(configId: string): Promise<number> {
     const result = await db.delete(sweepstakeParticipants).where(eq(sweepstakeParticipants.configId, configId)).returning();
+    return result.length;
+  }
+
+  // ---------- Shared cache (Task #290) ----------
+
+  async getSharedCacheEntry(namespace: string, cacheKey: string): Promise<SharedCacheEntry | undefined> {
+    const [row] = await db
+      .select()
+      .from(sharedCache)
+      .where(and(eq(sharedCache.namespace, namespace), eq(sharedCache.cacheKey, cacheKey)));
+    return row;
+  }
+
+  async upsertSharedCacheEntry(data: InsertSharedCacheEntry): Promise<SharedCacheEntry> {
+    const now = new Date();
+    const [row] = await db
+      .insert(sharedCache)
+      .values({ ...data, updatedAt: now })
+      .onConflictDoUpdate({
+        target: [sharedCache.namespace, sharedCache.cacheKey],
+        set: {
+          valueJson: data.valueJson ?? null,
+          valueText: data.valueText ?? null,
+          expiresAt: data.expiresAt ?? null,
+          lastUpdatedAt: data.lastUpdatedAt ?? now,
+          source: data.source ?? null,
+          status: data.status ?? "fresh",
+          errorMessage: data.errorMessage ?? null,
+          metadata: data.metadata ?? null,
+          updatedAt: now,
+        },
+      })
+      .returning();
+    return row;
+  }
+
+  async deleteSharedCacheEntry(namespace: string, cacheKey: string): Promise<boolean> {
+    const result = await db
+      .delete(sharedCache)
+      .where(and(eq(sharedCache.namespace, namespace), eq(sharedCache.cacheKey, cacheKey)))
+      .returning();
+    return result.length > 0;
+  }
+
+  async clearSharedCacheNamespace(namespace: string): Promise<number> {
+    const result = await db.delete(sharedCache).where(eq(sharedCache.namespace, namespace)).returning();
+    return result.length;
+  }
+
+  async listSharedCacheEntries(namespace?: string): Promise<SharedCacheEntry[]> {
+    if (namespace) {
+      return db
+        .select()
+        .from(sharedCache)
+        .where(eq(sharedCache.namespace, namespace))
+        .orderBy(desc(sharedCache.lastUpdatedAt));
+    }
+    return db.select().from(sharedCache).orderBy(asc(sharedCache.namespace), desc(sharedCache.lastUpdatedAt));
+  }
+
+  async pruneExpiredSharedCache(now: Date, gracePeriodMs: number): Promise<number> {
+    // Only prune rows whose expiry is older than `now - grace`, so recently
+    // expired rows survive as last-known-good (serve-stale) for a while.
+    const cutoff = new Date(now.getTime() - gracePeriodMs);
+    const result = await db
+      .delete(sharedCache)
+      .where(and(isNotNull(sharedCache.expiresAt), lt(sharedCache.expiresAt, cutoff)))
+      .returning();
     return result.length;
   }
 }

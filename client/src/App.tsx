@@ -49,6 +49,7 @@ import DisplayAgendaPage from "@/pages/display-agenda";
 import SweepstakePage from "@/pages/sweepstake";
 import DisplaySweepstakePage from "@/pages/display-sweepstake";
 import FontsPage from "@/pages/fonts";
+import SharedCachePage from "@/pages/admin-shared-cache";
 
 function AdminRoute({ component: Component }: { component: () => JSX.Element }) {
   const { user } = useAuth();
@@ -80,6 +81,7 @@ function AuthenticatedRouter() {
       <Route path="/admin/users">{() => <AdminRoute component={AdminUsersPage} />}</Route>
       <Route path="/admin/display-profiles">{() => <AdminRoute component={AdminDisplayProfilesPage} />}</Route>
       <Route path="/admin/activity">{() => <AdminRoute component={ActivityLogPage} />}</Route>
+      <Route path="/admin/shared-cache">{() => <AdminRoute component={SharedCachePage} />}</Route>
       <Route path="/control-panel" component={ControlPanelPage} />
       <Route path="/agenda" component={AgendaItemsPage} />
       <Route path="/agenda/displays" component={AgendaConfigsPage} />

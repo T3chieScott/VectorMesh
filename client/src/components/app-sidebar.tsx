@@ -25,6 +25,7 @@ import {
   CalendarDays,
   Type,
   Trophy,
+  DatabaseZap,
 } from "lucide-react";
 import {
   Sidebar,
@@ -191,6 +192,11 @@ const adminNavItems = [
     title: "Activity Log",
     url: "/admin/activity",
     icon: FileText,
+  },
+  {
+    title: "Shared Cache",
+    url: "/admin/shared-cache",
+    icon: DatabaseZap,
   },
 ];
 

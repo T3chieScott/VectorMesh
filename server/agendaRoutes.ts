@@ -31,6 +31,18 @@ import {
   MICROSOFT_NOT_CONNECTED_MESSAGE,
 } from "./microsoftGraph";
 import { getPathParam, getQueryString } from "./requestParams";
+import { getOrSet, set, del, buildCacheKey, registerRefresher, CACHE_NAMESPACES, DEFAULT_TTLS } from "./sharedCache";
+
+// Task #290 — drop the cached computed agenda display payload for a single
+// widget config (tenant-scoped key). Best effort: never let a cache failure
+// break a write.
+async function invalidateAgendaDisplayCache(clientId: string, configId: string): Promise<void> {
+  try {
+    await del(CACHE_NAMESPACES.AGENDA, buildCacheKey(clientId, configId));
+  } catch (err) {
+    console.error("[agenda] display cache invalidation failed:", err instanceof Error ? err.message : err);
+  }
+}
 
 export interface AgendaRoutesStorage {
   getAgendaItems(clientId?: string): Promise<AgendaItem[]>;
@@ -219,6 +231,18 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
     return norm === clientId || norm.startsWith(`${clientId}/`);
   }
 
+  // Task #290 — an agenda *item* change affects every display config of that
+  // site (each config resolves a filtered view of the same items), so drop the
+  // cached payload for all of the client's widget configs. Best effort.
+  async function invalidateAgendaDisplayForClient(clientId: string): Promise<void> {
+    try {
+      const configs = await storage.getAgendaWidgetConfigs(clientId);
+      await Promise.all(configs.map((c) => invalidateAgendaDisplayCache(clientId, c.id)));
+    } catch (err) {
+      console.error("[agenda] per-client cache invalidation failed:", err instanceof Error ? err.message : err);
+    }
+  }
+
   app.get("/api/agenda", requireAuthOrToken, loadUserContext, async (req, res) => {
     try {
       const clientIdParam = getQueryString(req, "clientId", res);
@@ -250,6 +274,7 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         return res.status(400).json({ error: "endsAt must be after startsAt" });
       }
       const item = await storage.createAgendaItem(data);
+      await invalidateAgendaDisplayForClient(item.clientId);
       audit(req, "create", "agenda_item", item.id, {
         title: item.title,
         clientId: item.clientId,
@@ -283,6 +308,10 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       // agenda-sync passes so hand-tweaks are never clobbered. The
       // sync engine reads manualOverride and skips matching rows.
       const item = await storage.updateAgendaItem(id, { ...data, manualOverride: true });
+      await invalidateAgendaDisplayForClient(existing.clientId);
+      if (data.clientId && data.clientId !== existing.clientId) {
+        await invalidateAgendaDisplayForClient(data.clientId);
+      }
       audit(req, "update", "agenda_item", id, { title: item?.title });
       res.json(item);
     } catch (error) {
@@ -301,6 +330,7 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         return res.status(403).json({ error: "Access denied to this site" });
       }
       await storage.deleteAgendaItem(id);
+      await invalidateAgendaDisplayForClient(existing.clientId);
       audit(req, "delete", "agenda_item", id, { title: existing.title });
       res.status(204).send();
     } catch (error) {
@@ -342,6 +372,7 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         await storage.deleteAgendaItemsForClient(clientId);
       }
       const inserted = await storage.createAgendaItemsBulk(toInsert);
+      await invalidateAgendaDisplayForClient(clientId);
       audit(req, "import", "agenda_item", clientId, {
         count: inserted.length,
         replace,
@@ -472,6 +503,7 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       // (both reference identical method signatures from the @shared/schema
       // types), so this pass-through is type-safe.
       const result = await runAgendaSync(existing, { storage, now, resolveStoredPath, graphFetch });
+      await invalidateAgendaDisplayForClient(existing.clientId);
       audit(req, "run", "agenda_sync_config", id, {
         ok: result.ok,
         inserted: result.inserted,
@@ -727,6 +759,10 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         return res.status(403).json({ error: "Access denied to target site" });
       }
       const config = await storage.updateAgendaWidgetConfig(id, data);
+      await invalidateAgendaDisplayCache(existing.clientId, id);
+      if (data.clientId && data.clientId !== existing.clientId) {
+        await invalidateAgendaDisplayCache(data.clientId, id);
+      }
       audit(req, "update", "agenda_widget_config", id, { name: config?.name });
       res.json(config);
     } catch (error) {
@@ -745,6 +781,7 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         return res.status(403).json({ error: "Access denied to this site" });
       }
       await storage.deleteAgendaWidgetConfig(id);
+      await invalidateAgendaDisplayCache(existing.clientId, id);
       audit(req, "delete", "agenda_widget_config", id, { name: existing.name });
       res.status(204).send();
     } catch (error) {
@@ -755,18 +792,88 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
 
   app.get("/api/agenda/display/:configId", async (req, res) => {
     try {
+      const configId = getPathParam(req, "configId");
       // Optional ?at=<ISO instant> test-date override so operators can
       // preview a screen as if "now" were a chosen moment. Invalid or
       // missing values fall back to the real server clock.
       const atRaw = typeof req.query.at === "string" ? req.query.at : null;
       const parsedAt = atRaw ? new Date(atRaw) : null;
-      const resolveAt =
-        parsedAt && !Number.isNaN(parsedAt.getTime()) ? parsedAt : now();
+      const hasOverride = !!(parsedAt && !Number.isNaN(parsedAt.getTime()));
+      const resolveAt = hasOverride ? parsedAt! : now();
+
+      let payload: Awaited<ReturnType<typeof buildAgendaDisplayPayload>> = null;
+      if (hasOverride) {
+        // Task #290 — a ?at preview resolves "now" to an arbitrary instant,
+        // so it must NEVER be cached (every preview is a one-off).
+        payload = await buildAgendaDisplayPayload(storage, configId, resolveAt);
+      } else {
+        // Cache the computed display payload (short TTL, serve-stale) keyed
+        // per tenant. Look up the config's clientId cheaply first so the key
+        // is tenant-scoped and the admin viewer can site-scope by metadata.
+        const cfg = await storage.getAgendaWidgetConfig(configId);
+        if (!cfg) return res.status(404).json({ error: "Config not found" });
+        const result = await getOrSet({
+          namespace: CACHE_NAMESPACES.AGENDA,
+          key: buildCacheKey(cfg.clientId, configId),
+          ttlMs: DEFAULT_TTLS.AGENDA_DISPLAY,
+          source: "agenda:display",
+          metadata: { clientId: cfg.clientId },
+          fetcher: async () => {
+            const built = await buildAgendaDisplayPayload(storage, configId, resolveAt);
+            if (!built) throw new Error("Config not found");
+            return built;
+          },
+        });
+        payload = result.data;
+      }
+      if (!payload) return res.status(404).json({ error: "Config not found" });
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ...payload, serverTime: Date.now() });
+    } catch (error) {
+      console.error("Error serving agenda display:", error);
+      res.status(500).json({ error: "Failed to serve agenda" });
+    }
+  });
+
+  // Task #290 — admin "refresh" for an agenda display cache entry. Recomputes
+  // the payload for "now" and writes it back even when still fresh. The cacheKey
+  // is buildCacheKey(clientId, configId); we re-derive the configId from it.
+  registerRefresher(CACHE_NAMESPACES.AGENDA, async (entry) => {
+    const parts = entry.cacheKey.split(":");
+    const configId = parts.length > 1 ? parts[1] : parts[0];
+    const cfg = await storage.getAgendaWidgetConfig(configId);
+    if (!cfg) {
+      await del(CACHE_NAMESPACES.AGENDA, entry.cacheKey);
+      return null;
+    }
+    const built = await buildAgendaDisplayPayload(storage, configId, now());
+    if (!built) {
+      await del(CACHE_NAMESPACES.AGENDA, entry.cacheKey);
+      return null;
+    }
+    await set(CACHE_NAMESPACES.AGENDA, entry.cacheKey, built, {
+      ttlMs: DEFAULT_TTLS.AGENDA_DISPLAY,
+      source: "agenda:display",
+      metadata: { clientId: cfg.clientId },
+    });
+    return { data: built, status: "fresh", stale: false, ok: true, updatedAt: new Date(), source: "agenda:display" };
+  });
+}
+
+// Assemble the scrubbed public agenda display payload (without serverTime,
+// which is always stamped fresh after any cache read). Extracted to module
+// scope (Task #290) so both the display route and the admin cache refresher
+// can recompute it. Returns null when the config doesn't exist.
+async function buildAgendaDisplayPayload(
+  storage: AgendaRoutesStorage,
+  configId: string,
+  resolveAt: Date,
+) {
       const resolved = await storage.getResolvedAgendaForConfig(
-        getPathParam(req, "configId"),
+        configId,
         resolveAt,
       );
-      if (!resolved) return res.status(404).json({ error: "Config not found" });
+      if (!resolved) return null;
       const { config, items } = resolved;
       const client = await storage.getClient(config.clientId);
       const publicConfig = {
@@ -832,17 +939,10 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       // display page (and agenda zones inside layouts) can inject the
       // @font-face needed to render a `custom:<id>` fontFamily.
       const fonts = await storage.getCustomFonts(config.clientId);
-      res.setHeader("Cache-Control", "no-store");
-      res.json({
+      return {
         config: publicConfig,
         items: publicItems,
         client: client ? { name: client.name, timezone: client.timezone } : null,
         fonts: fonts.map((f) => ({ id: f.id, familyId: f.familyId, name: f.name, weight: f.weight, style: f.style, format: f.format })),
-        serverTime: Date.now(),
-      });
-    } catch (error) {
-      console.error("Error serving agenda display:", error);
-      res.status(500).json({ error: "Failed to serve agenda" });
-    }
-  });
+      };
 }

@@ -1933,3 +1933,70 @@ export interface PlayerContentResponse {
     }>;
   } | null;
 }
+
+// ============ SHARED CACHE (Task #290) ============
+//
+// PostgreSQL-backed shared (L2) cache for external data (Sportmonks,
+// agenda spreadsheets, Google Sheets, Microsoft/SharePoint) and computed
+// widget/display payloads. It sits BEHIND the existing fast in-memory
+// (L1) caches and gives cross-process last-known-good storage so display
+// screens never block on a slow/failing provider.
+//
+// Entries are addressed by (namespace, cache_key). The cache_key MUST
+// encode the owning clientId/configId for any per-site payload so a
+// cached row can never leak across tenants (see server/sharedCache.ts
+// buildCacheKey). Secrets/tokens/signed URLs must never be persisted into
+// any column here — sanitise before writing.
+export const sharedCache = pgTable(
+  "shared_cache",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    // Logical bucket, e.g. "sportmonks", "agenda", "sweepstake_display".
+    namespace: text("namespace").notNull(),
+    // Fully-qualified key within the namespace (tenant-scoped where relevant).
+    cacheKey: text("cache_key").notNull(),
+    // Structured payload (preferred). value_text is for raw text snapshots
+    // (e.g. CSV) too large/awkward for JSON.
+    valueJson: jsonb("value_json"),
+    valueText: text("value_text"),
+    // When the entry goes stale. null = never expires.
+    expiresAt: timestamp("expires_at"),
+    // When the value was last successfully refreshed.
+    lastUpdatedAt: timestamp("last_updated_at").defaultNow(),
+    // Human-readable origin (sanitised), e.g. "sportmonks:inplay".
+    source: text("source"),
+    // fresh | stale | expired | error
+    status: text("status").notNull().default("fresh"),
+    // Sanitised last error message when a refresh failed.
+    errorMessage: text("error_message"),
+    // Small sanitised metadata bag (counts, flags) — never secrets.
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    namespaceKeyUnique: uniqueIndex("shared_cache_namespace_key_unique").on(
+      table.namespace,
+      table.cacheKey,
+    ),
+    namespaceIdx: index("shared_cache_namespace_idx").on(table.namespace),
+    cacheKeyIdx: index("shared_cache_cache_key_idx").on(table.cacheKey),
+    expiresAtIdx: index("shared_cache_expires_at_idx").on(table.expiresAt),
+    statusIdx: index("shared_cache_status_idx").on(table.status),
+    lastUpdatedAtIdx: index("shared_cache_last_updated_at_idx").on(table.lastUpdatedAt),
+  }),
+);
+
+export const SHARED_CACHE_STATUSES = ["fresh", "stale", "expired", "error"] as const;
+export type SharedCacheStatus = (typeof SHARED_CACHE_STATUSES)[number];
+
+export const insertSharedCacheSchema = createInsertSchema(sharedCache)
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .extend({
+    namespace: z.string().min(1),
+    cacheKey: z.string().min(1),
+    status: z.enum(SHARED_CACHE_STATUSES).default("fresh"),
+  });
+
+export type SharedCacheEntry = typeof sharedCache.$inferSelect;
+export type InsertSharedCacheEntry = z.infer<typeof insertSharedCacheSchema>;
