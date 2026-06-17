@@ -655,7 +655,7 @@ function StaffChips({ names, accent, tokens, max = 3 }: { names: string[]; accen
   if (names.length === 0)
     return <span style={{ fontSize: "1.6cqmin", color: tokens.subtle, fontStyle: "italic" }}>No staff drawn</span>;
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6cqmin", alignItems: "center" }}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6cqmin", alignItems: "center", justifyContent: "center" }}>
       {names.slice(0, max).map((n, i) => (
         <span
           key={`${n}-${i}`}
@@ -1329,7 +1329,7 @@ function LiveTeamColumn({ team, tokens, accent }: { team: LiveTeamView | null; t
       )}
       <div style={{ fontSize: "3.2cqmin", fontWeight: 900, whiteSpace: "nowrap" }}>{team?.name ?? "TBC"}</div>
       {team && team.participants.length > 0 && (
-        <div style={{ fontSize: "2cqmin", color: accent, fontWeight: 800, maxWidth: "30cqmin", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team.participants.join(" · ")}</div>
+        <div style={{ fontSize: "2cqmin", color: accent, fontWeight: 800, maxWidth: "40cqmin", lineHeight: 1.2, overflowWrap: "anywhere" }}>{team.participants.join(" · ")}</div>
       )}
     </div>
   );
@@ -1420,28 +1420,42 @@ function LiveStandingsSlide({ data, tokens, accent }: SlideProps) {
       if (!byGroup.has(key)) byGroup.set(key, []);
       byGroup.get(key)!.push(s);
     }
-    return Array.from(byGroup.entries()).slice(0, 4);
+    return Array.from(byGroup.entries());
   }, [live?.standings]);
+
+  const boxRef = useRef<HTMLDivElement>(null);
+  const { w, h } = useBoxSize(boxRef);
+  const cols = w > 0 ? clamp(Math.round(w / 520), 1, 4) : 2;
+  const rows = h > 0 ? clamp(Math.floor(h / 230), 1, 3) : 2;
+  const perPage = Math.max(1, cols * rows);
+  const { page, pageCount } = usePagedSlide(groups.length, perPage);
+  const shown = chunk(groups, perPage)[page] ?? [];
+
   if (groups.length === 0) return <CenterMessage tokens={tokens} title="No live tables yet" icon="📋" />;
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: groups.length > 1 ? "1fr 1fr" : "1fr", gap: "2cqmin", height: "100%", alignContent: "center" }} data-testid="slide-live-standings">
-      {groups.map(([name, rows]) => (
-        <div key={name} style={{ ...cardBase(tokens), padding: "1.6cqmin 2.2cqmin" }}>
-          <div style={{ marginBottom: "1cqmin" }}><GroupPill group={name} tokens={tokens} accent={accent} /></div>
-          {rows.slice(0, 4).map((r, i) => (
-            <div key={r.team.teamId ?? r.team.name} style={{ display: "grid", gridTemplateColumns: "auto auto 1fr auto auto", gap: "1.4cqmin", alignItems: "center", padding: "0.9cqmin 0", borderTop: i === 0 ? "none" : `1px solid ${tokens.border}`, fontSize: "2.1cqmin" }}>
-              <span style={{ color: tokens.subtle, width: "2.4cqmin", fontWeight: 800 }}>{r.position ?? i + 1}</span>
-              {r.team.crestUrl ? <img src={r.team.crestUrl} alt="" style={{ width: "3cqmin", height: "3cqmin", objectFit: "contain" }} /> : <span style={{ width: "3cqmin" }} />}
-              <span style={{ minWidth: 0, overflow: "hidden" }}>
-                <span style={{ fontWeight: 800, whiteSpace: "nowrap" }}>{r.team.name}</span>
-                {r.team.participants.length > 0 && <span style={{ color: accent, fontSize: "1.5cqmin", marginLeft: "1cqmin", fontWeight: 700 }}>{r.team.participants.join(" · ")}</span>}
-              </span>
-              <span style={{ color: tokens.subtle, fontVariantNumeric: "tabular-nums" }}>{r.won}-{r.draw}-{r.lost}</span>
-              <span style={{ fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>{r.points}</span>
-            </div>
-          ))}
-        </div>
-      ))}
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: "1cqmin" }} data-testid="slide-live-standings">
+      <SlideHeading title="Live group tables" accent={accent} tokens={tokens} right={<span style={{ fontSize: "6cqmin" }} aria-hidden>📋</span>} />
+      <div ref={boxRef} style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridAutoRows: "1fr", gap: "1.6cqmin", overflow: "hidden" }}>
+        {shown.map(([name, rows]) => (
+          <div key={name} style={{ ...cardBase(tokens), padding: "1.6cqmin 2.2cqmin", minHeight: 0, overflow: "hidden" }}>
+            <div style={{ marginBottom: "1cqmin" }}><GroupPill group={name} tokens={tokens} accent={accent} /></div>
+            {rows.slice(0, 4).map((r, i) => (
+              <div key={r.team.teamId ?? r.team.name} style={{ display: "grid", gridTemplateColumns: "auto auto 1fr auto auto", gap: "1.4cqmin", alignItems: "center", padding: "0.9cqmin 0", borderTop: i === 0 ? "none" : `1px solid ${tokens.border}`, fontSize: "2.1cqmin" }}>
+                <span style={{ color: tokens.subtle, width: "2.4cqmin", fontWeight: 800 }}>{r.position ?? i + 1}</span>
+                {r.team.crestUrl ? <img src={r.team.crestUrl} alt="" style={{ width: "3cqmin", height: "3cqmin", objectFit: "contain" }} /> : <span style={{ width: "3cqmin" }} />}
+                <span style={{ minWidth: 0, overflow: "hidden" }}>
+                  <span style={{ fontWeight: 800, whiteSpace: "nowrap" }}>{r.team.name}</span>
+                  {r.team.participants.length > 0 && <span style={{ color: accent, fontSize: "1.5cqmin", marginLeft: "1cqmin", fontWeight: 700 }}>{r.team.participants.join(" · ")}</span>}
+                </span>
+                <span style={{ color: tokens.subtle, fontVariantNumeric: "tabular-nums" }}>{r.won}-{r.draw}-{r.lost}</span>
+                <span style={{ fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>{r.points}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <PageDots page={page} pageCount={pageCount} accent={accent} tokens={tokens} testId="live-standings-pagination" />
     </div>
   );
 }
