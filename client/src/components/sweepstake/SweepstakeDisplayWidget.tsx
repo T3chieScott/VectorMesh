@@ -1122,9 +1122,10 @@ function AllTeamsSlide({ data, tokens, accent, ctx }: SlideProps) {
     () => [...data.teams].sort((a, b) => Number(a.eliminated) - Number(b.eliminated) || a.name.localeCompare(b.name)),
     [data.teams],
   );
-  // Fixed 6 x 3 grid so each card is wide enough to show the full team name.
+  // Fixed 6 x 2 grid: wide AND tall enough that the flag, full team name, group
+  // pill and up to two staff chips all fit without the name collapsing out.
   const cols = 6;
-  const rows = 3;
+  const rows = 2;
   const perPage = Math.max(1, cols * rows);
   const { page, pageCount } = usePagedSlide(teams.length, perPage);
   const items = chunk(teams, perPage)[page] ?? [];
@@ -1164,9 +1165,9 @@ function AllTeamsSlide({ data, tokens, accent, ctx }: SlideProps) {
               }}
               data-testid={`card-team-${t.id}`}
             >
-              <Flag team={t} size={6.5} tokens={tokens} />
-              <div style={{ fontSize: "2.2cqmin", fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{t.name}</div>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.8cqmin" }}>
+              <div style={{ flexShrink: 0 }}><Flag team={t} size={6.5} tokens={tokens} /></div>
+              <div style={{ fontSize: "2.2cqmin", fontWeight: 900, lineHeight: 1.15, maxWidth: "100%", flexShrink: 0, overflowWrap: "anywhere", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{t.name}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.8cqmin", flexShrink: 0 }}>
                 <GroupPill group={group} tokens={tokens} accent={accent} />
                 {t.isWinner ? (
                   <span style={{ fontSize: "1.4cqmin", fontWeight: 900, color: "#fff", background: "#f59e0b", borderRadius: 999, padding: "0.1cqmin 1cqmin" }}>🏆 WINNER</span>
