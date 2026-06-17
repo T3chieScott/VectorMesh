@@ -905,7 +905,7 @@ function FixturesSlide({ data, tokens, accent, ctx }: SlideProps) {
         right={<CalendarIcon accent={accent} />}
       />
       <div
-        style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridAutoRows: "1fr", gap: "1.4cqmin", overflow: "hidden" }}
+        style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridTemplateRows: `repeat(${perPage}, 1fr)`, gridAutoRows: "1fr", alignContent: "start", gap: "1.4cqmin", overflow: "hidden" }}
       >
         {items.map((m) => (
           <MatchCard key={m.id} match={m} tokens={tokens} accent={accent} ctx={ctx} mode={m.status === "finished" ? "result" : "fixture"} />
