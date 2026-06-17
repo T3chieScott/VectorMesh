@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import worldCupTrophyUrl from "@assets/World_cup_1781690948989.png";
 
 // Task #286/#287 — World Football Sweepstake display widget.
 //
@@ -1663,7 +1664,7 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
       >
         <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "2cqmin", marginBottom: "2.4cqmin" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "1.6cqmin", minWidth: 0 }}>
-            <span style={{ fontSize: "5cqmin", lineHeight: 1 }} aria-hidden>🏆</span>
+            <img src={worldCupTrophyUrl} alt="" aria-hidden style={{ height: "7cqmin", width: "auto", objectFit: "contain", filter: "drop-shadow(0 0.4cqmin 1cqmin rgba(0,0,0,0.35))" }} data-testid="img-trophy" />
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: "4.4cqmin", fontWeight: 900, color: accent, lineHeight: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} data-testid="text-tournament-name">
                 {data.tournamentName}
