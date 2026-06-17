@@ -1423,11 +1423,8 @@ function LiveStandingsSlide({ data, tokens, accent }: SlideProps) {
     return Array.from(byGroup.entries());
   }, [live?.standings]);
 
-  const boxRef = useRef<HTMLDivElement>(null);
-  const { w, h } = useBoxSize(boxRef);
-  const cols = w > 0 ? clamp(Math.round(w / 520), 1, 4) : 2;
-  const rows = h > 0 ? clamp(Math.floor(h / 230), 1, 3) : 2;
-  const perPage = Math.max(1, cols * rows);
+  const cols = 2;
+  const perPage = 4;
   const { page, pageCount } = usePagedSlide(groups.length, perPage);
   const shown = chunk(groups, perPage)[page] ?? [];
 
@@ -1436,7 +1433,7 @@ function LiveStandingsSlide({ data, tokens, accent }: SlideProps) {
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: "1cqmin" }} data-testid="slide-live-standings">
       <SlideHeading title="Live group tables" accent={accent} tokens={tokens} right={<span style={{ fontSize: "6cqmin" }} aria-hidden>📋</span>} />
-      <div ref={boxRef} style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridAutoRows: "1fr", gap: "1.6cqmin", overflow: "hidden" }}>
+      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridAutoRows: "1fr", gap: "1.6cqmin", overflow: "hidden" }}>
         {shown.map(([name, rows]) => (
           <div key={name} style={{ ...cardBase(tokens), padding: "1.6cqmin 2.2cqmin", minHeight: 0, overflow: "hidden" }}>
             <div style={{ marginBottom: "1cqmin" }}><GroupPill group={name} tokens={tokens} accent={accent} /></div>
