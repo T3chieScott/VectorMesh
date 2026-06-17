@@ -1122,14 +1122,9 @@ function AllTeamsSlide({ data, tokens, accent, ctx }: SlideProps) {
     () => [...data.teams].sort((a, b) => Number(a.eliminated) - Number(b.eliminated) || a.name.localeCompare(b.name)),
     [data.teams],
   );
-  const boxRef = useRef<HTMLDivElement>(null);
-  const { w, h } = useBoxSize(boxRef);
-  const cols = w > 0 ? clamp(Math.round(w / 215), 2, 8) : 4;
-  // Derive rows from the card's aspect relative to the box (not absolute px) so
-  // the layout is identical in the small preview and on a full-screen device:
-  // each card targets ~2:1 (w:h). Capped at 3 rows so a 16:9 box lands on a
-  // clean 4x3 = 12 grid and cqmin-sized card content never clips.
-  const rows = w > 0 && h > 0 ? clamp(Math.round((h * cols * 2) / w), 2, 3) : 3;
+  // Fixed 6 x 3 grid so each card is wide enough to show the full team name.
+  const cols = 6;
+  const rows = 3;
   const perPage = Math.max(1, cols * rows);
   const { page, pageCount } = usePagedSlide(teams.length, perPage);
   const items = chunk(teams, perPage)[page] ?? [];
@@ -1145,7 +1140,7 @@ function AllTeamsSlide({ data, tokens, accent, ctx }: SlideProps) {
         tokens={tokens}
         right={<span style={{ fontSize: "6cqmin" }} aria-hidden>🌍</span>}
       />
-      <div ref={boxRef} style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0,1fr))`, gap: "1.4cqmin", overflow: "hidden" }} data-testid="slide-spotlight">
+      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0,1fr))`, gap: "1.4cqmin", overflow: "hidden" }} data-testid="slide-spotlight">
         {items.map((t) => {
           const staff = staffFor(ctx, t.name);
           const group = groupFor(ctx, t.name);
