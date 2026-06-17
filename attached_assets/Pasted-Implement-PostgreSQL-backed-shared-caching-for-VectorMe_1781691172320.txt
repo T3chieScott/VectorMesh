@@ -1,0 +1,203 @@
+Implement PostgreSQL-backed shared caching for VectorMesh.
+
+Goal:
+Use the existing PostgreSQL database as the shared cache layer for external data and computed widget payloads. Do not add Redis at this stage. The design should allow Redis to be added later behind the same cache interface.
+
+Important:
+Do not remove or break existing functionality.
+Do not expose secrets or API keys to the frontend.
+Do not make display screens call external APIs directly.
+All display routes should use cached/normalised VectorMesh data.
+
+Create a reusable cache abstraction:
+server/cache/index.ts
+
+Expose methods:
+- cache.get(namespace, key)
+- cache.set(namespace, key, value, options)
+- cache.delete(namespace, key)
+- cache.clearNamespace(namespace)
+- cache.getOrSet(namespace, key, fetcher, options)
+- cache.getStale(namespace, key)
+- cache.markError(namespace, key, error)
+
+The app should not care whether the cache backend is PostgreSQL now or Redis later.
+
+PostgreSQL table:
+Create a table called shared_cache.
+
+Fields:
+- id
+- namespace text not null
+- cache_key text not null
+- value_json jsonb
+- value_text text optional
+- expires_at timestamp with time zone nullable
+- last_updated_at timestamp with time zone not null default now()
+- source text nullable
+- status text not null default 'fresh'
+- error_message text nullable
+- metadata jsonb nullable
+- created_at timestamp with time zone not null default now()
+- updated_at timestamp with time zone not null default now()
+
+Constraints:
+- unique(namespace, cache_key)
+
+Indexes:
+- namespace
+- cache_key
+- expires_at
+- status
+- last_updated_at
+- unique composite index on namespace + cache_key
+
+Status values:
+- fresh
+- stale
+- expired
+- error
+
+Cache behaviour:
+- get() should return null if missing.
+- get() should return null if expired unless allowStale is true.
+- getStale() should return cached value even if expired.
+- set() should upsert by namespace + key.
+- getOrSet() should:
+  1. return fresh cache if available
+  2. if expired/missing, call fetcher
+  3. store result with TTL
+  4. if fetcher fails and stale data exists, return stale data with warning metadata
+  5. if fetcher fails and no stale data exists, throw a controlled error
+
+TTL options:
+Support:
+- ttlSeconds
+- ttlMinutes
+- ttlHours
+- expiresAt
+- source
+- metadata
+
+Default TTLs:
+- Sportmonks fixtures/results: 5 minutes during live tournament, 30 minutes otherwise
+- Sportmonks teams/metadata: 24 hours
+- agenda spreadsheet snapshots: 5 minutes
+- agenda mapped rows: 5 minutes
+- computed display payloads: 30 seconds to 2 minutes depending on widget config
+- Microsoft/SharePoint spreadsheet fetch: 5 minutes
+- Google Sheets fetch: 5 minutes
+
+Cache namespaces:
+Use clear namespaces:
+- sportmonks:teams
+- sportmonks:fixtures
+- sportmonks:standings
+- sportmonks:results
+- worldcup:display
+- worldcup:sweepstake
+- agenda:spreadsheet
+- agenda:mappedRows
+- agenda:display
+- microsoft:spreadsheet
+- google:sheets
+- widget:displayPayload
+
+Admin visibility:
+Add an admin page or panel called Shared Cache.
+
+It should show:
+- namespace
+- key
+- status
+- source
+- expiresAt
+- lastUpdatedAt
+- age
+- hasError
+- errorMessage
+- metadata summary
+
+Admin actions:
+- refresh selected cache item
+- delete selected cache item
+- clear namespace
+- view cached JSON in a formatted readonly viewer
+- see expired/stale/error rows
+
+API endpoints:
+Add protected admin endpoints:
+GET /api/admin/cache
+GET /api/admin/cache/:namespace/:key
+DELETE /api/admin/cache/:namespace/:key
+POST /api/admin/cache/:namespace/clear
+POST /api/admin/cache/:namespace/:key/refresh where supported
+
+Do not allow unauthenticated access.
+
+Integration requirements:
+Update Sportmonks sync/display helpers to use shared cache.
+Update World Cup Sweepstake display endpoint to use cached provider data and cached computed display payloads.
+Update Agenda Spreadsheet Source helper to cache fetched spreadsheet data.
+Update Google Sheets helper to cache fetched sheet data.
+Update Microsoft/SharePoint spreadsheet helper to cache fetched workbook/sheet data.
+Update agenda display endpoint to use cached computed display payload where appropriate.
+
+Last-known-good behaviour:
+If an external provider fails:
+- do not crash the display
+- serve stale cache if available
+- mark cache row as error
+- store error message
+- expose warning in admin
+- display route should still render a friendly fallback
+
+Display safety:
+Screens should never wait on slow external APIs.
+Display endpoints should return quickly from VectorMesh database/cache.
+If cache is missing, return a controlled empty state rather than crashing.
+
+Migration:
+Add Drizzle schema/migration for shared_cache.
+Do not drop existing tables.
+Do not truncate existing data.
+
+Utility functions:
+Create:
+- buildCacheKey(parts)
+- isExpired(row)
+- calculateExpiry(options)
+- normaliseCacheNamespace(namespace)
+- safeJsonForCache(value)
+- summariseCacheMetadata(value)
+
+Testing:
+Add tests for:
+- set/get
+- expiry handling
+- stale fallback
+- getOrSet success
+- getOrSet provider failure with stale data
+- getOrSet provider failure without stale data
+- namespace clearing
+- upsert behaviour
+
+Logging:
+Log cache events in a controlled way:
+- cache miss
+- cache hit
+- stale served
+- provider fetch failed
+- cache refreshed
+Do not log secrets, API keys, full Microsoft tokens or credentials.
+
+Done criteria:
+- shared_cache table exists.
+- cache abstraction works.
+- Sportmonks helpers use PostgreSQL cache.
+- agenda spreadsheet helpers use PostgreSQL cache.
+- display endpoints no longer rely on direct external API calls.
+- stale data can be served when external providers fail.
+- admin can inspect and clear cache.
+- build passes.
+- existing VectorMesh functionality remains intact.
