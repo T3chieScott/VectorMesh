@@ -1033,7 +1033,8 @@ function SweepstakeSlide({ data, tokens, accent, ctx }: SlideProps) {
   const assigned = data.participants.filter((p) => p.teamName);
   const gridRef = useRef<HTMLDivElement>(null);
   const { w, h } = useBoxSize(gridRef);
-  const cols = w > 0 ? clamp(Math.round(w / 240), 2, 7) : 4;
+  // Fixed 6 columns so each card is wider and shows more of the participant name.
+  const cols = 6;
   const rows = h > 0 ? clamp(Math.floor(h / 86), 2, 12) : 8;
   const perPage = Math.max(1, cols * rows);
   const { page, pageCount } = usePagedSlide(assigned.length, perPage);
