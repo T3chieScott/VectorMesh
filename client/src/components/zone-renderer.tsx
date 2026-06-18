@@ -5568,6 +5568,12 @@ export interface ZoneRendererProps {
   showBorder?: boolean;
   playlistName?: string;
   timezone?: string;
+  // Per-screen IANA timezone override forwarded to time-sensitive widgets
+  // (currently the sweepstake wall) so a screen physically located in a
+  // different zone than its site shows kick-off times in its own local time.
+  // null/undefined = inherit the site timezone. Kept separate from
+  // `timezone` (which drives the weather/clock zones).
+  screenTimezone?: string | null;
   // When true the renderer's root is positioned absolute with inset:0 to fill
   // its parent — the parent MUST establish a positioning context (relative/
   // absolute/fixed/sticky) or the preview escapes and overlays the page.
@@ -5590,6 +5596,7 @@ export function ZoneRenderer({
   showBorder = false,
   playlistName,
   timezone,
+  screenTimezone,
   fillContainer = false,
   mediaBaseUrl,
   deviceToken,
@@ -5964,7 +5971,7 @@ export function ZoneRenderer({
         );
       case "sweepstake":
         return (
-          <SweepstakeConfigZoneWidget configId={zone.sweepstakeConfigId || ""} />
+          <SweepstakeConfigZoneWidget configId={zone.sweepstakeConfigId || ""} timezone={screenTimezone} />
         );
       case "webrtc_stream": {
         const webrtcFullUrl = zone.webrtcSignallingUrl && zone.webrtcStreamKey

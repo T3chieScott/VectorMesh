@@ -20,8 +20,11 @@ const STALE_GRACE_MS = 2 * 60 * 1000;
 
 export function SweepstakeConfigZoneWidget({
   configId,
+  timezone,
 }: {
   configId: string;
+  /** Per-screen IANA timezone override (null/undefined = inherit site). */
+  timezone?: string | null;
 }) {
   const [data, setData] = useState<DisplayPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -106,7 +109,7 @@ export function SweepstakeConfigZoneWidget({
   }
   return (
     <div className="w-full h-full">
-      <SweepstakeDisplayWidget data={data} />
+      <SweepstakeDisplayWidget data={data} timezoneOverride={timezone} />
     </div>
   );
 }

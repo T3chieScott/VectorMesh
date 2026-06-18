@@ -197,6 +197,12 @@ export const screens = pgTable("screens", {
   clientId: varchar("client_id").references(() => clients.id),
   name: text("name").notNull(),
   location: text("location"),
+  // Optional per-screen IANA timezone override (e.g. "Europe/Paris" for a
+  // screen physically located in France). null = inherit the owning
+  // client/site timezone. Used to format times (e.g. sweepstake kick-offs)
+  // in the screen's own local time regardless of the site default or the
+  // player device's OS clock.
+  timezone: text("timezone"),
   displayProfileId: varchar("display_profile_id").references(() => displayProfiles.id),
   // Task #180: pairing codes are globally unique. Each screen owns its
   // own code; walls share runtime `deviceToken` (assigned at pair time
@@ -271,7 +277,29 @@ export const screensRelations = relations(screens, ({ one, many }) => ({
   heartbeats: many(playerHeartbeats),
 }));
 
-export const insertScreenSchema = createInsertSchema(screens).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertScreenSchema = createInsertSchema(screens)
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .extend({
+    // Per-screen timezone override. null/omitted = inherit the site
+    // timezone. When a string is given it must be a valid IANA zone. We
+    // validate with Intl.DateTimeFormat directly to avoid a circular import
+    // back through createInsertSchema's transform (see insertClientSchema).
+    timezone: z
+      .string()
+      .refine(
+        (tz) => {
+          try {
+            new Intl.DateTimeFormat("en-US", { timeZone: tz }).format(new Date(0));
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        { message: "Unknown IANA timezone" },
+      )
+      .nullable()
+      .optional(),
+  });
 export type InsertScreen = z.infer<typeof insertScreenSchema>;
 export type Screen = typeof screens.$inferSelect;
 

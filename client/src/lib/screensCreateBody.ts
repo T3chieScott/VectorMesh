@@ -28,6 +28,9 @@ export interface ScreenCreateFormInput {
   // screen always lives in exactly one group.
   canvasGroupId?: string | null;
   roomCapacity?: number | null;
+  // Per-screen IANA timezone override. Empty/omitted = inherit the site
+  // timezone (sent as null so the server stores NULL).
+  timezone?: string | null;
   weatherLat?: string;
   weatherLng?: string;
   weatherPlaceName?: string;
@@ -48,6 +51,7 @@ export interface ScreenCreateRequestBody {
   canvasY: number;
   canvasGroupId: string | null;
   roomCapacity: number | null;
+  timezone: string | null;
   weatherLat: string | null;
   weatherLng: string | null;
   weatherPlaceName: string | null;
@@ -75,6 +79,7 @@ export function buildCreateScreenRequestBody(
       data.roomCapacity == null || Number.isNaN(data.roomCapacity)
         ? null
         : data.roomCapacity,
+    timezone: data.timezone?.trim() ? data.timezone.trim() : null,
     weatherLat: data.weatherLat?.trim() ? data.weatherLat.trim() : null,
     weatherLng: data.weatherLng?.trim() ? data.weatherLng.trim() : null,
     weatherPlaceName: data.weatherPlaceName?.trim()

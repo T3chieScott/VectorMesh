@@ -25,6 +25,11 @@ const STALE_GRACE_MS = 2 * 60 * 1000;
 export default function DisplaySweepstakePage() {
   const [, params] = useRoute("/display/sweepstake/:configId");
   const configId = params?.configId;
+  // Optional ?tz=Europe/Paris query param overrides the site timezone so a
+  // direct-URL signage screen physically located elsewhere shows kick-off
+  // times in its own local time. Omitted = inherit the site timezone.
+  const tzOverride =
+    new URLSearchParams(window.location.search).get("tz") || undefined;
   const [data, setData] = useState<DisplayPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retired, setRetired] = useState(false);
@@ -145,7 +150,7 @@ export default function DisplaySweepstakePage() {
 
   return (
     <div className="fixed inset-0">
-      <SweepstakeDisplayWidget data={data} />
+      <SweepstakeDisplayWidget data={data} timezoneOverride={tzOverride} />
     </div>
   );
 }

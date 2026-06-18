@@ -1409,6 +1409,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                     isPlaying={true}
                     showBorder={false}
                     timezone={weatherTimezone}
+                    screenTimezone={content!.screen?.timezone ?? undefined}
                     fillContainer={true}
                     mediaBaseUrl="/api/player/media"
                     deviceToken={token}
@@ -1615,6 +1616,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                 isPlaying={true}
                 showBorder={false}
                 timezone={weatherTimezone}
+                screenTimezone={content.screen?.timezone ?? undefined}
                 fillContainer={true}
                 mediaBaseUrl="/api/player/media"
                 deviceToken={token}

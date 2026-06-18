@@ -19,6 +19,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { TimezoneCombobox } from "@/components/timezone-combobox";
 import { z } from "zod";
 import { addMinutes, formatDistanceToNow } from "date-fns";
 import { PresetManager } from "@/components/preset-manager";
@@ -168,6 +169,7 @@ function loadViewPreference(userId: string | null | undefined): ScreensView {
 const screenFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   location: z.string().optional(),
+  timezone: z.string().nullable().optional(),
   clientId: z.string().nullable().optional(),
   displayProfileId: z.string().optional(),
   fallbackLayoutId: z.string().nullable().optional(),
@@ -1816,6 +1818,7 @@ function ScreenCard({
     defaultValues: {
       name: screen.name,
       location: screen.location || "",
+      timezone: screen.timezone ?? null,
       clientId: screen.clientId || "",
       displayProfileId: screen.displayProfileId || "",
       fallbackLayoutId: screen.fallbackLayoutId || "",
@@ -1839,6 +1842,7 @@ function ScreenCard({
       apiRequest("PATCH", `/api/screens/${screen.id}`, {
         ...data,
         clientId: data.clientId || null,
+        timezone: data.timezone?.trim() ? data.timezone.trim() : null,
         fallbackLayoutId: data.fallbackLayoutId || null,
         fallbackPlaylistId: data.fallbackPlaylistId || null,
         canvasEnabled: data.canvasEnabled || false,
@@ -2136,6 +2140,28 @@ function ScreenCard({
                           <FormControl>
                             <Input {...field} data-testid="input-edit-screen-location" />
                           </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="timezone"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Timezone</FormLabel>
+                          <FormControl>
+                            <TimezoneCombobox
+                              value={field.value ?? ""}
+                              onChange={(next) => field.onChange(next || null)}
+                              emptyOption={{ label: "Use site default" }}
+                              testId="button-edit-screen-timezone"
+                            />
+                          </FormControl>
+                          <p className="text-xs text-muted-foreground">
+                            Times like match kick-offs show in this zone. Leave on
+                            "Use site default" for screens at the main location.
+                          </p>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -2837,6 +2863,7 @@ function CreateScreenDialog({
   const baseDefaults: ScreenFormValues = {
     name: "",
     location: "",
+    timezone: null,
     clientId: selectedClientId || "",
     displayProfileId: "",
     canvasEnabled: false,
@@ -2937,6 +2964,28 @@ function CreateScreenDialog({
                       data-testid="input-screen-location"
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="timezone"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Timezone (optional)</FormLabel>
+                  <FormControl>
+                    <TimezoneCombobox
+                      value={field.value ?? ""}
+                      onChange={(next) => field.onChange(next || null)}
+                      emptyOption={{ label: "Use site default" }}
+                      testId="button-screen-timezone"
+                    />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">
+                    Times like match kick-offs show in this zone. Leave on
+                    "Use site default" for screens at the main location.
+                  </p>
                   <FormMessage />
                 </FormItem>
               )}

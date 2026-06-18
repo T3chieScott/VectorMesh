@@ -23,3 +23,23 @@ for old cached payloads) into every Intl `timeZone` call and same-day
 comparison. When adding a new storage dependency (e.g. `getClient`) to a routes
 module that has its own storage interface, also add it to that interface AND to
 every test mock, or the route will 500 at runtime under tests.
+
+## Per-screen timezone override
+
+A site has ONE timezone, but a screen can be physically elsewhere (e.g. a
+France-located display on a London-default site). Screens carry a nullable
+`timezone` column (null = inherit the site tz) that overrides the payload tz
+for that screen only. The override reaches the display as a `timezoneOverride`
+prop folded into the effective `data.timezone` at a single chokepoint.
+
+**Why:** Match data is in UTC and correct; only the per-location wall-clock
+formatting was wrong. The user explicitly chose a centrally-controlled
+per-screen setting over auto-detecting the device clock (Pi clocks are
+unreliable — see above).
+
+**How to apply:** ALWAYS validate an override timezone with `isValidTimezone`
+before it reaches any Intl `timeZone` call — an operator typo or a bad `?tz=`
+query param on the unauthenticated public display URL throws `RangeError` and
+blanks the screen. Invalid → fall back to the payload/site tz. Keep the
+override prop SEPARATE from the zone-renderer's existing `timezone` prop, which
+drives the weather/clock zones, not time-formatting widgets.

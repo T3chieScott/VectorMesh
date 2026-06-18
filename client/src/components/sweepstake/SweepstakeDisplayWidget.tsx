@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import worldCupTrophyUrl from "@assets/World_cup_1781690948989.png";
-import { DEFAULT_SCHEDULE_TIMEZONE_FALLBACK, getWallPartsInTz } from "@shared/timezone-utils";
+import { DEFAULT_SCHEDULE_TIMEZONE_FALLBACK, getWallPartsInTz, isValidTimezone } from "@shared/timezone-utils";
 
 // Task #286/#287 — World Football Sweepstake display widget.
 //
@@ -1778,9 +1778,32 @@ interface WidgetProps {
   data: SweepstakeDisplayData;
   /** Force a specific slide (used by the admin preview). */
   forcedSlide?: SlideType | null;
+  /**
+   * Optional per-screen IANA timezone that overrides the site timezone in
+   * `data.timezone`. Lets a screen physically located elsewhere (e.g. France
+   * on a London-default site) show kick-off times in its own local time.
+   */
+  timezoneOverride?: string | null;
 }
 
-export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
+export function SweepstakeDisplayWidget({ data: rawData, forcedSlide, timezoneOverride }: WidgetProps) {
+  // A per-screen timezone override (e.g. a France-located screen on a
+  // London-default site) wins over the site timezone baked into the payload.
+  // Fold it into the data so every consumer (buildContext, the "today"
+  // filters below, kick-off/date formatters) reads the same effective zone.
+  // Only honour a VALID IANA override. An operator typo in the screen
+  // setting or a bad ?tz= query param must never reach the Intl formatters
+  // below (they throw RangeError and would blank a public display) — fall
+  // back to the site timezone baked into the payload instead.
+  const data = useMemo(
+    () =>
+      timezoneOverride &&
+      isValidTimezone(timezoneOverride) &&
+      timezoneOverride !== rawData.timezone
+        ? { ...rawData, timezone: timezoneOverride }
+        : rawData,
+    [rawData, timezoneOverride],
+  );
   const tokens = themeTokens(data.theme);
   const accent = data.accentColor || "#16a34a";
   const motion = usePrefersMotion();
