@@ -1113,6 +1113,9 @@ function SweepstakeSlide({ data, tokens, accent, ctx }: SlideProps) {
                   <span style={{ fontSize: "1.8cqmin", color: tokens.subtle, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.teamName}</span>
                   {group && <span style={{ fontSize: "1.4cqmin", fontWeight: 800, color: hue !== null ? `hsl(${hue} 72% ${tokens.isDark ? 64 : 44}%)` : accent, whiteSpace: "nowrap" }}>{group}</span>}
                 </div>
+                {playingToday && !winner && !out && !status?.isLive && (
+                  <span style={{ display: "inline-block", alignSelf: "flex-start", marginTop: "0.5cqmin", fontSize: "1.3cqmin", fontWeight: 800, color: accent, background: `${accent}1f`, borderRadius: 999, padding: "0.2cqmin 0.9cqmin", whiteSpace: "nowrap" }}>TODAY</span>
+                )}
               </div>
               {winner ? (
                 <span style={{ fontSize: "1.5cqmin", fontWeight: 900, color: "#fff", background: "#f59e0b", borderRadius: 999, padding: "0.2cqmin 1cqmin" }}>🏆</span>
@@ -1123,8 +1126,6 @@ function SweepstakeSlide({ data, tokens, accent, ctx }: SlideProps) {
                   <span style={{ width: "1cqmin", height: "1cqmin", borderRadius: 999, background: LIVE_RED, display: "inline-block" }} aria-hidden />
                   {status.scoreLabel}
                 </span>
-              ) : playingToday ? (
-                <span style={{ fontSize: "1.3cqmin", fontWeight: 800, color: accent, background: `${accent}1f`, borderRadius: 999, padding: "0.2cqmin 0.9cqmin", whiteSpace: "nowrap" }}>TODAY</span>
               ) : null}
             </div>
           );
