@@ -1023,6 +1023,15 @@ function StandingsSlide({ data, tokens, accent, ctx }: SlideProps) {
         {shown.map(([name, rows]) => (
           <div key={name} style={{ ...cardBase(tokens), padding: "1.6cqmin 2cqmin", minHeight: 0, overflow: "hidden" }}>
             <div style={{ marginBottom: "1cqmin" }}><GroupPill group={name} tokens={tokens} accent={accent} /></div>
+            <div style={{ display: "grid", gridTemplateColumns: "auto auto 1fr auto auto", gap: "1.2cqmin", alignItems: "center", padding: "0 0 0.5cqmin", fontSize: "1.5cqmin", color: tokens.subtle, fontWeight: 800, letterSpacing: "0.04em" }}>
+              <span aria-hidden style={{ width: "2.4cqmin" }} />
+              <span aria-hidden style={{ width: "3cqmin" }} />
+              <span aria-hidden />
+              <span style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.4cqmin", textAlign: "center", width: "9cqmin" }}>
+                <span>W</span><span>D</span><span>L</span>
+              </span>
+              <span style={{ width: "4cqmin", textAlign: "right" }}>Pts</span>
+            </div>
             {rows.slice(0, 4).map((r, i) => {
               const team = teamFromName(ctx, r.teamName);
               const staff = staffFor(ctx, r.teamName);
@@ -1034,8 +1043,10 @@ function StandingsSlide({ data, tokens, accent, ctx }: SlideProps) {
                     <span style={{ fontWeight: 800, whiteSpace: "nowrap" }}>{r.teamName}</span>
                     {staff.length > 0 && <span style={{ color: accent, fontSize: "1.5cqmin", marginLeft: "1cqmin", fontWeight: 700 }}>{joinNames(staff, 1)}</span>}
                   </span>
-                  <span style={{ color: tokens.subtle, fontVariantNumeric: "tabular-nums" }}>{r.won}-{r.draw}-{r.lost}</span>
-                  <span style={{ fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>{r.points}</span>
+                  <span style={{ color: tokens.subtle, fontVariantNumeric: "tabular-nums", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.4cqmin", textAlign: "center", width: "9cqmin" }}>
+                    <span>{r.won}</span><span>{r.draw}</span><span>{r.lost}</span>
+                  </span>
+                  <span style={{ fontWeight: 900, fontVariantNumeric: "tabular-nums", width: "4cqmin", textAlign: "right" }}>{r.points}</span>
                 </div>
               );
             })}
@@ -1453,6 +1464,15 @@ function LiveStandingsSlide({ data, tokens, accent }: SlideProps) {
         {shown.map(([name, rows]) => (
           <div key={name} style={{ ...cardBase(tokens), padding: "1.6cqmin 2.2cqmin", minHeight: 0, overflow: "hidden" }}>
             <div style={{ marginBottom: "1cqmin" }}><GroupPill group={name} tokens={tokens} accent={accent} /></div>
+            <div style={{ display: "grid", gridTemplateColumns: "auto auto 1fr auto auto", gap: "1.4cqmin", alignItems: "center", padding: "0 0 0.5cqmin", fontSize: "1.5cqmin", color: tokens.subtle, fontWeight: 800, letterSpacing: "0.04em" }}>
+              <span aria-hidden style={{ width: "2.4cqmin" }} />
+              <span aria-hidden style={{ width: "3cqmin" }} />
+              <span aria-hidden />
+              <span style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.4cqmin", textAlign: "center", width: "9cqmin" }}>
+                <span>W</span><span>D</span><span>L</span>
+              </span>
+              <span style={{ width: "4cqmin", textAlign: "right" }}>Pts</span>
+            </div>
             {rows.slice(0, 4).map((r, i) => (
               <div key={r.team.teamId ?? r.team.name} style={{ display: "grid", gridTemplateColumns: "auto auto 1fr auto auto", gap: "1.4cqmin", alignItems: "center", padding: "0.9cqmin 0", borderTop: i === 0 ? "none" : `1px solid ${tokens.border}`, fontSize: "2.1cqmin" }}>
                 <span style={{ color: tokens.subtle, width: "2.4cqmin", fontWeight: 800 }}>{r.position ?? i + 1}</span>
@@ -1461,8 +1481,10 @@ function LiveStandingsSlide({ data, tokens, accent }: SlideProps) {
                   <span style={{ fontWeight: 800, whiteSpace: "nowrap" }}>{r.team.name}</span>
                   {r.team.participants.length > 0 && <span style={{ color: accent, fontSize: "1.5cqmin", marginLeft: "1cqmin", fontWeight: 700 }}>{r.team.participants.join(" · ")}</span>}
                 </span>
-                <span style={{ color: tokens.subtle, fontVariantNumeric: "tabular-nums" }}>{r.won}-{r.draw}-{r.lost}</span>
-                <span style={{ fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>{r.points}</span>
+                <span style={{ color: tokens.subtle, fontVariantNumeric: "tabular-nums", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.4cqmin", textAlign: "center", width: "9cqmin" }}>
+                  <span>{r.won}</span><span>{r.draw}</span><span>{r.lost}</span>
+                </span>
+                <span style={{ fontWeight: 900, fontVariantNumeric: "tabular-nums", width: "4cqmin", textAlign: "right" }}>{r.points}</span>
               </div>
             ))}
           </div>
