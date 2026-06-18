@@ -939,11 +939,9 @@ function FixturesSlide({ data, tokens, accent, ctx }: SlideProps) {
 
 function ResultsSlide({ data, tokens, accent, ctx }: SlideProps) {
   const list = ctx.finished;
-  const boxRef = useRef<HTMLDivElement>(null);
-  const { w, h } = useBoxSize(boxRef);
-  const cols = w > 0 ? clamp(Math.round(w / 580), 1, 3) : 1;
-  const rows = h > 0 ? clamp(Math.floor(h / 132), 1, 6) : 4;
-  const perPage = cols * rows;
+  // 3 results per page, stacked full-width — plenty of horizontal room for names.
+  const cols = 1;
+  const perPage = 3;
   const { page, pageCount } = usePagedSlide(list.length, perPage);
   const items = chunk(list, perPage)[page] ?? [];
 
@@ -959,8 +957,7 @@ function ResultsSlide({ data, tokens, accent, ctx }: SlideProps) {
         right={<span style={{ fontSize: "6cqmin" }} aria-hidden>📊</span>}
       />
       <div
-        ref={boxRef}
-        style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridAutoRows: "1fr", gap: "1.4cqmin", overflow: "hidden" }}
+        style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridTemplateRows: `repeat(${perPage}, 1fr)`, gridAutoRows: "1fr", alignContent: "start", gap: "1.4cqmin", overflow: "hidden" }}
       >
         {items.map((m) => {
           const homeStaff = staffFor(ctx, m.homeTeamName);
@@ -976,15 +973,15 @@ function ResultsSlide({ data, tokens, accent, ctx }: SlideProps) {
           const winStaff = hs > as ? homeStaff : as > hs ? awayStaff : [];
           let impact: { text: string; color: string } | null = null;
           if (homeStaff.length === 0 && awayStaff.length === 0) impact = { text: "No staff assigned", color: tokens.subtle };
-          else if (outStaff.length > 0) impact = { text: `${joinNames(outStaff, 3)} knocked out`, color: LIVE_RED };
-          else if (winStaff.length > 0) impact = { text: `${joinNames(winStaff, 3)} celebrating`, color: "#22c55e" };
-          else impact = { text: `${joinNames([...homeStaff, ...awayStaff], 3)} watching on`, color: accent };
+          else if (outStaff.length > 0) impact = { text: `${joinNames(outStaff, Infinity)} knocked out`, color: LIVE_RED };
+          else if (winStaff.length > 0) impact = { text: `${joinNames(winStaff, Infinity)} celebrating`, color: "#22c55e" };
+          else impact = { text: `${joinNames([...homeStaff, ...awayStaff], Infinity)} watching on`, color: accent };
           return (
             <div key={m.id} style={{ display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
               <MatchCard match={m} tokens={tokens} accent={accent} ctx={ctx} mode="result" showStaff={false} />
               <div style={{ display: "flex", alignItems: "flex-start", gap: "0.8cqmin", padding: "0.6cqmin 2.4cqmin 0", fontSize: "1.7cqmin", fontWeight: 800, color: impact.color, minHeight: 0 }}>
                 <span aria-hidden style={{ flexShrink: 0 }}>•</span>
-                <span style={{ minWidth: 0, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", lineHeight: 1.25 }}>{impact.text}</span>
+                <span style={{ minWidth: 0, lineHeight: 1.25 }}>{impact.text}</span>
               </div>
             </div>
           );
