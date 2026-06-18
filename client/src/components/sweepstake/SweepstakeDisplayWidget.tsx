@@ -1223,7 +1223,7 @@ function RivalriesSlide({ data, tokens, accent, ctx }: SlideProps) {
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: "1cqmin" }} data-testid="slide-rivalries">
       <SlideHeading title="Office rivalries" subtitle="Colleagues whose teams are about to clash" accent={accent} tokens={tokens} />
-      <div ref={boxRef} style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridAutoRows: "1fr", gap: "1.4cqmin", overflow: "hidden" }}>
+      <div ref={boxRef} style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridTemplateRows: `repeat(${rows}, 1fr)`, gridAutoRows: "1fr", alignContent: "start", gap: "1.4cqmin", overflow: "hidden" }}>
         {items.map(({ match, home, away }) => {
           const homeTeam = teamFromName(ctx, match.homeTeamName);
           const awayTeam = teamFromName(ctx, match.awayTeamName);
