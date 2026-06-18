@@ -1784,9 +1784,12 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
 
   const slidesLenRef = useRef(slides.length);
   slidesLenRef.current = slides.length;
+  const forcedRef = useRef(forcedSlide);
+  forcedRef.current = forcedSlide;
   const activeIndex = Math.min(pos.index, slides.length - 1);
   const activeItem: RotationItem = slides[activeIndex] ?? { kind: "builtin", slide: "sweepstake", key: "b:sweepstake:0" };
-  // The admin preview forces a single built-in slide and disables auto-advance.
+  // The admin preview forces a single built-in slide; it still pages through
+  // that slide on the rotation interval but never rotates to other slides.
   const activeSlide: RotationSlide =
     forcedSlide ?? (activeItem.kind === "builtin" ? activeItem.slide : "sweepstake");
   const isMediaActive = !forcedSlide && activeItem.kind === "media";
@@ -1812,6 +1815,9 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
     setPos(({ index, page }) => {
       const pc = Math.max(1, pageCountRef.current);
       if (page + 1 < pc) return { index, page: page + 1 };
+      // In the admin preview a single slide is forced: cycle through its pages
+      // without ever leaving the slide.
+      if (forcedRef.current) return { index, page: 0 };
       const len = Math.max(1, slidesLenRef.current);
       return { index: (index + 1) % len, page: 0 };
     });
@@ -1831,13 +1837,14 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
   // Auto-advance timer. Built-in slides use the configured rotation interval
   // (per page); custom images use their own durationSeconds. Videos are NOT
   // timed here — they advance from MediaSlide's `ended`/`error`/safety path so
-  // they always play to their natural end. The preview (forcedSlide) never
-  // auto-advances.
+  // they always play to their natural end. In the admin preview (forcedSlide)
+  // the timer still runs so the single forced slide pages through itself; it
+  // just never rotates on to a different slide (see `advance`).
   useEffect(() => {
-    if (forcedSlide || slides.length <= 1) return;
-    if (activeItem.kind === "media" && activeItem.mediaType === "video") return;
+    if (!forcedSlide && slides.length <= 1) return;
+    if (!forcedSlide && activeItem.kind === "media" && activeItem.mediaType === "video") return;
     const seconds =
-      activeItem.kind === "media"
+      !forcedSlide && activeItem.kind === "media"
         ? Math.max(1, activeItem.durationSeconds)
         : Math.max(3, data.rotationIntervalSeconds);
     const id = window.setTimeout(advance, seconds * 1000);
