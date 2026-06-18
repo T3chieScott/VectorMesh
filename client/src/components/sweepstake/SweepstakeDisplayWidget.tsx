@@ -515,8 +515,15 @@ function buildContext(data: SweepstakeDisplayData, motion: boolean): SweepstakeC
     staffByTeam.set(key, list);
   }
 
+  // Recent results are capped to matches that kicked off within the last 2 days.
+  const resultsCutoffTs = Date.now() - 2 * 86_400_000;
   const finished = data.matches
     .filter((m) => m.status === "finished")
+    .filter((m) => {
+      if (!m.kickoffAt) return false;
+      const ts = Date.parse(m.kickoffAt);
+      return !Number.isNaN(ts) && ts >= resultsCutoffTs;
+    })
     .sort((a, b) => (b.kickoffAt ?? "").localeCompare(a.kickoffAt ?? ""));
   const upcoming = data.matches
     .filter((m) => m.status !== "finished")
