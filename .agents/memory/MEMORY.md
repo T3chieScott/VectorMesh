@@ -14,3 +14,4 @@
 - [Agenda auto-fit pagination](agenda-autofit-pagination.md) — cards-per-page is measured off-screen, not maxItemsPerPage; packer reserves trailing gap so last card never clips; numCols can diverge in nested previews.
 - [Custom fonts](custom-fonts.md) — store font KEY not stack; `GET /api/fonts/:id/file` is intentionally no-auth (offline players + chromeless agenda); SW caches it like media.
 - [Agenda session dedup](agenda-session-dedup.md) — display collapses per-speaker rows by (client,title,start,end,room); status-merge precedence must cover every AGENDA_STATUSES value or live sessions get downgraded.
+- [Display wall-clock times use site tz](display-timezone.md) — player runs on Raspberry Pis with unreliable OS clocks; format all on-screen times in clients.timezone via shared/timezone-utils, never the device clock.

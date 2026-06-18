@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import worldCupTrophyUrl from "@assets/World_cup_1781690948989.png";
+import { DEFAULT_SCHEDULE_TIMEZONE_FALLBACK, getWallPartsInTz } from "@shared/timezone-utils";
 
 // Task #286/#287 — World Football Sweepstake display widget.
 //
@@ -167,6 +168,13 @@ export interface SweepstakeDisplayData {
   loop?: SweepstakeLoopSlide[];
   kickoffAt: string | null;
   lastSyncedAt: string | null;
+  /**
+   * IANA timezone of the owning site. Kick-off times are formatted in this
+   * zone so every display shows the same venue-local time regardless of the
+   * player device's own OS clock. Optional for back-compat with older cached
+   * payloads — falls back to the schedule default.
+   */
+  timezone?: string;
   teams: DisplayTeam[];
   participants: DisplayParticipant[];
   matches: DisplayMatch[];
@@ -383,29 +391,31 @@ function eventIcon(kind: string): string {
   }
 }
 
-function kickoffTime(iso: string | null): string {
+// All kick-off time/date formatting funnels through these helpers and is
+// rendered in the *site's* timezone (`tz`), never the player device's own OS
+// clock. A Raspberry Pi whose clock is set to UTC must still show the venue's
+// local kick-off time, so we always pass an explicit `timeZone` to Intl.
+function kickoffTime(iso: string | null, tz: string): string {
   if (!iso) return "TBC";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "TBC";
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: tz });
 }
 
-function shortDate(iso: string | null): string {
+function shortDate(iso: string | null, tz: string): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString([], { day: "numeric", month: "short" });
+  return d.toLocaleDateString([], { day: "numeric", month: "short", timeZone: tz });
 }
 
-function isSameLocalDay(iso: string | null, ref: Date): boolean {
+function isSameLocalDay(iso: string | null, ref: Date, tz: string): boolean {
   if (!iso) return false;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return false;
-  return (
-    d.getFullYear() === ref.getFullYear() &&
-    d.getMonth() === ref.getMonth() &&
-    d.getDate() === ref.getDate()
-  );
+  const a = getWallPartsInTz(d, tz);
+  const b = getWallPartsInTz(ref, tz);
+  return a.year === b.year && a.month === b.month && a.day === b.day;
 }
 
 function joinNames(names: string[], max = 3): string {
@@ -448,6 +458,8 @@ interface SweepstakeCtx {
   };
   liveByTeamId: Map<string, TeamLiveStatus>;
   motion: boolean;
+  /** Resolved IANA timezone used to format all kick-off times/dates. */
+  tz: string;
 }
 
 interface TeamLiveStatus {
@@ -529,17 +541,19 @@ function buildContext(data: SweepstakeDisplayData, motion: boolean): SweepstakeC
     .filter((m) => m.status !== "finished")
     .sort((a, b) => (a.kickoffAt ?? "").localeCompare(b.kickoffAt ?? ""));
 
+  const tz = data.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
   const refDay = new Date();
   // "today" for the fixtures slide includes games already played today (with
   // their results), live games, and games still to come — soonest first.
+  // "today" is the venue's calendar day (tz), not the player device's.
   const today = data.matches
-    .filter((m) => isSameLocalDay(m.kickoffAt, refDay))
+    .filter((m) => isSameLocalDay(m.kickoffAt, refDay, tz))
     .sort((a, b) => (a.kickoffAt ?? "").localeCompare(b.kickoffAt ?? ""));
   // playingToday still means "has a match STILL to come today" for the
   // participant badges, so derive it from upcoming-only.
   const playingToday = new Set<string>();
   for (const m of upcoming) {
-    if (!isSameLocalDay(m.kickoffAt, refDay)) continue;
+    if (!isSameLocalDay(m.kickoffAt, refDay, tz)) continue;
     if (m.homeTeamName) playingToday.add(m.homeTeamName.toLowerCase());
     if (m.awayTeamName) playingToday.add(m.awayTeamName.toLowerCase());
   }
@@ -585,6 +599,7 @@ function buildContext(data: SweepstakeDisplayData, motion: boolean): SweepstakeC
     survivor,
     liveByTeamId: liveStatusByTeamId(data.live),
     motion,
+    tz,
   };
 }
 
@@ -841,7 +856,7 @@ function MatchCard({ match, tokens, accent, ctx, mode, showStaff = true }: { mat
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1cqmin" }}>
         <GroupPill group={group} tokens={tokens} accent={accent} />
         <span style={{ fontSize: "1.6cqmin", color: tokens.subtle, fontWeight: 700, whiteSpace: "nowrap" }}>
-          {mode === "result" ? shortDate(match.kickoffAt) : ""}
+          {mode === "result" ? shortDate(match.kickoffAt, ctx.tz) : ""}
         </span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: "2cqmin" }}>
@@ -852,7 +867,7 @@ function MatchCard({ match, tokens, accent, ctx, mode, showStaff = true }: { mat
               {hs}<span style={{ color: tokens.subtle }}>–</span>{as}
             </div>
           ) : (
-            <div style={{ fontSize: "3.6cqmin", fontWeight: 900, color: accent, lineHeight: 1 }}>{kickoffTime(match.kickoffAt)}</div>
+            <div style={{ fontSize: "3.6cqmin", fontWeight: 900, color: accent, lineHeight: 1 }}>{kickoffTime(match.kickoffAt, ctx.tz)}</div>
           )}
           <div style={{ fontSize: "1.6cqmin", marginTop: "0.6cqmin", fontWeight: 800, color: live ? LIVE_RED : tokens.subtle, textTransform: "uppercase", letterSpacing: "0.08em" }}>
             {live ? "● LIVE" : mode === "result" ? "FT" : "KO"}
@@ -866,10 +881,10 @@ function MatchCard({ match, tokens, accent, ctx, mode, showStaff = true }: { mat
 
 // A small calendar graphic that shows today's real month + day. Replaces the
 // 📅 emoji, whose Apple glyph is permanently fixed to "JUL 17".
-function CalendarIcon({ accent }: { accent: string }) {
+function CalendarIcon({ accent, tz }: { accent: string; tz: string }) {
   const d = new Date();
-  const month = d.toLocaleDateString([], { month: "short" }).toUpperCase();
-  const day = d.getDate();
+  const month = d.toLocaleDateString([], { month: "short", timeZone: tz }).toUpperCase();
+  const day = getWallPartsInTz(d, tz).day;
   return (
     <div
       aria-hidden
@@ -930,7 +945,7 @@ function FixturesSlide({ data, tokens, accent, ctx }: SlideProps) {
         subtitle={usingToday ? `${ctx.today.length} match${ctx.today.length === 1 ? "" : "es"} on today` : "Next fixtures in the tournament"}
         accent={accent}
         tokens={tokens}
-        right={<CalendarIcon accent={accent} />}
+        right={<CalendarIcon accent={accent} tz={ctx.tz} />}
       />
       <div
         style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gridTemplateRows: `repeat(${perPage}, 1fr)`, gridAutoRows: "1fr", alignContent: "start", gap: "1.4cqmin", overflow: "hidden" }}
@@ -1259,7 +1274,7 @@ function RivalriesSlide({ data, tokens, accent, ctx }: SlideProps) {
               </div>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.3cqmin" }}>
                 <span style={{ fontSize: "2.2cqmin", fontWeight: 900, color: tokens.subtle }}>VS</span>
-                <span style={{ fontSize: "1.4cqmin", fontWeight: 800, color: accent, whiteSpace: "nowrap" }}>{shortDate(match.kickoffAt)} · {kickoffTime(match.kickoffAt)}</span>
+                <span style={{ fontSize: "1.4cqmin", fontWeight: 800, color: accent, whiteSpace: "nowrap" }}>{shortDate(match.kickoffAt, ctx.tz)} · {kickoffTime(match.kickoffAt, ctx.tz)}</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: "1.2cqmin", minWidth: 0, justifyContent: "flex-end" }}>
                 <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "0.15cqmin", alignItems: "flex-end", textAlign: "right" }}>
@@ -1369,7 +1384,7 @@ function LiveTeamColumn({ team, tokens, accent }: { team: LiveTeamView | null; t
   );
 }
 
-function MatchHero({ match, tokens, accent, label }: { match: LiveMatchView; tokens: ThemeTokens; accent: string; label: string }) {
+function MatchHero({ match, tokens, accent, label, tz }: { match: LiveMatchView; tokens: ThemeTokens; accent: string; label: string; tz: string }) {
   return (
     <div style={{ ...cardBase(tokens), border: `1px solid ${match.isLive ? LIVE_RED : tokens.border}`, padding: "3cqmin", display: "flex", flexDirection: "column", gap: "2cqmin" }}>
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "1.2cqmin" }}>
@@ -1385,7 +1400,7 @@ function MatchHero({ match, tokens, accent, label }: { match: LiveMatchView; tok
               {match.homeScore ?? 0}<span style={{ color: tokens.subtle }}> – </span>{match.awayScore ?? 0}
             </div>
           ) : (
-            <div style={{ fontSize: "4cqmin", fontWeight: 900, color: accent }}>{kickoffTime(match.startingAt)}</div>
+            <div style={{ fontSize: "4cqmin", fontWeight: 900, color: accent }}>{kickoffTime(match.startingAt, tz)}</div>
           )}
           <div style={{ fontSize: "2.2cqmin", color: tokens.subtle, marginTop: "0.6cqmin" }}>{match.isLive && match.minute != null ? `${match.minute}'` : match.stateLabel}</div>
         </div>
@@ -1395,15 +1410,15 @@ function MatchHero({ match, tokens, accent, label }: { match: LiveMatchView; tok
   );
 }
 
-function NowNextSlide({ data, tokens, accent }: SlideProps) {
+function NowNextSlide({ data, tokens, accent, ctx }: SlideProps) {
   const live = data.live;
   const now = live?.liveMatches[0] ?? null;
   const next = live?.nextMatch ?? null;
   if (!now && !next) return <CenterMessage tokens={tokens} title="No matches to show" subtitle="Check back at kick-off time" icon="⚽" />;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "3cqmin", height: "100%", justifyContent: "center" }} data-testid="slide-now-next">
-      {now && <MatchHero match={now} tokens={tokens} accent={accent} label="Now playing" />}
-      {next && <MatchHero match={next} tokens={tokens} accent={accent} label="Up next" />}
+      {now && <MatchHero match={now} tokens={tokens} accent={accent} label="Now playing" tz={ctx.tz} />}
+      {next && <MatchHero match={next} tokens={tokens} accent={accent} label="Up next" tz={ctx.tz} />}
     </div>
   );
 }

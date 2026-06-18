@@ -17,6 +17,7 @@ import {
   type InsertSweepstakeParticipant,
   type MediaAsset,
   type MediaShare,
+  type Client,
 } from "@shared/schema";
 import { getPathParam } from "./requestParams";
 import { filterMediaAssetsForScreen } from "./playerMediaFilter";
@@ -82,6 +83,7 @@ export interface SweepstakeRoutesStorage {
   getMediaAssets(): Promise<MediaAsset[]>;
   getMediaAsset(id: string): Promise<MediaAsset | undefined>;
   getMediaSharesForClient(clientId: string): Promise<MediaShare[]>;
+  getClient(id: string): Promise<Client | undefined>;
 }
 
 export interface SweepstakeRoutesAuth {
@@ -715,14 +717,15 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
         source: "sweepstake:display",
         metadata: { clientId: config.clientId },
         fetcher: async () => {
-          const [teams, matches, standings, participants, mediaAssets] = await Promise.all([
+          const [teams, matches, standings, participants, mediaAssets, client] = await Promise.all([
             storage.getTournamentTeams(config.id),
             storage.getTournamentMatches(config.id),
             storage.getTournamentStandings(config.id),
             storage.getSweepstakeParticipants(config.id),
             getScopedMediaForConfig(config.clientId),
+            storage.getClient(config.clientId),
           ]);
-          return buildDisplayData({ config, teams, matches, standings, participants, mediaAssets });
+          return buildDisplayData({ config, teams, matches, standings, participants, mediaAssets, timezone: client?.timezone });
         },
       });
       if (result.data == null) {
@@ -763,14 +766,15 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
       await del(CACHE_NAMESPACES.SWEEPSTAKE_DISPLAY, entry.cacheKey);
       return null;
     }
-    const [teams, matches, standings, participants, mediaAssets] = await Promise.all([
+    const [teams, matches, standings, participants, mediaAssets, client] = await Promise.all([
       storage.getTournamentTeams(config.id),
       storage.getTournamentMatches(config.id),
       storage.getTournamentStandings(config.id),
       storage.getSweepstakeParticipants(config.id),
       getScopedMediaForConfig(config.clientId),
+      storage.getClient(config.clientId),
     ]);
-    const data = buildDisplayData({ config, teams, matches, standings, participants, mediaAssets });
+    const data = buildDisplayData({ config, teams, matches, standings, participants, mediaAssets, timezone: client?.timezone });
     await set(CACHE_NAMESPACES.SWEEPSTAKE_DISPLAY, entry.cacheKey, data, {
       ttlMs: DEFAULT_TTLS.SWEEPSTAKE_DISPLAY,
       source: "sweepstake:display",

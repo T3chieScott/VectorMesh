@@ -315,3 +315,33 @@ test("buildDisplayData falls back to sweepstake when nothing has content", () =>
   const data = buildDisplayData({ config: config(), teams: [], matches: [], standings: [], participants: [] });
   assert.deepEqual(data.slides, ["sweepstake"]);
 });
+
+// Task #295 — kick-off times must render in the site's configured timezone, not
+// each player device's OS clock. The server stamps the resolved IANA zone onto
+// the payload so the client formats consistently everywhere.
+test("buildDisplayData passes through a valid site timezone", () => {
+  const data = buildDisplayData({
+    config: config(),
+    teams: [],
+    matches: [],
+    standings: [],
+    participants: [],
+    timezone: "America/New_York",
+  });
+  assert.equal(data.timezone, "America/New_York");
+});
+
+test("buildDisplayData falls back to Europe/London for missing or invalid timezone", () => {
+  const missing = buildDisplayData({ config: config(), teams: [], matches: [], standings: [], participants: [] });
+  assert.equal(missing.timezone, "Europe/London");
+
+  const invalid = buildDisplayData({
+    config: config(),
+    teams: [],
+    matches: [],
+    standings: [],
+    participants: [],
+    timezone: "Not/AZone",
+  });
+  assert.equal(invalid.timezone, "Europe/London");
+});

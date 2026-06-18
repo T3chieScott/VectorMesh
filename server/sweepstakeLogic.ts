@@ -16,6 +16,7 @@ import type {
   MediaAsset,
 } from "@shared/schema";
 import { SWEEPSTAKE_SLIDE_TYPES, SWEEPSTAKE_LIVE_PANELS } from "@shared/schema";
+import { DEFAULT_SCHEDULE_TIMEZONE_FALLBACK, isValidTimezone } from "@shared/timezone-utils";
 import type {
   NormLiveMatch,
   NormLiveEvent,
@@ -199,6 +200,8 @@ export interface SweepstakeDisplayData {
   loop: SweepstakeLoopSlide[];
   kickoffAt: string | null;
   lastSyncedAt: string | null;
+  /** IANA timezone of the owning site, used to format kick-off times. */
+  timezone: string;
   teams: DisplayTeam[];
   participants: DisplayParticipant[];
   matches: DisplayMatch[];
@@ -212,6 +215,13 @@ export interface BuildDisplayInput {
   matches: TournamentMatch[];
   standings: TournamentStanding[];
   participants: SweepstakeParticipant[];
+  /**
+   * IANA timezone of the owning site (clients.timezone). Kick-off times are
+   * formatted in this zone so every display shows the same venue-local time
+   * regardless of each player device's own OS clock setting. Falls back to
+   * the schedule default when missing or invalid.
+   */
+  timezone?: string;
   /**
    * Media assets the config's client may use (owned + shared), already
    * site-scoped by the caller. Custom media slides referencing assets outside
@@ -360,6 +370,10 @@ export function buildDisplayData(input: BuildDisplayInput): SweepstakeDisplayDat
     loop,
     kickoffAt: config.kickoffAt ? config.kickoffAt.toISOString() : null,
     lastSyncedAt: config.lastSyncedAt ? config.lastSyncedAt.toISOString() : null,
+    timezone:
+      input.timezone && isValidTimezone(input.timezone)
+        ? input.timezone
+        : DEFAULT_SCHEDULE_TIMEZONE_FALLBACK,
     teams,
     participants,
     matches,

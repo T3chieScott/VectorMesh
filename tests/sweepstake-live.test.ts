@@ -389,6 +389,7 @@ function makeDisplayStorage(cfg: SweepstakeWidgetConfig): SweepstakeRoutesStorag
     async getTournamentMatches() { return []; },
     async getTournamentStandings() { return []; },
     async getSweepstakeParticipants() { return []; },
+    async getClient() { return undefined; },
   } as unknown as SweepstakeRoutesStorage;
 }
 
