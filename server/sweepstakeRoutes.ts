@@ -15,8 +15,12 @@ import {
   type InsertTournamentStanding,
   type SweepstakeParticipant,
   type InsertSweepstakeParticipant,
+  type MediaAsset,
+  type MediaShare,
 } from "@shared/schema";
 import { getPathParam } from "./requestParams";
+import { filterMediaAssetsForScreen } from "./playerMediaFilter";
+import * as fileStorage from "./fileStorage";
 import { parseCsvToGrid } from "@shared/spreadsheet-mapping";
 import { fetchTournament, fetchSportmonksResults, isProviderKeyConfigured, ProviderError } from "./sweepstakeProviders";
 import {
@@ -75,6 +79,9 @@ export interface SweepstakeRoutesStorage {
   createSweepstakeParticipant(data: InsertSweepstakeParticipant): Promise<SweepstakeParticipant>;
   updateSweepstakeParticipant(id: string, data: Partial<InsertSweepstakeParticipant>): Promise<SweepstakeParticipant | undefined>;
   deleteSweepstakeParticipant(id: string): Promise<boolean>;
+  getMediaAssets(): Promise<MediaAsset[]>;
+  getMediaAsset(id: string): Promise<MediaAsset | undefined>;
+  getMediaSharesForClient(clientId: string): Promise<MediaShare[]>;
 }
 
 export interface SweepstakeRoutesAuth {
@@ -334,6 +341,23 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
   // team fate onto participant statuses. Idempotent. Delegates to the
   // module-level implementation shared with the periodic scheduler.
   const recomputeProgress = (configId: string) => recomputeSweepstakeProgress(storage, configId);
+
+  // Resolve the media assets a config's client may use (owned + shared),
+  // site-scoped exactly like the player media filter so custom slides can
+  // never reference cross-tenant media. Best-effort: on error returns [] so
+  // the display payload degrades to built-in slides rather than failing.
+  async function getScopedMediaForConfig(clientId: string): Promise<MediaAsset[]> {
+    try {
+      const [all, shares] = await Promise.all([
+        storage.getMediaAssets(),
+        storage.getMediaSharesForClient(clientId),
+      ]);
+      return filterMediaAssetsForScreen(all, clientId, shares);
+    } catch (err) {
+      console.error("[sweepstake] scoped media fetch failed:", err instanceof Error ? err.message : err);
+      return [];
+    }
+  }
 
   // ----- Configs -----
   app.get("/api/sweepstake/configs", requireAuth, loadUserContext, async (req, res) => {
@@ -691,13 +715,14 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
         source: "sweepstake:display",
         metadata: { clientId: config.clientId },
         fetcher: async () => {
-          const [teams, matches, standings, participants] = await Promise.all([
+          const [teams, matches, standings, participants, mediaAssets] = await Promise.all([
             storage.getTournamentTeams(config.id),
             storage.getTournamentMatches(config.id),
             storage.getTournamentStandings(config.id),
             storage.getSweepstakeParticipants(config.id),
+            getScopedMediaForConfig(config.clientId),
           ]);
-          return buildDisplayData({ config, teams, matches, standings, participants });
+          return buildDisplayData({ config, teams, matches, standings, participants, mediaAssets });
         },
       });
       if (result.data == null) {
@@ -738,18 +763,57 @@ export function mountSweepstakeRoutes(app: Express, deps: SweepstakeRoutesDeps) 
       await del(CACHE_NAMESPACES.SWEEPSTAKE_DISPLAY, entry.cacheKey);
       return null;
     }
-    const [teams, matches, standings, participants] = await Promise.all([
+    const [teams, matches, standings, participants, mediaAssets] = await Promise.all([
       storage.getTournamentTeams(config.id),
       storage.getTournamentMatches(config.id),
       storage.getTournamentStandings(config.id),
       storage.getSweepstakeParticipants(config.id),
+      getScopedMediaForConfig(config.clientId),
     ]);
-    const data = buildDisplayData({ config, teams, matches, standings, participants });
+    const data = buildDisplayData({ config, teams, matches, standings, participants, mediaAssets });
     await set(CACHE_NAMESPACES.SWEEPSTAKE_DISPLAY, entry.cacheKey, data, {
       ttlMs: DEFAULT_TTLS.SWEEPSTAKE_DISPLAY,
       source: "sweepstake:display",
       metadata: { clientId: config.clientId },
     });
     return { data, status: "fresh", stale: false, ok: true, updatedAt: new Date(), source: "sweepstake:display" };
+  });
+
+  // Public, scoped media stream for custom sweepstake slides. No auth (matches
+  // the public display endpoint), but tenant-safe: the asset must be referenced
+  // by THIS config's slideOrder AND owned by / shared with the config's client.
+  // Any miss is a flat 404 so we never confirm the existence of cross-tenant
+  // assets. HTTP-backed assets redirect; local assets stream with range support.
+  app.get("/api/sweepstake/display/:configId/media/:mediaId", async (req, res) => {
+    try {
+      const configId = getPathParam(req, "configId");
+      const mediaId = getPathParam(req, "mediaId");
+      const config = await storage.getSweepstakeConfig(configId);
+      if (!config) return res.status(404).json({ error: "Not found" });
+
+      const order = Array.isArray(config.slideOrder) ? config.slideOrder : [];
+      const referenced = order.some((it) => it.kind === "media" && it.mediaId === mediaId);
+      if (!referenced) return res.status(404).json({ error: "Not found" });
+
+      const asset = await storage.getMediaAsset(mediaId);
+      if (!asset) return res.status(404).json({ error: "Not found" });
+
+      // Tenant scope: owned by config's client OR explicitly shared with it.
+      if (asset.clientId !== config.clientId) {
+        const shares = await storage.getMediaSharesForClient(config.clientId);
+        if (!shares.some((s) => s.mediaAssetId === mediaId)) {
+          return res.status(404).json({ error: "Not found" });
+        }
+      }
+
+      if (asset.originalPath.startsWith("http")) {
+        res.redirect(asset.originalPath);
+      } else {
+        await fileStorage.streamFile(asset.originalPath, res, req);
+      }
+    } catch (error) {
+      console.error("Error serving sweepstake media:", error);
+      if (!res.headersSent) res.status(500).json({ error: "Failed to serve media" });
+    }
   });
 }

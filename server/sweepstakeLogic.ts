@@ -12,6 +12,8 @@ import type {
   TournamentStanding,
   SweepstakeSlideType,
   SweepstakeLivePanel,
+  SweepstakeLoopItem,
+  MediaAsset,
 } from "@shared/schema";
 import { SWEEPSTAKE_SLIDE_TYPES, SWEEPSTAKE_LIVE_PANELS } from "@shared/schema";
 import type {
@@ -166,6 +168,23 @@ export interface DisplayStanding {
   points: number;
 }
 
+// A resolved media slide in the public display payload. URL is a scoped public
+// route (no auth) that only streams media referenced by this config's loop.
+export interface DisplayMediaSlide {
+  kind: "media";
+  id: string;
+  url: string;
+  mediaType: "image" | "video" | "gif";
+  durationSeconds: number;
+  mute: boolean;
+  displayMode: string;
+}
+export interface DisplayBuiltinSlide {
+  kind: "builtin";
+  type: SweepstakeSlideType;
+}
+export type SweepstakeLoopSlide = DisplayBuiltinSlide | DisplayMediaSlide;
+
 export interface SweepstakeDisplayData {
   tournamentName: string;
   theme: string;
@@ -173,7 +192,10 @@ export interface SweepstakeDisplayData {
   layoutMode: string;
   rotationIntervalSeconds: number;
   refreshIntervalSeconds: number;
+  /** Legacy built-in-only list (back-compat). Prefer `loop`. */
   slides: SweepstakeSlideType[];
+  /** Ordered wall loop: built-in slides + resolved custom media slides. */
+  loop: SweepstakeLoopSlide[];
   kickoffAt: string | null;
   lastSyncedAt: string | null;
   teams: DisplayTeam[];
@@ -189,6 +211,12 @@ export interface BuildDisplayInput {
   matches: TournamentMatch[];
   standings: TournamentStanding[];
   participants: SweepstakeParticipant[];
+  /**
+   * Media assets the config's client may use (owned + shared), already
+   * site-scoped by the caller. Custom media slides referencing assets outside
+   * this set are dropped so the public payload never leaks cross-tenant media.
+   */
+  mediaAssets?: MediaAsset[];
 }
 
 /**
@@ -287,6 +315,38 @@ export function buildDisplayData(input: BuildDisplayInput): SweepstakeDisplayDat
   };
   const slides = requested.filter((s) => hasContent[s]);
 
+  // Build the ordered wall loop. When `slideOrder` is set it is the source of
+  // truth (built-in slides + custom media slides, mixed). Built-in items are
+  // still dropped when they have no content; media slides always show as long
+  // as they resolve to a site-scoped asset and are enabled. When `slideOrder`
+  // is empty we fall back to the legacy built-in-only list.
+  const mediaById = new Map((input.mediaAssets ?? []).map((m) => [m.id, m]));
+  const order: SweepstakeLoopItem[] = Array.isArray(config.slideOrder) ? config.slideOrder : [];
+  let loop: SweepstakeLoopSlide[] = [];
+  if (order.length > 0) {
+    for (const item of order) {
+      if (item.enabled === false) continue;
+      if (item.kind === "builtin") {
+        if (hasContent[item.type]) loop.push({ kind: "builtin", type: item.type });
+      } else if (item.kind === "media") {
+        const asset = mediaById.get(item.mediaId);
+        if (!asset) continue;
+        loop.push({
+          kind: "media",
+          id: item.id,
+          url: `/api/sweepstake/display/${config.id}/media/${item.mediaId}`,
+          mediaType: asset.mediaType,
+          durationSeconds: item.durationSeconds,
+          mute: item.mute,
+          displayMode: asset.displayMode ?? "cover",
+        });
+      }
+    }
+  } else {
+    loop = slides.map((type) => ({ kind: "builtin", type }) as SweepstakeLoopSlide);
+  }
+  if (loop.length === 0) loop = [{ kind: "builtin", type: "sweepstake" }];
+
   return {
     tournamentName: config.tournamentName,
     theme: config.theme,
@@ -295,6 +355,7 @@ export function buildDisplayData(input: BuildDisplayInput): SweepstakeDisplayDat
     rotationIntervalSeconds: config.rotationIntervalSeconds,
     refreshIntervalSeconds: config.refreshIntervalSeconds,
     slides: slides.length > 0 ? slides : (["sweepstake"] as SweepstakeSlideType[]),
+    loop,
     kickoffAt: config.kickoffAt ? config.kickoffAt.toISOString() : null,
     lastSyncedAt: config.lastSyncedAt ? config.lastSyncedAt.toISOString() : null,
     teams,

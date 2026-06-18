@@ -137,6 +137,23 @@ export interface SweepstakeLiveData {
   standings: LiveStandingView[];
 }
 
+// A resolved slide in the server's ordered wall loop: either a built-in slide
+// or a custom media slide (image / video from the media library).
+export interface DisplayBuiltinSlide {
+  kind: "builtin";
+  type: SlideType;
+}
+export interface DisplayMediaSlide {
+  kind: "media";
+  id: string;
+  url: string;
+  mediaType: "image" | "video" | "gif";
+  durationSeconds: number;
+  mute: boolean;
+  displayMode: string;
+}
+export type SweepstakeLoopSlide = DisplayBuiltinSlide | DisplayMediaSlide;
+
 export interface SweepstakeDisplayData {
   tournamentName: string;
   theme: string;
@@ -145,6 +162,8 @@ export interface SweepstakeDisplayData {
   rotationIntervalSeconds: number;
   refreshIntervalSeconds: number;
   slides: SlideType[];
+  /** Ordered wall loop (built-in + custom media). Preferred over `slides`. */
+  loop?: SweepstakeLoopSlide[];
   kickoffAt: string | null;
   lastSyncedAt: string | null;
   teams: DisplayTeam[];
@@ -1569,20 +1588,143 @@ function renderSlide(slide: RotationSlide, props: SlideProps) {
   }
 }
 
-// Build the effective rotation: the configured sweepstake slides, plus any
-// live panels that currently have something to show.
-function buildRotation(data: SweepstakeDisplayData): RotationSlide[] {
-  const base: RotationSlide[] = data.slides.length > 0 ? [...data.slides] : ["sweepstake"];
-  const live = data.live;
-  if (!live || !live.enabled) return base;
-  if (!live.available) return [...base, "live_unavailable"];
-  const livePanels: RotationSlide[] = [];
-  for (const panel of live.panels) {
-    if (panel === "now_next" && (live.liveMatches.length > 0 || live.nextMatch)) livePanels.push("now_next");
-    else if (panel === "live_score" && live.liveMatches.length > 0) livePanels.push("live_score");
-    else if (panel === "live_standings" && live.standings.length > 0) livePanels.push("live_standings");
+// A normalized rotation entry. Built-in entries wrap a RotationSlide; media
+// entries carry the resolved media url + per-slide playback settings. Every
+// entry has a stable string `key` because the deck and footer need a join-able
+// identity that survives the object shape (the old `slides.join(",")` broke on
+// objects).
+type RotationItem =
+  | { kind: "builtin"; slide: RotationSlide; key: string }
+  | {
+      kind: "media";
+      key: string;
+      url: string;
+      mediaType: "image" | "video" | "gif";
+      durationSeconds: number;
+      mute: boolean;
+      displayMode: string;
+    };
+
+// Build the effective rotation. The server's ordered `loop` (built-in slides
+// already content-filtered + custom media) is the source of truth; we fall
+// back to the legacy `slides` list when `loop` is absent (older payloads).
+// Live panels that currently have something to show are appended after.
+function buildRotation(data: SweepstakeDisplayData): RotationItem[] {
+  const items: RotationItem[] = [];
+  if (data.loop && data.loop.length > 0) {
+    data.loop.forEach((it, i) => {
+      if (it.kind === "builtin") {
+        items.push({ kind: "builtin", slide: it.type, key: `b:${it.type}:${i}` });
+      } else {
+        items.push({
+          kind: "media",
+          key: `m:${it.id}`,
+          url: it.url,
+          mediaType: it.mediaType,
+          durationSeconds: it.durationSeconds,
+          mute: it.mute,
+          displayMode: it.displayMode,
+        });
+      }
+    });
+  } else {
+    const base = data.slides.length > 0 ? data.slides : (["sweepstake"] as SlideType[]);
+    base.forEach((s, i) => items.push({ kind: "builtin", slide: s, key: `b:${s}:${i}` }));
   }
-  return [...base, ...livePanels];
+
+  const live = data.live;
+  if (live && live.enabled) {
+    if (!live.available) {
+      items.push({ kind: "builtin", slide: "live_unavailable", key: "b:live_unavailable" });
+    } else {
+      for (const panel of live.panels) {
+        if (panel === "now_next" && (live.liveMatches.length > 0 || live.nextMatch))
+          items.push({ kind: "builtin", slide: "now_next", key: "b:now_next" });
+        else if (panel === "live_score" && live.liveMatches.length > 0)
+          items.push({ kind: "builtin", slide: "live_score", key: "b:live_score" });
+        else if (panel === "live_standings" && live.standings.length > 0)
+          items.push({ kind: "builtin", slide: "live_standings", key: "b:live_standings" });
+      }
+    }
+  }
+
+  if (items.length === 0) items.push({ kind: "builtin", slide: "sweepstake", key: "b:sweepstake:0" });
+  return items;
+}
+
+// Full-bleed custom media slide. Images are timed by the deck (durationSeconds);
+// videos play to their natural end and call `onDone` on `ended`/`error`, with a
+// metadata-derived safety timeout so a stalled video can never freeze the loop.
+// Videos are muted by default (operators opt in per slide) to match the
+// platform-wide audio policy and to avoid audio-focus auto-pause stutter.
+function MediaSlide({
+  item,
+  onDone,
+}: {
+  item: Extract<RotationItem, { kind: "media" }>;
+  onDone: () => void;
+}) {
+  const isVideo = item.mediaType === "video";
+  const objectFit = item.displayMode === "contain" ? "contain" : "cover";
+  const doneRef = useRef(false);
+  const safetyRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    doneRef.current = false;
+    return () => {
+      if (safetyRef.current != null) window.clearTimeout(safetyRef.current);
+    };
+  }, [item.key]);
+
+  const finish = useCallback(() => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    if (safetyRef.current != null) window.clearTimeout(safetyRef.current);
+    onDone();
+  }, [onDone]);
+
+  const wrap: React.CSSProperties = {
+    position: "absolute",
+    inset: 0,
+    width: "100%",
+    height: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#000",
+    borderRadius: "2cqmin",
+    overflow: "hidden",
+  };
+  const mediaStyle: React.CSSProperties = { width: "100%", height: "100%", objectFit };
+
+  if (isVideo) {
+    return (
+      <div style={wrap} data-testid={`media-slide-${item.key}`}>
+        <video
+          src={item.url}
+          autoPlay
+          muted={item.mute !== false}
+          playsInline
+          style={mediaStyle}
+          onEnded={finish}
+          onError={finish}
+          onLoadedMetadata={(e) => {
+            const d = e.currentTarget.duration;
+            const ms = (Number.isFinite(d) && d > 0 ? d : 60) * 1000 + 2000;
+            if (safetyRef.current != null) window.clearTimeout(safetyRef.current);
+            safetyRef.current = window.setTimeout(finish, ms);
+          }}
+          data-testid={`video-${item.key}`}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div style={wrap} data-testid={`media-slide-${item.key}`}>
+      <img src={item.url} alt="" style={mediaStyle} data-testid={`img-${item.key}`} />
+    </div>
+  );
 }
 
 interface WidgetProps {
@@ -1597,7 +1739,7 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
   const motion = usePrefersMotion();
   const ctx = useMemo(() => buildContext(data, motion), [data, motion]);
   const slides = useMemo(() => buildRotation(data), [data]);
-  const slidesKey = slides.join(",");
+  const slidesKey = slides.map((it) => it.key).join(",");
   // The deck advances one page per tick and only moves to the next slide once
   // the active slide's last page has been shown, so multi-page slides are never
   // cut off early. `pageCountRef` holds the page count reported by the active
@@ -1608,18 +1750,37 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
     pageCountRef.current = Math.max(1, n);
   }, []);
 
-  const activeSlide: RotationSlide = forcedSlide ?? slides[Math.min(pos.index, slides.length - 1)] ?? "sweepstake";
+  const slidesLenRef = useRef(slides.length);
+  slidesLenRef.current = slides.length;
+  const activeIndex = Math.min(pos.index, slides.length - 1);
+  const activeItem: RotationItem = slides[activeIndex] ?? { kind: "builtin", slide: "sweepstake", key: "b:sweepstake:0" };
+  // The admin preview forces a single built-in slide and disables auto-advance.
+  const activeSlide: RotationSlide =
+    forcedSlide ?? (activeItem.kind === "builtin" ? activeItem.slide : "sweepstake");
+  const isMediaActive = !forcedSlide && activeItem.kind === "media";
 
   // Reset the reported page count whenever the active slide changes. This is a
   // ref write done in the render phase on purpose: it must run before the new
   // slide's effect re-reports its real count. Slides that don't paginate never
   // report, so they correctly stay at a single page.
   const slotRef = useRef<string | null>(null);
-  const slot = `${forcedSlide ?? ""}#${pos.index}#${activeSlide}`;
+  const slot = `${forcedSlide ?? ""}#${pos.index}#${activeItem.key}`;
   if (slotRef.current !== slot) {
     slotRef.current = slot;
     pageCountRef.current = 1;
   }
+
+  // Advance one page, then to the next slide once the active slide's last page
+  // has shown. Functional update so it's safe to call from a timer or a video
+  // `ended` callback without stale closures.
+  const advance = useCallback(() => {
+    setPos(({ index, page }) => {
+      const pc = Math.max(1, pageCountRef.current);
+      if (page + 1 < pc) return { index, page: page + 1 };
+      const len = Math.max(1, slidesLenRef.current);
+      return { index: (index + 1) % len, page: 0 };
+    });
+  }, []);
 
   // Jump back to the first page when the preview's forced slide changes (deck
   // rotation already resets the page when it advances the slide itself).
@@ -1627,18 +1788,26 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
     setPos((p) => (p.page === 0 ? p : { ...p, page: 0 }));
   }, [forcedSlide]);
 
+  // Keep the index in range as the rotation length changes (data refreshes).
   useEffect(() => {
-    const ms = Math.max(3, data.rotationIntervalSeconds) * 1000;
-    const id = window.setInterval(() => {
-      setPos(({ index, page }) => {
-        const pc = Math.max(1, pageCountRef.current);
-        if (page + 1 < pc) return { index, page: page + 1 };
-        if (forcedSlide || slides.length <= 1) return { index, page: 0 };
-        return { index: (index + 1) % slides.length, page: 0 };
-      });
-    }, ms);
-    return () => window.clearInterval(id);
-  }, [forcedSlide, slides.length, data.rotationIntervalSeconds, slidesKey]);
+    setPos((p) => (p.index < slides.length ? p : { index: 0, page: 0 }));
+  }, [slidesKey, slides.length]);
+
+  // Auto-advance timer. Built-in slides use the configured rotation interval
+  // (per page); custom images use their own durationSeconds. Videos are NOT
+  // timed here — they advance from MediaSlide's `ended`/`error`/safety path so
+  // they always play to their natural end. The preview (forcedSlide) never
+  // auto-advances.
+  useEffect(() => {
+    if (forcedSlide || slides.length <= 1) return;
+    if (activeItem.kind === "media" && activeItem.mediaType === "video") return;
+    const seconds =
+      activeItem.kind === "media"
+        ? Math.max(1, activeItem.durationSeconds)
+        : Math.max(3, data.rotationIntervalSeconds);
+    const id = window.setTimeout(advance, seconds * 1000);
+    return () => window.clearTimeout(id);
+  }, [forcedSlide, slides.length, data.rotationIntervalSeconds, slidesKey, pos.index, pos.page, advance, activeItem]);
 
   const slideProps: SlideProps = { data, tokens, accent, ctx };
   const s = ctx.survivor;
@@ -1670,7 +1839,7 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
                 {data.tournamentName}
               </div>
               <div style={{ fontSize: "1.8cqmin", color: tokens.subtle, textTransform: "uppercase", letterSpacing: "0.16em", fontWeight: 800, marginTop: "0.4cqmin" }}>
-                {SLIDE_TITLES[activeSlide]}
+                {isMediaActive ? "Featured" : SLIDE_TITLES[activeSlide]}
               </div>
             </div>
           </div>
@@ -1695,21 +1864,25 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
             <span style={{ fontSize: "2.2cqmin", fontWeight: 900, color: accent }}>{s.teamsActive} <span style={{ fontSize: "1.5cqmin", color: tokens.subtle, fontWeight: 700 }}>teams</span></span>
           </div>
         </header>
-        <main key={activeSlide} style={{ flex: 1, minHeight: 0, animation: motion ? "vmFadeUp 0.45s ease" : undefined }}>
-          <PagerContext.Provider value={{ page: pos.page, setPageCount }}>
-            {renderSlide(activeSlide, slideProps)}
-          </PagerContext.Provider>
+        <main key={isMediaActive ? activeItem.key : activeSlide} style={{ position: "relative", flex: 1, minHeight: 0, animation: motion ? "vmFadeUp 0.45s ease" : undefined }}>
+          {isMediaActive && activeItem.kind === "media" ? (
+            <MediaSlide item={activeItem} onDone={advance} />
+          ) : (
+            <PagerContext.Provider value={{ page: pos.page, setPageCount }}>
+              {renderSlide(activeSlide, slideProps)}
+            </PagerContext.Provider>
+          )}
         </main>
         {!forcedSlide && slides.length > 1 && (
           <footer style={{ display: "flex", justifyContent: "center", gap: "1.2cqmin", marginTop: "2cqmin" }}>
             {slides.map((sl, i) => (
               <span
-                key={sl}
+                key={sl.key}
                 style={{
-                  width: i === Math.min(pos.index, slides.length - 1) ? "4cqmin" : "1.4cqmin",
+                  width: i === activeIndex ? "4cqmin" : "1.4cqmin",
                   height: "1.4cqmin",
                   borderRadius: 999,
-                  background: i === Math.min(pos.index, slides.length - 1) ? accent : tokens.border,
+                  background: i === activeIndex ? accent : tokens.border,
                   transition: "width 0.3s ease",
                 }}
               />

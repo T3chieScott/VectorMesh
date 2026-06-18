@@ -65,7 +65,28 @@ import {
   CheckCircle2,
   XCircle,
   Upload,
+  GripVertical,
+  Image as ImageIcon,
+  Video as VideoIcon,
+  X,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   SWEEPSTAKE_PROVIDERS,
   SWEEPSTAKE_PROVIDER_LABELS,
@@ -76,10 +97,13 @@ import {
   SWEEPSTAKE_SLIDE_LABELS,
   SWEEPSTAKE_LIVE_PANELS,
   SWEEPSTAKE_LIVE_PANEL_LABELS,
+  sweepstakeLoopItemSchema,
   type SweepstakeWidgetConfig,
+  type SweepstakeLoopItem,
   type TournamentTeam,
   type SweepstakeParticipant,
   type SweepstakeProvider,
+  type MediaAsset,
 } from "@shared/schema";
 
 const LAYOUT_MODE_LABELS: Record<string, string> = {
@@ -110,6 +134,7 @@ const configFormSchema = z.object({
   refreshIntervalSeconds: z.coerce.number().int().min(5).max(3600),
   rotationIntervalSeconds: z.coerce.number().int().min(3).max(3600),
   slideTypes: z.array(z.enum(SWEEPSTAKE_SLIDE_TYPES)).default([]),
+  slideOrder: z.array(sweepstakeLoopItemSchema).default([]),
   liveEnabled: z.boolean().default(false),
   livePanels: z.array(z.enum(SWEEPSTAKE_LIVE_PANELS)).default([]),
   liveRefreshSeconds: z.coerce.number().int().min(5).max(300),
@@ -117,6 +142,21 @@ const configFormSchema = z.object({
   syncIntervalMinutes: z.coerce.number().int().min(5).max(1440),
 });
 type ConfigFormValues = z.infer<typeof configFormSchema>;
+
+// Initialize the wall-loop editor list. If the config already has a saved
+// `slideOrder`, use it verbatim. Otherwise (legacy / first edit) seed it from
+// the built-in slides the config currently rotates — the chosen `slideTypes`,
+// or all built-ins when none were chosen ("rotate everything"). This makes the
+// editor non-destructive: opening an old config shows its current behaviour.
+function initSlideOrder(c?: SweepstakeWidgetConfig): SweepstakeLoopItem[] {
+  const saved = (c?.slideOrder as SweepstakeLoopItem[] | undefined) ?? [];
+  if (saved.length > 0) return saved.map((it) => ({ ...it }));
+  const builtins =
+    c?.slideTypes && c.slideTypes.length > 0
+      ? (c.slideTypes as (typeof SWEEPSTAKE_SLIDE_TYPES)[number][])
+      : [...SWEEPSTAKE_SLIDE_TYPES];
+  return builtins.map((type) => ({ kind: "builtin", type, enabled: true }));
+}
 
 function defaultConfigForm(c?: SweepstakeWidgetConfig): ConfigFormValues {
   return {
@@ -132,6 +172,7 @@ function defaultConfigForm(c?: SweepstakeWidgetConfig): ConfigFormValues {
     refreshIntervalSeconds: c?.refreshIntervalSeconds ?? 30,
     rotationIntervalSeconds: c?.rotationIntervalSeconds ?? 12,
     slideTypes: (c?.slideTypes as any) ?? [],
+    slideOrder: initSlideOrder(c),
     liveEnabled: c?.liveEnabled ?? false,
     livePanels: (c?.livePanels as any) ?? [],
     liveRefreshSeconds: c?.liveRefreshSeconds ?? 15,
@@ -161,13 +202,344 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     accentColor: values.accentColor,
     refreshIntervalSeconds: values.refreshIntervalSeconds,
     rotationIntervalSeconds: values.rotationIntervalSeconds,
-    slideTypes: values.slideTypes,
+    // `slideOrder` is the source of truth for the wall loop. Keep the legacy
+    // `slideTypes` coherent (the enabled built-ins, in order) so any older
+    // reader stays sensible, but the display prefers `slideOrder`.
+    slideOrder: values.slideOrder,
+    slideTypes: values.slideOrder
+      .filter((it): it is Extract<SweepstakeLoopItem, { kind: "builtin" }> => it.kind === "builtin" && it.enabled !== false)
+      .map((it) => it.type),
     liveEnabled: values.liveEnabled,
     livePanels: values.livePanels,
     liveRefreshSeconds: values.liveRefreshSeconds,
     autoSyncEnabled: values.autoSyncEnabled,
     syncIntervalMinutes: values.syncIntervalMinutes,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Wall-loop editor (drag-reorder built-in + media slides)
+// ---------------------------------------------------------------------------
+
+// Stable dnd id for a loop item. Built-ins are unique by type; media items
+// carry their own generated id.
+function loopItemDndId(item: SweepstakeLoopItem): string {
+  return item.kind === "builtin" ? `builtin:${item.type}` : `media:${item.id}`;
+}
+
+function LoopEditor({
+  value,
+  onChange,
+}: {
+  value: SweepstakeLoopItem[];
+  onChange: (v: SweepstakeLoopItem[]) => void;
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  const mediaQuery = useSiteFilteredQuery<MediaAsset[]>("/api/media");
+  const { data: mediaAssets } = useQuery<MediaAsset[]>({ ...mediaQuery });
+  const mediaById = useMemo(() => {
+    const map = new Map<string, MediaAsset>();
+    (mediaAssets ?? []).forEach((a) => map.set(a.id, a));
+    return map;
+  }, [mediaAssets]);
+
+  const ids = value.map(loopItemDndId);
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    onChange(arrayMove(value, oldIndex, newIndex));
+  };
+
+  const updateAt = (index: number, patch: Partial<SweepstakeLoopItem>) => {
+    onChange(value.map((it, i) => (i === index ? ({ ...it, ...patch } as SweepstakeLoopItem) : it)));
+  };
+
+  const removeAt = (index: number) => {
+    onChange(value.filter((_, i) => i !== index));
+  };
+
+  const addMedia = (asset: MediaAsset) => {
+    const id =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `m_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    onChange([
+      ...value,
+      {
+        kind: "media",
+        id,
+        mediaId: asset.id,
+        durationSeconds: 12,
+        mute: true,
+        enabled: true,
+      },
+    ]);
+    setPickerOpen(false);
+  };
+
+  // Which built-ins are not currently in the loop (so the operator can add
+  // them back after removing one).
+  const usedBuiltins = new Set(
+    value.filter((it) => it.kind === "builtin").map((it) => (it as Extract<SweepstakeLoopItem, { kind: "builtin" }>).type),
+  );
+  const missingBuiltins = SWEEPSTAKE_SLIDE_TYPES.filter((t) => !usedBuiltins.has(t));
+
+  const addBuiltin = (type: (typeof SWEEPSTAKE_SLIDE_TYPES)[number]) => {
+    onChange([...value, { kind: "builtin", type, enabled: true }]);
+  };
+
+  return (
+    <div className="space-y-3 pt-1" data-testid="loop-editor">
+      {value.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+          No slides in the loop yet. Add built-in slides or media below.
+        </div>
+      ) : (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+            <div className="space-y-2">
+              {value.map((item, index) => (
+                <SortableLoopRow
+                  key={loopItemDndId(item)}
+                  id={loopItemDndId(item)}
+                  item={item}
+                  asset={item.kind === "media" ? mediaById.get(item.mediaId) : undefined}
+                  onPatch={(patch) => updateAt(index, patch)}
+                  onRemove={() => removeAt(index)}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setPickerOpen(true)}
+          data-testid="button-add-media-slide"
+        >
+          <Plus className="h-4 w-4 mr-1" /> Add image / video
+        </Button>
+        {missingBuiltins.length > 0 && (
+          <Select onValueChange={(v) => addBuiltin(v as (typeof SWEEPSTAKE_SLIDE_TYPES)[number])} value="">
+            <SelectTrigger className="w-auto h-9" data-testid="select-add-builtin">
+              <SelectValue placeholder="Add built-in slide" />
+            </SelectTrigger>
+            <SelectContent>
+              {missingBuiltins.map((t) => (
+                <SelectItem key={t} value={t} data-testid={`option-add-builtin-${t}`}>
+                  {SWEEPSTAKE_SLIDE_LABELS[t]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+
+      <MediaPickerDialog
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        assets={mediaAssets ?? []}
+        onPick={addMedia}
+      />
+    </div>
+  );
+}
+
+function SortableLoopRow({
+  id,
+  item,
+  asset,
+  onPatch,
+  onRemove,
+}: {
+  id: string;
+  item: SweepstakeLoopItem;
+  asset?: MediaAsset;
+  onPatch: (patch: Partial<SweepstakeLoopItem>) => void;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+  };
+
+  const enabled = item.enabled !== false;
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="flex items-center gap-3 rounded-md border bg-card p-2"
+      data-testid={`loop-row-${id}`}
+    >
+      <button
+        type="button"
+        className="cursor-grab touch-none text-muted-foreground hover:text-foreground"
+        {...attributes}
+        {...listeners}
+        data-testid={`drag-handle-${id}`}
+        aria-label="Drag to reorder"
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
+
+      {item.kind === "builtin" ? (
+        <>
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
+            <Trophy className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">{SWEEPSTAKE_SLIDE_LABELS[item.type]}</div>
+            <div className="text-xs text-muted-foreground">Built-in · shows when it has content</div>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="h-10 w-10 shrink-0 overflow-hidden rounded bg-muted">
+            {asset ? (
+              asset.mediaType === "video" ? (
+                <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+                  <VideoIcon className="h-4 w-4" />
+                </div>
+              ) : (
+                <img src={`/api/media/${asset.id}/file`} alt={asset.name} className="h-full w-full object-cover" />
+              )
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+                <ImageIcon className="h-4 w-4" />
+              </div>
+            )}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">{asset?.name ?? "Missing media"}</div>
+            <div className="flex items-center gap-3 pt-1">
+              {asset?.mediaType === "video" ? (
+                <span className="text-xs text-muted-foreground">Video · plays to the end</span>
+              ) : (
+                <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                  Show for
+                  <Input
+                    type="number"
+                    min={1}
+                    max={3600}
+                    value={item.durationSeconds}
+                    onChange={(e) => onPatch({ durationSeconds: Math.max(1, Number(e.target.value) || 1) })}
+                    className="h-7 w-16"
+                    data-testid={`input-duration-${id}`}
+                  />
+                  sec
+                </label>
+              )}
+              {asset?.mediaType === "video" && (
+                <button
+                  type="button"
+                  onClick={() => onPatch({ mute: !item.mute })}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                  data-testid={`toggle-sound-${id}`}
+                >
+                  {item.mute ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                  {item.mute ? "Muted" : "Sound on"}
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      <div className="flex shrink-0 items-center gap-2">
+        <Switch
+          checked={enabled}
+          onCheckedChange={(v) => onPatch({ enabled: v })}
+          data-testid={`toggle-enabled-${id}`}
+          aria-label="Show this slide"
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+          onClick={onRemove}
+          data-testid={`button-remove-${id}`}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function MediaPickerDialog({
+  open,
+  onOpenChange,
+  assets,
+  onPick,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  assets: MediaAsset[];
+  onPick: (asset: MediaAsset) => void;
+}) {
+  const usable = assets.filter(
+    (a) => a.mediaType === "image" || a.mediaType === "gif" || a.mediaType === "video",
+  );
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Add image or video</DialogTitle>
+        </DialogHeader>
+        {usable.length === 0 ? (
+          <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+            No media in this site's library yet. Upload images or videos on the Media page first.
+          </div>
+        ) : (
+          <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-y-auto sm:grid-cols-3">
+            {usable.map((asset) => (
+              <button
+                key={asset.id}
+                type="button"
+                onClick={() => onPick(asset)}
+                className="group overflow-hidden rounded-md border text-left hover:border-primary"
+                data-testid={`media-option-${asset.id}`}
+              >
+                <div className="relative aspect-video w-full bg-muted">
+                  {asset.mediaType === "video" ? (
+                    <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+                      <VideoIcon className="h-6 w-6" />
+                    </div>
+                  ) : (
+                    <img
+                      src={`/api/media/${asset.id}/file`}
+                      alt={asset.name}
+                      className="h-full w-full object-cover"
+                    />
+                  )}
+                  <span className="absolute right-1 top-1 rounded bg-black/60 px-1 text-[10px] uppercase text-white">
+                    {asset.mediaType}
+                  </span>
+                </div>
+                <div className="truncate p-2 text-xs">{asset.name}</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function ConfigDialog({
@@ -476,31 +848,20 @@ function ConfigDialog({
 
             <FormField
               control={form.control}
-              name="slideTypes"
+              name="slideOrder"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Slides to show</FormLabel>
-                  <FormDescription>Leave all unchecked to rotate through every slide that has content.</FormDescription>
-                  <div className="grid grid-cols-2 gap-2 pt-1">
-                    {SWEEPSTAKE_SLIDE_TYPES.map((s) => {
-                      const checked = field.value?.includes(s);
-                      return (
-                        <label key={s} className="flex items-center gap-2 text-sm cursor-pointer">
-                          <Checkbox
-                            checked={checked}
-                            onCheckedChange={(v) => {
-                              const set = new Set(field.value ?? []);
-                              if (v) set.add(s);
-                              else set.delete(s);
-                              field.onChange(Array.from(set));
-                            }}
-                            data-testid={`checkbox-slide-${s}`}
-                          />
-                          {SWEEPSTAKE_SLIDE_LABELS[s]}
-                        </label>
-                      );
-                    })}
-                  </div>
+                  <FormLabel>Wall loop</FormLabel>
+                  <FormDescription>
+                    Drag to set the order screens cycle through. Add images or
+                    videos from your media library, and turn any slide off
+                    without removing it. Built-in slides only appear when they
+                    have content; media slides always show.
+                  </FormDescription>
+                  <LoopEditor
+                    value={field.value ?? []}
+                    onChange={field.onChange}
+                  />
                   <FormMessage />
                 </FormItem>
               )}

@@ -1675,6 +1675,32 @@ export const SWEEPSTAKE_LIVE_PANEL_LABELS: Record<SweepstakeLivePanel, string> =
   live_standings: "Live group standings",
 };
 
+// The sweepstake "wall loop" is an ordered list of slides. Each item is either
+// a built-in slide (filtered out when it has no content) or a custom media slide
+// picked from the media library. Persisted on `slideOrder` (JSONB). When empty,
+// the display falls back to the legacy `slideTypes` behaviour (built-ins only).
+export const sweepstakeBuiltinSlideSchema = z.object({
+  kind: z.literal("builtin"),
+  type: z.enum(SWEEPSTAKE_SLIDE_TYPES),
+  enabled: z.boolean().default(true),
+});
+export const sweepstakeMediaSlideSchema = z.object({
+  kind: z.literal("media"),
+  // Stable id for React keys / drag-reorder (not the media asset id).
+  id: z.string().min(1),
+  mediaId: z.string().min(1),
+  // How long an image/gif slide shows. Videos play to their natural end.
+  durationSeconds: z.number().int().min(1).max(3600).default(12),
+  // true = muted (default). Operators opt in to sound per slide.
+  mute: z.boolean().default(true),
+  enabled: z.boolean().default(true),
+});
+export const sweepstakeLoopItemSchema = z.discriminatedUnion("kind", [
+  sweepstakeBuiltinSlideSchema,
+  sweepstakeMediaSlideSchema,
+]);
+export type SweepstakeLoopItem = z.infer<typeof sweepstakeLoopItemSchema>;
+
 export const SWEEPSTAKE_PARTICIPANT_STATUSES = ["active", "eliminated", "winner"] as const;
 export type SweepstakeParticipantStatus = (typeof SWEEPSTAKE_PARTICIPANT_STATUSES)[number];
 
@@ -1701,6 +1727,9 @@ export const sweepstakeWidgetConfigs = pgTable("sweepstake_widget_configs", {
   rotationIntervalSeconds: integer("rotation_interval_seconds").notNull().default(12),
   // Which slides to rotate through. Empty = all.
   slideTypes: text("slide_types").array().notNull().default(sql`'{}'::text[]`),
+  // Ordered wall-loop: built-in slides + custom media slides, mixed and
+  // reorderable. Empty = fall back to legacy `slideTypes` (built-ins only).
+  slideOrder: jsonb("slide_order").$type<SweepstakeLoopItem[]>().notNull().default(sql`'[]'::jsonb`),
   // Task #287 — live World Cup panels (Sportmonks only). Additive.
   liveEnabled: boolean("live_enabled").notNull().default(false),
   // Which live panels to mix into the rotation. Empty = all live panels.
@@ -1809,6 +1838,7 @@ export const insertSweepstakeWidgetConfigSchema = createInsertSchema(sweepstakeW
     refreshIntervalSeconds: z.number().int().min(5).max(3600).default(30),
     rotationIntervalSeconds: z.number().int().min(3).max(3600).default(12),
     slideTypes: z.array(z.enum(SWEEPSTAKE_SLIDE_TYPES)).default([]),
+    slideOrder: z.array(sweepstakeLoopItemSchema).default([]),
     liveEnabled: z.boolean().default(false),
     livePanels: z.array(z.enum(SWEEPSTAKE_LIVE_PANELS)).default([]),
     liveRefreshSeconds: z.number().int().min(5).max(300).default(15),
