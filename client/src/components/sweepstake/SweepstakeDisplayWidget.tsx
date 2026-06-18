@@ -1815,9 +1815,18 @@ export function SweepstakeDisplayWidget({ data: rawData, forcedSlide, timezoneOv
   // cut off early. `pageCountRef` holds the page count reported by the active
   // slide (1 for slides that don't paginate). See PagerContext / usePagedSlide.
   const [pos, setPos] = useState({ index: 0, page: 0 });
+  // `pageCountRef` is read synchronously by `advance` at timer-fire time (so it
+  // is always current and closure-safe). `activePageCount` mirrors it as state
+  // purely so the auto-advance effect RE-ARMS when the active slide's page count
+  // changes — e.g. a live "Playing today" slide that grows from 1 page to 2 as
+  // more matches are added during the day. Without the state, a single-page
+  // slide's timer would fire once, no-op, and never reschedule.
   const pageCountRef = useRef(1);
+  const [activePageCount, setActivePageCount] = useState(1);
   const setPageCount = useCallback((n: number) => {
-    pageCountRef.current = Math.max(1, n);
+    const v = Math.max(1, n);
+    pageCountRef.current = v;
+    setActivePageCount(v);
   }, []);
 
   const slidesLenRef = useRef(slides.length);
@@ -1844,20 +1853,28 @@ export function SweepstakeDisplayWidget({ data: rawData, forcedSlide, timezoneOv
   if (slotRef.current !== slot) {
     slotRef.current = slot;
     pageCountRef.current = 1;
+    // Reset the reactive mirror too (React's "adjust state during render"
+    // pattern — bounded because slotRef now matches `slot`). A slide that does
+    // not paginate never re-reports, so it must default back to a single page.
+    setActivePageCount(1);
   }
 
   // Advance one page, then to the next slide once the active slide's last page
   // has shown. Functional update so it's safe to call from a timer or a video
   // `ended` callback without stale closures.
   const advance = useCallback(() => {
-    setPos(({ index, page }) => {
+    setPos((prev) => {
+      const { index, page } = prev;
       const pc = Math.max(1, pageCountRef.current);
       if (page + 1 < pc) return { index, page: page + 1 };
       // In the admin preview a single slide is forced: cycle through its pages
       // without ever leaving the slide.
-      if (forcedRef.current) return { index, page: 0 };
+      if (forcedRef.current) return page === 0 ? prev : { index, page: 0 };
       const len = Math.max(1, slidesLenRef.current);
-      return { index: (index + 1) % len, page: 0 };
+      const nextIndex = (index + 1) % len;
+      // Nothing to move to (one single-page slide) — return the SAME object so
+      // React bails out and we don't churn renders on a static display.
+      return nextIndex === index && page === 0 ? prev : { index: nextIndex, page: 0 };
     });
   }, []);
 
@@ -1879,7 +1896,12 @@ export function SweepstakeDisplayWidget({ data: rawData, forcedSlide, timezoneOv
   // the timer still runs so the single forced slide pages through itself; it
   // just never rotates on to a different slide (see `advance`).
   useEffect(() => {
-    if (!forcedSlide && slides.length <= 1) return;
+    // Keep the timer alive whenever there is anything on screen. A single slide
+    // may still have MULTIPLE pages (e.g. a "Playing today" fixtures slide with
+    // more than 3 matches), so we must NOT bail out just because there is one
+    // slide — `advance` no-ops harmlessly when there is genuinely nothing to
+    // move to (one single-page slide).
+    if (!forcedSlide && slides.length === 0) return;
     if (!forcedSlide && activeItem.kind === "media" && activeItem.mediaType === "video") return;
     const seconds =
       !forcedSlide && activeItem.kind === "media"
@@ -1887,7 +1909,30 @@ export function SweepstakeDisplayWidget({ data: rawData, forcedSlide, timezoneOv
         : Math.max(3, data.rotationIntervalSeconds);
     const id = window.setTimeout(advance, seconds * 1000);
     return () => window.clearTimeout(id);
-  }, [forcedSlide, slides.length, data.rotationIntervalSeconds, slidesKey, pos.index, pos.page, advance, activeItem]);
+    // Depend on the activeItem's STABLE PRIMITIVE fields (key/kind/media
+    // type/duration) rather than the activeItem OBJECT: the live zone widget
+    // re-fetches on a poll and hands us a fresh data object every cycle, which
+    // rebuilds an equal-but-new activeItem each render. Keying on the object
+    // would reset this countdown on every poll and could starve the rotation
+    // when the poll interval is shorter than the rotation interval; primitives
+    // compare by value so an unchanged slide does not churn the timer.
+    // `activePageCount` is included so the timer re-arms when the active slide's
+    // page count changes (e.g. grows from 1 to 2 pages on a data refresh). The
+    // body reads the current activeItem via closure.
+  }, [
+    forcedSlide,
+    slides.length,
+    data.rotationIntervalSeconds,
+    slidesKey,
+    pos.index,
+    pos.page,
+    advance,
+    activeItem.key,
+    activeItem.kind,
+    activeItem.kind === "media" ? activeItem.mediaType : null,
+    activeItem.kind === "media" ? activeItem.durationSeconds : null,
+    activePageCount,
+  ]);
 
   const slideProps: SlideProps = { data, tokens, accent, ctx };
   const s = ctx.survivor;
