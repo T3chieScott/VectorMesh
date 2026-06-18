@@ -151,6 +151,7 @@ export interface DisplayMediaSlide {
   durationSeconds: number;
   mute: boolean;
   displayMode: string;
+  fullScreen?: boolean;
 }
 export type SweepstakeLoopSlide = DisplayBuiltinSlide | DisplayMediaSlide;
 
@@ -1603,6 +1604,7 @@ type RotationItem =
       durationSeconds: number;
       mute: boolean;
       displayMode: string;
+      fullScreen: boolean;
     };
 
 // Build the effective rotation. The server's ordered `loop` (built-in slides
@@ -1624,6 +1626,7 @@ function buildRotation(data: SweepstakeDisplayData): RotationItem[] {
           durationSeconds: it.durationSeconds,
           mute: it.mute,
           displayMode: it.displayMode,
+          fullScreen: it.fullScreen === true,
         });
       }
     });
@@ -1660,9 +1663,11 @@ function buildRotation(data: SweepstakeDisplayData): RotationItem[] {
 function MediaSlide({
   item,
   onDone,
+  fullBleed = false,
 }: {
   item: Extract<RotationItem, { kind: "media" }>;
   onDone: () => void;
+  fullBleed?: boolean;
 }) {
   const isVideo = item.mediaType === "video";
   const objectFit = item.displayMode === "contain" ? "contain" : "cover";
@@ -1692,7 +1697,7 @@ function MediaSlide({
     alignItems: "center",
     justifyContent: "center",
     background: "#000",
-    borderRadius: "2cqmin",
+    borderRadius: fullBleed ? 0 : "2cqmin",
     overflow: "hidden",
   };
   const mediaStyle: React.CSSProperties = { width: "100%", height: "100%", objectFit };
@@ -1758,6 +1763,9 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
   const activeSlide: RotationSlide =
     forcedSlide ?? (activeItem.kind === "builtin" ? activeItem.slide : "sweepstake");
   const isMediaActive = !forcedSlide && activeItem.kind === "media";
+  // Full-screen media renders edge-to-edge with no tournament header/footer
+  // chrome — the slide simply fills the whole display.
+  const isFullScreenMedia = isMediaActive && activeItem.kind === "media" && activeItem.fullScreen;
 
   // Reset the reported page count whenever the active slide changes. This is a
   // ref write done in the render phase on purpose: it must run before the new
@@ -1816,6 +1824,15 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
     <div style={{ width: "100%", height: "100%", containerType: "size", background: tokens.bg, position: "relative", overflow: "hidden" }}>
       <style dangerouslySetInnerHTML={{ __html: KEYFRAMES }} />
       <Backdrop tokens={tokens} motion={motion} />
+      {isFullScreenMedia && activeItem.kind === "media" ? (
+        <div
+          key={activeItem.key}
+          style={{ position: "absolute", inset: 0, animation: motion ? "vmFadeUp 0.45s ease" : undefined }}
+          data-testid="sweepstake-display"
+        >
+          <MediaSlide item={activeItem} onDone={advance} fullBleed />
+        </div>
+      ) : (
       <div
         style={{
           position: "relative",
@@ -1890,6 +1907,7 @@ export function SweepstakeDisplayWidget({ data, forcedSlide }: WidgetProps) {
           </footer>
         )}
       </div>
+      )}
     </div>
   );
 }

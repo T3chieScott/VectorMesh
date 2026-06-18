@@ -1693,6 +1693,8 @@ export const sweepstakeMediaSlideSchema = z.object({
   durationSeconds: z.number().int().min(1).max(3600).default(12),
   // true = muted (default). Operators opt in to sound per slide.
   mute: z.boolean().default(true),
+  // true = render edge-to-edge (no tournament header / page dots chrome).
+  fullScreen: z.boolean().default(false),
   enabled: z.boolean().default(true),
 });
 export const sweepstakeLoopItemSchema = z.discriminatedUnion("kind", [

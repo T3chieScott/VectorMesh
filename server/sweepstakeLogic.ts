@@ -178,6 +178,7 @@ export interface DisplayMediaSlide {
   durationSeconds: number;
   mute: boolean;
   displayMode: string;
+  fullScreen: boolean;
 }
 export interface DisplayBuiltinSlide {
   kind: "builtin";
@@ -339,6 +340,7 @@ export function buildDisplayData(input: BuildDisplayInput): SweepstakeDisplayDat
           durationSeconds: item.durationSeconds,
           mute: item.mute,
           displayMode: asset.displayMode ?? "cover",
+          fullScreen: item.fullScreen === true,
         });
       }
     }

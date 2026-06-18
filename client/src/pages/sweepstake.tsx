@@ -279,6 +279,7 @@ function LoopEditor({
         mediaId: asset.id,
         durationSeconds: 12,
         mute: true,
+        fullScreen: false,
         enabled: true,
       },
     ]);
@@ -455,6 +456,15 @@ function SortableLoopRow({
                   {item.mute ? "Muted" : "Sound on"}
                 </button>
               )}
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Checkbox
+                  checked={item.fullScreen === true}
+                  onCheckedChange={(v) => onPatch({ fullScreen: !!v })}
+                  className="h-3.5 w-3.5"
+                  data-testid={`toggle-fullscreen-${id}`}
+                />
+                Full screen
+              </label>
             </div>
           </div>
         </>
