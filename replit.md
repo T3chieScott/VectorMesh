@@ -8,6 +8,11 @@ VectorMesh is an onsite display management platform for conference and exhibitio
 
 Preferred communication style: Simple, everyday language.
 
+## Further Documentation
+
+- `docs/features.md` — detailed implementation notes for the more involved features (player audio policy, agenda spreadsheet mapper, HTML/CSS widgets, sweepstake wall loop).
+- `docs/runbook.md` — operations runbook: one-shot boot repair/backfill markers and tenant-scoping invariants, with recovery steps.
+
 ## System Architecture
 
 ### Frontend Architecture
@@ -31,102 +36,21 @@ A test-only auth bypass route `POST /api/auth/test-login` exists in `server/test
 - **Component Library**: Reusable UI components based on shadcn/ui.
 
 ### Technical Implementations
-- **Layout Rotation**: Playlist items can reference media assets or layout templates. The player rotates through entire layouts on a timer, with zones identified by content-based fingerprints (`getZoneFingerprint`) to maintain state (e.g., videos keep playing) for identical zones across layouts.
-- **Canvas Positioning for Video Walls**: Screens can be placed within a larger virtual canvas, with layout content filling the screen's Area of Interest (AOI). The player simulator offers a "Full Canvas / Screen AOI" toggle for testing.
+- **Layout Rotation**: Playlist items can reference media assets or layout templates. The player rotates through entire layouts on a timer, with zones identified by content-based fingerprints (`getZoneFingerprint`) to keep state (e.g. videos keep playing) for identical zones across layouts.
+- **Canvas Positioning for Video Walls**: Screens can be placed within a larger virtual canvas, with layout content filling the screen's Area of Interest (AOI). The player simulator offers a "Full Canvas / Screen AOI" toggle.
 - **Site Filtering**: Most UI components fetching site-scoped resources use `useSiteFilteredQuery` to prevent cross-site data leakage. Exceptions exist for system-wide or already server-filtered endpoints.
-- **Live Screenshots**: Players capture and upload compressed JPEG screenshots every 60 seconds (if enabled), stored as base64 data URLs. The admin screen page displays these with auto-refresh.
-- **Screen Presets & Control Panel**: Pre-configured layout+zone combinations can be saved and activated via a one-click control panel, creating high-priority live overrides. Deactivation removes the override. This supports Stream Deck integration via REST API.
-- **API Tokens**: Users can mint personal long-lived bearer tokens for external integrations. Tokens are hashed and stored, accepting `Authorization: Bearer vm_...` and applying existing tenant scoping rules.
-- **Programme Scheduling**: Features a block editor with time rules, recurring schedules, target selection (screen/group), layout assignment, and priority. Displays target, layout, and playlist information, with warnings for misconfigured blocks. Player resolver handles both screen and group targets. The conflict panel only flags overlapping blocks when their resolved screen sets actually intersect, so blocks targeting different screens at the same time coexist without false-positive warnings. The schedule editor also surfaces playback diagnostics — per-block warnings for "block in past" and "no screen booking covers this block's dates", and a top-of-page banner when no block in the selected version will play on any screen in the next 7 days.
-- **Multi-Event Screen Bookings**: Each screen can be booked into multiple events over time via the `screen_event_bookings` table (one row per booking with non-overlapping `[startsAt, endsAt)` half-open intervals per screen, validated server-side). The legacy single-valued `screens.currentEventId` column has been dropped; the player content resolver, manifest, allowed-clients filter, simulator, and heartbeat alerts all derive the active event from the booking that contains "now". Bookings are managed inline from the screen edit dialog and from a per-event bookings dialog on the events page.
-- **Fallback Playlist Support**: Screens can have a `fallbackLayoutId` and `fallbackPlaylistId`. If no scheduled or fallback layout resolves, the fallback playlist is used, rendering media items full-screen. Priority chain: live override → scheduled programme → fallback layout → fallback playlist.
-- **Offline Player Capability**: A Service Worker caches layout data and media assets, enabling display nodes to function offline. Layout JSON is also stored in localStorage.
-- **Player Audio Policy (muted-by-default)**: Every player-side `<video>` is muted unless an operator explicitly opts in to audio. This is intentional and must not be flipped without preserving the opt-in path. Reason: modern Chromium auto-pauses a *playing, unmuted* background `<video>` when another browser tab claims audio focus (e.g. a YouTube ad). A muted element never participates in audio-focus arbitration, so it is never the element that gets paused — keeping it muted *pre-empts* the stutter that the Task #196 watchdog would otherwise have to recover from. Enforcement: the `KeepAliveVideo` wrapper in `client/src/components/zone-renderer.tsx` defaults `muted` to `true` (callers opt in with `muted={false}`), and `client/src/hooks/use-video-keep-alive.ts` pins the DOM `muted` *property* imperatively on attach, on `pause`, on `playing`, and on every `volumechange` (snapping it back if anything un-mutes it). The imperative pin also works around React's long-standing bug where the `muted` prop isn't reliably reflected onto the DOM property. The WebRTC live-stream `<video>` (raw element, not `KeepAliveVideo`) enforces the same via its own effect, honouring its `mute` prop. The opt-in for media-player zones is `zone.mediaPlayerMuted`; for YouTube/WebRTC widgets it is the `mute` prop. No current layout uses unmuted video.
-- **Agenda Spreadsheet Source Mapper (Task #267)**: The agenda-sync helper feeds the existing Agenda Display Widget from several source kinds, not just the legacy fixed-column `ics` / `google_sheets_csv` feeds. `agenda_sync_configs` carries a `sourceType` whose mapped variants (`csv_url`, `google_sheets`, `excel_onedrive`, `sharepoint_excel`, `uploaded_xlsx` — enumerated in `AGENDA_MAPPED_SOURCE_TYPES`) drive a column-mapping pipeline instead of hardcoded columns. Mapped configs add `columnMapping` (a `{ agendaField: sourceHeader }` record over `AGENDA_MAPPABLE_FIELDS`), `externalIdColumn`, `sheetName`, `headerRowIndex` / `firstDataRowIndex`, `timezone`, `dateFormatHint`, `storedFilePath` (for uploads), plus `syncMode` (`scheduled` vs `manual`), `removeMissingItems`, and `lastSyncWarnings`. The shared layer `shared/spreadsheet-mapping.ts` does CSV→grid, header/row extraction, fuzzy `suggestColumnMapping`, status-alias `normalizeStatus`, tz-aware `parseAgendaDate` (ISO / UK / Excel-serial / Date), and `applyMapping` → per-row outcome with errors. `title`, `startsAt`, and `endsAt` are required; rows missing them are per-row errors. XLSX is read server-side by `server/spreadsheetParse.ts` (exceljs → the same `Cell[][]` grid as CSV); URL sources are fetched server-side through the SSRF-hardened `safeFetch` (which now exposes raw `bytes`); OneDrive/SharePoint links that resolve to an HTML sign-in page (not a `PK`-magic ZIP) surface `ONEDRIVE_CANNOT_READ_MESSAGE` guidance — Microsoft Graph OAuth is intentionally out of scope. Upsert is keyed on `(externalSyncConfigId, externalId)`; rows flagged `manualOverride` are frozen (never overwritten or tombstoned). **Two safety guards matter:** (1) the periodic scheduler tick (`runDueAgendaSyncs` in `server/routes.ts`) threads `resolveStoredPath: fileStorage.getAbsolutePath` so `uploaded_xlsx` feeds resolve their relative on-disk path in background mode exactly like manual/preview runs; (2) `runAgendaSync` refuses to run a mapped config whose `columnMapping` is missing a required field (`missingRequiredMappings`) — it throws into the catch path (recording `lastError`, removing nothing) instead of producing zero ok rows and, with `removeMissingItems=true`, tombstoning every previously-synced item. The admin UI (`client/src/pages/agenda-items.tsx → SyncConfigDialog`) offers the source-type picker, URL input or `.xlsx` upload (`POST /api/agenda/sync-configs/upload-xlsx`, multer, ext + `client.maxUploadSizeMb` guarded), Test (`POST .../preview` with no mapping → sheets+headers) / Preview (with mapping → per-row outcome), sheet / header-row pickers, date-format + timezone inputs, an auto-suggesting mapping panel marking required fields, an external-id picker, and `syncMode` / `removeMissingItems` toggles. `uploaded_xlsx` configs are cross-tenant-guarded: `storedFilePath` must live under the config's own `clientId/` directory on create/update/preview.
-- **Per-Client Schedule Timezones**: Each client (site) carries an IANA timezone (`clients.timezone`, default `Europe/London`, env override `DEFAULT_SCHEDULE_TIMEZONE`). All schedule HH:MM comparisons run through `shared/timezone-utils.ts`, which handles DST transitions (spring-forward gaps snap forward, fall-back duplicates pick the earlier instant) so blocks fire at the wall-clock time operators configure. The schedule editor surfaces the active tz and the client edit form exposes a tz picker; unit and integration tests cover Europe/London BST/GMT and US DST boundaries.
-- **HTML/CSS Widgets (Task #244)**: The `html` zone type renders operator-authored markup inside a sandboxed iframe. The HTML body reuses `zone.textContent`; styles live in a new `zone.htmlCss` field (both persist on the layout's JSONB `zones` column — no migration). The renderer (`client/src/components/zone-renderer.tsx → HtmlWidget`) builds a `srcDoc` document and mounts it with `sandbox="allow-same-origin"` **only** (never `allow-scripts`), so the iframe can paint and inherit no parent script context. `{{player_variables}}` in the HTML body are resolved before rendering, and the same component drives the layout editor's live preview and the simulator. **Reference-resolution scaling (Task #262)**: `HtmlWidget` renders the iframe on a fixed-**width** reference canvas (`REFERENCE_WIDTH = 1920` px wide, height derived from the container's measured aspect ratio — `refHeight = (h/w) * 1920`) and CSS-`transform: scale()`s it (`scale = w/1920`, from top-left) to fill the real container. Anchoring to width (not height) means author content always fills the zone's width at the same horizontal scale regardless of the zone's aspect ratio; the vertical axis just follows (a tall zone shows more of the page, a short zone shows the top portion that fits). This is why a 16:9 zone renders natively: at 1920×1080 the reference height lands on 1080 and the scale is exactly 1. The earlier height-anchored version (`REFERENCE_HEIGHT = 1080`) made fixed-width content shrink dramatically on short/wide zones (a 1000px column became a tiny island on a 6400px-wide reference canvas) — width-anchoring fixes that. Width-anchoring still makes pixel sizes lay out identically on every surface — the editor's Live Preview, the layout canvas, and a real device screen — because two containers of the same aspect ratio render the same reference page at a different scale. The editor's `HtmlWidgetLivePreview` therefore only needs to supply a box of the correct aspect ratio (layout ratio scaled by the edited zone's width/height %), capped via `maxWidth`; the widget handles the content scaling. The authoring contract is "design for a 1920px-wide canvas". The base reset only zeroes margins and makes `html,body` fill the reference canvas (`width/height:100%`, `overflow:hidden`, `box-sizing:border-box`) — it deliberately imposes **no** flex/centering on `body`, so author CSS (`max-width`, `margin:auto`, `height:100%`, flexbox, etc.) behaves exactly as it would in a browser at the zone's resolution. (A previous attempt to vertically centre via `body{display:flex}` was reverted because it turned a `margin:auto` block into a shrink-to-content flex item that ignored `max-width`.) If short content leaves background "dead space", that is the author's own `body` background; the author controls filling/centering via their own CSS. Defense-in-depth runs server-side: `shared/html-widget-sanitize.ts` (`sanitizeHtmlZones`) strips `<script>` blocks, `on*=` inline handlers, and `javascript:` URLs from the HTML and neutralises `</style>` breakouts in the CSS before the payload reaches any device — applied on the admin layouts response, the player content response, and canvas-tile layouts in `server/routes.ts`. Sanitiser behaviour is pinned by `tests/html-widget-sanitize.test.ts`.
-
-- **Sweepstake Wall Loop — custom media slides**: The sweepstake display's rotation ("wall loop") is operator-orderable and can mix the built-in tournament slides with images/videos from the media library. The ordered loop is persisted on `sweepstake_widget_configs.slideOrder` (JSONB), a discriminated-union array of `{kind:"builtin", type, enabled}` and `{kind:"media", id, mediaId, durationSeconds, mute, enabled}` items (`sweepstakeLoopItemSchema` in `shared/schema.ts`). `slideOrder` is the source of truth; when it is empty the display falls back to legacy `slideTypes` behaviour (built-ins only). The admin editor (`client/src/pages/sweepstake.tsx → LoopEditor`) is a `@dnd-kit` drag-reorder list mixing built-in + media rows, with a media picker (`/api/media`, site-scoped via `useSiteFilteredQuery`), per-image duration, per-video sound toggle (muted by default), enable/disable, and remove. `initSlideOrder` seeds the editor non-destructively from existing `slideTypes`/all built-ins on first edit; `toApiPayload` keeps legacy `slideTypes` coherent by deriving it from the enabled built-ins in `slideOrder`. The server (`server/sweepstakeLogic.ts → buildDisplayData`) emits a resolved `loop` (drops disabled items, content-filters built-ins, but **always** shows media slides whose asset resolves in the site-scoped set — so media plays even with no tournament data) alongside the back-compat `slides`. Media bytes are served by the public, tenant-safe route `GET /api/sweepstake/display/:configId/media/:mediaId`, which 404s unless the `mediaId` is referenced by that config's `slideOrder` AND the asset is owned by / shared with the config's `clientId`. The renderer (`client/src/components/sweepstake/SweepstakeDisplayWidget.tsx → MediaSlide`) honours `durationSeconds` for images/GIFs and advances videos on natural end (`onEnded`) with an error/metadata safety timeout; videos are muted unless the slide opts in (`mute:false`). A media slide can also opt into `fullScreen` (per-item flag on the loop item), which renders it edge-to-edge over the whole display, bypassing the tournament header and page-dot footer chrome (the renderer branches on `isFullScreenMedia` and passes `fullBleed` to `MediaSlide`). Schema column added by `migrations/0018_sweepstake_slide_order.sql`.
-
-## Operations Runbook
-
-### Canvas pairing — one-shot repair marker (Task #179)
-
-The boot path runs `repairFalseCanvasPairingsOnce()` which gates the
-Task #176 false-canvas-pairing repair behind a `system_settings` marker
-keyed `canvas_pairing_repair_176_completed`. The marker is claimed
-*atomically* (insert with `ON CONFLICT DO NOTHING`) **before** the
-repair runs, then stamped with the final outcome on success.
-
-Boot log lines:
-- `[canvas-pairing] one-shot repair already completed for this DB; skipping` — marker present, no work done.
-- `[canvas-pairing] one-shot repair ran with nothing to fix` — marker absent, repair ran, found no damaged rows, marker now written.
-- `[canvas-pairing] one-shot repair fixed N false-canvas-pairing row(s)` — marker absent, repair fixed N rows, marker now written.
-
-**Recovery — marker stuck in `running` state**: if the server crashes
-between the marker claim and the completion stamp, the marker stays at
-`status: "running"` and every subsequent boot will skip the repair.
-To force a re-run, delete the row by hand:
-
-```sql
-DELETE FROM system_settings WHERE key = 'canvas_pairing_repair_176_completed';
-```
-
-The next boot will re-claim the marker and run the repair. The
-underlying repair is idempotent against clean data, so re-running on a
-healthy DB is a safe no-op.
-
-### Canvas groups — explicit-grouping backfill marker (Task #189)
-
-The boot path runs `backfillExplicitCanvasGroupsOnce()` which gates the
-Task #189 explicit-grouping backfill behind a `system_settings` marker
-keyed `canvas_groups_backfill_189_completed`. The marker is claimed
-*atomically* (insert with `ON CONFLICT DO NOTHING`) **before** the
-backfill runs, so concurrent boots cannot both produce `canvas_groups`
-rows; only the winner runs and the loser returns `{ skipped: true }`.
-On success the marker is stamped with `status: "completed"` plus
-`groupsCreated` / `screensStamped` counts for forensics.
-
-Boot log lines:
-- `[canvas-groups] explicit-grouping backfill already completed for this DB; skipping` — marker present, no work done.
-- `[canvas-groups] explicit-grouping backfill: created N group(s), stamped M screen(s)` — marker absent, backfill ran and stamped completion.
-
-**Recovery — marker stuck in `running` state**: if the server crashes
-between the marker claim and the completion stamp, the marker stays at
-`status: "running"` and every subsequent boot will skip the backfill,
-leaving any unstamped canvas screens without a `canvasGroupId`. To
-force a re-run, delete the row by hand:
-
-```sql
-DELETE FROM system_settings WHERE key = 'canvas_groups_backfill_189_completed';
-```
-
-The next boot will re-claim the marker and run the backfill. The
-backfill only touches screens with `canvasGroupId IS NULL`, so
-re-running on a healthy (fully-stamped) DB is a safe no-op.
-
-### Player media payload — per-screen site scope (Task #239)
-
-`GET /api/player/:screenId/content` site-scopes `content.media` through
-`server/playerMediaFilter.ts → filterMediaAssetsForScreen()`. The
-response only contains media assets that are either owned by the
-screen's `clientId` or explicitly shared with that client via the
-`media_shares` table — mirroring the admin `GET /api/media` filter. A
-screen with no `clientId` (orphan row) gets an empty list, never the
-whole estate.
-
-This invariant matters because the player's zone-renderer falls back
-to `zone.mediaId ? filter : media` for media zones with no specific
-asset selected. Without server-side scoping, that fallback rotated
-through every uploaded file across all clients — a cross-tenant data
-leak. Don't reintroduce an unfiltered `storage.getMediaAssets()` call
-in any player-facing endpoint.
-
-Defensive client check: `client/src/components/zone-renderer.tsx`
-logs a one-shot `[player-content]` warning when a media zone's
-`mediaId` references an asset that isn't in the site-scoped payload
-(stale cross-site reference or since-deleted asset), instead of
-silently rendering empty.
+- **Live Screenshots**: Players capture and upload compressed JPEG screenshots every 60 seconds (if enabled), stored as base64 data URLs; the admin screen page displays these with auto-refresh.
+- **Screen Presets & Control Panel**: Pre-configured layout+zone combinations can be saved and activated via a one-click control panel (creating a high-priority live override; deactivation removes it). Supports Stream Deck integration via REST API.
+- **API Tokens**: Users can mint personal long-lived bearer tokens (`Authorization: Bearer vm_...`) for external integrations; tokens are hashed and stored, with existing tenant scoping applied.
+- **Programme Scheduling**: A block editor with time rules, recurring schedules, screen/group targets, layout assignment, and priority. The conflict panel only flags overlapping blocks when their resolved screen sets actually intersect. The editor surfaces playback diagnostics (per-block "in past" / "no booking covers these dates" warnings, plus a 7-day "nothing will play" banner).
+- **Multi-Event Screen Bookings**: Each screen can be booked into multiple events over time via the `screen_event_bookings` table (one row per booking with non-overlapping `[startsAt, endsAt)` half-open intervals per screen, validated server-side). The legacy `screens.currentEventId` column has been dropped; the player resolver, manifest, allowed-clients filter, simulator, and heartbeat alerts all derive the active event from the booking that contains "now".
+- **Fallback Playlist Support**: Screens can have a `fallbackLayoutId` and `fallbackPlaylistId`. Priority chain: live override → scheduled programme → fallback layout → fallback playlist (rendered full-screen).
+- **Offline Player Capability**: A Service Worker caches layout data and media assets so display nodes function offline; layout JSON is also stored in localStorage.
+- **Player Audio Policy (muted-by-default)**: Every player-side `<video>` is muted unless an operator explicitly opts in, to avoid Chromium audio-focus auto-pause stutter. Do not flip this without preserving the opt-in path. See `docs/features.md`.
+- **Per-Client Schedule Timezones**: Each client (site) carries an IANA timezone (`clients.timezone`, default `Europe/London`, env override `DEFAULT_SCHEDULE_TIMEZONE`). All schedule HH:MM comparisons run through `shared/timezone-utils.ts`, which handles DST transitions so blocks fire at the configured wall-clock time.
+- **Agenda Spreadsheet Source Mapper**: The agenda-sync helper feeds the Agenda Display Widget from CSV/Google Sheets/Excel (OneDrive/SharePoint/uploaded) sources via a column-mapping pipeline (`shared/spreadsheet-mapping.ts`), not just the legacy fixed-column feeds. See `docs/features.md`.
+- **HTML/CSS Widgets**: The `html` zone type renders operator-authored markup in a sandboxed iframe (`sandbox="allow-same-origin"` only — never `allow-scripts`), scaled from a fixed 1920px-wide reference canvas, with server-side sanitisation. See `docs/features.md`.
+- **Sweepstake Wall Loop — custom media slides**: The sweepstake display's rotation is an operator-orderable loop mixing built-in tournament slides with media-library images/videos (per-item duration, sound, full-screen, enable/remove), persisted on `sweepstake_widget_configs.slideOrder` (JSONB). Media bytes are served by a public, tenant-safe route. See `docs/features.md`.
 
 ## External Dependencies
 
