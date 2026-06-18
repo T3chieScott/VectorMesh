@@ -313,6 +313,7 @@ function AgendaRow({
   accentColor,
   roleColors,
   showCardDate,
+  suppressTestId,
 }: {
   item: AgendaItem;
   config: AgendaWidgetConfig;
@@ -322,6 +323,11 @@ function AgendaRow({
   accentColor?: string;
   roleColors?: RoleColors;
   showCardDate?: boolean;
+  // The off-screen pagination measurer renders a hidden copy of every
+  // row. Those copies must NOT carry data-testid, or the visible row and
+  // its measurer twin both match `agenda-row-<id>` and break Playwright's
+  // strict-mode locators.
+  suppressTestId?: boolean;
 }) {
   const timeStyle = timeRoleStyle(config, roleColors?.time);
   const bodyStyle = roleColors?.body ? { color: roleColors.body } : undefined;
@@ -348,11 +354,15 @@ function AgendaRow({
     borderLeftColor: accentColor || "var(--ag-border)",
     boxShadow: isCurrent ? "var(--ag-glow)" : undefined,
   };
+  // Off-screen measurer twins must not carry ANY data-testid, or both the
+  // visible row and its hidden twin match the same selector and break
+  // Playwright's strict-mode locators (agenda-row, agenda-title, …).
+  const tid = (id: string) => (suppressTestId ? undefined : id);
   return (
     <div
       className="flex items-start gap-4 rounded-lg px-4 py-3"
       style={cardStyle}
-      data-testid={`agenda-row-${item.id}`}
+      data-testid={tid(`agenda-row-${item.id}`)}
       data-current={isCurrent ? "true" : undefined}
     >
       <div
@@ -362,14 +372,14 @@ function AgendaRow({
         <span
           className="font-mono font-bold"
           style={{ fontSize: scale * roleSizes.time, ...timeStyle }}
-          data-testid={`agenda-time-start-${item.id}`}
+          data-testid={tid(`agenda-time-start-${item.id}`)}
         >
           {formatTime(item.startsAt, tz)}
         </span>
         <span
           className="font-mono opacity-60"
           style={{ fontSize: scale * endTimeMult, ...timeStyle }}
-          data-testid={`agenda-time-end-${item.id}`}
+          data-testid={tid(`agenda-time-end-${item.id}`)}
         >
           {formatTime(item.endsAt, tz)}
         </span>
@@ -377,7 +387,7 @@ function AgendaRow({
           <span
             className="mt-1 text-center leading-tight opacity-70"
             style={{ fontSize: scale * roleSizes.date, ...timeStyle }}
-            data-testid={`agenda-card-date-${item.id}`}
+            data-testid={tid(`agenda-card-date-${item.id}`)}
           >
             {formatShortDate(item.startsAt, tz)}
           </span>
@@ -388,7 +398,7 @@ function AgendaRow({
           <h3
             className="font-semibold leading-tight break-words"
             style={{ fontSize: scale * roleSizes.title, ...bodyStyle }}
-            data-testid={`agenda-title-${item.id}`}
+            data-testid={tid(`agenda-title-${item.id}`)}
           >
             {item.title}
           </h3>
@@ -405,13 +415,13 @@ function AgendaRow({
             {((config.showRoom && item.room) || item.track) && (
               <div className="flex flex-wrap gap-3">
                 {config.showRoom && item.room && (
-                  <span data-testid={`agenda-room-${item.id}`}>📍 {item.room}</span>
+                  <span data-testid={tid(`agenda-room-${item.id}`)}>📍 {item.room}</span>
                 )}
                 {item.track && <span>🏷 {item.track}</span>}
               </div>
             )}
             {config.showPresenter && item.presenter && (
-              <span className="whitespace-pre-line" data-testid={`agenda-presenter-${item.id}`}>🎤 {item.presenter}</span>
+              <span className="whitespace-pre-line" data-testid={tid(`agenda-presenter-${item.id}`)}>🎤 {item.presenter}</span>
             )}
           </div>
         ) : null}
@@ -424,7 +434,7 @@ function AgendaRow({
           <p
             className="mt-1 italic opacity-90"
             style={{ fontSize: scale * roleSizes.body, ...bodyStyle }}
-            data-testid={`agenda-status-msg-${item.id}`}
+            data-testid={tid(`agenda-status-msg-${item.id}`)}
           >
             {item.statusMessage}
           </p>
@@ -1057,6 +1067,7 @@ export function AgendaDisplayWidget({
                 accentColor={config.accentColor}
                 roleColors={roleColors}
                 showCardDate={multiDay}
+                suppressTestId
               />
             </div>
           ))}

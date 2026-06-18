@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { sql, like, inArray } from "drizzle-orm";
-import { screens, displayProfiles, users } from "../../shared/schema";
+import { screens, displayProfiles, users, canvasGroups, clients } from "../../shared/schema";
 
 // Task #182: committed Playwright UI/E2E test for the
 // /screens "create two canvas-enabled screens, regenerate from one,
@@ -25,7 +25,7 @@ const PREFIX = `__TEST_S182_E2E_${Math.random().toString(36).slice(2, 8)}__`;
 
 const { Pool } = pg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL! });
-const db = drizzle(pool, { schema: { screens, displayProfiles, users } });
+const db = drizzle(pool, { schema: { screens, displayProfiles, users, canvasGroups, clients } });
 
 async function findOrPickAdminEmail(): Promise<string> {
   const rows = await db
@@ -41,32 +41,73 @@ async function findOrPickAdminEmail(): Promise<string> {
   return rows[0].email;
 }
 
-async function findCanvasFriendlyProfile(): Promise<{ id: string; name: string }> {
+async function findCanvasFriendlyClientAndProfile(): Promise<{
+  client: { id: string; name: string };
+  profile: { id: string; name: string };
+}> {
   // Pick a 1920x1080 landscape profile (or fall back to any landscape one)
   // so the two test tiles can sit side-by-side on a 3840x1080 wall.
   const rows = await db
-    .select({ id: displayProfiles.id, name: displayProfiles.name, w: displayProfiles.width, h: displayProfiles.height })
+    .select({
+      id: displayProfiles.id,
+      name: displayProfiles.name,
+      clientId: displayProfiles.clientId,
+      w: displayProfiles.width,
+      h: displayProfiles.height,
+    })
     .from(displayProfiles)
     .where(sql`${displayProfiles.width} = 1920 AND ${displayProfiles.height} = 1080`)
     .limit(1);
-  if (rows.length > 0) return { id: rows[0].id, name: rows[0].name };
-  const fallback = await db
-    .select({ id: displayProfiles.id, name: displayProfiles.name })
-    .from(displayProfiles)
-    .where(sql`${displayProfiles.width} >= ${displayProfiles.height}`)
-    .limit(1);
-  if (fallback.length === 0) {
-    throw new Error("No display profile found; seed one before running this E2E test.");
+  let prof = rows[0];
+  if (!prof) {
+    const fallback = await db
+      .select({
+        id: displayProfiles.id,
+        name: displayProfiles.name,
+        clientId: displayProfiles.clientId,
+      })
+      .from(displayProfiles)
+      .where(sql`${displayProfiles.width} >= ${displayProfiles.height}`)
+      .limit(1);
+    if (fallback.length === 0) {
+      throw new Error("No display profile found; seed one before running this E2E test.");
+    }
+    prof = fallback[0] as typeof prof;
   }
-  return fallback[0];
+
+  // A canvas group requires a non-null clientId (Task #189), so both tiles
+  // must share a site. Use the profile's own site if it is scoped to one;
+  // otherwise (a global profile) any site works.
+  let clientRow: { id: string; name: string } | undefined;
+  if (prof.clientId) {
+    const scoped = await db
+      .select({ id: clients.id, name: clients.name })
+      .from(clients)
+      .where(sql`${clients.id} = ${prof.clientId}`)
+      .limit(1);
+    clientRow = scoped[0];
+  }
+  if (!clientRow) {
+    const any = await db
+      .select({ id: clients.id, name: clients.name })
+      .from(clients)
+      .limit(1);
+    if (any.length === 0) {
+      throw new Error("No client/site found; seed one before running this E2E test.");
+    }
+    clientRow = any[0];
+  }
+
+  return { client: clientRow, profile: { id: prof.id, name: prof.name } };
 }
 
 async function cleanup() {
   // Delete any rows from this run AND any leftover rows from a prior
   // crashed run of the same test family (same __TEST_S182_E2E_*
-  // namespace). Done in two steps so the unique pairing_code constraint
-  // never blocks a re-run.
+  // namespace). Screens carry a canvasGroupId FK into canvas_groups, so
+  // drop the screens first, then the namespaced canvas group rows.
   await db.delete(screens).where(like(screens.name, `__TEST_S182_E2E_%`));
+  await db.delete(canvasGroups).where(like(canvasGroups.name, `__TEST_S182_E2E_%`));
 }
 
 async function loginAsTestUser(page: Page, email: string) {
@@ -91,6 +132,7 @@ async function readScreenRowsByName(prefix: string) {
       canvasHeight: screens.canvasHeight,
       canvasX: screens.canvasX,
       canvasY: screens.canvasY,
+      canvasGroupId: screens.canvasGroupId,
       createdAt: screens.createdAt,
     })
     .from(screens)
@@ -101,11 +143,12 @@ async function readScreenRowsByName(prefix: string) {
 test.describe("Task #182: /screens create + regenerate flow", () => {
   let adminEmail = "";
   let profile: { id: string; name: string } = { id: "", name: "" };
+  let client: { id: string; name: string } = { id: "", name: "" };
 
   test.beforeAll(async () => {
     await cleanup();
     adminEmail = await findOrPickAdminEmail();
-    profile = await findCanvasFriendlyProfile();
+    ({ client, profile } = await findCanvasFriendlyClientAndProfile());
   });
 
   test.afterAll(async () => {
@@ -124,10 +167,20 @@ test.describe("Task #182: /screens create + regenerate flow", () => {
     await expect(page.getByTestId("text-screens-title")).toBeVisible();
     await expect(page.getByTestId("button-create-screen").first()).toBeVisible();
 
+    const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    // Task #189: two tiles only form one wall (one shared device pairing,
+    // one owner) when they share an explicit `canvasGroupId`. The first
+    // tile mints the group via the "+ New group" button (which prompts for
+    // a name); the second tile picks that same group from the dropdown. A
+    // namespaced group name lets cleanup() drop the row afterwards.
+    const groupName = `${PREFIX}wall`;
+
     // Helper: walk the create dialog and submit one tile.
     const createTile = async (
       name: string,
       canvasX: number,
+      group: { create: true } | { select: true },
     ): Promise<void> => {
       await page.getByTestId("button-create-screen").first().click();
       const dialog = page.getByRole("dialog");
@@ -135,10 +188,19 @@ test.describe("Task #182: /screens create + regenerate flow", () => {
 
       await dialog.getByTestId("input-screen-name").fill(name);
 
+      // Assign a site first — a canvas group requires a non-null clientId
+      // (Task #189), and the group dropdown only lists groups for the
+      // currently-selected site.
+      await dialog.getByTestId("select-screen-client").click();
+      await page
+        .getByRole("option", { name: new RegExp(`^${escapeRe(client.name)}$`, "i") })
+        .first()
+        .click();
+
       // Display profile is a Radix Select — open + pick by visible label.
       await dialog.getByTestId("select-screen-profile").click();
       await page
-        .getByRole("option", { name: new RegExp(profile.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") })
+        .getByRole("option", { name: new RegExp(escapeRe(profile.name), "i") })
         .first()
         .click();
 
@@ -153,6 +215,46 @@ test.describe("Task #182: /screens create + regenerate flow", () => {
       const yInput = dialog.getByTestId("create-canvas-y");
       await yInput.fill("0");
 
+      if ("create" in group) {
+        // The "+ New group" button opens a window.prompt for the name, then
+        // POSTs /api/canvas-groups and auto-selects the new group on success.
+        const groupCreated = page.waitForResponse(
+          (r) =>
+            r.url().includes("/api/canvas-groups") &&
+            r.request().method() === "POST",
+        );
+        page.once("dialog", (d) => d.accept(groupName));
+        await dialog.getByTestId("create-canvas-group-new").click();
+        const resp = await groupCreated;
+        expect(
+          resp.ok(),
+          `create canvas group failed: ${resp.status()}`,
+        ).toBeTruthy();
+        // onSuccess sets the form's canvasGroupId *before* showing this toast.
+        await expect(page.getByText(/Created canvas group/i).first()).toBeVisible({
+          timeout: 10_000,
+        });
+        // Wait until the picker trigger actually reflects the freshly-created
+        // group. The group's <SelectItem> only appears once the /api/canvas-groups
+        // query refetches, and the trigger only shows the group name once the
+        // form value resolves against that list. Submitting before this settles
+        // races the value and the screen ends up auto-minted into its own group
+        // instead of joining the wall.
+        await expect(
+          dialog.getByTestId("create-canvas-group-select"),
+        ).toContainText(groupName, { timeout: 10_000 });
+      } else {
+        await dialog.getByTestId("create-canvas-group-select").click();
+        const option = page.getByRole("option", {
+          name: new RegExp(escapeRe(groupName), "i"),
+        });
+        await expect(option).toBeVisible({ timeout: 10_000 });
+        await option.first().click();
+        await expect(
+          dialog.getByTestId("create-canvas-group-select"),
+        ).toContainText(groupName, { timeout: 10_000 });
+      }
+
       await dialog.getByTestId("button-submit-screen").click();
       await expect(dialog).toBeHidden({ timeout: 10_000 });
     };
@@ -160,13 +262,19 @@ test.describe("Task #182: /screens create + regenerate flow", () => {
     const nameA = `${PREFIX}A`;
     const nameB = `${PREFIX}B`;
 
-    await createTile(nameA, 0);
-    await createTile(nameB, 1920);
+    await createTile(nameA, 0, { create: true });
+    await createTile(nameB, 1920, { select: true });
 
     // 2) DB is the source of truth for unique pairing codes.
     const rows = await readScreenRowsByName(PREFIX);
     expect(rows, `expected exactly 2 screens, got ${rows.length}`).toHaveLength(2);
     const [rowA, rowB] = rows;
+    // Both tiles must land in the SAME canvas group (one tile created the
+    // group via "+ New group", the other selected it). If the create branch
+    // drops the group, the server auto-mints a solo group per screen and the
+    // wall never forms — guard against that regression explicitly.
+    expect(rowA.canvasGroupId).toBeTruthy();
+    expect(rowB.canvasGroupId).toBe(rowA.canvasGroupId);
     expect(rowA.name).toBe(nameA);
     expect(rowB.name).toBe(nameB);
     expect(rowA.canvasWidth).toBe(3840);

@@ -386,11 +386,18 @@ function CanvasGroupPicker({
       <div className="flex gap-2">
         <Select
           value={watchedGroupId || NONE_VALUE}
-          onValueChange={(v) =>
+          onValueChange={(v) => {
+            // Radix fires onValueChange("") when the controlled value points
+            // at an item that isn't in the list yet — e.g. right after
+            // "+ New group" sets canvasGroupId but before the /api/canvas-groups
+            // query refetches the matching <SelectItem>. Ignore that spurious
+            // clear so we don't clobber the group we just selected (legit
+            // "none" selections come through as NONE_VALUE, never "").
+            if (v === "") return;
             form.setValue("canvasGroupId", v === NONE_VALUE ? null : v, {
               shouldDirty: true,
-            })
-          }
+            });
+          }}
         >
           <SelectTrigger
             className="h-9 text-xs"
@@ -1993,9 +2000,9 @@ function ScreenCard({
       <Card className={`relative hover-elevate transition-all ${screen.locked ? "ring-1 ring-amber-500/30" : ""}`}>
       {dragHandle}
       <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
           <div
-            className={`flex h-10 w-10 items-center justify-center rounded-lg ${
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
               screen.isOnline
                 ? "bg-green-500/10"
                 : screen.isPaired
@@ -2013,9 +2020,9 @@ function ScreenCard({
               }`}
             />
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <CardTitle className="text-base" data-testid={`text-screen-name-${screen.id}`}>
+              <CardTitle className="truncate text-base" data-testid={`text-screen-name-${screen.id}`}>
                 {screen.name}
               </CardTitle>
               {screen.locked && (

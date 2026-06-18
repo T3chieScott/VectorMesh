@@ -237,10 +237,10 @@ test(`${PREFIX} picking a layout clears any previously-chosen agenda`, async () 
       "fallback-playlist picker hides while a layout is selected",
     );
 
-    // Clear the layout back to "No layout"; both pickers should
+    // Clear the layout back to "No scene"; both pickers should
     // re-appear, and the agenda one should show the placeholder
     // (i.e. its state was wiped, not just hidden).
-    await pickOption(h.user, "select-block-layout", "No layout");
+    await pickOption(h.user, "select-block-layout", "No scene");
     assert.match(
       triggerText("select-block-agenda-config"),
       /Select an agenda|No agenda/,

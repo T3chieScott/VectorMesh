@@ -1,7 +1,7 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { sql, like, eq } from "drizzle-orm";
+import { sql, like } from "drizzle-orm";
 import {
   agendaItems,
   agendaWidgetConfigs,
@@ -50,14 +50,40 @@ async function cleanup() {
     .where(like(agendaWidgetConfigs.name, `${PREFIX}%`));
 }
 
+async function findOrPickAdminEmail(): Promise<string> {
+  const rows = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(sql`${users.role} = 'admin' AND ${users.isActive} = true`)
+    .limit(1);
+  if (rows.length === 0) {
+    throw new Error(
+      "No active admin user found in DB; seed one before running this E2E test.",
+    );
+  }
+  return rows[0].email;
+}
+
+async function loginAsTestUser(page: Page, email: string) {
+  // Route through page.request so the session cookie lands in the page's
+  // own context, authenticating subsequent page.request mutations.
+  const res = await page.request.post("/api/auth/test-login", {
+    data: { email },
+    headers: { "Content-Type": "application/json" },
+  });
+  expect(res.status(), `test-login failed: ${await res.text()}`).toBe(200);
+}
+
 test.describe("Task #211: /display/agenda/:configId end-to-end", () => {
   let clientId = "";
   let configId = "";
   let itemBeforeId = "";
   let itemNowId = "";
+  let adminEmail = "";
 
   test.beforeAll(async () => {
     await cleanup();
+    adminEmail = await findOrPickAdminEmail();
     clientId = await pickClientId();
     // Short refresh interval so the test doesn't sit waiting 30s for a
     // poll. The route schema clamps to >= 5s; we use the minimum.
@@ -133,13 +159,19 @@ test.describe("Task #211: /display/agenda/:configId end-to-end", () => {
       "LIVE Keynote",
     );
 
-    // 3) Mutate a title in the DB and wait for the page's polling loop
-    //    (5s refresh interval) to pick up the change without a reload.
+    // 3) Rename the item through the authenticated API and wait for the
+    //    page's polling loop (5s refresh interval) to pick up the change
+    //    without a reload. We go through PATCH /api/agenda/:id rather than a
+    //    raw DB write because the public display route caches the computed
+    //    payload (Task #290, 30s TTL); only an API write invalidates that
+    //    cache, which is the real operator path a poll must reflect.
+    await loginAsTestUser(page, adminEmail);
     const newTitle = `${PREFIX}LIVE Keynote RENAMED`;
-    await db
-      .update(agendaItems)
-      .set({ title: newTitle, updatedAt: new Date() })
-      .where(eq(agendaItems.id, itemNowId));
+    const patchRes = await page.request.patch(`/api/agenda/${itemNowId}`, {
+      data: { title: newTitle },
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(patchRes.status(), await patchRes.text()).toBe(200);
 
     await expect(page.getByTestId(`agenda-title-${itemNowId}`)).toContainText(
       "RENAMED",

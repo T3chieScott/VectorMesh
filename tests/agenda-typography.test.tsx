@@ -126,12 +126,17 @@ test("insertAgendaWidgetConfigSchema: valid font + 6-char hex colours accepted",
   assert.equal(r.success, true, JSON.stringify(r));
 });
 
-test("insertAgendaWidgetConfigSchema: rejects unknown font family key", () => {
+test("insertAgendaWidgetConfigSchema: accepts arbitrary font family keys (custom fonts)", () => {
+  // Task #281 — fontFamily is now a free-form string so operator-uploaded
+  // custom-font keys (and any future built-in additions) validate without a
+  // schema change. Unknown/stale keys are handled at render time by
+  // resolveFontStack, which falls back to the default stack (covered by the
+  // "unknown fontFamily key in DB falls back to default" renderer test).
   const r = insertAgendaWidgetConfigSchema.safeParse({
     ...BASE_INSERT,
-    fontFamily: "comic-sans" as any,
+    fontFamily: "comic-sans",
   });
-  assert.equal(r.success, false);
+  assert.equal(r.success, true, JSON.stringify(r));
 });
 
 test("insertAgendaWidgetConfigSchema: rejects non-hex colour strings", () => {

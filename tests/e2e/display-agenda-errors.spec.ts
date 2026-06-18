@@ -63,8 +63,13 @@ test.describe("Task #216: /display/agenda/:configId error branches", () => {
     // A well-formed UUID that definitely does not exist in the DB.
     const missingId = "00000000-0000-4000-8000-000000000216";
 
-    // Sanity-check the route really returns 404 for this id.
-    const apiRes = await page.request.get(`/api/agenda/display/${missingId}`);
+    // Sanity-check the route really returns 404 for this id. Give the
+    // request a generous timeout: this is the first hit against a freshly
+    // (re)started dev server under the full E2E poll load, so the very
+    // first response can be slow even though the route itself is fast.
+    const apiRes = await page.request.get(`/api/agenda/display/${missingId}`, {
+      timeout: 30_000,
+    });
     expect(apiRes.status()).toBe(404);
 
     await page.goto(`/display/agenda/${missingId}`);
