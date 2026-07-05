@@ -17,6 +17,8 @@ import type {
 } from "@shared/schema";
 import { SWEEPSTAKE_SLIDE_TYPES, SWEEPSTAKE_LIVE_PANELS } from "@shared/schema";
 import { DEFAULT_SCHEDULE_TIMEZONE_FALLBACK, isValidTimezone } from "@shared/timezone-utils";
+import { computeProgression, resolveGroupSlot, buildBracket } from "./sweepstakeProgression";
+import type { BracketRound } from "./sweepstakeProgression";
 import type {
   NormLiveMatch,
   NormLiveEvent,
@@ -206,6 +208,8 @@ export interface SweepstakeDisplayData {
   participants: DisplayParticipant[];
   matches: DisplayMatch[];
   standings: DisplayStanding[];
+  /** Knockout bracket rounds (earliest → final); empty before knockouts exist. */
+  bracket: BracketRound[];
   winner: { teamName: string; participants: string[] } | null;
 }
 
@@ -260,17 +264,27 @@ export function buildDisplayData(input: BuildDisplayInput): SweepstakeDisplayDat
     status: p.status as DisplayParticipant["status"],
   }));
 
+  // Derive standings/completed groups so knockout draw placeholders like
+  // "1st Group C" can be filled with the real qualifier once that group is
+  // final. This is display-only — nothing is persisted here, so a later
+  // provider sync never fights the resolution.
+  const progression = computeProgression(input.matches);
+  const resolveName = (name: string | null): string | null =>
+    resolveGroupSlot(name, progression) ?? name;
+
   const matches: DisplayMatch[] = input.matches.map((m) => ({
     id: m.id,
     stage: m.stage,
     groupName: m.groupName,
-    homeTeamName: m.homeTeamName,
-    awayTeamName: m.awayTeamName,
+    homeTeamName: resolveName(m.homeTeamName),
+    awayTeamName: resolveName(m.awayTeamName),
     homeScore: m.homeScore,
     awayScore: m.awayScore,
     status: m.status as DisplayMatch["status"],
     kickoffAt: m.kickoffAt ? m.kickoffAt.toISOString() : null,
   }));
+
+  const bracket = buildBracket(matches);
 
   const standings: DisplayStanding[] = input.standings.map((s) => ({
     teamName: s.teamName,
@@ -322,6 +336,7 @@ export function buildDisplayData(input: BuildDisplayInput): SweepstakeDisplayDat
     survivors: participants.some((p) => p.teamName),
     eliminations: participants.some((p) => p.status !== "active") || teams.some((t) => t.eliminated),
     spotlight: teams.length > 0,
+    bracket: bracket.some((r) => r.matches.length > 0),
     winner: winner !== null,
   };
   const slides = requested.filter((s) => hasContent[s]);
@@ -378,6 +393,7 @@ export function buildDisplayData(input: BuildDisplayInput): SweepstakeDisplayDat
     participants,
     matches,
     standings,
+    bracket,
     winner,
   };
 }

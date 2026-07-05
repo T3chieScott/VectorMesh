@@ -20,6 +20,7 @@ export type SlideType =
   | "fixtures"
   | "results"
   | "standings"
+  | "bracket"
   | "sweepstake"
   | "rivalries"
   | "survivors"
@@ -69,6 +70,24 @@ export interface DisplayStanding {
   lost: number;
   goalDifference: number;
   points: number;
+}
+
+// Knockout bracket (mirrors server BracketRound / BracketMatch).
+export interface BracketMatch {
+  id: string;
+  stage: string | null;
+  homeTeamName: string | null;
+  awayTeamName: string | null;
+  homeScore: number | null;
+  awayScore: number | null;
+  status: "scheduled" | "in_play" | "finished";
+  winnerName: string | null;
+  kickoffAt: string | null;
+}
+
+export interface BracketRound {
+  name: string;
+  matches: BracketMatch[];
 }
 
 // ----- Live World Cup panels (Task #287). Mirror server SweepstakeLiveData. -----
@@ -179,6 +198,8 @@ export interface SweepstakeDisplayData {
   participants: DisplayParticipant[];
   matches: DisplayMatch[];
   standings: DisplayStanding[];
+  /** Knockout bracket rounds (earliest → final); optional for older payloads. */
+  bracket?: BracketRound[];
   winner: { teamName: string; participants: string[] } | null;
   live?: SweepstakeLiveData | null;
 }
@@ -264,6 +285,7 @@ const SLIDE_TITLES: Record<RotationSlide, string> = {
   fixtures: "Today's fixtures",
   results: "Recent results",
   standings: "Group tables",
+  bracket: "Knockout bracket",
   sweepstake: "The sweepstake",
   rivalries: "Office rivalries",
   survivors: "Survivor board",
@@ -1080,6 +1102,100 @@ function StandingsSlide({ data, tokens, accent, ctx }: SlideProps) {
   );
 }
 
+// Short, signage-friendly round names for the bracket column headers.
+function shortRoundName(name: string): string {
+  const s = name.toLowerCase();
+  if (/round of 32|1\/16/.test(s)) return "Round of 32";
+  if (/round of 16|1\/8/.test(s)) return "Round of 16";
+  if (/quarter|1\/4/.test(s)) return "Quarter-finals";
+  if (/semi|1\/2/.test(s)) return "Semi-finals";
+  if (/(3rd|third)\b|play.?off/.test(s)) return "3rd place";
+  if (/final/.test(s)) return "Final";
+  return name;
+}
+
+function BracketSlide({ data, tokens, accent, ctx }: SlideProps) {
+  const rounds = useMemo(() => (data.bracket ?? []).filter((r) => r.matches.length > 0), [data.bracket]);
+
+  const boxRef = useRef<HTMLDivElement>(null);
+  const { w } = useBoxSize(boxRef);
+  // Show as many rounds per page as fit at a comfortable column width, then
+  // page through the remaining rounds (earliest → final).
+  const perPage = w > 0 ? clamp(Math.round(w / 360), 1, rounds.length || 1) : Math.min(4, rounds.length || 1);
+  const { page, pageCount } = usePagedSlide(rounds.length, perPage);
+  const shown = chunk(rounds, perPage)[page] ?? [];
+
+  if (rounds.length === 0)
+    return <CenterMessage tokens={tokens} title="No knockout matches yet" subtitle="The bracket fills in once the group stage finishes" icon="🏆" />;
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: "1cqmin" }} data-testid="slide-bracket">
+      <SlideHeading title="Knockout bracket" accent={accent} tokens={tokens} right={<span style={{ fontSize: "6cqmin" }} aria-hidden>🏆</span>} />
+      <div
+        ref={boxRef}
+        style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: `repeat(${shown.length}, minmax(0,1fr))`, gap: "1.6cqmin", overflow: "hidden" }}
+      >
+        {shown.map((round) => (
+          <div key={round.name} style={{ display: "flex", flexDirection: "column", minHeight: 0, gap: "1cqmin" }}>
+            <div style={{ textAlign: "center", marginBottom: "0.4cqmin" }}>
+              <GroupPill group={shortRoundName(round.name)} tokens={tokens} accent={accent} />
+            </div>
+            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", justifyContent: "space-around", gap: "1cqmin", overflow: "hidden" }}>
+              {round.matches.map((m) => (
+                <BracketMatchCard key={m.id} match={m} tokens={tokens} accent={accent} ctx={ctx} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <PageDots page={page} pageCount={pageCount} accent={accent} tokens={tokens} testId="bracket-pagination" />
+    </div>
+  );
+}
+
+function BracketMatchCard({ match, tokens, accent, ctx }: { match: BracketMatch; tokens: ThemeTokens; accent: string; ctx: SweepstakeCtx }) {
+  const decided = match.status === "finished" && match.homeScore != null && match.awayScore != null;
+  const rows: Array<{ name: string | null; score: number | null; side: "home" | "away" }> = [
+    { name: match.homeTeamName, score: match.homeScore, side: "home" },
+    { name: match.awayTeamName, score: match.awayScore, side: "away" },
+  ];
+  return (
+    <div style={{ ...cardBase(tokens), padding: "1cqmin 1.2cqmin", display: "flex", flexDirection: "column", gap: "0.6cqmin" }} data-testid={`bracket-match-${match.id}`}>
+      {rows.map((r) => {
+        const isWinner = decided && match.winnerName != null && r.name != null && r.name.toLowerCase() === match.winnerName.toLowerCase();
+        const isLoser = decided && match.winnerName != null && !isWinner;
+        const team = teamFromName(ctx, r.name);
+        const staff = staffFor(ctx, r.name);
+        return (
+          <div
+            key={r.side}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "auto 1fr auto",
+              gap: "1cqmin",
+              alignItems: "center",
+              opacity: isLoser ? 0.5 : 1,
+            }}
+          >
+            <Flag team={team} size={2.6} tokens={tokens} />
+            <span style={{ minWidth: 0, overflow: "hidden" }}>
+              <span style={{ fontWeight: isWinner ? 900 : 700, whiteSpace: "nowrap", color: isWinner ? accent : tokens.text, fontSize: "2cqmin" }}>
+                {r.name ?? "TBD"}
+              </span>
+              {staff.length > 0 && (
+                <span style={{ color: tokens.subtle, fontSize: "1.4cqmin", marginLeft: "0.8cqmin", fontWeight: 700 }}>{joinNames(staff, 1)}</span>
+              )}
+            </span>
+            <span style={{ fontWeight: 900, fontVariantNumeric: "tabular-nums", fontSize: "2cqmin", minWidth: "2.4cqmin", textAlign: "right" }}>
+              {r.score ?? (match.status === "scheduled" ? "" : "–")}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function SweepstakeSlide({ data, tokens, accent, ctx }: SlideProps) {
   const assigned = data.participants.filter((p) => p.teamName);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -1606,6 +1722,8 @@ function renderSlide(slide: RotationSlide, props: SlideProps) {
       return <ResultsSlide {...props} />;
     case "standings":
       return <StandingsSlide {...props} />;
+    case "bracket":
+      return <BracketSlide {...props} />;
     case "sweepstake":
       return <SweepstakeSlide {...props} />;
     case "rivalries":

@@ -3,6 +3,7 @@
 - [Dev server OOM](dev-server-oom.md) — XLSX OOM is exceljs full-load materializing every cell into live heap; fix = streaming reader (WorkbookReader), never load(). Bigger heap doesn't fix it.
 - [OneDrive Graph file listing](onedrive-graph-file-listing.md) — `/me/drive/recent` near-empty on business accounts; list `root/children`; share-link 403 = account can't access link.
 - [XLSX fast preview vs full read parity](dev-server-oom.md) — jszip+saxes preview reader must match exceljs full-read grid shape (trailing styled-blank col widths, truncation) or preview-picked mappings diverge from sync.
+- [Sweepstake progression](sweepstake-progression.md) — eliminations additive+provable+persisted; third-place cut must not trust partial KO feeds; placeholder resolution is display-only.
 - [Stale list cache phantom records](stale-list-cache-phantom-records.md) — staleTime:Infinity lists show deleted records on long-open tabs; add/delete then "fail" (404); hard refresh fixes. Check DB before assuming backend bug.
 - [Sportmonks results-only sync](sportmonks-results-only-sync.md) — periodic sweepstake sync = date-window /fixtures/between merge by externalId (never /fixtures/latest, never full re-pull).
 - [Replace-all sync wipes FKs](replace-all-sync-fk-wipe.md) — delete-all+reinsert-with-new-ids nulls every ON DELETE SET NULL FK; reconcile in place (match→update keeping id) instead.

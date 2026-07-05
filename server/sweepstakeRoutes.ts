@@ -32,6 +32,7 @@ import {
   buildLiveData,
   type SweepstakeLiveData,
 } from "./sweepstakeLogic";
+import { computeProgression } from "./sweepstakeProgression";
 import {
   getLiveInplayMatches,
   getSeasonFixtures,
@@ -207,6 +208,40 @@ export async function recomputeSweepstakeProgress(
     storage.getTournamentMatches(configId),
     storage.getSweepstakeParticipants(configId),
   ]);
+
+  // Derive group tables and provable eliminations from the finished matches,
+  // then persist them so the widget reflects the tournament's real progress.
+  const progression = computeProgression(matches);
+  const teamByName = new Map(teams.map((t) => [t.name.toLowerCase(), t]));
+  await storage.replaceTournamentStandings(
+    configId,
+    progression.standings.map((s) => ({
+      configId,
+      teamId: teamByName.get(s.teamName.toLowerCase())?.id ?? null,
+      teamName: s.teamName,
+      groupName: s.groupName,
+      position: s.position,
+      played: s.played,
+      won: s.won,
+      draw: s.draw,
+      lost: s.lost,
+      goalsFor: s.goalsFor,
+      goalsAgainst: s.goalsAgainst,
+      goalDifference: s.goalDifference,
+      points: s.points,
+    })),
+  );
+  // Eliminations are additive: results can only knock a team OUT. A team a human
+  // marked out by hand stays out; nobody is auto-revived except the champion
+  // (handled by the winner branch below).
+  for (const t of teams) {
+    if (t.isWinner || t.eliminated) continue;
+    if (progression.eliminatedTeamNames.has(t.name.toLowerCase())) {
+      await storage.updateTournamentTeam(t.id, { eliminated: true, eliminatedAt: new Date() });
+      t.eliminated = true;
+    }
+  }
+
   const winnerName = detectWinnerTeamName(matches);
   if (winnerName) {
     const winnerTeam = teams.find((t) => t.name.toLowerCase() === winnerName.toLowerCase());
