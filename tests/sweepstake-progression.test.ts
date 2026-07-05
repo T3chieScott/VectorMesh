@@ -4,6 +4,7 @@ import {
   computeGroupStandings,
   computeProgression,
   resolveGroupSlot,
+  resolveThirdPlaceSlot,
   buildBracket,
   isPlaceholderName,
   isRealTeamName,
@@ -160,6 +161,97 @@ test("resolveGroupSlot fills a placeholder only once the group is complete", () 
     gm({ groupName: "Group C", homeTeamName: "Gamma", awayTeamName: "Delta" }),
   ]);
   assert.equal(resolveGroupSlot("1st Group C", partial), null);
+});
+
+// Build a strict 1>2>3>4 four-team group. Points are always 9/6/3/0 so
+// positions are fixed regardless of margins; scorelines only tune the
+// third-placed team's goal difference so we can control which thirds rank best.
+// `strongThird` → the 3rd team posts a strong GD (advances); otherwise a poor
+// GD (misses the cut).
+function fifaGroup(letter: string, strongThird: boolean): MatchLike[] {
+  const t = [`${letter}1`, `${letter}2`, `${letter}3`, `${letter}4`];
+  const fin = (home: string, away: string, hs: number, as: number): MatchLike =>
+    gm({ groupName: `Group ${letter}`, homeTeamName: home, awayTeamName: away, homeScore: hs, awayScore: as, status: "finished" });
+  return [
+    fin(t[0], t[1], 1, 0),
+    fin(t[0], t[3], 1, 0),
+    fin(t[1], t[3], 1, 0),
+    // These three decide the 3rd team's goal difference.
+    fin(t[0], t[2], strongThird ? 1 : 5, 0),
+    fin(t[1], t[2], strongThird ? 1 : 5, 0),
+    fin(t[2], t[3], strongThird ? 5 : 1, 0),
+  ];
+}
+
+// A full 48-team World Cup group stage where groups B,D,E,F,I,J,K,L produce the
+// eight best third-placed teams (matching the confirmed 2026 Annex C row), plus
+// the 16 Round-of-32 fixtures needed for the engine to trust the capacity.
+function worldCupMatches(): MatchLike[] {
+  const qualifying = new Set(["B", "D", "E", "F", "I", "J", "K", "L"]);
+  const groups = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
+  const matches: MatchLike[] = [];
+  for (const g of groups) matches.push(...fifaGroup(g, qualifying.has(g)));
+  for (let i = 0; i < 16; i++) {
+    matches.push({
+      stage: "Round of 32",
+      groupName: null,
+      homeTeamName: `Winner slot ${i}`,
+      awayTeamName: `Runner-up slot ${i}`,
+      homeScore: null,
+      awayScore: null,
+      status: "scheduled",
+    });
+  }
+  return matches;
+}
+
+test("computeProgression records the qualifying third-place groups for the 48-team format", () => {
+  const prog = computeProgression(worldCupMatches());
+  assert.equal(prog.groupStageComplete, true);
+  assert.deepEqual(prog.qualifyingThirdGroups, ["B", "D", "E", "F", "I", "J", "K", "L"]);
+  // The four worst thirds are out; the eight qualifiers are not.
+  for (const g of ["A", "C", "G", "H"]) assert.equal(prog.eliminatedTeamNames.has(`${g.toLowerCase()}3`), true);
+  for (const g of ["B", "D", "E", "F", "I", "J", "K", "L"]) assert.equal(prog.eliminatedTeamNames.has(`${g.toLowerCase()}3`), false);
+});
+
+test("resolveThirdPlaceSlot fills cross-group placeholders via the FIFA Annex C table", () => {
+  const prog = computeProgression(worldCupMatches());
+  // Confirmed 2026 mapping for the B,D,E,F,I,J,K,L combination:
+  //   1A vs 3E, 1B vs 3J, 1D vs 3B, 1E vs 3D, 1G vs 3I, 1I vs 3F, 1K vs 3L, 1L vs 3K.
+  // Each slot's candidate-group set names the winner column it belongs to.
+  assert.equal(resolveThirdPlaceSlot("Third-place Group C/E/F/H/I", prog), "E3"); // winner A → 3E
+  assert.equal(resolveThirdPlaceSlot("Third-place Group E/F/G/I/J", prog), "J3"); // winner B → 3J
+  assert.equal(resolveThirdPlaceSlot("Third-place Group B/E/F/I/J", prog), "B3"); // winner D → 3B
+  assert.equal(resolveThirdPlaceSlot("Third-place Group A/B/C/D/F", prog), "D3"); // winner E → 3D
+  assert.equal(resolveThirdPlaceSlot("Third-place Group A/E/H/I/J", prog), "I3"); // winner G → 3I
+  assert.equal(resolveThirdPlaceSlot("Third-place Group C/D/F/G/H", prog), "F3"); // winner I → 3F
+  assert.equal(resolveThirdPlaceSlot("Third-place Group D/E/I/J/L", prog), "L3"); // winner K → 3L
+  assert.equal(resolveThirdPlaceSlot("Third-place Group E/H/I/J/K", prog), "K3"); // winner L → 3K
+  // Alternate placeholder spelling ("3rd") resolves the same way.
+  assert.equal(resolveThirdPlaceSlot("3rd Group A/B/C/D/F", prog), "D3");
+});
+
+test("resolveThirdPlaceSlot stays off until the qualifying thirds are proven", () => {
+  // No knockout fixtures yet → capacity untrusted → qualifyingThirdGroups null.
+  const qualifying = new Set(["B", "D", "E", "F", "I", "J", "K", "L"]);
+  const noKo: MatchLike[] = [];
+  for (const g of ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"]) {
+    noKo.push(...fifaGroup(g, qualifying.has(g)));
+  }
+  const prog = computeProgression(noKo);
+  assert.equal(prog.qualifyingThirdGroups, null);
+  assert.equal(resolveThirdPlaceSlot("Third-place Group A/B/C/D/F", prog), null);
+});
+
+test("resolveThirdPlaceSlot leaves single-group and unknown slots for the provider", () => {
+  const prog = computeProgression(worldCupMatches());
+  // A single-group placeholder isn't a cross-group third slot — resolveGroupSlot's job.
+  assert.equal(resolveThirdPlaceSlot("3rd Group C", prog), null);
+  // A group-set that matches no Round-of-32 fixture can't be placed.
+  assert.equal(resolveThirdPlaceSlot("Third-place Group A/B", prog), null);
+  // Real team names and non-third placeholders are untouched.
+  assert.equal(resolveThirdPlaceSlot("Brazil", prog), null);
+  assert.equal(resolveThirdPlaceSlot("Winner Match 73", prog), null);
 });
 
 test("buildBracket orders rounds earliest to final and computes winners", () => {

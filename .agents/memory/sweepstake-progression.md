@@ -28,9 +28,23 @@ more advancing thirds than there are groups. Otherwise leave all thirds in.
 
 ## Placeholder resolution is display-only
 "1st Group C" style slots are resolved to real teams **only in the display
-payload** (never persisted) and **only when that group is complete**. Cross-group
-"3rd Group A/B/C…" and "Winner Match NN" slots are left for the upstream provider
-to fill, so local resolution never fights a later provider sync.
+payload** (never persisted) and **only when that group is complete**. "Winner
+Match NN" slots are left for the upstream provider. Local resolution only ever
+replaces a placeholder-form name (never a real one), so it never fights a later
+provider sync.
+
+## Cross-group "3rd Group X/Y/Z" slots use the FIFA Annex C table
+Cross-group third-place placeholders ARE resolved locally now, via the official
+495-row FIFA World Cup 2026 Annex C allocation table (`server/thirdPlaceAllocation.ts`).
+Mechanics: the slot's own candidate-group set uniquely identifies which R32
+winner column it is (the 8 sets are distinct); the set of 8 qualifying third
+groups (`DerivedProgression.qualifyingThirdGroups`) picks the Annex C row;
+together they name the exact group whose 3rd-placed team fills the slot.
+**Only** fires for the exact 48-team format (12 groups, 8 advancing thirds,
+trusted capacity) — `qualifyingThirdGroups` is null otherwise, so Euro/32-team
+cups are unaffected. The qualifying set reuses the same points→GD→GF ranked cut
+as elimination (we lack FIFA's conduct-score/world-ranking tiebreakers), so a
+tie broken differently upstream self-corrects once the provider fills real names.
 
 ## Group vs knockout classification
 A match is group-stage if it has a non-empty `groupName` OR its stage text

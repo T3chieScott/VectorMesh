@@ -17,7 +17,7 @@ import type {
 } from "@shared/schema";
 import { SWEEPSTAKE_SLIDE_TYPES, SWEEPSTAKE_LIVE_PANELS } from "@shared/schema";
 import { DEFAULT_SCHEDULE_TIMEZONE_FALLBACK, isValidTimezone } from "@shared/timezone-utils";
-import { computeProgression, resolveGroupSlot, buildBracket } from "./sweepstakeProgression";
+import { computeProgression, resolveGroupSlot, resolveThirdPlaceSlot, buildBracket } from "./sweepstakeProgression";
 import type { BracketRound } from "./sweepstakeProgression";
 import type {
   NormLiveMatch,
@@ -270,7 +270,7 @@ export function buildDisplayData(input: BuildDisplayInput): SweepstakeDisplayDat
   // provider sync never fights the resolution.
   const progression = computeProgression(input.matches);
   const resolveName = (name: string | null): string | null =>
-    resolveGroupSlot(name, progression) ?? name;
+    resolveGroupSlot(name, progression) ?? resolveThirdPlaceSlot(name, progression) ?? name;
 
   const matches: DisplayMatch[] = input.matches.map((m) => ({
     id: m.id,
