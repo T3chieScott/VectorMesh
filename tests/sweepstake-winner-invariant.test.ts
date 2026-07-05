@@ -117,6 +117,12 @@ function makeStorage(teams: TournamentTeam[], matches: TournamentMatch[] = []): 
     async replaceTournamentTeams() { return teams.slice(); },
     async getTournamentMatches() { return matches.slice(); },
     async replaceTournamentMatches() { return []; },
+    async updateTournamentMatch(id: string, patch: Record<string, unknown>) {
+      const m = matches.find((x) => x.id === id);
+      if (!m) return undefined;
+      Object.assign(m, patch);
+      return m;
+    },
     async getTournamentStandings() { return standings.slice(); },
     async replaceTournamentStandings() { return []; },
     async getSweepstakeParticipants() { return participants.slice(); },

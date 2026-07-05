@@ -32,7 +32,7 @@ import {
   buildLiveData,
   type SweepstakeLiveData,
 } from "./sweepstakeLogic";
-import { computeProgression } from "./sweepstakeProgression";
+import { computeProgression, isGroupStageMatch } from "./sweepstakeProgression";
 import {
   getLiveInplayMatches,
   getSeasonFixtures,
@@ -74,6 +74,7 @@ export interface SweepstakeRoutesStorage {
   getTournamentMatches(configId: string): Promise<TournamentMatch[]>;
   replaceTournamentMatches(configId: string, matches: InsertTournamentMatch[]): Promise<TournamentMatch[]>;
   mergeTournamentMatches(configId: string, matches: InsertTournamentMatch[]): Promise<TournamentMatch[]>;
+  updateTournamentMatch(id: string, patch: Partial<InsertTournamentMatch>): Promise<TournamentMatch | undefined>;
   getTournamentStandings(configId: string): Promise<TournamentStanding[]>;
   replaceTournamentStandings(configId: string, standings: InsertTournamentStanding[]): Promise<TournamentStanding[]>;
   getSweepstakeParticipants(configId: string): Promise<SweepstakeParticipant[]>;
@@ -209,10 +210,30 @@ export async function recomputeSweepstakeProgress(
     storage.getSweepstakeParticipants(configId),
   ]);
 
+  const teamByName = new Map(teams.map((t) => [t.name.toLowerCase(), t]));
+  const teamNameById = new Map(teams.map((t) => [t.id, t.name]));
+
+  // Record the winner of each decided knockout match on the match row. A
+  // decisive 90-minute score names the winner directly (mapped to its team id);
+  // a provider-supplied winner (e.g. after penalties) is kept. This is what lets
+  // the loser be eliminated even when the score was level, and what fills
+  // "Winner <round> N" slots on later fixtures.
+  for (const m of matches) {
+    if (isGroupStageMatch(m) || m.status !== "finished") continue;
+    let winnerId = m.winnerTeamId ?? null;
+    if (!winnerId && m.homeScore != null && m.awayScore != null && m.homeScore !== m.awayScore) {
+      const winnerName = m.homeScore > m.awayScore ? m.homeTeamName : m.awayTeamName;
+      if (winnerName) winnerId = teamByName.get(winnerName.toLowerCase())?.id ?? null;
+    }
+    if (winnerId && winnerId !== m.winnerTeamId) {
+      await storage.updateTournamentMatch(m.id, { winnerTeamId: winnerId });
+      m.winnerTeamId = winnerId;
+    }
+  }
+
   // Derive group tables and provable eliminations from the finished matches,
   // then persist them so the widget reflects the tournament's real progress.
-  const progression = computeProgression(matches);
-  const teamByName = new Map(teams.map((t) => [t.name.toLowerCase(), t]));
+  const progression = computeProgression(matches, teamNameById);
   await storage.replaceTournamentStandings(
     configId,
     progression.standings.map((s) => ({

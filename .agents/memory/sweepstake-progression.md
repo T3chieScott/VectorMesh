@@ -28,10 +28,32 @@ more advancing thirds than there are groups. Otherwise leave all thirds in.
 
 ## Placeholder resolution is display-only
 "1st Group C" style slots are resolved to real teams **only in the display
-payload** (never persisted) and **only when that group is complete**. "Winner
-Match NN" slots are left for the upstream provider. Local resolution only ever
-replaces a placeholder-form name (never a real one), so it never fights a later
-provider sync.
+payload** (never persisted) and **only when that group is complete**. Local
+resolution only ever replaces a placeholder-form name (never a real one), so it
+never fights a later provider sync.
+
+### "Winner <round> N" slots ARE resolved locally now (round-named form only)
+`resolveWinnerSlot` fills "Winner Quarter-final 1" / "Winner Round of 16 3" /
+"Winner Semi-final 2": the N is an ordinal WITHIN that round (round matches
+sorted by kickoff, id as tiebreak) and the N-th match's recorded winner fills
+the slot. Display-only, still only replaces placeholders. **Bare "Winner Match
+73" stays unresolved** — it references a FIFA match NUMBER we don't store, and
+changing the provider fetch to ingest match numbers is out of scope. So the old
+"Winner Match NN left to provider" note only holds for the bare-number form.
+
+## Knockout winner is persisted on the match; penalties can eliminate
+`recomputeSweepstakeProgress` records `tournament_matches.winnerTeamId` for each
+finished KO match: a decisive 90-min score → winner side's team id (by name,
+since providers leave home/away team ids null); a provider-supplied winner is
+kept. `computeProgression(matches, teamNameById)` then eliminates the loser of a
+**level-score** (penalty) KO match too — but ONLY when a winner is recorded and
+matches one side by name. Called with no `teamNameById` (the pure unit fixtures),
+it keeps the conservative "level score → nobody out". Storage gained
+`updateTournamentMatch(id, patch)`; `winner_team_id` already exists in migration
+0014 (no new migration). Any mock `SweepstakeRoutesStorage` in tests must
+implement `updateTournamentMatch` or recompute throws.
+**Why:** the score alone can't prove a shoot-out winner, but a persisted winner
+can — so elimination stays provable, never a guess.
 
 ## Cross-group "3rd Group X/Y/Z" slots use the FIFA Annex C table
 Cross-group third-place placeholders ARE resolved locally now, via the official

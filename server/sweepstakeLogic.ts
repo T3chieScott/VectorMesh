@@ -17,8 +17,8 @@ import type {
 } from "@shared/schema";
 import { SWEEPSTAKE_SLIDE_TYPES, SWEEPSTAKE_LIVE_PANELS } from "@shared/schema";
 import { DEFAULT_SCHEDULE_TIMEZONE_FALLBACK, isValidTimezone } from "@shared/timezone-utils";
-import { computeProgression, resolveGroupSlot, resolveThirdPlaceSlot, buildBracket } from "./sweepstakeProgression";
-import type { BracketRound } from "./sweepstakeProgression";
+import { computeProgression, resolveGroupSlot, resolveThirdPlaceSlot, resolveWinnerSlot, buildBracket } from "./sweepstakeProgression";
+import type { BracketRound, WinnerSlotMatch } from "./sweepstakeProgression";
 import type {
   NormLiveMatch,
   NormLiveEvent,
@@ -268,9 +268,33 @@ export function buildDisplayData(input: BuildDisplayInput): SweepstakeDisplayDat
   // "1st Group C" can be filled with the real qualifier once that group is
   // final. This is display-only — nothing is persisted here, so a later
   // provider sync never fights the resolution.
-  const progression = computeProgression(input.matches);
+  const teamNameById = new Map(input.teams.map((t) => [t.id, t.name]));
+  const progression = computeProgression(input.matches, teamNameById);
+
+  // A "Winner <round> N" slot in a later fixture is filled from the recorded
+  // winner of the N-th match in that earlier round. Build that lookup from the
+  // raw matches: a decisive score names the winner directly, otherwise fall
+  // back to the persisted winnerTeamId (e.g. a penalty result).
+  const winnerSlotMatches: WinnerSlotMatch[] = input.matches.map((m) => {
+    let winnerName: string | null = null;
+    if (m.homeScore != null && m.awayScore != null && m.homeScore !== m.awayScore) {
+      winnerName = m.homeScore > m.awayScore ? m.homeTeamName : m.awayTeamName;
+    } else if (m.winnerTeamId) {
+      winnerName = teamNameById.get(m.winnerTeamId) ?? null;
+    }
+    return {
+      id: m.id,
+      stage: m.stage,
+      kickoffAt: m.kickoffAt ? m.kickoffAt.toISOString() : null,
+      winnerName: m.status === "finished" ? winnerName : null,
+    };
+  });
+
   const resolveName = (name: string | null): string | null =>
-    resolveGroupSlot(name, progression) ?? resolveThirdPlaceSlot(name, progression) ?? name;
+    resolveGroupSlot(name, progression) ??
+    resolveThirdPlaceSlot(name, progression) ??
+    resolveWinnerSlot(name, winnerSlotMatches) ??
+    name;
 
   const matches: DisplayMatch[] = input.matches.map((m) => ({
     id: m.id,

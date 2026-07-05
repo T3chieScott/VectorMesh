@@ -5,11 +5,13 @@ import {
   computeProgression,
   resolveGroupSlot,
   resolveThirdPlaceSlot,
+  resolveWinnerSlot,
   buildBracket,
   isPlaceholderName,
   isRealTeamName,
   type MatchLike,
   type BracketInputMatch,
+  type WinnerSlotMatch,
 } from "../server/sweepstakeProgression";
 
 // Task #297 — pin the World Cup progression engine: group tables, provable
@@ -36,6 +38,7 @@ function ko(o: Partial<MatchLike> & { homeTeamName: string; awayTeamName: string
     homeScore: o.homeScore ?? null,
     awayScore: o.awayScore ?? null,
     status: o.status ?? "scheduled",
+    winnerTeamId: o.winnerTeamId ?? null,
   };
 }
 
@@ -276,6 +279,50 @@ test("buildBracket excludes group-stage fixtures", () => {
   const rounds = buildBracket(input);
   assert.equal(rounds.length, 1);
   assert.equal(rounds[0].matches[0].id, "k1");
+});
+
+test("penalty-decided knockout eliminates the loser once a winner is recorded", () => {
+  // A level 90-minute score, but the winner was recorded (penalties). Passing
+  // the team-name map lets the engine prove the loser and knock them out.
+  const matches: MatchLike[] = [
+    ko({ stage: "Round of 16", homeTeamName: "Spain", awayTeamName: "Japan", homeScore: 1, awayScore: 1, status: "finished", winnerTeamId: "spain-id" }),
+  ];
+  const teamNameById = new Map([["spain-id", "Spain"]]);
+  const prog = computeProgression(matches, teamNameById);
+  assert.equal(prog.eliminatedTeamNames.has("japan"), true);
+  assert.equal(prog.eliminatedTeamNames.has("spain"), false);
+  // Without the name map (pure fixtures) the level score is still unresolved.
+  const bare = computeProgression(matches);
+  assert.equal(bare.eliminatedTeamNames.has("japan"), false);
+});
+
+test("resolveWinnerSlot fills a 'Winner <round> N' slot from the earlier round's decided winners", () => {
+  const winners: WinnerSlotMatch[] = [
+    { id: "qf1", stage: "Quarter-finals", kickoffAt: "2026-07-05T18:00:00Z", winnerName: "Brazil" },
+    { id: "qf2", stage: "Quarter-finals", kickoffAt: "2026-07-06T18:00:00Z", winnerName: "France" },
+    // A quarter-final not yet decided.
+    { id: "qf3", stage: "Quarter-finals", kickoffAt: "2026-07-07T18:00:00Z", winnerName: null },
+  ];
+  // Ordinal is the position within the round, ordered by kickoff.
+  assert.equal(resolveWinnerSlot("Winner Quarter-final 1", winners), "Brazil");
+  assert.equal(resolveWinnerSlot("Winner Quarter-final 2", winners), "France");
+  // The third quarter-final is undecided → leave the placeholder.
+  assert.equal(resolveWinnerSlot("Winner Quarter-final 3", winners), null);
+  // Out-of-range ordinal → null.
+  assert.equal(resolveWinnerSlot("Winner Quarter-final 4", winners), null);
+});
+
+test("resolveWinnerSlot leaves bare match-number and unknown slots for the provider", () => {
+  const winners: WinnerSlotMatch[] = [
+    { id: "qf1", stage: "Quarter-finals", kickoffAt: "2026-07-05T18:00:00Z", winnerName: "Brazil" },
+  ];
+  // "Winner Match 73" references a FIFA match number we don't store.
+  assert.equal(resolveWinnerSlot("Winner Match 73", winners), null);
+  // Real team names and non-winner placeholders are untouched.
+  assert.equal(resolveWinnerSlot("Brazil", winners), null);
+  assert.equal(resolveWinnerSlot("1st Group C", winners), null);
+  // An unrecognised round word can't be placed.
+  assert.equal(resolveWinnerSlot("Winner Playoff 1", winners), null);
 });
 
 test("buildBracket excludes group matches identified by groupName even when stage lacks 'group'", () => {

@@ -249,6 +249,7 @@ export interface IStorage {
   getTournamentMatches(configId: string): Promise<TournamentMatch[]>;
   replaceTournamentMatches(configId: string, matches: InsertTournamentMatch[]): Promise<TournamentMatch[]>;
   mergeTournamentMatches(configId: string, matches: InsertTournamentMatch[]): Promise<TournamentMatch[]>;
+  updateTournamentMatch(id: string, patch: Partial<InsertTournamentMatch>): Promise<TournamentMatch | undefined>;
   getTournamentStandings(configId: string): Promise<TournamentStanding[]>;
   replaceTournamentStandings(configId: string, standings: InsertTournamentStanding[]): Promise<TournamentStanding[]>;
   getSweepstakeParticipants(configId: string): Promise<SweepstakeParticipant[]>;
@@ -3286,6 +3287,14 @@ export class DatabaseStorage implements IStorage {
         .where(eq(tournamentMatches.configId, configId))
         .orderBy(tournamentMatches.kickoffAt);
     });
+  }
+
+  async updateTournamentMatch(id: string, patch: Partial<InsertTournamentMatch>): Promise<TournamentMatch | undefined> {
+    const [row] = await db.update(tournamentMatches)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(tournamentMatches.id, id))
+      .returning();
+    return row;
   }
 
   async getTournamentStandings(configId: string): Promise<TournamentStanding[]> {

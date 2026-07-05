@@ -21,7 +21,15 @@ import {
 export type MatchLike = Pick<
   TournamentMatch,
   "stage" | "groupName" | "homeTeamName" | "awayTeamName" | "homeScore" | "awayScore" | "status"
->;
+> & {
+  /**
+   * Recorded winner of a decided knockout match. Lets the loser be eliminated
+   * even when the 90-minute score was level (a penalty shoot-out): the score
+   * alone can't prove who went through, but a persisted winner can. Optional so
+   * unit fixtures and group matches can omit it.
+   */
+  winnerTeamId?: string | null;
+};
 
 export interface DerivedStanding {
   teamName: string;
@@ -59,7 +67,7 @@ export interface DerivedProgression {
 
 // A group match carries a real group label; knockout fixtures don't (their
 // draw slots live in the placeholder team names instead).
-function isGroupStageMatch(m: MatchLike): boolean {
+export function isGroupStageMatch(m: MatchLike): boolean {
   if (m.groupName && m.groupName.trim()) return true;
   return /group/i.test(m.stage ?? "");
 }
@@ -199,7 +207,15 @@ function firstKnockoutSlots(matches: MatchLike[]): number {
  *    that omits the exact FIFA third-place allocation table),
  *  - the losing side of any finished knockout match is out.
  */
-export function computeProgression(matches: MatchLike[]): DerivedProgression {
+export function computeProgression(
+  matches: MatchLike[],
+  // Maps a team id → its name. When provided, a decided knockout match with a
+  // level 90-minute score (a penalty shoot-out) still eliminates the loser,
+  // using the recorded winnerTeamId to prove who went through. Omitted by the
+  // pure unit fixtures, which then keep the conservative "level score → nobody
+  // out" behaviour.
+  teamNameById?: Map<string, string>,
+): DerivedProgression {
   const standings = computeGroupStandings(matches);
   const eliminated = new Set<string>();
 
@@ -269,10 +285,24 @@ export function computeProgression(matches: MatchLike[]): DerivedProgression {
   // Losing side of any decided knockout match.
   for (const m of matches) {
     if (isGroupStageMatch(m)) continue;
-    if (m.status !== "finished" || m.homeScore == null || m.awayScore == null) continue;
-    if (m.homeScore === m.awayScore) continue; // shoot-out result unknown → skip
-    const loser = m.homeScore > m.awayScore ? m.awayTeamName : m.homeTeamName;
-    if (isRealTeamName(loser)) eliminated.add(loser!.toLowerCase());
+    if (m.status !== "finished") continue;
+    // A decisive 90-minute score names the loser directly.
+    if (m.homeScore != null && m.awayScore != null && m.homeScore !== m.awayScore) {
+      const loser = m.homeScore > m.awayScore ? m.awayTeamName : m.homeTeamName;
+      if (isRealTeamName(loser)) eliminated.add(loser!.toLowerCase());
+      continue;
+    }
+    // Level score (penalty shoot-out) or missing scores: only provable when a
+    // winner was recorded and it matches one side by name. Otherwise skip —
+    // eliminations are permanent, so we never guess.
+    const winnerName = m.winnerTeamId ? teamNameById?.get(m.winnerTeamId) : undefined;
+    if (winnerName) {
+      const w = winnerName.toLowerCase();
+      let loser: string | null | undefined;
+      if (m.homeTeamName && m.homeTeamName.toLowerCase() === w) loser = m.awayTeamName;
+      else if (m.awayTeamName && m.awayTeamName.toLowerCase() === w) loser = m.homeTeamName;
+      if (isRealTeamName(loser)) eliminated.add(loser!.toLowerCase());
+    }
   }
 
   return { standings, eliminatedTeamNames: eliminated, completeGroups, groupStageComplete, qualifyingThirdGroups };
@@ -374,6 +404,55 @@ export function resolveThirdPlaceSlot(
     (s) => s.groupName.toLowerCase() === group.toLowerCase() && s.position === 3,
   );
   return row ? row.teamName : null;
+}
+
+// A finished knockout match with its decided winner, used to fill "Winner <round>
+// N" slots in later fixtures. `winnerName` is null while the match is undecided.
+export interface WinnerSlotMatch {
+  id: string;
+  stage: string | null;
+  kickoffAt: string | null;
+  winnerName: string | null;
+}
+
+/**
+ * Resolve a "winner of an earlier knockout match" placeholder, e.g.
+ * "Winner Quarter-final 1", "Winner Round of 16 3", "Winner Semi-final 2".
+ *
+ * The N is an ordinal WITHIN that round: the matches of the named round are put
+ * in kickoff order (id as a stable tiebreak) and the N-th one's recorded winner
+ * fills the slot. Resolution is display-only and only ever replaces a
+ * placeholder, so a later provider sync always wins.
+ *
+ * Returns null when it can't be proven: unknown round word, ordinal out of
+ * range, the feeding match not yet decided — or the bare "Winner Match 73"
+ * form, which references a FIFA match NUMBER we don't store (that mapping is
+ * left to the upstream provider).
+ */
+export function resolveWinnerSlot(
+  name: string | null | undefined,
+  matches: WinnerSlotMatch[],
+): string | null {
+  if (!name) return null;
+  const m = /^\s*winners?\s+(?:of\s+)?(.+?)\s+(\d+)\s*$/i.exec(name);
+  if (!m) return null;
+  const roundText = m[1].trim();
+  const ordinal = Number(m[2]);
+  if (!Number.isInteger(ordinal) || ordinal < 1) return null;
+  // "Winner Match NN" points at a FIFA match number, which we don't store.
+  if (/^match(es)?$/i.test(roundText)) return null;
+  const rank = koRoundRank(roundText);
+  if (rank === 99) return null; // unrecognised round
+
+  const inRound = matches
+    .filter((x) => koRoundRank(x.stage) === rank)
+    .sort(
+      (a, b) =>
+        (a.kickoffAt ?? "").localeCompare(b.kickoffAt ?? "") || a.id.localeCompare(b.id),
+    );
+  const target = inRound[ordinal - 1];
+  if (!target) return null;
+  return isRealTeamName(target.winnerName) ? target.winnerName : null;
 }
 
 // ---------- Knockout bracket ----------
