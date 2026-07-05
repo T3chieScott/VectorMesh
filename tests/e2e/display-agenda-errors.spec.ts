@@ -72,7 +72,12 @@ test.describe("Task #216: /display/agenda/:configId error branches", () => {
     });
     expect(apiRes.status()).toBe(404);
 
-    await page.goto(`/display/agenda/${missingId}`);
+    // `domcontentloaded` (not the default `load`) — under full-suite
+    // poll load the `load` event can lag past the nav timeout, and the
+    // assertions below only need React to have mounted.
+    await page.goto(`/display/agenda/${missingId}`, {
+      waitUntil: "domcontentloaded",
+    });
 
     const retired = page.getByTestId("agenda-display-retired");
     await expect(retired).toBeVisible({ timeout: 10_000 });
@@ -127,7 +132,9 @@ test.describe("Task #216: /display/agenda/:configId error branches", () => {
       }
     });
 
-    await page.goto(`/display/agenda/${configId}`);
+    await page.goto(`/display/agenda/${configId}`, {
+      waitUntil: "domcontentloaded",
+    });
 
     // First load succeeded — row is visible.
     await expect(page.getByTestId(`agenda-row-${it.id}`)).toBeVisible({

@@ -17,7 +17,10 @@ export default defineConfig({
   workers: 1,
   reporter: process.env.CI ? [["github"]] : [["list"]],
   use: {
-    baseURL: process.env.E2E_BASE_URL || "http://localhost:5000",
+    // Use the IPv4 loopback explicitly. On this container `localhost`
+    // resolves to IPv6 `::1`, but the dev server only binds IPv4, so a
+    // `localhost` baseURL intermittently fails with EAFNOSUPPORT ::1.
+    baseURL: process.env.E2E_BASE_URL || "http://127.0.0.1:5000",
     trace: "retain-on-failure",
     actionTimeout: 10_000,
     navigationTimeout: 15_000,

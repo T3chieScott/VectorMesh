@@ -134,7 +134,7 @@ import {
   MonitorPlay,
   Wifi,
 } from "lucide-react";
-import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client, AgendaWidgetConfig, SweepstakeWidgetConfig } from "@shared/schema";
+import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client, AgendaWidgetConfig, SweepstakeWidgetConfig, AgendaLayoutMode } from "@shared/schema";
 import { buildMediaImgSnippet } from "@shared/media-refs";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { resolveLayoutUploadClientId } from "@/lib/layoutUploadClientId";
@@ -966,7 +966,7 @@ function AgendaConfigPickerSection({
   // when the chosen agenda design is layoutMode='auto'.
   const resolvedVariant = selected
     ? pickAgendaLayout(
-        selected.layoutMode,
+        selected.layoutMode as AgendaLayoutMode,
         zoneWidthPx,
         zoneHeightPx,
         selected.displayMode,

@@ -23,7 +23,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { eq, like, sql } from "drizzle-orm";
+import { eq, like, sql, inArray } from "drizzle-orm";
 import { storage } from "../server/storage";
 import { db } from "../server/db";
 import { clients, screens, type Screen } from "../shared/schema";
@@ -87,7 +87,7 @@ test.after(async () => {
     await db
       .update(screens)
       .set({ isOnline: true } as any)
-      .where(sql`${screens.id} = ANY(${ambientOnlineIds})`);
+      .where(inArray(screens.id, ambientOnlineIds));
   }
   await cleanup();
 });
