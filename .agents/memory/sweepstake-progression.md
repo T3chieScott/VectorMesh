@@ -55,6 +55,16 @@ implement `updateTournamentMatch` or recompute throws.
 **Why:** the score alone can't prove a shoot-out winner, but a persisted winner
 can — so elimination stays provable, never a guess.
 
+### winnerTeamId must flow to ALL winner-facing outputs, not just elimination
+When you add a "recorded winner" concept, every place that decides a winner from
+the SCORE must also honour winnerTeamId (via a teamNameById map), or penalty
+results silently regress: (a) champion auto-detection (`detectWinnerTeamName`) —
+a level-score final with a recorded winner must still set `isWinner`; (b) the
+bracket's per-match `winnerName` (`buildBracket`) — must show the shoot-out
+winner, not blank. Both take an optional `teamNameById` and still return null on
+a draw with no recorded winner (never guess). Wiring winnerTeamId into
+elimination alone leaves champion/bracket outputs silently blank for penalties.
+
 ## Cross-group "3rd Group X/Y/Z" slots use the FIFA Annex C table
 Cross-group third-place placeholders ARE resolved locally now, via the official
 495-row FIFA World Cup 2026 Annex C allocation table (`server/thirdPlaceAllocation.ts`).

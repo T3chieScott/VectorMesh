@@ -263,7 +263,7 @@ export async function recomputeSweepstakeProgress(
     }
   }
 
-  const winnerName = detectWinnerTeamName(matches);
+  const winnerName = detectWinnerTeamName(matches, teamNameById);
   if (winnerName) {
     const winnerTeam = teams.find((t) => t.name.toLowerCase() === winnerName.toLowerCase());
     if (winnerTeam) {

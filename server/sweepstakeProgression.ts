@@ -485,6 +485,8 @@ export interface BracketInputMatch {
   homeScore: number | null;
   awayScore: number | null;
   status: "scheduled" | "in_play" | "finished";
+  /** Recorded winner (e.g. after penalties) when the score is level. */
+  winnerTeamId?: string | null;
   kickoffAt: string | null;
 }
 
@@ -511,7 +513,19 @@ function koRoundRank(stage: string | null): number {
  * matches. Group-stage fixtures are excluded. Each match reports its computed
  * winner when the result is decisive.
  */
-export function buildBracket(matches: BracketInputMatch[]): BracketRound[] {
+// Report a knockout match's winner: a decisive 90-minute score names it
+// directly; a level score is only decided by a recorded winnerTeamId (penalty
+// shoot-out) that resolves to a real team — never a guess.
+function bracketWinnerName(m: BracketInputMatch, teamNameById?: Map<string, string>): string | null {
+  if (m.status !== "finished") return null;
+  if (m.homeScore != null && m.awayScore != null && m.homeScore !== m.awayScore) {
+    return m.homeScore > m.awayScore ? m.homeTeamName : m.awayTeamName;
+  }
+  if (m.winnerTeamId) return teamNameById?.get(m.winnerTeamId) ?? null;
+  return null;
+}
+
+export function buildBracket(matches: BracketInputMatch[], teamNameById?: Map<string, string>): BracketRound[] {
   const ko = matches.filter((m) => !isGroupStageStage(m.stage, m.groupName ?? null));
   if (ko.length === 0) return [];
 
@@ -539,12 +553,7 @@ export function buildBracket(matches: BracketInputMatch[]): BracketRound[] {
         homeScore: m.homeScore,
         awayScore: m.awayScore,
         status: m.status,
-        winnerName:
-          m.status === "finished" && m.homeScore != null && m.awayScore != null && m.homeScore !== m.awayScore
-            ? m.homeScore > m.awayScore
-              ? m.homeTeamName
-              : m.awayTeamName
-            : null,
+        winnerName: bracketWinnerName(m, teamNameById),
         kickoffAt: m.kickoffAt,
       })),
     });

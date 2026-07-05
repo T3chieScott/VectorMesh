@@ -115,14 +115,25 @@ export function computeParticipantStatuses(
  * winning team name, or null if no decisive final is found. Used as a hint;
  * operators can always set the winner by hand.
  */
-export function detectWinnerTeamName(matches: Pick<TournamentMatch, "stage" | "status" | "homeTeamName" | "awayTeamName" | "homeScore" | "awayScore">[]): string | null {
+export function detectWinnerTeamName(
+  matches: Pick<TournamentMatch, "stage" | "status" | "homeTeamName" | "awayTeamName" | "homeScore" | "awayScore" | "winnerTeamId">[],
+  teamNameById?: Map<string, string>,
+): string | null {
   const finals = matches.filter(
     (m) => m.status === "finished" && /final/i.test(m.stage ?? "") && !/semi|quarter/i.test(m.stage ?? ""),
   );
   if (finals.length === 0) return null;
   const f = finals[finals.length - 1];
-  if (f.homeScore == null || f.awayScore == null || f.homeScore === f.awayScore) return null;
-  return f.homeScore > f.awayScore ? f.homeTeamName ?? null : f.awayTeamName ?? null;
+  // Decisive 90-minute score names the champion directly.
+  if (f.homeScore != null && f.awayScore != null && f.homeScore !== f.awayScore) {
+    return f.homeScore > f.awayScore ? f.homeTeamName ?? null : f.awayTeamName ?? null;
+  }
+  // Level score (penalty shoot-out): trust only a recorded winnerTeamId that
+  // resolves to a real team name — never guess a champion from a draw alone.
+  if (f.winnerTeamId) {
+    return teamNameById?.get(f.winnerTeamId) ?? null;
+  }
+  return null;
 }
 
 // ---------- Display payload (scrubbed for public consumption) ----------
@@ -308,7 +319,10 @@ export function buildDisplayData(input: BuildDisplayInput): SweepstakeDisplayDat
     kickoffAt: m.kickoffAt ? m.kickoffAt.toISOString() : null,
   }));
 
-  const bracket = buildBracket(matches);
+  const bracket = buildBracket(
+    matches.map((dm, i) => ({ ...dm, winnerTeamId: input.matches[i]?.winnerTeamId ?? null })),
+    teamNameById,
+  );
 
   const standings: DisplayStanding[] = input.standings.map((s) => ({
     teamName: s.teamName,

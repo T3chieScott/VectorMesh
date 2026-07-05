@@ -257,6 +257,14 @@ test("winner detection: unfinished or drawn final returns null", () => {
   );
 });
 
+test("winner detection: penalty final (level score) uses recorded winnerTeamId", () => {
+  const finalMatch = match({ id: "f", stage: "FINAL", status: "finished", homeTeamName: "A", awayTeamName: "B", homeScore: 1, awayScore: 1, winnerTeamId: "b-id" });
+  // With the name map the recorded shoot-out winner becomes champion.
+  assert.equal(detectWinnerTeamName([finalMatch], new Map([["b-id", "B"]])), "B");
+  // Without the map we never guess a champion from a draw.
+  assert.equal(detectWinnerTeamName([finalMatch]), null);
+});
+
 // ---------- display data (scrubbed) ----------
 test("buildDisplayData never leaks participant emails", () => {
   const teams = [team({ id: "t1", name: "A" })];

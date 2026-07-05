@@ -271,6 +271,18 @@ test("buildBracket orders rounds earliest to final and computes winners", () => 
   assert.equal(final.winnerName, null);
 });
 
+test("buildBracket reports a penalty winner only when winnerTeamId maps to a team", () => {
+  // A level score decided on penalties: winnerName comes from the recorded
+  // winnerTeamId via the name map, never from the drawn score.
+  const input: BracketInputMatch[] = [
+    { id: "sf", stage: "Semi-finals", homeTeamName: "Italy", awayTeamName: "Spain", homeScore: 1, awayScore: 1, status: "finished", winnerTeamId: "italy-id", kickoffAt: null },
+  ];
+  const withMap = buildBracket(input, new Map([["italy-id", "Italy"]]));
+  assert.equal(withMap[0].matches[0].winnerName, "Italy");
+  // Without the map (or without a recorded winner) a draw stays undecided.
+  assert.equal(buildBracket(input)[0].matches[0].winnerName, null);
+});
+
 test("buildBracket excludes group-stage fixtures", () => {
   const input: BracketInputMatch[] = [
     { id: "g1", stage: "Group A", homeTeamName: "Alpha", awayTeamName: "Beta", homeScore: 1, awayScore: 0, status: "finished", kickoffAt: null },
