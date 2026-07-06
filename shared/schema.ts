@@ -1806,6 +1806,8 @@ export const tournamentMatches = pgTable("tournament_matches", {
   awayTeamName: text("away_team_name"),
   homeScore: integer("home_score"),
   awayScore: integer("away_score"),
+  penaltyHomeScore: integer("penalty_home_score"),
+  penaltyAwayScore: integer("penalty_away_score"),
   status: text("status").notNull().default("scheduled"),
   kickoffAt: timestamp("kickoff_at"),
   winnerTeamId: varchar("winner_team_id"),

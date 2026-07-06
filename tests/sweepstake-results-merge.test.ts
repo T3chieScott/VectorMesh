@@ -100,3 +100,32 @@ test("merge inserts a fixture that wasn't synced before", async () => {
   assert.ok(fresh, "a brand-new fixture in the window must be inserted");
   assert.equal(fresh!.status, "in_play");
 });
+
+test("merge carries penalty shoot-out scores through a results refresh", async () => {
+  const { configId } = await makeConfig();
+
+  // Seeded as a scheduled level-score knockout tie (no penalties yet).
+  await storage.replaceTournamentMatches(configId, [
+    match("700", { homeTeamName: "Germany", awayTeamName: "Paraguay" }),
+  ]);
+
+  // The results window reports it finished 1-1, decided 3-4 on penalties.
+  const merged = await storage.mergeTournamentMatches(configId, [
+    match("700", {
+      homeTeamName: "Germany",
+      awayTeamName: "Paraguay",
+      homeScore: 1,
+      awayScore: 1,
+      penaltyHomeScore: 3,
+      penaltyAwayScore: 4,
+      status: "finished",
+    }),
+  ]);
+
+  const after = merged.find((m) => m.externalId === "700")!;
+  assert.equal(after.homeScore, 1);
+  assert.equal(after.awayScore, 1);
+  assert.equal(after.penaltyHomeScore, 3, "penalty home score must survive the merge");
+  assert.equal(after.penaltyAwayScore, 4, "penalty away score must survive the merge");
+  assert.equal(after.status, "finished");
+});

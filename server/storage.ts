@@ -3271,6 +3271,8 @@ export class DatabaseStorage implements IStorage {
               awayTeamName: m.awayTeamName,
               homeScore: m.homeScore,
               awayScore: m.awayScore,
+              penaltyHomeScore: m.penaltyHomeScore,
+              penaltyAwayScore: m.penaltyAwayScore,
               status: m.status,
               kickoffAt: m.kickoffAt,
               updatedAt: new Date(),

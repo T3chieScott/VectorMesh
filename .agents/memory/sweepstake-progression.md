@@ -78,6 +78,22 @@ cups are unaffected. The qualifying set reuses the same points→GD→GF ranked 
 as elimination (we lack FIFA's conduct-score/world-ranking tiebreakers), so a
 tie broken differently upstream self-corrects once the provider fills real names.
 
+### Provider must populate penalty data or the winnerTeamId path is dead
+Recording winnerTeamId only helps if something upstream can prove a level-score
+KO winner. Providers leave home/away team ids null and CANNOT set our internal
+winnerTeamId, so `recomputeSweepstakeProgress` is the only place it's derived.
+For Sportmonks: penalty ties come back with `state.state === "FT_PEN"` (map to
+finished in `toStatus`) and shoot-out goals in `scores[].description ===
+"PENALTY_SHOOTOUT"` (per participant home/away). Parser writes these to
+`penaltyHomeScore/penaltyAwayScore` (added in migration 0020); recompute breaks a
+level 90/120-min score by the higher penalty score → winnerTeamId → loser
+eliminated + champion/bracket resolve. The results-only periodic merge
+(`mergeTournamentMatches`) MUST update the penalty columns too or a re-sync wipes
+them. AET matches with a decisive aggregate score already work via the score path.
+**Why:** the prior "penalties eliminate" fix wired the CONSUMERS (progression/
+bracket/champion) but nothing PRODUCED the winner signal, so it silently no-op'd
+on real Sportmonks data — every penalty loser stayed "in".
+
 ## Group vs knockout classification
 A match is group-stage if it has a non-empty `groupName` OR its stage text
 contains "group". Filter the bracket on `groupName` too — some feeds label group

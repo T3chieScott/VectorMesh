@@ -52,6 +52,8 @@ function match(o: Partial<TournamentMatch> & { id: string }): TournamentMatch {
     awayTeamName: o.awayTeamName ?? null,
     homeScore: o.homeScore ?? null,
     awayScore: o.awayScore ?? null,
+    penaltyHomeScore: o.penaltyHomeScore ?? null,
+    penaltyAwayScore: o.penaltyAwayScore ?? null,
     status: (o.status as any) ?? "scheduled",
     kickoffAt: o.kickoffAt ?? null,
     winnerTeamId: o.winnerTeamId ?? null,
@@ -226,5 +228,42 @@ test("recomputeProgress collapses pre-existing multi-winner state to the detecte
     const winners = storage.teams.filter((t) => t.isWinner);
     assert.equal(winners.length, 1, "exactly one winner after recompute");
     assert.equal(winners[0].name, "C", "the detected final winner wins");
+  });
+});
+
+test("recomputeProgress eliminates the penalty-shoot-out loser of a level knockout", async () => {
+  // Knockout tie level after 120 minutes (1-1), decided on penalties: the
+  // higher shoot-out score names the winner, so the loser must be knocked out
+  // even though the recorded winnerTeamId starts null (provider can't set it).
+  const teams = [
+    team({ id: "t1", name: "Germany" }),
+    team({ id: "t2", name: "Paraguay" }),
+  ];
+  const matches = [
+    match({
+      id: "m1",
+      stage: "Round of 32",
+      status: "finished",
+      homeTeamName: "Germany",
+      awayTeamName: "Paraguay",
+      homeScore: 1,
+      awayScore: 1,
+      penaltyHomeScore: 3,
+      penaltyAwayScore: 4,
+    }),
+  ];
+  const storage = makeStorage(teams, matches);
+  await withServer(storage, async (base) => {
+    const res = await fetch(`${base}/api/sweepstake/teams/t1`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ shortName: "GER" }),
+    });
+    assert.equal(res.status, 200);
+    const germany = storage.teams.find((t) => t.name === "Germany")!;
+    const paraguay = storage.teams.find((t) => t.name === "Paraguay")!;
+    assert.equal(germany.eliminated, true, "penalty loser is eliminated");
+    assert.equal(paraguay.eliminated, false, "penalty winner stays in");
+    assert.equal(matches[0].winnerTeamId, "t2", "winner resolved from penalty score");
   });
 });

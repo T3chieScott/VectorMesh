@@ -46,7 +46,7 @@ function requireKey(provider: SweepstakeProvider): string {
 
 function toStatus(raw: string | null | undefined): "scheduled" | "in_play" | "finished" {
   const s = (raw ?? "").toUpperCase();
-  if (["FINISHED", "FT", "AET", "PEN", "AWARDED"].includes(s)) return "finished";
+  if (["FINISHED", "FT", "AET", "PEN", "FT_PEN", "AWARDED"].includes(s)) return "finished";
   if (["IN_PLAY", "PAUSED", "LIVE", "1H", "2H", "HT", "ET", "BT", "P"].includes(s)) return "in_play";
   return "scheduled";
 }
@@ -266,9 +266,9 @@ function mapSportmonksFixture(f: any): Omit<InsertTournamentMatch, "configId"> {
   const home = parts.find((p) => p?.meta?.location === "home");
   const away = parts.find((p) => p?.meta?.location === "away");
   const scores: any[] = Array.isArray(f.scores) ? f.scores : [];
-  const goalsFor = (loc: string): number | null => {
+  const scoreFor = (description: string, loc: string): number | null => {
     const entry = scores.find(
-      (s) => s?.description === "CURRENT" && s?.score?.participant === loc,
+      (s) => s?.description === description && s?.score?.participant === loc,
     );
     const g = entry?.score?.goals;
     return typeof g === "number" ? g : null;
@@ -281,8 +281,12 @@ function mapSportmonksFixture(f: any): Omit<InsertTournamentMatch, "configId"> {
     awayTeamId: null,
     homeTeamName: home?.name ?? null,
     awayTeamName: away?.name ?? null,
-    homeScore: goalsFor("home"),
-    awayScore: goalsFor("away"),
+    homeScore: scoreFor("CURRENT", "home"),
+    awayScore: scoreFor("CURRENT", "away"),
+    // Penalty shoot-out scores (present only for a knockout decided on penalties)
+    // let the loser be eliminated even though the 90/120-minute score was level.
+    penaltyHomeScore: scoreFor("PENALTY_SHOOTOUT", "home"),
+    penaltyAwayScore: scoreFor("PENALTY_SHOOTOUT", "away"),
     status: toStatus(f.state?.state),
     kickoffAt: f.starting_at_timestamp
       ? new Date(f.starting_at_timestamp * 1000)

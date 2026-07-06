@@ -225,6 +225,17 @@ export async function recomputeSweepstakeProgress(
       const winnerName = m.homeScore > m.awayScore ? m.homeTeamName : m.awayTeamName;
       if (winnerName) winnerId = teamByName.get(winnerName.toLowerCase())?.id ?? null;
     }
+    // Level (or unrecorded) score decided on penalties: the higher shoot-out
+    // score names the winner, so the loser can be eliminated.
+    if (
+      !winnerId &&
+      m.penaltyHomeScore != null &&
+      m.penaltyAwayScore != null &&
+      m.penaltyHomeScore !== m.penaltyAwayScore
+    ) {
+      const winnerName = m.penaltyHomeScore > m.penaltyAwayScore ? m.homeTeamName : m.awayTeamName;
+      if (winnerName) winnerId = teamByName.get(winnerName.toLowerCase())?.id ?? null;
+    }
     if (winnerId && winnerId !== m.winnerTeamId) {
       await storage.updateTournamentMatch(m.id, { winnerTeamId: winnerId });
       m.winnerTeamId = winnerId;
