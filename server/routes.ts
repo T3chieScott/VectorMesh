@@ -72,6 +72,7 @@ import { createAircraftOverheadHandler } from "./openSkyAircraft";
 import { buildScreenPatchHandler } from "./screenPatchHandler";
 import { buildScreenCreateHandler } from "./screenCreateHandler";
 import { buildScreenRegeneratePairingHandler } from "./screenRegeneratePairingHandler";
+import { buildPlayerPairHandler } from "./playerPairHandler";
 import {
   decideVideoHealthUpdate,
   extractVideoStats,
@@ -3180,71 +3181,10 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/player/pair", async (req, res) => {
-    try {
-      const { pairingCode, hardwareInfo } = req.body;
-      const screen = await storage.getScreenByPairingCode(pairingCode);
-      
-      if (!screen) {
-        return res.status(404).json({ error: "Invalid pairing code" });
-      }
-
-      const deviceToken = crypto.randomBytes(32).toString("hex");
-      
-      const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || null;
-      const reverseDns = await (async () => {
-        try {
-          const dns = await import("dns");
-          if (clientIp) {
-            const hostnames = await dns.promises.reverse(clientIp);
-            return hostnames[0] || null;
-          }
-        } catch {}
-        return null;
-      })();
-
-      // Implicit-canvas pairing (Task #173): one Pi drives the whole
-      // wall, so a single pairing code claims every member tile under
-      // one shared deviceToken. The player is told which tile it
-      // landed on (screenId/name = canvas owner = first-created tile)
-      // plus the full member list so the UI can render the composite.
-      const members = await storage.getCanvasMembers(screen);
-      const owner = members[0];
-      await storage.setCanvasPairingState(
-        members.map((m) => m.id),
-        {
-          isPaired: true,
-          isOnline: true,
-          lastSeen: new Date(),
-          hardwareClass: hardwareInfo?.class || "raspberry_pi",
-          hostname: hardwareInfo?.hostname || reverseDns || null,
-          ipAddress: clientIp,
-          deviceToken,
-        },
-      );
-
-      const isCanvasGroup = members.length > 1;
-      res.json({
-        screenId: owner.id,
-        name: owner.name,
-        deviceToken,
-        // First time-sync sample so the freshly-paired player's
-        // first-render clock already reflects server time.
-        serverTime: Date.now(),
-        canvas: isCanvasGroup
-          ? {
-              ownerScreenId: owner.id,
-              width: owner.canvasWidth,
-              height: owner.canvasHeight,
-              tiles: members.map((m) => ({ id: m.id, name: m.name })),
-            }
-          : null,
-      });
-    } catch (error) {
-      console.error("Error pairing screen:", error);
-      res.status(500).json({ error: "Failed to pair screen" });
-    }
-  });
+  // Task #303: handler extracted to server/playerPairHandler.ts so
+  // tests can drive the real pairing path (incl. the kiosk-mode
+  // re-pair gate) without registerRoutes(). Behaviour documented there.
+  app.post("/api/player/pair", buildPlayerPairHandler(storage));
 
   // Task #185 — Pi-side "I'm walking away" signal. The player calls
   // this just before clearing its localStorage device token (after

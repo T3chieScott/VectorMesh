@@ -126,9 +126,30 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
     const params = new URLSearchParams(window.location.search);
     return !!params.get("code");
   });
+  const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
   const autoPairAttempted = useRef(false);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const unmountedRef = useRef(false);
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
+  }, []);
 
-  const handlePairWithCode = useCallback(async (pairingCode: string) => {
+  // isAutoAttempt: true when driven by the ?code= URL (kiosk boot).
+  // Task #303 — kiosks often come up before their network does, so a
+  // failed AUTO attempt that is retryable (network error / 5xx) is
+  // retried with exponential backoff instead of falling back to the
+  // manual pairing form on a display nobody is standing next to.
+  // Definitive rejections (invalid code 404, already-paired 409) stop
+  // retrying and surface the error.
+  const handlePairWithCode = useCallback(async (
+    pairingCode: string,
+    isAutoAttempt = false,
+    attempt = 0,
+  ) => {
     if (pairingCode.length < 4) {
       setError("Please enter a valid pairing code");
       setAutoConnecting(false);
@@ -136,19 +157,27 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
     }
     setLoading(true);
     setError(null);
+    let retryable = false;
     try {
       // Sample server-time offset from the pair response so the
       // provider's first paint is already close to correct.
       const t1 = Date.now();
-      const res = await fetch("/api/player/pair", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          pairingCode: pairingCode.toUpperCase().trim(),
-          hardwareInfo: { hostname: window.location.hostname },
-        }),
-      });
+      let res: Response;
+      try {
+        res = await fetch("/api/player/pair", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            pairingCode: pairingCode.toUpperCase().trim(),
+            hardwareInfo: { hostname: window.location.hostname },
+          }),
+        });
+      } catch (networkErr) {
+        retryable = true;
+        throw new Error("Can't reach the server");
+      }
       if (!res.ok) {
+        if (res.status >= 500) retryable = true;
         const data = await res.json().catch(() => null);
         throw new Error(data?.error || "Invalid pairing code");
       }
@@ -164,8 +193,19 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
       storeAuth(data.deviceToken, data.screenId);
       onPaired(data.screenId, data.deviceToken);
     } catch (err: any) {
-      setError(err.message || "Failed to pair");
-      setAutoConnecting(false);
+      if (isAutoAttempt && retryable && !unmountedRef.current) {
+        // Exponential backoff: 2s, 4s, 8s, 16s, then every 30s forever.
+        const delayMs = Math.min(2000 * 2 ** attempt, 30000);
+        setRetryCountdown(Math.round(delayMs / 1000));
+        retryTimerRef.current = setTimeout(() => {
+          if (!unmountedRef.current) {
+            handlePairWithCode(pairingCode, true, attempt + 1);
+          }
+        }, delayMs);
+      } else {
+        setError(err.message || "Failed to pair");
+        setAutoConnecting(false);
+      }
     } finally {
       setLoading(false);
     }
@@ -181,7 +221,7 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
     if (urlCode) {
       const cleaned = urlCode.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
       setCode(cleaned);
-      handlePairWithCode(cleaned);
+      handlePairWithCode(cleaned, true);
     }
   }, [handlePairWithCode]);
 
@@ -191,7 +231,11 @@ function PairingScreen({ onPaired }: { onPaired: (screenId: string, token: strin
         <div className="text-center text-white">
           <div className="w-16 h-16 mx-auto mb-6 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
           <h1 className="text-2xl font-bold mb-2">Connecting Display</h1>
-          <p className="text-white/60 text-sm">Pairing automatically...</p>
+          <p className="text-white/60 text-sm" data-testid="auto-pairing-status">
+            {retryCountdown !== null && !loading
+              ? `Server unreachable — retrying automatically (next attempt in up to ${retryCountdown}s)...`
+              : "Pairing automatically..."}
+          </p>
         </div>
       </div>
     );

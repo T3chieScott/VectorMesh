@@ -212,6 +212,15 @@ export const screens = pgTable("screens", {
   // duplicate codes that pointed the next pair attempt at the wrong
   // screen.
   pairingCode: varchar("pairing_code", { length: 6 }).unique(),
+  // Task #303 — opt-in "reusable pairing code" (kiosk mode). Windows
+  // kiosk PCs wipe browser storage on reboot, losing the deviceToken.
+  // When this flag is ON, POST /api/player/pair accepts the screen's
+  // code even while the screen is already paired, minting a fresh
+  // token (the old one dies) so a kiosk URL like /player?code=ABC123
+  // survives reboots. When OFF (default), a pair attempt against an
+  // already-paired screen is rejected (409) so a leaked code can't
+  // hijack a live display.
+  kioskModeEnabled: boolean("kiosk_mode_enabled").default(false),
   deviceToken: text("device_token"),
   isPaired: boolean("is_paired").default(false),
   isOnline: boolean("is_online").default(false),

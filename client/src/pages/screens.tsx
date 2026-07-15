@@ -84,6 +84,7 @@ import {
   WifiOff,
   MapPin,
   RefreshCw,
+  RotateCcw,
   Activity,
   Copy,
   Zap,
@@ -1917,6 +1918,32 @@ function ScreenCard({
     }
   };
 
+  // Task #303 — opt-in reusable pairing code for kiosk PCs that wipe
+  // browser storage on reboot. When on, the same code re-pairs the
+  // screen any time, so a kiosk URL with ?code= survives reboots.
+  const toggleKioskModeMutation = useMutation({
+    mutationFn: (enabled: boolean) =>
+      apiRequest("PATCH", `/api/screens/${screen.id}`, { kioskModeEnabled: enabled }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screens"] });
+      toast({ title: screen.kioskModeEnabled ? "Reusable pairing code disabled" : "Reusable pairing code enabled" });
+    },
+    onError: () => {
+      toast({ title: "Failed to update reusable pairing code", variant: "destructive" });
+    },
+  });
+
+  const kioskUrl = screen.pairingCode
+    ? `${window.location.origin}/player?code=${screen.pairingCode}`
+    : null;
+
+  const copyKioskUrl = () => {
+    if (kioskUrl) {
+      navigator.clipboard.writeText(kioskUrl);
+      toast({ title: "Kiosk URL copied to clipboard" });
+    }
+  };
+
   const toggleScreenshotMutation = useMutation({
     mutationFn: (enabled: boolean) =>
       apiRequest("PATCH", `/api/screens/${screen.id}`, { screenshotEnabled: enabled }),
@@ -2530,6 +2557,49 @@ function ScreenCard({
           screen={screen}
           gating={pairingGating}
         />
+        {/* Task #303 — reusable pairing code (kiosk mode). Owner-only
+            like the other pairing controls; sibling tiles inherit the
+            wall's pairing via the owner. */}
+        {pairingGating.isCanvasOwner && (
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <RotateCcw className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">Reusable pairing code</span>
+              </div>
+              <Switch
+                checked={screen.kioskModeEnabled || false}
+                onCheckedChange={(checked) => toggleKioskModeMutation.mutate(checked)}
+                disabled={!!screen.locked}
+                data-testid={`switch-kiosk-mode-${screen.id}`}
+              />
+            </div>
+            {screen.kioskModeEnabled && kioskUrl && (
+              <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-muted/50">
+                <div className="min-w-0">
+                  <p className="text-[10px] text-muted-foreground">
+                    Kiosk URL — set as the kiosk browser's start page; the screen re-pairs itself after every reboot
+                  </p>
+                  <p
+                    className="text-xs font-mono truncate"
+                    data-testid={`text-kiosk-url-${screen.id}`}
+                  >
+                    {kioskUrl}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={copyKioskUrl}
+                  className="inline-flex shrink-0 items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground"
+                  data-testid={`button-copy-kiosk-url-${screen.id}`}
+                  aria-label="Copy kiosk URL"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <TestTube className="h-3.5 w-3.5 text-muted-foreground" />

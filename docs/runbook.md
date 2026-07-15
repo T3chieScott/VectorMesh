@@ -79,3 +79,24 @@ logs a one-shot `[player-content]` warning when a media zone's
 `mediaId` references an asset that isn't in the site-scoped payload
 (stale cross-site reference or since-deleted asset), instead of
 silently rendering empty.
+
+## Pairing codes are single-claim by default (Task #303)
+
+`POST /api/player/pair` now returns **409** if the screen (or any member
+of its video wall) already holds a live device token, unless the
+screen's **Reusable pairing code** (kiosk mode) toggle is ON. Before
+Task #303, any device with the code could silently hijack a live
+display; now the code is single-claim by default.
+
+Operator recovery when a pair attempt hits 409:
+- **Replacing the device?** Unpair the screen (screens page menu) or
+  regenerate its code, then pair the new device.
+- **Kiosk PC that wipes browser storage on reboot?** Turn ON
+  "Reusable pairing code" on the screen card, then set the kiosk
+  browser's start page to the copyable Kiosk URL
+  (`/player?code=XXXXXX`). The screen re-pairs itself on every boot;
+  each re-pair invalidates the previous device's token and writes a
+  `kiosk_repair` audit_logs row.
+
+Note: regenerating a screen's code invalidates any saved kiosk URL —
+update the kiosk start page after regenerating.
