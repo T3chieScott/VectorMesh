@@ -981,7 +981,11 @@ test("schema: screens.pairing_code carries a UNIQUE constraint at the DB layer (
     threw,
     "second insert with duplicate pairing_code must violate UNIQUE",
   );
-  const msg = String((threw as Error).message ?? threw);
+  // drizzle-orm ≥0.45 wraps the raw PG error under .cause; check the
+  // full chain so the assertion survives future error-format changes.
+  const err = threw as Error & { cause?: unknown };
+  const causeMsg = err.cause instanceof Error ? err.cause.message : "";
+  const msg = [String(err.message ?? threw), causeMsg].join(" ");
   assert.match(
     msg,
     /unique|duplicate/i,
