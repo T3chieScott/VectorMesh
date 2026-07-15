@@ -219,8 +219,12 @@ test(`${PREFIX} loadPersistedOffset rejects NaN/Infinity`, () => {
 // in <100ms with a clear error message.
 
 test(`${PREFIX} all four player endpoints stamp serverTime`, () => {
-  const path = resolve(import.meta.dirname ?? __dirname, "..", "server", "routes.ts");
-  const src = readFileSync(path, "utf8");
+  const dir = import.meta.dirname ?? __dirname;
+  // Task #303 extracted the pair handler into its own file, so the
+  // trip-wire scans both sources.
+  const src =
+    readFileSync(resolve(dir, "..", "server", "routes.ts"), "utf8") +
+    readFileSync(resolve(dir, "..", "server", "playerPairHandler.ts"), "utf8");
 
   // (1) Dedicated time endpoint
   assert.match(

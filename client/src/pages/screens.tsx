@@ -2578,7 +2578,7 @@ function ScreenCard({
               <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-muted/50">
                 <div className="min-w-0">
                   <p className="text-[10px] text-muted-foreground">
-                    Kiosk URL — set as the kiosk browser's start page; the screen re-pairs itself after every reboot
+                    Kiosk URL — set as the kiosk browser's start page; the screen re-pairs itself after every reboot. Anyone with this URL can claim this screen while enabled.
                   </p>
                   <p
                     className="text-xs font-mono truncate"
