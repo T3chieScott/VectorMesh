@@ -262,6 +262,8 @@ function MediaCard({
   folders,
   isAdmin,
   selectedClientId,
+  isSelected,
+  onToggleSelect,
 }: {
   asset: MediaAsset;
   viewMode: "grid" | "list";
@@ -269,6 +271,10 @@ function MediaCard({
   folders: MediaFolder[];
   isAdmin: boolean;
   selectedClientId: string | null;
+  // Task #306 follow-on — multiselect: undefined onToggleSelect means
+  // this asset can't be bulk-selected (e.g. shared from another site).
+  isSelected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -456,8 +462,16 @@ function MediaCard({
   if (viewMode === "list") {
     return (
       <>
-        <div className="flex items-center justify-between p-4 rounded-lg border bg-card hover-elevate transition-all">
+        <div className={`flex items-center justify-between p-4 rounded-lg border bg-card hover-elevate transition-all ${isSelected ? "ring-2 ring-primary border-primary" : ""}`}>
           <div className="flex items-center gap-4">
+            {onToggleSelect && (
+              <Checkbox
+                checked={!!isSelected}
+                onCheckedChange={() => onToggleSelect()}
+                aria-label={`Select ${asset.name}`}
+                data-testid={`checkbox-select-media-${asset.id}`}
+              />
+            )}
             <div
               className={`flex h-12 w-12 items-center justify-center rounded-lg ${getMediaTypeColor()}`}
             >
@@ -538,8 +552,19 @@ function MediaCard({
 
   return (
     <>
-      <Card className="group overflow-hidden hover-elevate transition-all">
+      <Card className={`group overflow-hidden hover-elevate transition-all ${isSelected ? "ring-2 ring-primary" : ""}`}>
         <div className="relative aspect-video bg-muted">
+          {onToggleSelect && (
+            <div className={`absolute top-2 ${isSharedAsset ? "right-2" : "left-2"} z-10 ${isSelected ? "" : "opacity-0 group-hover:opacity-100 transition-opacity"}`}>
+              <Checkbox
+                checked={!!isSelected}
+                onCheckedChange={() => onToggleSelect()}
+                className="bg-background/80 backdrop-blur-sm"
+                aria-label={`Select ${asset.name}`}
+                data-testid={`checkbox-select-media-${asset.id}`}
+              />
+            </div>
+          )}
           {asset.thumbnailPath || asset.mediaType === "image" ? (
             <img
               src={getMediaPreviewUrl(asset)}
@@ -630,6 +655,9 @@ export default function MediaPage() {
   const [folderDialogMode, setFolderDialogMode] = useState<"create" | "rename">("create");
   const [folderDialogName, setFolderDialogName] = useState("");
   const [folderBeingEdited, setFolderBeingEdited] = useState<MediaFolder | null>(null);
+  // Multiselect — bulk move/delete across the media library.
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const { toast } = useToast();
   const { selectedClientId } = useSiteContext();
   const { user } = useAuth();
@@ -684,6 +712,100 @@ export default function MediaPage() {
         ? !asset.folderId
         : asset.folderId === effectiveFolderId;
     return matchesSearch && matchesType && matchesFolder;
+  });
+
+  // Only assets owned by the currently viewed site (not shared-in ones) can
+  // be bulk-selected — shared assets are read-only from another site.
+  const isSelectable = (asset: MediaAsset) =>
+    !(selectedClientId && asset.clientId !== selectedClientId);
+  const selectableMedia = filteredMedia.filter(isSelectable);
+  const visibleSelectedIds = selectedAssetIds.filter((id) =>
+    selectableMedia.some((a) => a.id === id),
+  );
+  const allVisibleSelected =
+    selectableMedia.length > 0 &&
+    visibleSelectedIds.length === selectableMedia.length;
+
+  const toggleAssetSelected = (id: string) => {
+    setSelectedAssetIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedAssetIds(allVisibleSelected ? [] : selectableMedia.map((a) => a.id));
+  };
+
+  // Folders are per-site: bulk move is only offered when every selected
+  // asset belongs to the same site, and only that site's folders are shown.
+  const selectedAssets = media.filter((a) => visibleSelectedIds.includes(a.id));
+  const selectionClientIds = Array.from(new Set(selectedAssets.map((a) => a.clientId)));
+  const selectionClientId = selectionClientIds.length === 1 ? selectionClientIds[0] : null;
+  const bulkMoveFolders = selectionClientId
+    ? folders.filter((f) => f.clientId === selectionClientId)
+    : [];
+
+  const bulkMoveMutation = useMutation({
+    mutationFn: async (folderId: string | null) => {
+      const results = await Promise.allSettled(
+        visibleSelectedIds.map((id) =>
+          apiRequest("PATCH", `/api/media/${id}`, { folderId }),
+        ),
+      );
+      const failed = results.filter((r) => r.status === "rejected").length;
+      return { failed, total: results.length, folderId };
+    },
+    onSuccess: ({ failed, total, folderId }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/media"] });
+      const folderName = folderId
+        ? folders.find((f) => f.id === folderId)?.name ?? "folder"
+        : null;
+      if (failed > 0) {
+        toast({
+          title: `Moved ${total - failed} of ${total} items`,
+          description: `${failed} item${failed === 1 ? "" : "s"} could not be moved.`,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: folderName
+            ? `Moved ${total} item${total === 1 ? "" : "s"} to "${folderName}"`
+            : `Moved ${total} item${total === 1 ? "" : "s"} to Uncategorised`,
+        });
+      }
+      setSelectedAssetIds([]);
+    },
+    onError: () => {
+      toast({ title: "Failed to move media", variant: "destructive" });
+    },
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async () => {
+      const results = await Promise.allSettled(
+        visibleSelectedIds.map((id) => apiRequest("DELETE", `/api/media/${id}`)),
+      );
+      const failed = results.filter((r) => r.status === "rejected").length;
+      return { failed, total: results.length };
+    },
+    onSuccess: ({ failed, total }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/media"] });
+      if (failed > 0) {
+        toast({
+          title: `Deleted ${total - failed} of ${total} items`,
+          description: `${failed} item${failed === 1 ? "" : "s"} could not be deleted (they may be in use).`,
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: `Deleted ${total} item${total === 1 ? "" : "s"}` });
+      }
+      setSelectedAssetIds([]);
+      setBulkDeleteOpen(false);
+    },
+    onError: () => {
+      toast({ title: "Failed to delete media", variant: "destructive" });
+      setBulkDeleteOpen(false);
+    },
   });
 
   const uncategorisedCount = media.filter((a) => !a.folderId).length;
@@ -1050,6 +1172,82 @@ export default function MediaPage() {
         </aside>
 
         <div className="flex-1 min-w-0">
+      {!isLoading && selectableMedia.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 mb-4 p-3 rounded-lg border bg-card" data-testid="bar-bulk-actions">
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <Checkbox
+              checked={allVisibleSelected}
+              onCheckedChange={() => toggleSelectAll()}
+              aria-label="Select all"
+              data-testid="checkbox-select-all-media"
+            />
+            {visibleSelectedIds.length > 0
+              ? `${visibleSelectedIds.length} selected`
+              : "Select all"}
+          </label>
+          {visibleSelectedIds.length > 0 && (
+            <>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!selectionClientId || bulkMoveMutation.isPending}
+                    data-testid="button-bulk-move"
+                  >
+                    <FolderInput className="mr-2 h-4 w-4" />
+                    {bulkMoveMutation.isPending ? "Moving..." : "Move to folder"}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem
+                    onSelect={() => bulkMoveMutation.mutate(null)}
+                    data-testid="button-bulk-move-none"
+                  >
+                    <X className="mr-2 h-4 w-4" />
+                    Uncategorised
+                  </DropdownMenuItem>
+                  {bulkMoveFolders.length > 0 && <DropdownMenuSeparator />}
+                  {bulkMoveFolders.map((folder) => (
+                    <DropdownMenuItem
+                      key={folder.id}
+                      onSelect={() => bulkMoveMutation.mutate(folder.id)}
+                      data-testid={`button-bulk-move-${folder.id}`}
+                    >
+                      <Folder className="mr-2 h-4 w-4" />
+                      {folder.name}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {!selectionClientId && (
+                <span className="text-xs text-muted-foreground">
+                  Select items from one site to move them
+                </span>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive"
+                onClick={() => setBulkDeleteOpen(true)}
+                disabled={bulkDeleteMutation.isPending}
+                data-testid="button-bulk-delete"
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedAssetIds([])}
+                data-testid="button-bulk-clear"
+              >
+                Clear
+              </Button>
+            </>
+          )}
+        </div>
+      )}
       {isLoading ? (
         <div
           className={
@@ -1121,6 +1319,10 @@ export default function MediaPage() {
               folders={folders}
               isAdmin={isAdmin}
               selectedClientId={selectedClientId}
+              isSelected={visibleSelectedIds.includes(asset.id)}
+              onToggleSelect={
+                isSelectable(asset) ? () => toggleAssetSelected(asset.id) : undefined
+              }
             />
           ))}
         </div>
@@ -1165,6 +1367,37 @@ export default function MediaPage() {
               data-testid="button-folder-save"
             >
               {folderDialogMode === "create" ? "Create" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Delete {visibleSelectedIds.length} item{visibleSelectedIds.length === 1 ? "" : "s"}?
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This permanently deletes the selected media. Anywhere they are used
+            (layouts, playlists) will lose them.
+          </p>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setBulkDeleteOpen(false)}
+              data-testid="button-bulk-delete-cancel"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => bulkDeleteMutation.mutate()}
+              disabled={bulkDeleteMutation.isPending || visibleSelectedIds.length === 0}
+              data-testid="button-bulk-delete-confirm"
+            >
+              {bulkDeleteMutation.isPending ? "Deleting..." : "Delete"}
             </Button>
           </DialogFooter>
         </DialogContent>
