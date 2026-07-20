@@ -1249,6 +1249,9 @@ function MontageMediaPicker({
   const { data: mediaAssets, isLoading } = useQuery<MediaAsset[]>({
     ...mediaQuery,
   });
+  // Task #306 — name search so operators can find a slide in a big
+  // library without squinting at 5-column thumbnails.
+  const [montageSearch, setMontageSearch] = useState("");
 
   // Filter to only show images
   const imageAssets = mediaAssets?.filter(
@@ -1316,12 +1319,18 @@ function MontageMediaPicker({
               <div
                 key={asset.id}
                 className="relative group w-16 h-16 rounded-md overflow-hidden border-2 border-primary"
+                title={asset.name}
               >
                 <img
                   src={`/api/media/${asset.id}/file`}
                   alt={asset.name}
                   className="w-full h-full object-cover"
                 />
+                <div className="absolute bottom-0 inset-x-0 bg-black/60 px-0.5 pointer-events-none">
+                  <p className="text-[9px] leading-3 text-white truncate" data-testid={`text-montage-selected-name-${asset.id}`}>
+                    {asset.name}
+                  </p>
+                </div>
                 <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
                   <button
                     type="button"
@@ -1358,38 +1367,66 @@ function MontageMediaPicker({
 
       {/* Media library grid */}
       <Label className="text-sm font-medium">Available Photos</Label>
+      <Input
+        value={montageSearch}
+        onChange={(e) => setMontageSearch(e.target.value)}
+        placeholder="Search photos by name..."
+        className="h-8 text-sm"
+        data-testid="input-montage-search"
+      />
       <ScrollArea className="h-40 border rounded-md p-2">
-        <div className="grid grid-cols-5 gap-2">
-          {imageAssets.map((asset) => {
-            const isSelected = cleanIds.includes(asset.id);
+        {(() => {
+          const q = montageSearch.trim().toLowerCase();
+          const visibleAssets = q
+            ? imageAssets.filter((a) => (a.name || "").toLowerCase().includes(q))
+            : imageAssets;
+          if (visibleAssets.length === 0) {
             return (
-              <button
-                key={asset.id}
-                type="button"
-                onClick={() => toggleSelection(asset.id)}
-                className={`relative aspect-square rounded-md overflow-hidden border-2 transition-all ${
-                  isSelected
-                    ? "border-primary ring-2 ring-primary/20"
-                    : "border-transparent hover:border-muted-foreground/50"
-                }`}
-                data-testid={`montage-media-${asset.id}`}
-              >
-                <img
-                  src={`/api/media/${asset.id}/file`}
-                  alt={asset.name}
-                  className="w-full h-full object-cover"
-                />
-                {isSelected && (
-                  <div className="absolute top-1 right-1 bg-primary text-primary-foreground rounded-full w-4 h-4 flex items-center justify-center">
-                    <span className="text-xs">
-                      {cleanIds.indexOf(asset.id) + 1}
-                    </span>
-                  </div>
-                )}
-              </button>
+              <div className="py-6 text-center text-sm text-muted-foreground" data-testid="text-montage-no-matches">
+                No photos match "{montageSearch.trim()}"
+              </div>
             );
-          })}
-        </div>
+          }
+          return (
+            <div className="grid grid-cols-5 gap-2">
+              {visibleAssets.map((asset) => {
+                const isSelected = cleanIds.includes(asset.id);
+                return (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    onClick={() => toggleSelection(asset.id)}
+                    title={asset.name}
+                    className={`relative aspect-square rounded-md overflow-hidden border-2 transition-all ${
+                      isSelected
+                        ? "border-primary ring-2 ring-primary/20"
+                        : "border-transparent hover:border-muted-foreground/50"
+                    }`}
+                    data-testid={`montage-media-${asset.id}`}
+                  >
+                    <img
+                      src={`/api/media/${asset.id}/file`}
+                      alt={asset.name}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute bottom-0 inset-x-0 bg-black/60 px-0.5 pointer-events-none">
+                      <p className="text-[9px] leading-3 text-white truncate" data-testid={`text-montage-name-${asset.id}`}>
+                        {asset.name}
+                      </p>
+                    </div>
+                    {isSelected && (
+                      <div className="absolute top-1 right-1 bg-primary text-primary-foreground rounded-full w-4 h-4 flex items-center justify-center">
+                        <span className="text-xs">
+                          {cleanIds.indexOf(asset.id) + 1}
+                        </span>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
       </ScrollArea>
     </div>
   );
