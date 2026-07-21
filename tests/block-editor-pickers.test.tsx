@@ -168,14 +168,21 @@ async function pickOption(
     await new Promise((r) => setTimeout(r, 0));
   });
 
-  const option = Array.from(
-    document.body.querySelectorAll<HTMLElement>('[role="option"]'),
-  ).find((el) => (el.textContent || "").trim() === optionText);
+  // Radix Selects render options with role="option"; the scene picker
+  // (SceneFolderSelect) renders plain buttons in a popover with
+  // data-testid="option-block-scene-*".
+  const candidates = [
+    ...Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')),
+    ...Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-testid^="option-block-scene"]'),
+    ),
+  ];
+  const option = candidates.find(
+    (el) => (el.textContent || "").trim() === optionText,
+  );
   assert.ok(
     option,
-    `expected option labelled "${optionText}" in the open ${triggerTestId} dropdown; saw [${Array.from(
-      document.body.querySelectorAll<HTMLElement>('[role="option"]'),
-    )
+    `expected option labelled "${optionText}" in the open ${triggerTestId} dropdown; saw [${candidates
       .map((e) => (e.textContent || "").trim())
       .join(", ")}]`,
   );
