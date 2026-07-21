@@ -9981,6 +9981,8 @@ function LayoutListItem({
   layout, 
   folders,
   onMoveToFolder,
+  checked,
+  onToggleChecked,
   isSelected, 
   onSelect,
   previewScreenId,
@@ -9991,6 +9993,8 @@ function LayoutListItem({
   layout: LayoutTemplate; 
   folders: LayoutFolder[];
   onMoveToFolder: (folderId: string | null) => void;
+  checked: boolean;
+  onToggleChecked: () => void;
   isSelected: boolean; 
   onSelect: () => void;
   previewScreenId: string;
@@ -10016,6 +10020,17 @@ function LayoutListItem({
       data-testid={`layout-list-item-${layout.id}`}
     >
       <div className="flex items-start gap-3">
+        <div
+          className="flex items-center self-stretch pr-0.5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Checkbox
+            checked={checked}
+            onCheckedChange={() => onToggleChecked()}
+            aria-label={`Select scene ${layout.name}`}
+            data-testid={`checkbox-scene-${layout.id}`}
+          />
+        </div>
         <div 
           className="w-16 h-12 bg-slate-800 rounded flex-shrink-0 relative overflow-hidden"
         >
@@ -10992,6 +11007,31 @@ export default function LayoutsPage() {
   const [folderDialogName, setFolderDialogName] = useState("");
   const [folderBeingEdited, setFolderBeingEdited] = useState<LayoutFolder | null>(null);
   const [folderPendingDelete, setFolderPendingDelete] = useState<LayoutFolder | null>(null);
+  const [checkedSceneIds, setCheckedSceneIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+
+  // Drop stale selections when the visible scene list changes (site filter,
+  // deletions elsewhere) so bulk actions never target hidden scenes.
+  useEffect(() => {
+    setCheckedSceneIds((prev) => {
+      if (prev.size === 0) return prev;
+      const visible = new Set(layouts.map((l) => l.id));
+      const next = new Set(Array.from(prev).filter((id) => visible.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [layouts]);
+
+  const toggleCheckedScene = (layoutId: string) => {
+    setCheckedSceneIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(layoutId)) {
+        next.delete(layoutId);
+      } else {
+        next.add(layoutId);
+      }
+      return next;
+    });
+  };
 
   // Folders belong to a single site. When "All sites" is selected we can
   // only create a folder if there is exactly one site to choose from.
@@ -11045,6 +11085,69 @@ export default function LayoutsPage() {
     },
     onError: () => {
       toast({ title: "Failed to move scene", variant: "destructive" });
+    },
+  });
+
+  const bulkMoveToFolderMutation = useMutation({
+    mutationFn: async (vars: { layoutIds: string[]; folderId: string | null }) => {
+      const results = await Promise.allSettled(
+        vars.layoutIds.map((id) =>
+          apiRequest("PATCH", `/api/layouts/${id}`, { folderId: vars.folderId }),
+        ),
+      );
+      const failed = results.filter((r) => r.status === "rejected").length;
+      return { moved: vars.layoutIds.length - failed, failed };
+    },
+    onSuccess: ({ moved, failed }, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      setCheckedSceneIds(new Set());
+      const folderName = vars.folderId
+        ? sceneFolders.find((f) => f.id === vars.folderId)?.name ?? "folder"
+        : null;
+      if (failed > 0) {
+        toast({
+          title: `Moved ${moved} scene${moved === 1 ? "" : "s"}, ${failed} failed`,
+          description: "Scenes can only go into folders on their own site.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: folderName
+            ? `Moved ${moved} scene${moved === 1 ? "" : "s"} to "${folderName}"`
+            : `Removed ${moved} scene${moved === 1 ? "" : "s"} from folders`,
+        });
+      }
+    },
+    onError: () => {
+      toast({ title: "Failed to move scenes", variant: "destructive" });
+    },
+  });
+
+  const bulkDeleteScenesMutation = useMutation({
+    mutationFn: async (layoutIds: string[]) => {
+      const results = await Promise.allSettled(
+        layoutIds.map((id) => apiRequest("DELETE", `/api/layouts/${id}`)),
+      );
+      const failed = results.filter((r) => r.status === "rejected").length;
+      return { deleted: layoutIds.length - failed, failed };
+    },
+    onSuccess: ({ deleted, failed }, layoutIds) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      if (selectedLayoutId && layoutIds.includes(selectedLayoutId)) {
+        setSelectedLayoutId(null);
+      }
+      setCheckedSceneIds(new Set());
+      if (failed > 0) {
+        toast({
+          title: `Deleted ${deleted} scene${deleted === 1 ? "" : "s"}, ${failed} failed`,
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: `Deleted ${deleted} scene${deleted === 1 ? "" : "s"}` });
+      }
+    },
+    onError: () => {
+      toast({ title: "Failed to delete scenes", variant: "destructive" });
     },
   });
 
@@ -11305,6 +11408,107 @@ export default function LayoutsPage() {
                 <FolderPlus className="h-4 w-4" />
               </Button>
             </div>
+            {checkedSceneIds.size > 0 && (() => {
+              const checkedScenes = layouts.filter((l) => checkedSceneIds.has(l.id));
+              const lockedCount = checkedScenes.filter((l) => l.locked).length;
+              const clientIds = new Set(checkedScenes.map((l) => l.clientId ?? null));
+              const commonClientId =
+                clientIds.size === 1 ? checkedScenes[0]?.clientId ?? null : null;
+              const moveTargets = commonClientId
+                ? sceneFolders.filter((f) => f.clientId === commonClientId)
+                : [];
+              return (
+                <div
+                  className="flex items-center gap-1 rounded-md border bg-muted/40 px-2 py-1.5"
+                  data-testid="bar-bulk-scene-actions"
+                >
+                  <span className="text-xs font-medium flex-1 min-w-0 truncate" data-testid="text-bulk-selected-count">
+                    {checkedSceneIds.size} selected
+                  </span>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        title="Move to folder"
+                        data-testid="button-bulk-move-scenes"
+                      >
+                        <FolderInput className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          bulkMoveToFolderMutation.mutate({
+                            layoutIds: Array.from(checkedSceneIds),
+                            folderId: null,
+                          })
+                        }
+                        data-testid="button-bulk-move-scenes-none"
+                      >
+                        <X className="mr-2 h-4 w-4" />
+                        Uncategorised
+                      </DropdownMenuItem>
+                      {clientIds.size > 1 ? (
+                        <DropdownMenuItem disabled>
+                          Scenes span multiple sites
+                        </DropdownMenuItem>
+                      ) : moveTargets.length === 0 ? (
+                        <DropdownMenuItem disabled>No folders on this site</DropdownMenuItem>
+                      ) : (
+                        <>
+                          <DropdownMenuSeparator />
+                          {moveTargets.map((folder) => (
+                            <DropdownMenuItem
+                              key={folder.id}
+                              onSelect={() =>
+                                bulkMoveToFolderMutation.mutate({
+                                  layoutIds: Array.from(checkedSceneIds),
+                                  folderId: folder.id,
+                                })
+                              }
+                              data-testid={`button-bulk-move-scenes-${folder.id}`}
+                            >
+                              <Folder className="mr-2 h-4 w-4" />
+                              {folder.name}
+                            </DropdownMenuItem>
+                          ))}
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-destructive hover:text-destructive"
+                    title={
+                      lockedCount === checkedScenes.length
+                        ? "All selected scenes are locked"
+                        : "Delete selected"
+                    }
+                    disabled={
+                      lockedCount === checkedScenes.length ||
+                      bulkDeleteScenesMutation.isPending
+                    }
+                    onClick={() => setBulkDeleteConfirmOpen(true)}
+                    data-testid="button-bulk-delete-scenes"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    title="Clear selection"
+                    onClick={() => setCheckedSceneIds(new Set())}
+                    data-testid="button-bulk-clear-scenes"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              );
+            })()}
           </div>
           <ScrollArea className="flex-1">
             <div className="p-2 space-y-1">
@@ -11377,6 +11581,8 @@ export default function LayoutsPage() {
                             onMoveToFolder={(folderId) =>
                               moveLayoutToFolderMutation.mutate({ layoutId: layout.id, folderId })
                             }
+                            checked={checkedSceneIds.has(layout.id)}
+                            onToggleChecked={() => toggleCheckedScene(layout.id)}
                             isSelected={layout.id === selectedLayoutId}
                             onSelect={() => {
                               setSelectedLayoutId(layout.id);
@@ -11433,6 +11639,41 @@ export default function LayoutsPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          <AlertDialog open={bulkDeleteConfirmOpen} onOpenChange={setBulkDeleteConfirmOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Delete {(() => {
+                    const deletable = layouts.filter(
+                      (l) => checkedSceneIds.has(l.id) && !l.locked,
+                    ).length;
+                    return `${deletable} scene${deletable === 1 ? "" : "s"}`;
+                  })()}?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {layouts.some((l) => checkedSceneIds.has(l.id) && l.locked)
+                    ? "Locked scenes in your selection will be skipped. "
+                    : ""}
+                  This permanently deletes the selected scenes and cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => {
+                    const ids = layouts
+                      .filter((l) => checkedSceneIds.has(l.id) && !l.locked)
+                      .map((l) => l.id);
+                    if (ids.length > 0) bulkDeleteScenesMutation.mutate(ids);
+                    setBulkDeleteConfirmOpen(false);
+                  }}
+                  data-testid="button-confirm-bulk-delete-scenes"
+                >
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           <AlertDialog
             open={!!folderPendingDelete}
             onOpenChange={(open) => {
