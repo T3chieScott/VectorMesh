@@ -11243,24 +11243,6 @@ export default function LayoutsPage() {
     );
   }
 
-  if (layouts.length === 0) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <Card className="max-w-md py-12">
-          <CardContent className="flex flex-col items-center justify-center text-center">
-            <Layout className="h-12 w-12 text-muted-foreground/50 mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No scenes yet</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              Create scenes to define how content appears on your
-              screens with zones for media, tickers, and widgets.
-            </p>
-            <CreateLayoutDialog events={events} />
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   return (
     <div className="-m-6 flex overflow-hidden" style={{ height: 'calc(100vh - 3.5rem)' }} data-testid="layouts-page">
       {(!selectedLayout || showLayoutList) && (
@@ -11514,6 +11496,20 @@ export default function LayoutsPage() {
               onSelectedZoneIdsChange={setSelectedZoneIds}
             />
           </div>
+        </div>
+      ) : layouts.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center">
+          <Card className="max-w-md py-12">
+            <CardContent className="flex flex-col items-center justify-center text-center">
+              <Layout className="h-12 w-12 text-muted-foreground/50 mb-4" />
+              <h3 className="text-lg font-semibold mb-2">No scenes yet</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Create scenes to define how content appears on your
+                screens with zones for media, tickers, and widgets.
+              </p>
+              <CreateLayoutDialog events={events} />
+            </CardContent>
+          </Card>
         </div>
       ) : (
         <div className="flex-1 flex items-center justify-center text-muted-foreground">
