@@ -790,9 +790,14 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
           clearEvent = true;
         }
       }
+      // Task #312: the old folder belongs to the old site — never let a
+      // moved scene keep pointing at another site's folder.
       const updated = await storage.updateLayoutTemplate(id, {
         clientId: targetClientId,
         ...(clearEvent ? { eventId: null } : {}),
+        ...(source.clientId !== targetClientId && source.folderId
+          ? { folderId: null }
+          : {}),
       });
       logAudit(req, "move", "layout", id, { targetClientId, name: source.name });
       res.json(updated);
