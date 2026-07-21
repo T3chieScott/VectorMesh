@@ -42,7 +42,9 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -133,8 +135,10 @@ import {
   Unlock,
   MonitorPlay,
   Wifi,
+  Folder,
+  ChevronRight,
 } from "lucide-react";
-import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client, AgendaWidgetConfig, SweepstakeWidgetConfig, AgendaLayoutMode } from "@shared/schema";
+import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client, MediaFolder, AgendaWidgetConfig, SweepstakeWidgetConfig, AgendaLayoutMode } from "@shared/schema";
 import { buildMediaImgSnippet } from "@shared/media-refs";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { resolveLayoutUploadClientId } from "@/lib/layoutUploadClientId";
@@ -1238,6 +1242,102 @@ function SweepstakeConfigPickerSection({
   );
 }
 
+// Task #308 — shared collapsible folder grouping for media pickers,
+// mirroring the Media Library's per-site folders. Groups a given asset
+// list by folderId with an "Uncategorised" section. When `forceExpand`
+// is true (e.g. an active search) every section with matches is shown open.
+function useMediaFolders() {
+  const foldersQuery = useSiteFilteredQuery<MediaFolder[]>("/api/media-folders");
+  const { data: folders = [] } = useQuery<MediaFolder[]>({ ...foldersQuery });
+  return folders;
+}
+
+function groupAssetsByFolder(assets: MediaAsset[], folders: MediaFolder[]) {
+  const known = new Set(folders.map((f) => f.id));
+  const sections: Array<{ key: string; name: string; assets: MediaAsset[] }> = [];
+  for (const folder of folders) {
+    const inFolder = assets.filter((a) => a.folderId === folder.id);
+    if (inFolder.length > 0) {
+      sections.push({ key: folder.id, name: folder.name, assets: inFolder });
+    }
+  }
+  // Assets with no folder, or with a folder from another site we can't see.
+  const uncategorised = assets.filter((a) => !a.folderId || !known.has(a.folderId));
+  if (uncategorised.length > 0) {
+    sections.push({ key: "__uncategorised__", name: "Uncategorised", assets: uncategorised });
+  }
+  return sections;
+}
+
+function MediaFolderSections({
+  assets,
+  forceExpand,
+  renderAsset,
+  gridClassName,
+}: {
+  assets: MediaAsset[];
+  forceExpand?: boolean;
+  renderAsset: (asset: MediaAsset) => React.ReactNode;
+  gridClassName: string;
+}) {
+  const folders = useMediaFolders();
+  const sections = groupAssetsByFolder(assets, folders);
+  // Open by default so nothing "disappears" for operators used to the
+  // old flat grid; state is remembered while the dialog stays mounted.
+  const [closedKeys, setClosedKeys] = useState<Set<string>>(new Set());
+
+  // No folders in play — keep the original flat grid.
+  if (sections.length === 1 && sections[0].key === "__uncategorised__" && folders.length === 0) {
+    return <div className={gridClassName}>{assets.map(renderAsset)}</div>;
+  }
+
+  const toggle = (key: string) => {
+    setClosedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  return (
+    <div className="space-y-2">
+      {sections.map((section) => {
+        const isOpen = forceExpand || !closedKeys.has(section.key);
+        return (
+          <div key={section.key}>
+            <button
+              type="button"
+              onClick={() => toggle(section.key)}
+              className="flex w-full items-center gap-1.5 rounded px-1 py-1 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              data-testid={`button-picker-folder-${section.key}`}
+            >
+              {isOpen ? (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+              )}
+              <Folder className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{section.name}</span>
+              <span className="ml-auto shrink-0 text-[10px] tabular-nums">
+                {section.assets.length}
+              </span>
+            </button>
+            {isOpen && (
+              <div className={`${gridClassName} mt-1 mb-2`}>
+                {section.assets.map(renderAsset)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MontageMediaPicker({
   selectedIds,
   onSelectionChange,
@@ -1387,44 +1487,48 @@ function MontageMediaPicker({
               </div>
             );
           }
+          const renderAsset = (asset: MediaAsset) => {
+            const isSelected = cleanIds.includes(asset.id);
+            return (
+              <button
+                key={asset.id}
+                type="button"
+                onClick={() => toggleSelection(asset.id)}
+                title={asset.name}
+                className={`relative aspect-square rounded-md overflow-hidden border-2 transition-all ${
+                  isSelected
+                    ? "border-primary ring-2 ring-primary/20"
+                    : "border-transparent hover:border-muted-foreground/50"
+                }`}
+                data-testid={`montage-media-${asset.id}`}
+              >
+                <img
+                  src={`/api/media/${asset.id}/file`}
+                  alt={asset.name}
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute bottom-0 inset-x-0 bg-black/60 px-0.5 pointer-events-none">
+                  <p className="text-[9px] leading-3 text-white truncate" data-testid={`text-montage-name-${asset.id}`}>
+                    {asset.name}
+                  </p>
+                </div>
+                {isSelected && (
+                  <div className="absolute top-1 right-1 bg-primary text-primary-foreground rounded-full w-4 h-4 flex items-center justify-center">
+                    <span className="text-xs">
+                      {cleanIds.indexOf(asset.id) + 1}
+                    </span>
+                  </div>
+                )}
+              </button>
+            );
+          };
           return (
-            <div className="grid grid-cols-5 gap-2">
-              {visibleAssets.map((asset) => {
-                const isSelected = cleanIds.includes(asset.id);
-                return (
-                  <button
-                    key={asset.id}
-                    type="button"
-                    onClick={() => toggleSelection(asset.id)}
-                    title={asset.name}
-                    className={`relative aspect-square rounded-md overflow-hidden border-2 transition-all ${
-                      isSelected
-                        ? "border-primary ring-2 ring-primary/20"
-                        : "border-transparent hover:border-muted-foreground/50"
-                    }`}
-                    data-testid={`montage-media-${asset.id}`}
-                  >
-                    <img
-                      src={`/api/media/${asset.id}/file`}
-                      alt={asset.name}
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute bottom-0 inset-x-0 bg-black/60 px-0.5 pointer-events-none">
-                      <p className="text-[9px] leading-3 text-white truncate" data-testid={`text-montage-name-${asset.id}`}>
-                        {asset.name}
-                      </p>
-                    </div>
-                    {isSelected && (
-                      <div className="absolute top-1 right-1 bg-primary text-primary-foreground rounded-full w-4 h-4 flex items-center justify-center">
-                        <span className="text-xs">
-                          {cleanIds.indexOf(asset.id) + 1}
-                        </span>
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+            <MediaFolderSections
+              assets={visibleAssets}
+              forceExpand={q.length > 0}
+              renderAsset={renderAsset}
+              gridClassName="grid grid-cols-5 gap-2"
+            />
           );
         })()}
       </ScrollArea>
@@ -1855,6 +1959,9 @@ function ZoneEditorDialog({
   const { data: mediaAssets } = useQuery<MediaAsset[]>({
     ...mediaQuery,
   });
+
+  // Task #308 — folders so the media dropdown can group by folder.
+  const zoneEditorFolders = useMediaFolders();
 
   // Fetch event palette for colour pickers
   const { data: events } = useQuery<Event[]>({
@@ -3135,10 +3242,21 @@ function ZoneEditorDialog({
                           </FormControl>
                           <SelectContent>
                             <SelectItem value="__none__">None</SelectItem>
-                            {mediaAssets?.filter(a => a.mediaType === "image" || a.mediaType === "gif" || a.mediaType === "video").map((asset) => (
-                              <SelectItem key={asset.id} value={asset.id}>
-                                {asset.name}{asset.mediaType === "video" ? " (Video)" : ""}
-                              </SelectItem>
+                            {groupAssetsByFolder(
+                              mediaAssets?.filter(a => a.mediaType === "image" || a.mediaType === "gif" || a.mediaType === "video") || [],
+                              zoneEditorFolders,
+                            ).map((section) => (
+                              <SelectGroup key={section.key}>
+                                <SelectLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                  <Folder className="h-3 w-3" />
+                                  {section.name}
+                                </SelectLabel>
+                                {section.assets.map((asset) => (
+                                  <SelectItem key={asset.id} value={asset.id}>
+                                    {asset.name}{asset.mediaType === "video" ? " (Video)" : ""}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
                             ))}
                           </SelectContent>
                         </Select>
