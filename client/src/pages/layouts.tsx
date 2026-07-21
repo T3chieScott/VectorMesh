@@ -144,6 +144,7 @@ import {
   FolderPlus,
   FolderInput,
   Search,
+  Check,
 } from "lucide-react";
 import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client, MediaFolder, LayoutFolder, AgendaWidgetConfig, SweepstakeWidgetConfig, AgendaLayoutMode } from "@shared/schema";
 import { buildMediaImgSnippet } from "@shared/media-refs";
@@ -1249,6 +1250,9 @@ function SweepstakeConfigPickerSection({
   );
 }
 
+// Task #317 — persisted collapse state for the Scenes sidebar folders.
+const CLOSED_SCENE_FOLDERS_STORAGE_KEY = "vectormesh_scenes_closed_folders";
+
 // Task #308 — shared collapsible folder grouping for media pickers,
 // mirroring the Media Library's per-site folders. Groups a given asset
 // list by folderId with an "Uncategorised" section. When `forceExpand`
@@ -1998,6 +2002,8 @@ function ZoneEditorDialog({
 
   // Task #308 — folders so the media dropdown can group by folder.
   const zoneEditorFolders = useMediaFolders();
+  // Task #317 — montage-style searchable thumbnail picker for the media zone.
+  const [mediaZoneSearch, setMediaZoneSearch] = useState("");
 
   // Fetch event palette for colour pickers
   const { data: events } = useQuery<Event[]>({
@@ -3266,36 +3272,114 @@ function ZoneEditorDialog({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Select or Upload Media</FormLabel>
+                      {/* Task #317 — montage-style searchable thumbnail grid
+                          instead of a dropdown, single-select. */}
+                      <div className="space-y-2">
+                        {(() => {
+                          const zoneMediaAssets =
+                            mediaAssets?.filter(
+                              (a) =>
+                                a.mediaType === "image" ||
+                                a.mediaType === "gif" ||
+                                a.mediaType === "video",
+                            ) || [];
+                          const selectedAsset = zoneMediaAssets.find((a) => a.id === field.value);
+                          const q = mediaZoneSearch.trim().toLowerCase();
+                          const visibleAssets = q
+                            ? zoneMediaAssets.filter((a) => (a.name || "").toLowerCase().includes(q))
+                            : zoneMediaAssets;
+                          const renderAsset = (asset: MediaAsset) => {
+                            const isSelected = field.value === asset.id;
+                            return (
+                              <button
+                                key={asset.id}
+                                type="button"
+                                onClick={() => field.onChange(isSelected ? "" : asset.id)}
+                                title={asset.name}
+                                className={`relative aspect-square rounded-md overflow-hidden border-2 transition-all ${
+                                  isSelected
+                                    ? "border-primary ring-2 ring-primary/20"
+                                    : "border-transparent hover:border-muted-foreground/50"
+                                }`}
+                                data-testid={`zone-media-${asset.id}`}
+                              >
+                                <img
+                                  src={
+                                    asset.thumbnailPath
+                                      ? `/api/media/${asset.id}/thumbnail`
+                                      : `/api/media/${asset.id}/file`
+                                  }
+                                  alt={asset.name}
+                                  className="w-full h-full object-cover"
+                                />
+                                {asset.mediaType === "video" && (
+                                  <div className="absolute top-1 left-1 bg-black/60 rounded px-1 pointer-events-none">
+                                    <span className="text-[9px] text-white">Video</span>
+                                  </div>
+                                )}
+                                <div className="absolute bottom-0 inset-x-0 bg-black/60 px-0.5 pointer-events-none">
+                                  <p className="text-[9px] leading-3 text-white truncate" data-testid={`text-zone-media-name-${asset.id}`}>
+                                    {asset.name}
+                                  </p>
+                                </div>
+                                {isSelected && (
+                                  <div className="absolute top-1 right-1 bg-primary text-primary-foreground rounded-full w-4 h-4 flex items-center justify-center pointer-events-none">
+                                    <Check className="h-3 w-3" />
+                                  </div>
+                                )}
+                              </button>
+                            );
+                          };
+                          return (
+                            <>
+                              <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                                <span className="truncate" data-testid="text-zone-media-selected">
+                                  {selectedAsset
+                                    ? `Selected: ${selectedAsset.name}${selectedAsset.mediaType === "video" ? " (Video)" : ""}`
+                                    : "No media selected"}
+                                </span>
+                                {field.value && (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 px-2 text-xs shrink-0"
+                                    onClick={() => field.onChange("")}
+                                    data-testid="button-clear-zone-media"
+                                  >
+                                    Clear
+                                  </Button>
+                                )}
+                              </div>
+                              <Input
+                                value={mediaZoneSearch}
+                                onChange={(e) => setMediaZoneSearch(e.target.value)}
+                                placeholder="Search media by name..."
+                                className="h-8 text-sm"
+                                data-testid="input-zone-media-search"
+                              />
+                              <ScrollArea className="h-40 border rounded-md p-2">
+                                {zoneMediaAssets.length === 0 ? (
+                                  <div className="py-6 text-center text-sm text-muted-foreground" data-testid="text-zone-media-empty">
+                                    No media in this site's library. Upload one below.
+                                  </div>
+                                ) : visibleAssets.length === 0 ? (
+                                  <div className="py-6 text-center text-sm text-muted-foreground" data-testid="text-zone-media-no-matches">
+                                    No media match "{mediaZoneSearch.trim()}"
+                                  </div>
+                                ) : (
+                                  <MediaFolderSections
+                                    assets={visibleAssets}
+                                    forceExpand={q.length > 0}
+                                    renderAsset={renderAsset}
+                                    gridClassName="grid grid-cols-5 gap-2"
+                                  />
+                                )}
+                              </ScrollArea>
+                            </>
+                          );
+                        })()}
                       <div className="flex gap-2">
-                        <Select
-                          value={field.value || "__none__"}
-                          onValueChange={(val) => field.onChange(val === "__none__" ? "" : val)}
-                        >
-                          <FormControl>
-                            <SelectTrigger className="flex-1" data-testid="select-media-asset">
-                              <SelectValue placeholder="Choose media..." />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="__none__">None</SelectItem>
-                            {groupAssetsByFolder(
-                              mediaAssets?.filter(a => a.mediaType === "image" || a.mediaType === "gif" || a.mediaType === "video") || [],
-                              zoneEditorFolders,
-                            ).map((section) => (
-                              <SelectGroup key={section.key}>
-                                <SelectLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                  <Folder className="h-3 w-3" />
-                                  {section.name}
-                                </SelectLabel>
-                                {section.assets.map((asset) => (
-                                  <SelectItem key={asset.id} value={asset.id}>
-                                    {asset.name}{asset.mediaType === "video" ? " (Video)" : ""}
-                                  </SelectItem>
-                                ))}
-                              </SelectGroup>
-                            ))}
-                          </SelectContent>
-                        </Select>
                         {layoutUploadClientId ? (
                           <ObjectUploader
                             maxNumberOfFiles={1}
@@ -3333,6 +3417,7 @@ function ZoneEditorDialog({
                             </TooltipContent>
                           </Tooltip>
                         )}
+                      </div>
                       </div>
                       <FormDescription>
                         Select an existing image/video or upload a new one
@@ -9227,6 +9312,8 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
       apiRequest("POST", "/api/layouts", {
         name: `${layout.name} (Copy)`,
         eventId: layout.eventId,
+        clientId: layout.clientId,
+        folderId: layout.folderId,
         aspectRatio: layout.aspectRatio || "16:9",
         customWidth: layout.customWidth,
         customHeight: layout.customHeight,
@@ -10350,6 +10437,8 @@ function LayoutEditorPanel({
       apiRequest("POST", "/api/layouts", {
         name: `${layout.name} (Copy)`,
         eventId: layout.eventId,
+        clientId: layout.clientId,
+        folderId: layout.folderId,
         aspectRatio: layout.aspectRatio || "16:9",
         customWidth: layout.customWidth,
         customHeight: layout.customHeight,
@@ -11001,7 +11090,23 @@ export default function LayoutsPage() {
 
   // Task #311 — scene folders + name search
   const [sceneSearch, setSceneSearch] = useState("");
-  const [closedFolderKeys, setClosedFolderKeys] = useState<Set<string>>(new Set());
+  const [closedFolderKeys, setClosedFolderKeys] = useState<Set<string>>(() => {
+    // Task #317: remember which scene folders the operator collapsed
+    // across reloads. Folder keys are folder ids (site-scoped), so one
+    // shared key is safe across sites.
+    try {
+      const raw = localStorage.getItem(CLOSED_SCENE_FOLDERS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return new Set(parsed.filter((k): k is string => typeof k === "string"));
+        }
+      }
+    } catch {
+      // Corrupt/blocked storage — fall back to everything open.
+    }
+    return new Set<string>();
+  });
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [folderDialogMode, setFolderDialogMode] = useState<"create" | "rename">("create");
   const [folderDialogName, setFolderDialogName] = useState("");
@@ -11192,6 +11297,14 @@ export default function LayoutsPage() {
         next.delete(key);
       } else {
         next.add(key);
+      }
+      try {
+        localStorage.setItem(
+          CLOSED_SCENE_FOLDERS_STORAGE_KEY,
+          JSON.stringify(Array.from(next)),
+        );
+      } catch {
+        // Storage unavailable — collapse state just won't persist.
       }
       return next;
     });
