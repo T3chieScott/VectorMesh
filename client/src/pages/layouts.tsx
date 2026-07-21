@@ -26,6 +26,7 @@ import { Slider } from "@/components/ui/slider";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -53,6 +54,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   Collapsible,
@@ -137,8 +141,11 @@ import {
   Wifi,
   Folder,
   ChevronRight,
+  FolderPlus,
+  FolderInput,
+  Search,
 } from "lucide-react";
-import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client, MediaFolder, AgendaWidgetConfig, SweepstakeWidgetConfig, AgendaLayoutMode } from "@shared/schema";
+import type { LayoutTemplate, Event, LayoutZone, MediaAsset, Client, MediaFolder, LayoutFolder, AgendaWidgetConfig, SweepstakeWidgetConfig, AgendaLayoutMode } from "@shared/schema";
 import { buildMediaImgSnippet } from "@shared/media-refs";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { resolveLayoutUploadClientId } from "@/lib/layoutUploadClientId";
@@ -9968,6 +9975,8 @@ function VariableResolvedBadge({
 
 function LayoutListItem({ 
   layout, 
+  folders,
+  onMoveToFolder,
   isSelected, 
   onSelect,
   previewScreenId,
@@ -9976,6 +9985,8 @@ function LayoutListItem({
   previewStatus,
 }: { 
   layout: LayoutTemplate; 
+  folders: LayoutFolder[];
+  onMoveToFolder: (folderId: string | null) => void;
   isSelected: boolean; 
   onSelect: () => void;
   previewScreenId: string;
@@ -10019,7 +10030,56 @@ function LayoutListItem({
           ))}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-medium text-sm truncate">{layout.name}</p>
+          <div className="flex items-start justify-between gap-1">
+            <p className="font-medium text-sm truncate">{layout.name}</p>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 shrink-0 -mr-1"
+                  onClick={(e) => e.stopPropagation()}
+                  data-testid={`button-scene-menu-${layout.id}`}
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger data-testid={`button-move-scene-folder-${layout.id}`}>
+                    <FolderInput className="mr-2 h-4 w-4" />
+                    Move to folder
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuItem
+                      disabled={!layout.folderId}
+                      onSelect={() => onMoveToFolder(null)}
+                      data-testid={`button-move-scene-folder-none-${layout.id}`}
+                    >
+                      <X className="mr-2 h-4 w-4" />
+                      Uncategorised
+                    </DropdownMenuItem>
+                    {folders.length > 0 && <DropdownMenuSeparator />}
+                    {folders.length === 0 ? (
+                      <DropdownMenuItem disabled>No folders yet</DropdownMenuItem>
+                    ) : (
+                      folders.map((folder) => (
+                        <DropdownMenuItem
+                          key={folder.id}
+                          disabled={layout.folderId === folder.id}
+                          onSelect={() => onMoveToFolder(folder.id)}
+                          data-testid={`button-move-scene-folder-${folder.id}-${layout.id}`}
+                        >
+                          <Folder className="mr-2 h-4 w-4" />
+                          {folder.name}
+                        </DropdownMenuItem>
+                      ))
+                    )}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <Badge variant="secondary" className="text-xs">{zones.length} zones</Badge>
             <Badge variant="outline" className="text-xs">
@@ -10896,9 +10956,11 @@ function LivePreviewPanel({
 export default function LayoutsPage() {
   const [selectedLayoutId, setSelectedLayoutId] = useState<string | null>(null);
   const { toast } = useToast();
+  const { selectedClientId, clients } = useSiteContext();
   
   const layoutsQuery = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
   const eventsQuery = useSiteFilteredQuery<Event[]>("/api/events");
+  const layoutFoldersQuery = useSiteFilteredQuery<LayoutFolder[]>("/api/layout-folders");
 
   const { data: layouts = [], isLoading: layoutsLoading } = useQuery<LayoutTemplate[]>({
     ...layoutsQuery,
@@ -10907,6 +10969,162 @@ export default function LayoutsPage() {
   const { data: events = [] } = useQuery<Event[]>({
     ...eventsQuery,
   });
+
+  const { data: sceneFolders = [] } = useQuery<LayoutFolder[]>({
+    ...layoutFoldersQuery,
+  });
+
+  // Task #311 — scene folders + name search
+  const [sceneSearch, setSceneSearch] = useState("");
+  const [closedFolderKeys, setClosedFolderKeys] = useState<Set<string>>(new Set());
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [folderDialogMode, setFolderDialogMode] = useState<"create" | "rename">("create");
+  const [folderDialogName, setFolderDialogName] = useState("");
+  const [folderBeingEdited, setFolderBeingEdited] = useState<LayoutFolder | null>(null);
+  const [folderPendingDelete, setFolderPendingDelete] = useState<LayoutFolder | null>(null);
+
+  // Folders belong to a single site. When "All sites" is selected we can
+  // only create a folder if there is exactly one site to choose from.
+  const folderClientId = selectedClientId || (clients.length === 1 ? clients[0].id : null);
+
+  const createFolderMutation = useMutation({
+    mutationFn: (vars: { name: string; clientId: string }) =>
+      apiRequest("POST", "/api/layout-folders", vars),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layout-folders"] });
+      toast({ title: "Folder created" });
+    },
+    onError: () => {
+      toast({ title: "Failed to create folder", variant: "destructive" });
+    },
+  });
+
+  const renameFolderMutation = useMutation({
+    mutationFn: (vars: { id: string; name: string }) =>
+      apiRequest("PATCH", `/api/layout-folders/${vars.id}`, { name: vars.name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layout-folders"] });
+      toast({ title: "Folder renamed" });
+    },
+    onError: () => {
+      toast({ title: "Failed to rename folder", variant: "destructive" });
+    },
+  });
+
+  const deleteFolderMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/layout-folders/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layout-folders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      toast({ title: "Folder deleted", description: "Its scenes moved to Uncategorised." });
+    },
+    onError: () => {
+      toast({ title: "Failed to delete folder", variant: "destructive" });
+    },
+  });
+
+  const moveLayoutToFolderMutation = useMutation({
+    mutationFn: (vars: { layoutId: string; folderId: string | null }) =>
+      apiRequest("PATCH", `/api/layouts/${vars.layoutId}`, { folderId: vars.folderId }),
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
+      const folderName = vars.folderId
+        ? sceneFolders.find((f) => f.id === vars.folderId)?.name ?? "folder"
+        : null;
+      toast({ title: folderName ? `Moved to "${folderName}"` : "Removed from folder" });
+    },
+    onError: () => {
+      toast({ title: "Failed to move scene", variant: "destructive" });
+    },
+  });
+
+  const openCreateFolder = () => {
+    if (!folderClientId) {
+      toast({
+        title: "Please select a site first",
+        description: "Folders belong to a single site — choose one from the sidebar.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setFolderDialogMode("create");
+    setFolderDialogName("");
+    setFolderBeingEdited(null);
+    setFolderDialogOpen(true);
+  };
+
+  const openRenameFolder = (folder: LayoutFolder) => {
+    setFolderDialogMode("rename");
+    setFolderDialogName(folder.name);
+    setFolderBeingEdited(folder);
+    setFolderDialogOpen(true);
+  };
+
+  const submitFolderDialog = () => {
+    const name = folderDialogName.trim();
+    if (!name) return;
+    if (folderDialogMode === "create") {
+      if (!folderClientId) return;
+      createFolderMutation.mutate({ name, clientId: folderClientId });
+    } else if (folderBeingEdited) {
+      renameFolderMutation.mutate({ id: folderBeingEdited.id, name });
+    }
+    setFolderDialogOpen(false);
+  };
+
+  const toggleFolderSection = (key: string) => {
+    setClosedFolderKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const sceneSearchLower = sceneSearch.trim().toLowerCase();
+  const filteredLayouts = sceneSearchLower
+    ? layouts.filter((l) => l.name.toLowerCase().includes(sceneSearchLower))
+    : layouts;
+
+  // Group scenes into per-folder sections plus Uncategorised. Folders with
+  // no matching scenes are hidden while searching but shown (empty) otherwise
+  // so a freshly created folder is visible.
+  const sceneSections = useMemo(() => {
+    const known = new Set(sceneFolders.map((f) => f.id));
+    const sections: Array<{
+      key: string;
+      name: string;
+      folder: LayoutFolder | null;
+      layouts: LayoutTemplate[];
+    }> = [];
+    for (const folder of sceneFolders) {
+      const inFolder = filteredLayouts.filter((l) => l.folderId === folder.id);
+      if (inFolder.length > 0 || !sceneSearchLower) {
+        sections.push({ key: folder.id, name: folder.name, folder, layouts: inFolder });
+      }
+    }
+    const uncategorised = filteredLayouts.filter(
+      (l) => !l.folderId || !known.has(l.folderId),
+    );
+    if (sceneFolders.length === 0) {
+      // No folders at all — keep the original flat list (no section header).
+      return uncategorised.length > 0 || !sceneSearchLower
+        ? [{ key: "__flat__", name: "", folder: null, layouts: uncategorised }]
+        : [];
+    }
+    if (uncategorised.length > 0 || !sceneSearchLower) {
+      sections.push({
+        key: "__uncategorised__",
+        name: "Uncategorised",
+        folder: null,
+        layouts: uncategorised,
+      });
+    }
+    return sections.filter((s) => s.layouts.length > 0 || !sceneSearchLower);
+  }, [sceneFolders, filteredLayouts, sceneSearchLower]);
 
   const previewScreenId = useVariablePreviewScreenId();
   const previewScreensQuery = useSiteFilteredQuery<{ id: string; name: string }[]>("/api/screens");
@@ -11072,25 +11290,186 @@ export default function LayoutsPage() {
               </Select>
             </div>
           </div>
+          <div className="px-4 pb-3 pt-3 border-b space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Search scenes..."
+                  value={sceneSearch}
+                  onChange={(e) => setSceneSearch(e.target.value)}
+                  className="h-8 pl-8 text-sm"
+                  data-testid="input-scene-search"
+                />
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                onClick={openCreateFolder}
+                title="New folder"
+                data-testid="button-create-scene-folder"
+              >
+                <FolderPlus className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
           <ScrollArea className="flex-1">
             <div className="p-2 space-y-1">
-              {layouts.map((layout) => (
-                <LayoutListItem
-                  key={layout.id}
-                  layout={layout}
-                  isSelected={layout.id === selectedLayoutId}
-                  onSelect={() => {
-                    setSelectedLayoutId(layout.id);
-                    setShowLayoutList(false);
-                  }}
-                  previewScreenId={previewScreenId}
-                  previewCtx={previewCtx}
-                  previewScreenName={previewScreenName}
-                  previewStatus={previewStatus}
-                />
-              ))}
+              {sceneSections.map((section) => {
+                const isOpen =
+                  sceneSearch.trim().length > 0 || !closedFolderKeys.has(section.key);
+                return (
+                  <div key={section.key}>
+                    {section.key !== "__flat__" && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => toggleFolderSection(section.key)}
+                        className="flex flex-1 min-w-0 items-center gap-1.5 rounded px-1 py-1 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                        data-testid={`button-scene-folder-${section.key}`}
+                      >
+                        {isOpen ? (
+                          <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                        ) : (
+                          <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                        )}
+                        <Folder className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{section.name}</span>
+                        <span className="ml-auto shrink-0 text-[10px] tabular-nums">
+                          {section.layouts.length}
+                        </span>
+                      </button>
+                      {section.folder && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 shrink-0"
+                              data-testid={`button-scene-folder-menu-${section.folder.id}`}
+                            >
+                              <MoreHorizontal className="h-3.5 w-3.5" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onSelect={() => openRenameFolder(section.folder!)}
+                              data-testid={`button-rename-scene-folder-${section.folder.id}`}
+                            >
+                              <Pencil className="mr-2 h-4 w-4" />
+                              Rename
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onSelect={() => setFolderPendingDelete(section.folder!)}
+                              data-testid={`button-delete-scene-folder-${section.folder.id}`}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </div>
+                    )}
+                    {isOpen && (
+                      <div className="space-y-1 mt-1 mb-2">
+                        {section.layouts.map((layout) => (
+                          <LayoutListItem
+                            key={layout.id}
+                            layout={layout}
+                            folders={sceneFolders.filter(
+                              (f) => layout.clientId && f.clientId === layout.clientId,
+                            )}
+                            onMoveToFolder={(folderId) =>
+                              moveLayoutToFolderMutation.mutate({ layoutId: layout.id, folderId })
+                            }
+                            isSelected={layout.id === selectedLayoutId}
+                            onSelect={() => {
+                              setSelectedLayoutId(layout.id);
+                              setShowLayoutList(false);
+                            }}
+                            previewScreenId={previewScreenId}
+                            previewCtx={previewCtx}
+                            previewScreenName={previewScreenName}
+                            previewStatus={previewStatus}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {sceneSections.length === 0 && (
+                <p
+                  className="text-xs text-muted-foreground text-center py-6"
+                  data-testid="text-no-scenes-match"
+                >
+                  No scenes match "{sceneSearch}"
+                </p>
+              )}
             </div>
           </ScrollArea>
+          <Dialog open={folderDialogOpen} onOpenChange={setFolderDialogOpen}>
+            <DialogContent className="max-w-sm">
+              <DialogHeader>
+                <DialogTitle>
+                  {folderDialogMode === "create" ? "New folder" : "Rename folder"}
+                </DialogTitle>
+              </DialogHeader>
+              <Input
+                value={folderDialogName}
+                onChange={(e) => setFolderDialogName(e.target.value)}
+                placeholder="Folder name"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submitFolderDialog();
+                }}
+                data-testid="input-scene-folder-name"
+              />
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setFolderDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={submitFolderDialog}
+                  disabled={!folderDialogName.trim()}
+                  data-testid="button-save-scene-folder"
+                >
+                  {folderDialogMode === "create" ? "Create" : "Save"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <AlertDialog
+            open={!!folderPendingDelete}
+            onOpenChange={(open) => {
+              if (!open) setFolderPendingDelete(null);
+            }}
+          >
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete "{folderPendingDelete?.name}"?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  The folder will be removed. Scenes inside it are not deleted —
+                  they move back to Uncategorised.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => {
+                    if (folderPendingDelete) deleteFolderMutation.mutate(folderPendingDelete.id);
+                    setFolderPendingDelete(null);
+                  }}
+                  data-testid="button-confirm-delete-scene-folder"
+                >
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       )}
 

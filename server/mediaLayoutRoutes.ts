@@ -4,6 +4,7 @@ import {
   insertMediaAssetSchema,
   insertMediaFolderSchema,
   insertLayoutTemplateSchema,
+  insertLayoutFolderSchema,
   type Client,
   type Event,
   type MediaAsset,
@@ -14,6 +15,8 @@ import {
   type InsertMediaShare,
   type LayoutTemplate,
   type InsertLayoutTemplate,
+  type LayoutFolder,
+  type InsertLayoutFolder,
 } from "@shared/schema";
 import { sanitizeHtmlZones } from "@shared/html-widget-sanitize";
 import { getPathParam, getQueryString } from "./requestParams";
@@ -38,6 +41,11 @@ export interface MediaLayoutRoutesStorage {
   deleteMediaShare(mediaAssetId: string, clientId: string): Promise<boolean>;
   getClient(id: string): Promise<Client | undefined>;
   getEvent(id: string): Promise<Event | undefined>;
+  getLayoutFolders(clientId?: string): Promise<LayoutFolder[]>;
+  getLayoutFolder(id: string): Promise<LayoutFolder | undefined>;
+  createLayoutFolder(data: InsertLayoutFolder): Promise<LayoutFolder>;
+  updateLayoutFolder(id: string, data: Partial<InsertLayoutFolder>): Promise<LayoutFolder | undefined>;
+  deleteLayoutFolder(id: string): Promise<boolean>;
   getLayoutTemplates(): Promise<LayoutTemplate[]>;
   getLayoutTemplate(id: string): Promise<LayoutTemplate | undefined>;
   createLayoutTemplate(data: InsertLayoutTemplate): Promise<LayoutTemplate>;
@@ -515,6 +523,98 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
     }
   });
 
+  // ============ LAYOUT FOLDERS (Task #311) ============
+  // Per-site folders for scenes, mirroring the media-folder routes.
+  // Deleting a folder never deletes scenes — the FK nulls their
+  // folderId so they fall back to the uncategorised view.
+  app.get("/api/layout-folders", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const allowed = getAllowedClientIds(req);
+      const clientId = getQueryString(req, "clientId", res); if (clientId === null) return;
+      if (clientId) {
+        if (!canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        return res.json(await storage.getLayoutFolders(clientId));
+      }
+      const folders = await storage.getLayoutFolders();
+      const filtered = allowed
+        ? folders.filter((f) => allowed.includes(f.clientId))
+        : folders;
+      res.json(filtered);
+    } catch (error) {
+      console.error("Error fetching layout folders:", error);
+      res.status(500).json({ error: "Failed to fetch layout folders" });
+    }
+  });
+
+  app.post("/api/layout-folders", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const data = insertLayoutFolderSchema.parse(req.body);
+      if (!canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
+      }
+      const folder = await storage.createLayoutFolder(data);
+      logAudit(req, "create", "layout_folder", folder.id, { name: folder.name, clientId: data.clientId });
+      res.status(201).json(folder);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      console.error("Error creating layout folder:", error);
+      res.status(500).json({ error: "Failed to create layout folder" });
+    }
+  });
+
+  app.patch("/api/layout-folders/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const id = getPathParam(req, "id");
+      const existing = await storage.getLayoutFolder(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Folder not found" });
+      }
+      if (!canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      // Only the name is editable — a folder can't move sites.
+      const data = insertLayoutFolderSchema.partial().omit({ clientId: true }).parse(req.body);
+      const updated = await storage.updateLayoutFolder(id, data);
+      if (!updated) {
+        return res.status(404).json({ error: "Folder not found" });
+      }
+      logAudit(req, "update", "layout_folder", updated.id, { name: updated.name });
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      console.error("Error updating layout folder:", error);
+      res.status(500).json({ error: "Failed to update layout folder" });
+    }
+  });
+
+  app.delete("/api/layout-folders/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const id = getPathParam(req, "id");
+      const existing = await storage.getLayoutFolder(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Folder not found" });
+      }
+      if (!canAccessClient(req, existing.clientId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const deleted = await storage.deleteLayoutFolder(id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Folder not found" });
+      }
+      logAudit(req, "delete", "layout_folder", id);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting layout folder:", error);
+      res.status(500).json({ error: "Failed to delete layout folder" });
+    }
+  });
+
   // ============ LAYOUT TEMPLATES ============
   app.get("/api/layouts", requireAuth, loadUserContext, async (req, res) => {
     try {
@@ -566,6 +666,13 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
           return res.status(400).json({ error: "Event does not belong to the specified site" });
         }
       }
+      // Task #311: a folder must exist and belong to the scene's site.
+      if (data.folderId) {
+        const folder = await storage.getLayoutFolder(data.folderId);
+        if (!folder || folder.clientId !== data.clientId) {
+          return res.status(400).json({ error: "Folder does not belong to the specified site" });
+        }
+      }
       const layout = await storage.createLayoutTemplate(data);
       logAudit(req, "create", "layout", layout.id, { name: layout.name });
       res.status(201).json(layout);
@@ -597,6 +704,24 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
         !canAccessClient(req, data.clientId)
       ) {
         return res.status(403).json({ error: "Access denied to target site" });
+      }
+      // Task #311: a folder must exist and belong to the scene's site.
+      if (data.folderId) {
+        const folder = await storage.getLayoutFolder(data.folderId);
+        const effectiveClientId = data.clientId ?? existing.clientId;
+        if (!folder || folder.clientId !== effectiveClientId) {
+          return res.status(400).json({ error: "Folder does not belong to the scene's site" });
+        }
+      }
+      // If the scene moves site without an explicit folderId, drop the
+      // old folder so it can't keep pointing at another site's folder.
+      if (
+        data.clientId &&
+        data.clientId !== existing.clientId &&
+        data.folderId === undefined &&
+        existing.folderId
+      ) {
+        (data as Partial<typeof data> & { folderId: string | null }).folderId = null;
       }
       const layout = await storage.updateLayoutTemplate(getPathParam(req, "id"), data);
       logAudit(req, "update", "layout", layout!.id, { name: layout!.name });

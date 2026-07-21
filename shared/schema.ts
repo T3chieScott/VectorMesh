@@ -457,10 +457,32 @@ export type MediaShare = typeof mediaShares.$inferSelect;
 
 // ============ LAYOUT TEMPLATES ============
 
+// ============ LAYOUT FOLDERS ============
+// Task #311: per-site (clientId-scoped) flat folders for organising
+// scenes (layout templates), mirroring mediaFolders. Deleting a folder
+// must NOT delete its scenes — the folderId FK on layout_templates uses
+// onDelete:"set null" so scenes fall back to the uncategorised view.
+export const layoutFolders = pgTable("layout_folders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const layoutFoldersRelations = relations(layoutFolders, ({ one, many }) => ({
+  client: one(clients, { fields: [layoutFolders.clientId], references: [clients.id] }),
+  layouts: many(layoutTemplates),
+}));
+
+export const insertLayoutFolderSchema = createInsertSchema(layoutFolders).omit({ id: true, createdAt: true });
+export type InsertLayoutFolder = z.infer<typeof insertLayoutFolderSchema>;
+export type LayoutFolder = typeof layoutFolders.$inferSelect;
+
 export const layoutTemplates = pgTable("layout_templates", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   clientId: varchar("client_id").references(() => clients.id, { onDelete: "cascade" }),
   eventId: varchar("event_id").references(() => events.id, { onDelete: "cascade" }),
+  folderId: varchar("folder_id").references(() => layoutFolders.id, { onDelete: "set null" }),
   name: text("name").notNull(),
   version: integer("version").default(1),
   aspectRatio: text("aspect_ratio").notNull().default("16:9"),
@@ -476,6 +498,7 @@ export const layoutTemplates = pgTable("layout_templates", {
 export const layoutTemplatesRelations = relations(layoutTemplates, ({ one }) => ({
   client: one(clients, { fields: [layoutTemplates.clientId], references: [clients.id] }),
   event: one(events, { fields: [layoutTemplates.eventId], references: [events.id] }),
+  folder: one(layoutFolders, { fields: [layoutTemplates.folderId], references: [layoutFolders.id] }),
 }));
 
 export const insertLayoutTemplateSchema = createInsertSchema(layoutTemplates).omit({ id: true, createdAt: true, updatedAt: true });

@@ -52,6 +52,9 @@ import {
   type InsertCustomFont,
   type LayoutTemplate,
   type InsertLayoutTemplate,
+  layoutFolders,
+  type LayoutFolder,
+  type InsertLayoutFolder,
   type Programme,
   type InsertProgramme,
   type ProgrammeVersion,
@@ -535,6 +538,13 @@ export interface IStorage {
   createMediaFolder(data: InsertMediaFolder): Promise<MediaFolder>;
   updateMediaFolder(id: string, data: Partial<InsertMediaFolder>): Promise<MediaFolder | undefined>;
   deleteMediaFolder(id: string): Promise<boolean>;
+
+  // Layout Folders (Task #311) — per-site flat folders for organising scenes.
+  getLayoutFolders(clientId?: string): Promise<LayoutFolder[]>;
+  getLayoutFolder(id: string): Promise<LayoutFolder | undefined>;
+  createLayoutFolder(data: InsertLayoutFolder): Promise<LayoutFolder>;
+  updateLayoutFolder(id: string, data: Partial<InsertLayoutFolder>): Promise<LayoutFolder | undefined>;
+  deleteLayoutFolder(id: string): Promise<boolean>;
 
   // Media Shares
   getMediaSharesForAsset(mediaAssetId: string): Promise<MediaShare[]>;
@@ -2216,6 +2226,39 @@ export class DatabaseStorage implements IStorage {
 
   async deleteMediaFolder(id: string): Promise<boolean> {
     const result = await db.delete(mediaFolders).where(eq(mediaFolders.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Layout Folders (Task #311)
+  async getLayoutFolders(clientId?: string): Promise<LayoutFolder[]> {
+    const query = db.select().from(layoutFolders);
+    if (clientId) {
+      return query.where(eq(layoutFolders.clientId, clientId)).orderBy(asc(layoutFolders.name));
+    }
+    return query.orderBy(asc(layoutFolders.name));
+  }
+
+  async getLayoutFolder(id: string): Promise<LayoutFolder | undefined> {
+    const [folder] = await db.select().from(layoutFolders).where(eq(layoutFolders.id, id));
+    return folder;
+  }
+
+  async createLayoutFolder(data: InsertLayoutFolder): Promise<LayoutFolder> {
+    const [folder] = await db.insert(layoutFolders).values(data).returning();
+    return folder;
+  }
+
+  async updateLayoutFolder(id: string, data: Partial<InsertLayoutFolder>): Promise<LayoutFolder | undefined> {
+    const [folder] = await db
+      .update(layoutFolders)
+      .set(data)
+      .where(eq(layoutFolders.id, id))
+      .returning();
+    return folder;
+  }
+
+  async deleteLayoutFolder(id: string): Promise<boolean> {
+    const result = await db.delete(layoutFolders).where(eq(layoutFolders.id, id));
     return (result.rowCount ?? 0) > 0;
   }
 
