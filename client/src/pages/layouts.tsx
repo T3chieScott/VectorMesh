@@ -1550,6 +1550,8 @@ function MediaPlayerItemsPicker({
 
   const allAssets = mediaAssets || [];
   const [showLibrary, setShowLibrary] = useState(false);
+  // Task #309 — folder grouping + search, matching the montage picker.
+  const [librarySearch, setLibrarySearch] = useState("");
 
   const getAsset = (mediaAssetId: string) => allAssets.find((a) => a.id === mediaAssetId);
 
@@ -1700,15 +1702,34 @@ function MediaPlayerItemsPicker({
       {showLibrary && (
         <div className="space-y-2">
           <Label className="text-sm font-medium">Media Library</Label>
+          <Input
+            value={librarySearch}
+            onChange={(e) => setLibrarySearch(e.target.value)}
+            placeholder="Search media by name..."
+            className="h-8 text-sm"
+            data-testid="input-media-player-search"
+          />
           <ScrollArea className="h-40 border rounded-md p-2">
-            <div className="grid grid-cols-4 gap-2">
-              {allAssets.map((asset) => {
+            {(() => {
+              const q = librarySearch.trim().toLowerCase();
+              const visibleAssets = q
+                ? allAssets.filter((a) => (a.name || "").toLowerCase().includes(q))
+                : allAssets;
+              if (visibleAssets.length === 0) {
+                return (
+                  <div className="py-6 text-center text-sm text-muted-foreground" data-testid="text-media-player-no-matches">
+                    No media match "{librarySearch.trim()}"
+                  </div>
+                );
+              }
+              const renderAsset = (asset: MediaAsset) => {
                 const isVideo = asset.mediaType === "video";
                 return (
                   <button
                     key={asset.id}
                     type="button"
                     onClick={() => addItem(asset.id)}
+                    title={asset.name}
                     className="relative aspect-square rounded-md overflow-hidden border-2 border-transparent hover:border-muted-foreground/50 transition-all"
                     data-testid={`media-player-library-${asset.id}`}
                   >
@@ -1724,8 +1745,16 @@ function MediaPlayerItemsPicker({
                     )}
                   </button>
                 );
-              })}
-            </div>
+              };
+              return (
+                <MediaFolderSections
+                  assets={visibleAssets}
+                  forceExpand={q.length > 0}
+                  renderAsset={renderAsset}
+                  gridClassName="grid grid-cols-4 gap-2"
+                />
+              );
+            })()}
           </ScrollArea>
         </div>
       )}
