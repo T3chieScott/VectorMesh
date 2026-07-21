@@ -1252,6 +1252,10 @@ function SweepstakeConfigPickerSection({
 
 // Task #317 — persisted collapse state for the Scenes sidebar folders.
 const CLOSED_SCENE_FOLDERS_STORAGE_KEY = "vectormesh_scenes_closed_folders";
+// Persisted collapse state for folder sections inside media pickers
+// (photo montage, media zone). Keys are media-folder ids plus
+// "__uncategorised__".
+const CLOSED_MEDIA_FOLDERS_STORAGE_KEY = "vectormesh_media_picker_closed_folders";
 
 // Task #308 — shared collapsible folder grouping for media pickers,
 // mirroring the Media Library's per-site folders. Groups a given asset
@@ -1294,8 +1298,23 @@ function MediaFolderSections({
   const folders = useMediaFolders();
   const sections = groupAssetsByFolder(assets, folders);
   // Open by default so nothing "disappears" for operators used to the
-  // old flat grid; state is remembered while the dialog stays mounted.
-  const [closedKeys, setClosedKeys] = useState<Set<string>>(new Set());
+  // old flat grid; collapse state is persisted to localStorage so it
+  // survives dialog close/reopen and page reloads (shared across all
+  // media pickers — folder keys are folder ids, so they're site-scoped).
+  const [closedKeys, setClosedKeys] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(CLOSED_MEDIA_FOLDERS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return new Set(parsed.filter((k): k is string => typeof k === "string"));
+        }
+      }
+    } catch {
+      // Corrupt/blocked storage — fall back to everything open.
+    }
+    return new Set<string>();
+  });
 
   // No folders in play — keep the original flat grid.
   if (sections.length === 1 && sections[0].key === "__uncategorised__" && folders.length === 0) {
@@ -1309,6 +1328,14 @@ function MediaFolderSections({
         next.delete(key);
       } else {
         next.add(key);
+      }
+      try {
+        localStorage.setItem(
+          CLOSED_MEDIA_FOLDERS_STORAGE_KEY,
+          JSON.stringify(Array.from(next)),
+        );
+      } catch {
+        // Storage unavailable — collapse state just won't persist.
       }
       return next;
     });
