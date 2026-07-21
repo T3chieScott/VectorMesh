@@ -8419,6 +8419,7 @@ function InteractiveLayoutPreview({
   selectedZoneId: controlledSelectedZoneId,
   onSelectZone,
   onDoubleClickZone,
+  onZonePointerDown,
   selectedZoneIds: controlledSelectedZoneIds,
   onSelectedZoneIdsChange,
   agendaTestAt: agendaTestAtProp,
@@ -8432,6 +8433,7 @@ function InteractiveLayoutPreview({
   selectedZoneId?: string | null;
   onSelectZone?: (zoneId: string | null) => void;
   onDoubleClickZone?: (zoneId: string) => void;
+  onZonePointerDown?: (zoneId: string) => void;
   selectedZoneIds?: Set<string>;
   onSelectedZoneIdsChange?: (ids: Set<string>) => void;
   // Optional ISO test-date supplied by an in-app control (the Interactive
@@ -8618,6 +8620,8 @@ function InteractiveLayoutPreview({
     const zone = zonesToRender.find(z => z.id === zoneId);
     if (!zone || !containerRef.current) return;
 
+    if (onZonePointerDown) onZonePointerDown(zoneId);
+
     if (e.shiftKey) {
       return;
     } else {
@@ -8644,7 +8648,7 @@ function InteractiveLayoutPreview({
       startZone: { x: zone.x, y: zone.y, width: zone.width, height: zone.height },
       multiDragStartZones: multiDragZones,
     });
-  }, [zonesToRender, selectedZoneIds]);
+  }, [zonesToRender, selectedZoneIds, onZonePointerDown]);
 
   const handleMouseMove = useCallback((e: MouseEvent) => {
     if (!dragState || !containerRef.current) return;
@@ -10112,6 +10116,7 @@ function LayoutEditorPanel({
   onSelectZone,
   editZoneIdTrigger,
   onEditZoneTriggered,
+  onZonePointerDown,
   showLayoutList,
   onToggleLayoutList,
   onBackToList,
@@ -10128,6 +10133,7 @@ function LayoutEditorPanel({
   onSelectZone?: (zoneId: string | null) => void;
   editZoneIdTrigger?: string | null;
   onEditZoneTriggered?: () => void;
+  onZonePointerDown?: (zoneId: string) => void;
   showLayoutList?: boolean;
   onToggleLayoutList?: () => void;
   onBackToList?: () => void;
@@ -10229,6 +10235,7 @@ function LayoutEditorPanel({
 
   const handleZoneItemClick = (e: React.MouseEvent, zone: LayoutZone) => {
     if (justDraggedRef.current || draggedZoneId) return;
+    if (onZonePointerDown) onZonePointerDown(zone.id);
     if (e.shiftKey && selectedZoneIds) {
       const newIds = new Set(selectedZoneIds);
       if (newIds.has(zone.id)) {
@@ -10733,6 +10740,7 @@ function LivePreviewPanel({
   highlightedZoneId,
   onSelectZone,
   onDoubleClickZone,
+  onZonePointerDown,
   selectedZoneIds,
   onSelectedZoneIdsChange,
 }: { 
@@ -10745,6 +10753,7 @@ function LivePreviewPanel({
   highlightedZoneId?: string | null;
   onSelectZone?: (zoneId: string | null) => void;
   onDoubleClickZone?: (zoneId: string) => void;
+  onZonePointerDown?: (zoneId: string) => void;
   selectedZoneIds: Set<string>;
   onSelectedZoneIdsChange: (ids: Set<string>) => void;
 }) {
@@ -10943,6 +10952,7 @@ function LivePreviewPanel({
             selectedZoneId={highlightedZoneId}
             onSelectZone={onSelectZone}
             onDoubleClickZone={onDoubleClickZone}
+            onZonePointerDown={onZonePointerDown}
             selectedZoneIds={selectedZoneIds}
             onSelectedZoneIdsChange={onSelectedZoneIdsChange}
             agendaTestAt={previewAtIso}
@@ -11370,7 +11380,6 @@ export default function LayoutsPage() {
                             isSelected={layout.id === selectedLayoutId}
                             onSelect={() => {
                               setSelectedLayoutId(layout.id);
-                              setShowLayoutList(false);
                             }}
                             previewScreenId={previewScreenId}
                             previewCtx={previewCtx}
@@ -11472,6 +11481,7 @@ export default function LayoutsPage() {
               onSelectZone={setHighlightedZoneId}
               editZoneIdTrigger={editZoneIdTrigger}
               onEditZoneTriggered={() => setEditZoneIdTrigger(null)}
+              onZonePointerDown={() => setShowLayoutList(false)}
               showLayoutList={showLayoutList}
               onToggleLayoutList={() => setShowLayoutList(!showLayoutList)}
               onBackToList={() => {
@@ -11491,6 +11501,7 @@ export default function LayoutsPage() {
               onDiscardAll={handleDiscardAll}
               highlightedZoneId={highlightedZoneId}
               onSelectZone={setHighlightedZoneId}
+              onZonePointerDown={() => setShowLayoutList(false)}
               onDoubleClickZone={(zoneId) => setEditZoneIdTrigger(zoneId)}
               selectedZoneIds={selectedZoneIds}
               onSelectedZoneIdsChange={setSelectedZoneIds}
