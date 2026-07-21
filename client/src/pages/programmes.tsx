@@ -1826,6 +1826,10 @@ export default function ProgrammesPage() {
   const layoutsQ = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
   const { data: layouts = [] } = useQuery(layoutsQ);
 
+  // Pre-fetch so SceneFolderSelect finds it in cache instantly on first open.
+  const layoutFoldersQ = useSiteFilteredQuery<LayoutFolder[]>("/api/layout-folders");
+  useQuery<LayoutFolder[]>(layoutFoldersQ);
+
   const playlistsQ = useSiteFilteredQuery<Playlist[]>("/api/playlists");
   const { data: playlists = [] } = useQuery(playlistsQ);
 
