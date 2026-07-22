@@ -3907,9 +3907,12 @@ function MontageWidget({
   const baseUrl = mediaBaseUrl || "/api/media";
   const getUrl = useCallback((id: string) => {
     if (!id) return "";
+    const asset = allMedia.find(m => m.id === id);
+    const v = asset?.updatedAt ? new Date(asset.updatedAt).getTime() : "";
     const url = `${baseUrl}/${id}/file`;
-    return deviceToken ? `${url}?token=${deviceToken}` : url;
-  }, [baseUrl, deviceToken]);
+    if (deviceToken) return `${url}?token=${deviceToken}${v ? `&v=${v}` : ""}`;
+    return v ? `${url}?v=${v}` : url;
+  }, [baseUrl, deviceToken, allMedia]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -5291,9 +5294,12 @@ function MediaPlayerWidget({
   const baseUrl = mediaBaseUrl || "/api/media";
   const getUrl = useCallback((mediaAssetId: string) => {
     if (!mediaAssetId) return "";
+    const asset = allMedia.find(m => m.id === mediaAssetId);
+    const v = asset?.updatedAt ? new Date(asset.updatedAt).getTime() : "";
     const url = `${baseUrl}/${mediaAssetId}/file`;
-    return deviceToken ? `${url}?token=${deviceToken}` : url;
-  }, [baseUrl, deviceToken]);
+    if (deviceToken) return `${url}?token=${deviceToken}${v ? `&v=${v}` : ""}`;
+    return v ? `${url}?v=${v}` : url;
+  }, [baseUrl, deviceToken, allMedia]);
 
   const getMediaType = useCallback((mediaAssetId: string): "image" | "video" | "gif" => {
     const asset = allMedia.find(m => m.id === mediaAssetId);
