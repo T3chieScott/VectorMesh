@@ -68,6 +68,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
+import { SceneFolderSelect } from "@/components/scene-folder-select";
 import {
   ChevronLeft,
   ChevronRight,
@@ -1614,21 +1615,13 @@ function ScheduleBlockEditor({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Scene</FormLabel>
-                  <Select value={field.value || "none"} onValueChange={(v) => field.onChange(v === "none" ? "" : v)}>
-                    <FormControl>
-                      <SelectTrigger data-testid="select-layout">
-                        <SelectValue placeholder="Select a scene" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="none">No scene</SelectItem>
-                      {layouts.map((layout) => (
-                        <SelectItem key={layout.id} value={layout.id}>
-                          {layout.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <FormControl>
+                    <SceneFolderSelect
+                      layouts={layouts}
+                      value={field.value || "none"}
+                      onChange={(v) => field.onChange(v === "none" ? "" : v)}
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
