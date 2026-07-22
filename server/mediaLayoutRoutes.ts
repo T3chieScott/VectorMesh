@@ -631,12 +631,17 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
         }
         filtered = filtered.filter(l => !l.clientId || l.clientId === clientId);
       }
+      // Attach folderName so clients can group by folder without a
+      // separate /api/layout-folders fetch (avoids timing races).
+      const allFolders = await storage.getLayoutFolders();
+      const folderNameMap = new Map(allFolders.map((f) => [f.id, f.name]));
       // Task #244: sanitise HTML-widget zone bodies on read so the layout
       // editor and simulator (which both load layouts via this endpoint) see
       // the same script-free payload a real player receives.
       const sanitized = filtered.map((l) => ({
         ...l,
         zones: sanitizeHtmlZones(l.zones as any),
+        folderName: l.folderId ? (folderNameMap.get(l.folderId) ?? null) : null,
       }));
       res.json(sanitized);
     } catch (error) {

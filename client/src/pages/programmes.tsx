@@ -102,7 +102,7 @@ import {
   Monitor,
   AlertTriangle,
 } from "lucide-react";
-import type { Programme, Event, ProgrammeVersion, ScheduleBlock, LayoutTemplate, LayoutFolder, Playlist, Screen, ScreenGroup, TimeRule, ScheduleTarget, ZoneSource, AgendaWidgetConfig } from "@shared/schema";
+import type { Programme, Event, ProgrammeVersion, ScheduleBlock, LayoutTemplate, Playlist, Screen, ScreenGroup, TimeRule, ScheduleTarget, ZoneSource, AgendaWidgetConfig } from "@shared/schema";
 import { ProgrammeBlocksContextMenu } from "@/components/programme-blocks-context-menu";
 
 // Same storage key as the Scenes page sidebar, so collapsing a folder
@@ -112,17 +112,19 @@ const CLOSED_SCENE_FOLDERS_STORAGE_KEY = "vectormesh_scenes_closed_folders";
 // Folder-grouped scene picker for the schedule block editor. Renders the
 // site's scene folders as collapsible sections inside a popover, with
 // collapse state persisted to localStorage (shared with the Scenes page).
+// The /api/layouts response is augmented server-side with `folderName` so
+// that SceneFolderSelect can group without a separate network fetch.
+type LayoutWithFolder = LayoutTemplate & { folderName?: string | null };
+
 function SceneFolderSelect({
   layouts,
   value,
   onChange,
 }: {
-  layouts: LayoutTemplate[];
+  layouts: LayoutWithFolder[];
   value: string;
   onChange: (value: string) => void;
 }) {
-  const foldersQ = useSiteFilteredQuery<LayoutFolder[]>("/api/layout-folders");
-  const { data: folders = [] } = useQuery<LayoutFolder[]>({ ...foldersQ });
   const [open, setOpen] = useState(false);
   const [closedKeys, setClosedKeys] = useState<Set<string>>(() => {
     try {
@@ -159,17 +161,26 @@ function SceneFolderSelect({
     });
   };
 
-  const knownFolderIds = new Set(folders.map((f) => f.id));
-  const sections: Array<{ key: string; name: string; layouts: LayoutTemplate[] }> = [];
-  for (const folder of folders) {
-    const inFolder = layouts.filter((l) => l.folderId === folder.id);
-    if (inFolder.length > 0) {
-      sections.push({ key: folder.id, name: folder.name, layouts: inFolder });
+  // Derive folder sections from the folderName/folderId already on each layout
+  // (server attaches folderName in the /api/layouts response).
+  const folderOrder: string[] = [];
+  const folderNames: Record<string, string> = {};
+  const byFolder: Record<string, LayoutWithFolder[]> = {};
+  for (const l of layouts) {
+    if (l.folderId && l.folderName) {
+      if (!byFolder[l.folderId]) {
+        folderOrder.push(l.folderId);
+        folderNames[l.folderId] = l.folderName;
+        byFolder[l.folderId] = [];
+      }
+      byFolder[l.folderId].push(l);
     }
   }
-  const uncategorised = layouts.filter(
-    (l) => !l.folderId || !knownFolderIds.has(l.folderId),
+  const assignedFolderIds = new Set(folderOrder);
+  const sections: Array<{ key: string; name: string; layouts: LayoutWithFolder[] }> = folderOrder.map(
+    (fid) => ({ key: fid, name: folderNames[fid], layouts: byFolder[fid] }),
   );
+  const uncategorised = layouts.filter((l) => !l.folderId || !assignedFolderIds.has(l.folderId));
   const hasFolderSections = sections.length > 0;
   if (uncategorised.length > 0) {
     sections.push({ key: "__uncategorised__", name: "Uncategorised", layouts: uncategorised });
@@ -1825,10 +1836,6 @@ export default function ProgrammesPage() {
 
   const layoutsQ = useSiteFilteredQuery<LayoutTemplate[]>("/api/layouts");
   const { data: layouts = [] } = useQuery(layoutsQ);
-
-  // Pre-fetch so SceneFolderSelect finds it in cache instantly on first open.
-  const layoutFoldersQ = useSiteFilteredQuery<LayoutFolder[]>("/api/layout-folders");
-  useQuery<LayoutFolder[]>(layoutFoldersQ);
 
   const playlistsQ = useSiteFilteredQuery<Playlist[]>("/api/playlists");
   const { data: playlists = [] } = useQuery(playlistsQ);
