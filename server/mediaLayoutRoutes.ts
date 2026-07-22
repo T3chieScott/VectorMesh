@@ -1,3 +1,4 @@
+import { promises as fsp } from "fs";
 import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
 import { z } from "zod";
 import {
@@ -63,6 +64,8 @@ export interface MediaLayoutRoutesAuth {
 
 export interface MediaLayoutFileStorage {
   streamFile(path: string, res: Response, req: Request): Promise<void> | void;
+  saveFileFromDisk(tempPath: string, originalName: string, contentType: string, clientId: string): Promise<string>;
+  deleteFile(storagePath: string): Promise<boolean>;
 }
 
 export interface MediaLayoutRoutesDeps {
@@ -79,6 +82,7 @@ export interface MediaLayoutRoutesDeps {
     payload?: any,
   ) => void;
   fileStorage: MediaLayoutFileStorage;
+  uploadSingle: RequestHandler;
   generateVideoThumbnail: (
     originalPath: string,
     clientId: string,
@@ -101,6 +105,7 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
     requireAdmin,
     loadUserContext,
     fileStorage,
+    uploadSingle,
     generateVideoThumbnail,
     getVideoDuration,
   } = deps;
@@ -427,6 +432,134 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
       res.status(500).json({ error: "Failed to backfill durations" });
     }
   });
+
+  // ============ MEDIA ASSET REPLACE (Task #320) ============
+  // POST /api/media/:id/replace — upload a replacement file for an existing
+  // asset, keeping the same asset ID so all scene zone references remain valid.
+  // The incoming file must be the same broad media category (image/video/gif).
+  app.post(
+    "/api/media/:id/replace",
+    requireAuth,
+    loadUserContext,
+    uploadSingle,
+    async (req, res) => {
+      const tempPath = req.file?.path;
+      const cleanupTemp = async () => {
+        if (tempPath) {
+          try { await fsp.unlink(tempPath); } catch {}
+        }
+      };
+      try {
+        if (!req.file || !tempPath) {
+          return res.status(400).json({ error: "No file provided" });
+        }
+
+        const id = getPathParam(req, "id");
+        const existing = await storage.getMediaAsset(id);
+        if (!existing) {
+          await cleanupTemp();
+          return res.status(404).json({ error: "Media asset not found" });
+        }
+        if (existing.clientId && !canAccessClient(req, existing.clientId)) {
+          await cleanupTemp();
+          return res.status(403).json({ error: "Access denied" });
+        }
+        if (!existing.clientId) {
+          await cleanupTemp();
+          return res.status(400).json({ error: "Asset is not assigned to a site" });
+        }
+
+        // Derive the incoming file's media category from its MIME type.
+        const incomingMime = req.file.mimetype ?? "";
+        let incomingMediaType: "image" | "video" | "gif";
+        if (incomingMime === "image/gif") {
+          incomingMediaType = "gif";
+        } else if (incomingMime.startsWith("image/")) {
+          incomingMediaType = "image";
+        } else if (incomingMime.startsWith("video/")) {
+          incomingMediaType = "video";
+        } else {
+          await cleanupTemp();
+          return res.status(400).json({
+            error: `Unsupported file type: ${incomingMime}. Must be an image, video, or GIF.`,
+          });
+        }
+
+        if (incomingMediaType !== existing.mediaType) {
+          await cleanupTemp();
+          return res.status(400).json({
+            error: `Cannot replace a ${existing.mediaType} with a ${incomingMediaType}. Media type must stay the same.`,
+          });
+        }
+
+        // Save the new file (new UUID path).
+        const newPath = await fileStorage.saveFileFromDisk(
+          tempPath,
+          req.file.originalname,
+          incomingMime,
+          existing.clientId,
+        );
+
+        // For videos, regenerate thumbnail and get duration.
+        let newThumbnailPath: string | null | undefined = undefined;
+        let newDuration: number | null | undefined = undefined;
+        if (incomingMediaType === "video") {
+          try {
+            [newThumbnailPath, newDuration] = await Promise.all([
+              generateVideoThumbnail(newPath, existing.clientId),
+              getVideoDuration(newPath),
+            ]);
+          } catch (thumbErr) {
+            console.error("[replace] Video processing failed:", thumbErr);
+          }
+        }
+
+        // Update the DB record (keep same ID, folder, client, tags, etc.)
+        const updates: Partial<Parameters<typeof storage.updateMediaAsset>[1]> = {
+          originalPath: newPath,
+          mimeType: incomingMime,
+          fileSize: req.file.size,
+          // Clear stale dimensions/duration — new values only set when known.
+          width: null,
+          height: null,
+          duration: newDuration ?? null,
+        };
+        if (newThumbnailPath) updates.thumbnailPath = newThumbnailPath;
+        if (req.file.originalname) updates.name = req.file.originalname;
+
+        const updated = await storage.updateMediaAsset(id, updates);
+        if (!updated) {
+          await fileStorage.deleteFile(newPath);
+          return res.status(500).json({ error: "Failed to update asset record" });
+        }
+
+        // Delete old file from disk (best-effort — don't fail the response).
+        if (existing.originalPath && !existing.originalPath.startsWith("http")) {
+          await fileStorage.deleteFile(existing.originalPath);
+        }
+        // Delete old thumbnail if it changed.
+        if (
+          existing.thumbnailPath &&
+          existing.thumbnailPath !== updated.thumbnailPath &&
+          !existing.thumbnailPath.startsWith("http")
+        ) {
+          await fileStorage.deleteFile(existing.thumbnailPath);
+        }
+
+        logAudit(req, "replace", "media", id, {
+          oldName: existing.name,
+          newName: updated.name,
+          clientId: existing.clientId,
+        });
+
+        res.json(updated);
+      } catch (error) {
+        await cleanupTemp();
+        console.error("Error replacing media asset:", error);
+        res.status(500).json({ error: "Failed to replace media asset" });
+      }
+    },
+  );
 
   // ============ MEDIA FOLDERS (Task #265) ============
   // Per-site flat folders. Tenant-scoped exactly like media assets:

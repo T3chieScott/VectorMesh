@@ -275,7 +275,12 @@ async function startTestServer(opts: {
     requireAuth,
     requireAdmin,
     loadUserContext,
-    fileStorage: { streamFile: () => {} },
+    fileStorage: {
+      streamFile: () => {},
+      saveFileFromDisk: async () => "stub/path.jpg",
+      deleteFile: async () => true,
+    },
+    uploadSingle: (_req: any, _res: any, next: any) => next(),
     generateVideoThumbnail: async () => null,
     getVideoDuration: async () => null,
   });

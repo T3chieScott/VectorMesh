@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useSiteContext, useSiteFilteredQuery } from "@/hooks/use-site-context";
@@ -58,6 +58,7 @@ import {
   FolderInput,
   Pencil,
   X,
+  RefreshCw,
 } from "lucide-react";
 import type { MediaAsset, MediaShare, Client, MediaFolder } from "@shared/schema";
 
@@ -278,7 +279,39 @@ function MediaCard({
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [isReplacing, setIsReplacing] = useState(false);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+
+  const acceptForType = asset.mediaType === "gif"
+    ? "image/gif"
+    : asset.mediaType === "video"
+    ? "video/*"
+    : "image/*";
+
+  const handleReplaceFile = async (file: File) => {
+    setIsReplacing(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`/api/media/${asset.id}/replace`, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "Upload failed");
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/media"] });
+      toast({ title: "File replaced successfully" });
+    } catch (err: any) {
+      toast({ title: err.message ?? "Failed to replace file", variant: "destructive" });
+    } finally {
+      setIsReplacing(false);
+      if (replaceInputRef.current) replaceInputRef.current.value = "";
+    }
+  };
 
   const assetFolders = folders.filter((f) => f.clientId === asset.clientId);
 
@@ -355,6 +388,16 @@ function MediaCard({
           Download
         </a>
       </DropdownMenuItem>
+      {!isSharedAsset && (
+        <DropdownMenuItem
+          onSelect={() => replaceInputRef.current?.click()}
+          disabled={isReplacing}
+          data-testid={`button-replace-media-${asset.id}`}
+        >
+          <RefreshCw className={`mr-2 h-4 w-4 ${isReplacing ? "animate-spin" : ""}`} />
+          {isReplacing ? "Replacing…" : "Replace file"}
+        </DropdownMenuItem>
+      )}
       {!isSharedAsset && (
         <DropdownMenuItem
           onSelect={() => toggleDisplayModeMutation.mutate()}
@@ -546,6 +589,17 @@ function MediaCard({
         </div>
         {previewDialog}
         {isAdmin && <ShareDialog asset={asset} clients={clients} open={shareOpen} onOpenChange={setShareOpen} />}
+        <input
+          ref={replaceInputRef}
+          type="file"
+          accept={acceptForType}
+          className="hidden"
+          data-testid={`input-replace-media-${asset.id}`}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) handleReplaceFile(file);
+          }}
+        />
       </>
     );
   }
@@ -639,6 +693,17 @@ function MediaCard({
       </Card>
       {previewDialog}
       {isAdmin && <ShareDialog asset={asset} clients={clients} open={shareOpen} onOpenChange={setShareOpen} />}
+      <input
+        ref={replaceInputRef}
+        type="file"
+        accept={acceptForType}
+        className="hidden"
+        data-testid={`input-replace-media-${asset.id}`}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) handleReplaceFile(file);
+        }}
+      />
     </>
   );
 }

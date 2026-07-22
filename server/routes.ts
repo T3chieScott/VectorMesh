@@ -1784,6 +1784,7 @@ export async function registerRoutes(
     loadUserContext,
     logAudit,
     fileStorage,
+    uploadSingle: upload.single("file"),
     generateVideoThumbnail,
     getVideoDuration,
   });
