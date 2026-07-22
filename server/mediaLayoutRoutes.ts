@@ -530,13 +530,14 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
         }
 
         // Update the DB record (keep same ID, folder, client, tags, etc.)
-        const updates: Partial<Parameters<typeof storage.updateMediaAsset>[1]> = {
+        const updates: Partial<Parameters<typeof storage.updateMediaAsset>[1]> & { updatedAt?: Date } = {
           originalPath: newPath,
           mimeType: incomingMime,
           fileSize: req.file.size,
           width: newWidth,
           height: newHeight,
           duration: newDuration ?? null,
+          updatedAt: new Date(),
         };
         if (newThumbnailPath) updates.thumbnailPath = newThumbnailPath;
         if (req.file.originalname) updates.name = req.file.originalname;

@@ -9,7 +9,7 @@ import type { MediaAsset } from "./schema";
 const MEDIA_REF_RE = /\{\{\s*media:\s*([a-zA-Z0-9-]+)\s*\}\}/g;
 
 export interface ResolveMediaRefsOptions {
-  media: Pick<MediaAsset, "id" | "originalPath">[];
+  media: (Pick<MediaAsset, "id" | "originalPath"> & { updatedAt?: Date | null })[];
   /** Defaults to "/api/media" (admin/editor). Players pass "/api/player/media". */
   mediaBaseUrl?: string;
   /** Per-screen device token; appended as `?token=` so the player can authorise. */
@@ -36,7 +36,11 @@ export function resolveMediaRefs(html: string, opts: ResolveMediaRefsOptions): s
     if (asset.originalPath && asset.originalPath.startsWith("http")) {
       return asset.originalPath;
     }
-    return `${baseUrl}/${asset.id}/file${deviceToken ? `?token=${deviceToken}` : ""}`;
+    const v = asset.updatedAt ? new Date(asset.updatedAt).getTime() : "";
+    const qs = deviceToken
+      ? `?token=${deviceToken}${v ? `&v=${v}` : ""}`
+      : v ? `?v=${v}` : "";
+    return `${baseUrl}/${asset.id}/file${qs}`;
   });
 }
 

@@ -93,14 +93,17 @@ function formatDuration(seconds: number | null | undefined): string {
 }
 
 function getMediaUrl(asset: MediaAsset): string {
-  return `/api/media/${asset.id}/file`;
+  const v = asset.updatedAt ? new Date(asset.updatedAt).getTime() : "";
+  return `/api/media/${asset.id}/file${v ? `?v=${v}` : ""}`;
 }
 
 function getMediaPreviewUrl(asset: MediaAsset): string {
+  const v = asset.updatedAt ? new Date(asset.updatedAt).getTime() : "";
+  const qs = v ? `?v=${v}` : "";
   if (asset.thumbnailPath) {
-    return `/api/media/${asset.id}/thumbnail`;
+    return `/api/media/${asset.id}/thumbnail${qs}`;
   }
-  return `/api/media/${asset.id}/file`;
+  return `/api/media/${asset.id}/file${qs}`;
 }
 
 function ShareDialog({

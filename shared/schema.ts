@@ -370,6 +370,7 @@ export const mediaAssets = pgTable("media_assets", {
   displayMode: scaleModeEnum("display_mode").default("cover"),
   folderId: varchar("folder_id").references(() => mediaFolders.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 export const mediaAssetsRelations = relations(mediaAssets, ({ one, many }) => ({
@@ -379,7 +380,7 @@ export const mediaAssetsRelations = relations(mediaAssets, ({ one, many }) => ({
   shares: many(mediaShares),
 }));
 
-export const insertMediaAssetSchema = createInsertSchema(mediaAssets).omit({ id: true, createdAt: true });
+export const insertMediaAssetSchema = createInsertSchema(mediaAssets).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertMediaAsset = z.infer<typeof insertMediaAssetSchema>;
 export type MediaAsset = typeof mediaAssets.$inferSelect;
 

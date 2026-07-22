@@ -3799,9 +3799,10 @@ function MediaWidget({
   if (!currentMedia) return null;
 
   const baseUrl = mediaBaseUrl || "/api/media";
+  const mediaCacheBuster = currentMedia.updatedAt ? new Date(currentMedia.updatedAt).getTime() : "";
   const mediaUrl = currentMedia.originalPath.startsWith("http")
     ? currentMedia.originalPath
-    : `${baseUrl}/${currentMedia.id}/file${deviceToken ? `?token=${deviceToken}` : ""}`;
+    : `${baseUrl}/${currentMedia.id}/file${deviceToken ? `?token=${deviceToken}&v=${mediaCacheBuster}` : mediaCacheBuster ? `?v=${mediaCacheBuster}` : ""}`;
   
   if (currentMedia.mediaType === "video") {
     return (
