@@ -88,6 +88,7 @@ export interface MediaLayoutRoutesDeps {
     clientId: string,
   ) => Promise<string | null | undefined>;
   getVideoDuration: (originalPath: string) => Promise<number | null | undefined>;
+  getImageDimensions: (originalPath: string) => Promise<{ width: number; height: number } | null>;
 }
 
 /**
@@ -108,6 +109,7 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
     uploadSingle,
     generateVideoThumbnail,
     getVideoDuration,
+    getImageDimensions,
   } = deps;
   const canAccessClient = (req: Request, clientId: string) =>
     auth.canAccessClient(req, clientId);
@@ -501,8 +503,11 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
         );
 
         // For videos, regenerate thumbnail and get duration.
+        // For images, read width/height via sharp.
         let newThumbnailPath: string | null | undefined = undefined;
         let newDuration: number | null | undefined = undefined;
+        let newWidth: number | null = null;
+        let newHeight: number | null = null;
         if (incomingMediaType === "video") {
           try {
             [newThumbnailPath, newDuration] = await Promise.all([
@@ -512,6 +517,16 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
           } catch (thumbErr) {
             console.error("[replace] Video processing failed:", thumbErr);
           }
+        } else if (incomingMediaType === "image") {
+          try {
+            const dims = await getImageDimensions(newPath);
+            if (dims) {
+              newWidth = dims.width;
+              newHeight = dims.height;
+            }
+          } catch (dimErr) {
+            console.error("[replace] Image dimension extraction failed:", dimErr);
+          }
         }
 
         // Update the DB record (keep same ID, folder, client, tags, etc.)
@@ -519,9 +534,8 @@ export function mountMediaLayoutRoutes(app: Express, deps: MediaLayoutRoutesDeps
           originalPath: newPath,
           mimeType: incomingMime,
           fileSize: req.file.size,
-          // Clear stale dimensions/duration — new values only set when known.
-          width: null,
-          height: null,
+          width: newWidth,
+          height: newHeight,
           duration: newDuration ?? null,
         };
         if (newThumbnailPath) updates.thumbnailPath = newThumbnailPath;

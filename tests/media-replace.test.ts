@@ -186,6 +186,7 @@ async function startReplaceServer(opts: TestServerOpts) {
     },
     generateVideoThumbnail: async () => null,
     getVideoDuration: async () => null,
+    getImageDimensions: async () => null,
   });
 
   const server = app.listen(0);

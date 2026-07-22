@@ -3,7 +3,27 @@ import { promises as fs } from "fs";
 import { randomUUID } from "crypto";
 import path from "path";
 import os from "os";
+import sharp from "sharp";
 import * as fileStorage from "./fileStorage";
+
+export async function getImageDimensions(
+  imageStoragePath: string,
+): Promise<{ width: number; height: number } | null> {
+  if (!imageStoragePath || imageStoragePath.startsWith("http")) {
+    return null;
+  }
+  try {
+    const absolutePath = await fileStorage.getAbsolutePath(imageStoragePath);
+    const metadata = await sharp(absolutePath).metadata();
+    if (metadata.width && metadata.height) {
+      return { width: metadata.width, height: metadata.height };
+    }
+    return null;
+  } catch (err) {
+    console.error("Image dimension extraction failed:", err);
+    return null;
+  }
+}
 
 export async function getVideoDuration(
   videoStoragePath: string,

@@ -199,6 +199,9 @@ function makeFakeStorage(initial: {
     async getEvent(id) {
       return events.find((e) => e.id === id);
     },
+    async getLayoutFolders() {
+      return [];
+    },
     async getLayoutTemplates() {
       return layouts.slice();
     },
@@ -283,6 +286,7 @@ async function startTestServer(opts: {
     uploadSingle: (_req: any, _res: any, next: any) => next(),
     generateVideoThumbnail: async () => null,
     getVideoDuration: async () => null,
+    getImageDimensions: async () => null,
   });
 
   const server = app.listen(0);

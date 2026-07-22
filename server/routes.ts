@@ -21,7 +21,7 @@ import {
   wallTimeOnDateInTz,
 } from "@shared/timezone-utils";
 import { getDefaultScheduleTimezone } from "./scheduleTimezone";
-import { generateVideoThumbnail, getVideoDuration } from "./thumbnail";
+import { generateVideoThumbnail, getVideoDuration, getImageDimensions } from "./thumbnail";
 import { setupAuth, isAuthenticated, isAuthenticatedOrToken, hashApiToken } from "./auth";
 import { mountTestAuthRoute } from "./testAuthRoute";
 import { mountAgendaRoutes } from "./agendaRoutes";
@@ -1787,6 +1787,7 @@ export async function registerRoutes(
     uploadSingle: upload.single("file"),
     generateVideoThumbnail,
     getVideoDuration,
+    getImageDimensions,
   });
 
   // ============ FILE UPLOAD ============

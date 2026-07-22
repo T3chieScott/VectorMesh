@@ -240,6 +240,7 @@ async function startTestServer(opts: {
     uploadSingle: (_req: any, _res: any, next: any) => next(),
     generateVideoThumbnail: async () => null,
     getVideoDuration: async () => null,
+    getImageDimensions: async () => null,
   });
 
   const server = app.listen(0);
