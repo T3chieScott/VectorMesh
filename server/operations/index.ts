@@ -86,6 +86,7 @@ export interface OperationsRoutesStorage {
   touchMonitorSessionLastAccess(id: string, now: Date): Promise<void>;
   revokeMonitorSession(id: string, revokedAt: Date): Promise<boolean>;
   cleanupExpiredMonitorSessions(retentionDays: number, now: Date): Promise<number>;
+  getMonitorSessionsForScreen(screenId: string, now?: Date): Promise<MonitorSession[]>;
 }
 
 // ============ Auth helpers (dependency-injected, testable) ============
@@ -715,7 +716,57 @@ export function mountOperationsRoutes(
     },
   );
 
-  // ============ MONITOR SESSION ENDPOINTS (Task #330) ============
+  // ============ MONITOR SESSION ENDPOINTS (Task #330 + #331) ============
+
+  // ---- GET /api/operations/screens/:screenId/monitor-sessions ----
+  // Returns active (non-expired, non-revoked) monitor sessions for the given
+  // screen. Intended for the admin "Monitor Sessions" panel. Requires the
+  // operations.multiview scope (admins and account_managers pass implicitly).
+  app.get(
+    "/api/operations/screens/:screenId/monitor-sessions",
+    ...baseMiddleware,
+    requireScope(OPERATIONS_SCOPES.MULTIVIEW),
+    async (req: Request, res: Response) => {
+      try {
+        const screenId = getPathParam(req, "screenId");
+
+        const screen = await st.getScreen(screenId);
+        if (!screen) return apiError(res, 404, "NOT_FOUND", "Screen not found");
+
+        // Tenant isolation: verify the requesting user/token can access this screen
+        if (screen.clientId === null || screen.clientId === undefined) {
+          const effectiveIds = await resolveEffectiveClientIds(req);
+          if (effectiveIds !== null) {
+            return apiError(res, 403, "FORBIDDEN", "Access denied");
+          }
+        } else if (!(await canAccessClientForOps(req, screen.clientId))) {
+          return apiError(res, 403, "FORBIDDEN", "Access denied");
+        }
+
+        const sessions = await st.getMonitorSessionsForScreen(screenId);
+
+        // Strip internal-only fields (token_hash, session_secret_hash) before
+        // returning. The client only needs display-safe fields.
+        const safe = sessions.map((s) => ({
+          id: s.id,
+          screenId: s.screenId,
+          clientId: s.clientId,
+          clientType: s.clientType,
+          clientName: s.clientName,
+          bootstrapUsedAt: s.bootstrapUsedAt?.toISOString() ?? null,
+          expiresAt: s.expiresAt.toISOString(),
+          lastAccessAt: s.lastAccessAt?.toISOString() ?? null,
+          createdAt: s.createdAt?.toISOString() ?? null,
+          // ipAddress is not stored on the session row — not included.
+        }));
+
+        res.json(safe);
+      } catch (err) {
+        console.error("[operations] GET /screens/:id/monitor-sessions error:", err);
+        apiError(res, 500, "INTERNAL_ERROR", "Internal server error");
+      }
+    },
+  );
 
   // ---- POST /api/operations/screens/:screenId/monitor-session ----
   // Creates a new monitor session for the given screen.

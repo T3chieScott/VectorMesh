@@ -1416,6 +1416,123 @@ function TraceStepRow({ step }: { step: ContentTraceStep }) {
   }
 }
 
+// Task #331 — panel listing active monitor sessions for a screen.
+// Admins can see who is monitoring a screen via the Multiview API
+// and revoke any session immediately.
+interface MonitorSessionRow {
+  id: string;
+  screenId: string;
+  clientId: string | null;
+  clientType: string | null;
+  clientName: string | null;
+  bootstrapUsedAt: string | null;
+  expiresAt: string;
+  lastAccessAt: string | null;
+  createdAt: string | null;
+}
+
+function MonitorSessionsPanel({ screen }: { screen: Screen }) {
+  const { toast } = useToast();
+  const queryKey = ["/api/operations/screens", screen.id, "monitor-sessions"];
+  const { data: sessions, isLoading, error } = useQuery<MonitorSessionRow[]>({
+    queryKey,
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/operations/screens/${screen.id}/monitor-sessions`,
+      );
+      return res.json();
+    },
+    // Refresh every 30 s so newly created sessions appear without a manual reload
+    refetchInterval: 30_000,
+  });
+
+  const revokeMutation = useMutation<void, Error, string>({
+    mutationFn: async (sessionId: string) => {
+      await apiRequest("DELETE", `/api/operations/monitor-sessions/${sessionId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey });
+      toast({ title: "Monitor session revoked" });
+    },
+    onError: (err) => {
+      toast({
+        title: "Failed to revoke session",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Treat a 403 (insufficient scope) as "no sessions / not applicable"
+  // rather than showing an error to site_users who haven't been granted
+  // the multiview scope.
+  if (error) return null;
+  if (isLoading) return null;
+  if (!sessions || sessions.length === 0) return null;
+
+  return (
+    <div
+      className="space-y-2 rounded-lg border p-3 bg-muted/30"
+      data-testid={`panel-monitor-sessions-${screen.id}`}
+    >
+      <div className="flex items-center gap-2">
+        <Activity className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-xs font-medium">Monitor Sessions</span>
+        <Badge variant="secondary" className="h-4 text-[10px] px-1.5">
+          {sessions.length}
+        </Badge>
+      </div>
+      <div className="space-y-1.5">
+        {sessions.map((s) => (
+          <div
+            key={s.id}
+            className="flex items-start justify-between gap-2 rounded-md border bg-background px-2.5 py-2"
+            data-testid={`monitor-session-row-${s.id}`}
+          >
+            <div className="min-w-0 space-y-0.5">
+              <p className="text-xs font-medium truncate">
+                {s.clientName || s.clientType || "Unknown client"}
+              </p>
+              <p className="text-[10px] text-muted-foreground">
+                Created{" "}
+                {s.createdAt
+                  ? formatDistanceToNow(new Date(s.createdAt), { addSuffix: true })
+                  : "—"}
+                {s.lastAccessAt && (
+                  <>
+                    {" · "}Last seen{" "}
+                    {formatDistanceToNow(new Date(s.lastAccessAt), { addSuffix: true })}
+                  </>
+                )}
+              </p>
+              <p className="text-[10px] text-muted-foreground">
+                Expires{" "}
+                {formatDistanceToNow(new Date(s.expiresAt), { addSuffix: true })}
+                {!s.bootstrapUsedAt && (
+                  <span className="ml-1 text-amber-600 dark:text-amber-400">
+                    (not yet activated)
+                  </span>
+                )}
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={() => revokeMutation.mutate(s.id)}
+              disabled={revokeMutation.isPending && revokeMutation.variables === s.id}
+              data-testid={`button-revoke-monitor-session-${s.id}`}
+            >
+              Revoke
+            </Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Task #197 — small badge that surfaces the player keep-alive
 // watchdog's stalls/recoveries/reloads counters so operators get an
 // early warning of an unhealthy display. Hidden entirely when the
@@ -2869,6 +2986,7 @@ function ScreenCard({
             )}
           </div>
         )}
+        <MonitorSessionsPanel screen={screen} />
         <PresetManager
           targetType="screen"
           targetId={screen.id}

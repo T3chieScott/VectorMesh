@@ -708,6 +708,12 @@ export interface IStorage {
    * of rows removed. Called by the periodic cleanup job.
    */
   cleanupExpiredMonitorSessions(retentionDays: number, now: Date): Promise<number>;
+  /**
+   * Returns active (not expired, not revoked) monitor sessions for the given
+   * screen. Ordered by createdAt descending so the most recent appears first.
+   * Used by the admin UI "Monitor Sessions" panel (Task #331).
+   */
+  getMonitorSessionsForScreen(screenId: string, now?: Date): Promise<MonitorSession[]>;
 
   // Shared cache (Task #290) — PostgreSQL L2 cache.
   getSharedCacheEntry(namespace: string, cacheKey: string): Promise<SharedCacheEntry | undefined>;
@@ -3641,6 +3647,20 @@ export class DatabaseStorage implements IStorage {
       .delete(monitorSessions)
       .where(lt(monitorSessions.expiresAt, cutoff));
     return result.rowCount ?? 0;
+  }
+
+  async getMonitorSessionsForScreen(screenId: string, now: Date = new Date()): Promise<MonitorSession[]> {
+    return db
+      .select()
+      .from(monitorSessions)
+      .where(
+        and(
+          eq(monitorSessions.screenId, screenId),
+          sql`${monitorSessions.revokedAt} IS NULL`,
+          sql`${monitorSessions.expiresAt} > ${now}`,
+        ),
+      )
+      .orderBy(desc(monitorSessions.createdAt));
   }
 }
 
