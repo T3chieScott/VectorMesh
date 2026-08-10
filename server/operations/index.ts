@@ -24,6 +24,7 @@
  */
 
 import crypto from "crypto";
+import rateLimit from "express-rate-limit";
 import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
 import type { Client, Event, ScreenGroup, Screen, DisplayProfile, MonitorSession, InsertMonitorSession } from "@shared/schema";
 import { getPathParam } from "../requestParams";
@@ -354,6 +355,49 @@ function mapScreen(screen: Screen, profile: DisplayProfile | null): OperationsSc
     // Explicitly NOT included: deviceToken, pairingCode, kioskModeEnabled,
     // fallbackLayoutId, fallbackPlaylistId, canvasGroupId, etc.
   };
+}
+
+// ============ Monitor bootstrap rate limiter ============
+
+const DEFAULT_MONITOR_BOOTSTRAP_RATE_LIMIT_MAX = 10;
+
+function getMonitorBootstrapRateLimitMax(): number {
+  const env = process.env.MONITOR_BOOTSTRAP_RATE_LIMIT_MAX;
+  if (env) {
+    const n = parseInt(env, 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return DEFAULT_MONITOR_BOOTSTRAP_RATE_LIMIT_MAX;
+}
+
+/**
+ * Generic 429 body — same shape as the 401 body to prevent timing oracles.
+ * The 429 status itself is safe to reveal (RFC 6585); only the body must
+ * not disclose whether a given token was valid.
+ */
+const MONITOR_429_JSON = JSON.stringify({
+  error: "UNAUTHORIZED",
+  message: "Monitor session invalid, expired, or revoked. Create a new monitor session.",
+});
+
+/**
+ * IP-based rate limiter for the monitor bootstrap endpoint.
+ * Built lazily on first mount so the env var is read at runtime.
+ */
+function createMonitorBootstrapRateLimiter() {
+  return rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: getMonitorBootstrapRateLimitMax(),
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (_req: Request, res: Response) => {
+      res.status(429).type("application/json").send(MONITOR_429_JSON);
+    },
+    // Use the library's built-in IP key handling (IPv6-safe normalization).
+    // Do NOT supply a custom keyGenerator — express-rate-limit v8+ warns
+    // about raw req.ip keys on IPv6 because callers can cycle subnet addresses
+    // to evade limits; the library default handles this correctly.
+  });
 }
 
 // ============ Monitor session TTL ============
@@ -801,8 +845,13 @@ export function mountOperationsRoutes(
   //
   // This route is NOT behind requireAuthOrToken — it authenticates itself
   // via the single-use bootstrap token in the query string.
+  //
+  // Rate-limited: max MONITOR_BOOTSTRAP_RATE_LIMIT_MAX (default 10) attempts
+  // per IP per minute. 429 returns the same body shape as 401 so it cannot
+  // be used as a timing oracle.
   app.get(
     "/monitor-bootstrap/:screenId",
+    createMonitorBootstrapRateLimiter(),
     async (req: Request, res: Response) => {
       res.setHeader("Referrer-Policy", "no-referrer");
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
