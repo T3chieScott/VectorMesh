@@ -681,10 +681,19 @@ export interface IStorage {
   // Operations permissions (Task #329)
   getOperationsScopesForUser(userId: string): Promise<string[]>;
   getOperationsScopesForToken(tokenId: string): Promise<string[]>;
+  /** Batch-fetch scopes for multiple token IDs in a single query. */
+  getOperationsScopesForTokens(tokenIds: string[]): Promise<Map<string, string[]>>;
   grantUserOperationsScope(userId: string, scope: string, grantedBy?: string): Promise<void>;
   grantTokenOperationsScope(tokenId: string, scope: string): Promise<void>;
   revokeUserOperationsScope(userId: string, scope: string): Promise<boolean>;
   revokeTokenOperationsScope(tokenId: string, scope: string): Promise<boolean>;
+  /**
+   * Atomically replace the full set of Operations scopes for a token.
+   * Executes inside a single DB transaction; concurrent calls cannot
+   * produce a partially-merged scope set. Caller is responsible for
+   * validating scope strings before calling this method.
+   */
+  setTokenOperationsScopes(tokenId: string, scopes: string[]): Promise<void>;
 
   // Monitor sessions (Task #330)
   createMonitorSession(data: InsertMonitorSession): Promise<MonitorSession>;
@@ -3523,6 +3532,34 @@ export class DatabaseStorage implements IStorage {
       .from(tokenOperationsScopes)
       .where(eq(tokenOperationsScopes.tokenId, tokenId));
     return rows.map((r) => r.scope);
+  }
+
+  async getOperationsScopesForTokens(tokenIds: string[]): Promise<Map<string, string[]>> {
+    if (tokenIds.length === 0) return new Map();
+    const rows = await db
+      .select({ tokenId: tokenOperationsScopes.tokenId, scope: tokenOperationsScopes.scope })
+      .from(tokenOperationsScopes)
+      .where(inArray(tokenOperationsScopes.tokenId, tokenIds));
+    const map = new Map<string, string[]>();
+    for (const row of rows) {
+      if (!map.has(row.tokenId)) map.set(row.tokenId, []);
+      map.get(row.tokenId)!.push(row.scope);
+    }
+    return map;
+  }
+
+  async setTokenOperationsScopes(tokenId: string, scopes: string[]): Promise<void> {
+    const deduplicated = [...new Set(scopes)];
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(tokenOperationsScopes)
+        .where(eq(tokenOperationsScopes.tokenId, tokenId));
+      if (deduplicated.length > 0) {
+        await tx
+          .insert(tokenOperationsScopes)
+          .values(deduplicated.map((scope) => ({ tokenId, scope })));
+      }
+    });
   }
 
   async grantUserOperationsScope(

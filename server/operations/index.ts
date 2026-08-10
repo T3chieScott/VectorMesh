@@ -46,6 +46,51 @@ export const OPERATIONS_SCOPES = {
 
 export type OperationsScope = typeof OPERATIONS_SCOPES[keyof typeof OPERATIONS_SCOPES];
 
+/** All scope values in a flat array, for validation. */
+export const ALL_OPERATIONS_SCOPE_VALUES: readonly string[] = Object.values(OPERATIONS_SCOPES);
+
+/**
+ * Administrator-visible scope definitions for the scope-management UI.
+ * Add a new entry here (alongside the OPERATIONS_SCOPES constant above)
+ * when a new scope should be surfaced to administrators.
+ */
+export const ADMIN_VISIBLE_SCOPES: ReadonlyArray<{
+  scope: OperationsScope;
+  label: string;
+  description: string;
+}> = [
+  {
+    scope: OPERATIONS_SCOPES.VIEW,
+    label: "View Projects & Venues",
+    description: "Allows discovery of accessible projects and venues via the Operations API.",
+  },
+  {
+    scope: OPERATIONS_SCOPES.SCREEN_READ,
+    label: "Read Screens",
+    description: "Allows listing screens and reading screen status information.",
+  },
+  {
+    scope: OPERATIONS_SCOPES.MULTIVIEW,
+    label: "Multiview",
+    description: "Allows creation of read-only live monitor sessions for screens.",
+  },
+  {
+    scope: OPERATIONS_SCOPES.DIAGNOSTICS_READ,
+    label: "Read Diagnostics",
+    description: "Allows access to operational diagnostics.",
+  },
+];
+
+/**
+ * The three scopes bundled by the "Grant Multiview Access" preset.
+ * Removing multiview access removes exactly these three scopes.
+ */
+export const MULTIVIEW_PRESET_SCOPES: readonly OperationsScope[] = [
+  OPERATIONS_SCOPES.VIEW,
+  OPERATIONS_SCOPES.SCREEN_READ,
+  OPERATIONS_SCOPES.MULTIVIEW,
+];
+
 // ============ Storage interface (dependency-injected, testable) ============
 
 export interface OperationsRoutesStorage {

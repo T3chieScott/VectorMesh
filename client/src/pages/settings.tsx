@@ -35,7 +35,10 @@ import {
   HelpCircle,
   Globe,
   Monitor,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Link } from "wouter";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -545,17 +548,39 @@ interface ApiTokenData {
   newIp: { ip: string | null; at: string | null; count: number } | null;
   newIpAcknowledgedAt: string | null;
   newIpAcknowledgedBy: { id: string | null; name: string | null } | null;
+  operationsScopes: string[];
 }
+
+interface ScopeDefinition {
+  scope: string;
+  label: string;
+  description: string;
+}
+
+// Scopes bundled by the Multiview Access preset (mirrors MULTIVIEW_PRESET_SCOPES server-side).
+const MULTIVIEW_PRESET = ["operations.view", "operations.screen.read", "operations.multiview"];
 
 function ApiTokensCard() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [createOpen, setCreateOpen] = useState(false);
   const [tokenName, setTokenName] = useState("");
   const [revealedToken, setRevealedToken] = useState<string | null>(null);
   const [revokeId, setRevokeId] = useState<string | null>(null);
+  const [expandedScopeTokenId, setExpandedScopeTokenId] = useState<string | null>(null);
+  // Tracks a pending "clear all scopes" action that needs confirmation before sending.
+  const [clearAllConfirm, setClearAllConfirm] = useState<{ id: string } | null>(null);
+
+  const isPrivileged = user?.role === "admin" || user?.role === "account_manager";
 
   const { data: tokens = [], isLoading } = useQuery<ApiTokenData[]>({
     queryKey: ["/api/me/api-tokens"],
+  });
+
+  // Fetch admin-visible scope definitions once; only issued for admins/account managers.
+  const { data: scopeDefs = [] } = useQuery<ScopeDefinition[]>({
+    queryKey: ["/api/admin/operations/scope-definitions"],
+    enabled: isPrivileged,
   });
 
   const createMutation = useMutation({
@@ -601,6 +626,48 @@ function ApiTokensCard() {
     },
   });
 
+  const setScopesMutation = useMutation({
+    mutationFn: async ({ id, scopes }: { id: string; scopes: string[] }) => {
+      const res = await apiRequest("PUT", `/api/admin/api-tokens/${id}/operations-scopes`, { scopes });
+      return res.json() as Promise<{ tokenId: string; scopes: string[] }>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/me/api-tokens"] });
+      setClearAllConfirm(null);
+      toast({ title: "Operations access updated" });
+    },
+    onError: () => {
+      toast({ title: "Failed to update operations access", variant: "destructive" });
+    },
+  });
+
+  function applyScopes(id: string, scopes: string[]) {
+    if (scopes.length === 0) {
+      setClearAllConfirm({ id });
+    } else {
+      setScopesMutation.mutate({ id, scopes });
+    }
+  }
+
+  function toggleScope(t: ApiTokenData, scope: string) {
+    const current = new Set(t.operationsScopes);
+    const next = current.has(scope)
+      ? [...current].filter(s => s !== scope)
+      : [...current, scope];
+    applyScopes(t.id, next);
+  }
+
+  function grantMultiview(t: ApiTokenData) {
+    const next = new Set(t.operationsScopes);
+    MULTIVIEW_PRESET.forEach(s => next.add(s));
+    setScopesMutation.mutate({ id: t.id, scopes: [...next] });
+  }
+
+  function removeMultiview(t: ApiTokenData) {
+    const next = t.operationsScopes.filter(s => !MULTIVIEW_PRESET.includes(s));
+    applyScopes(t.id, next);
+  }
+
   const handleCopy = async () => {
     if (!revealedToken) return;
     try {
@@ -641,101 +708,180 @@ function ApiTokensCard() {
               <div className="space-y-2">
                 {visibleTokens.map((t) => {
                   const isRevoked = !!t.revokedAt;
+                  const scopeExpanded = expandedScopeTokenId === t.id;
+                  const hasAllMultiview = MULTIVIEW_PRESET.every(s => t.operationsScopes.includes(s));
+                  const hasAnyMultiview = MULTIVIEW_PRESET.some(s => t.operationsScopes.includes(s));
                   return (
                     <div
                       key={t.id}
-                      className={`flex items-center justify-between gap-3 p-3 border rounded-md ${isRevoked ? "opacity-60" : ""}`}
+                      className={`border rounded-md overflow-hidden ${isRevoked ? "opacity-60" : ""}`}
                       data-testid={`row-api-token-${t.id}`}
                     >
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-sm truncate flex items-center gap-2" data-testid={`text-token-name-${t.id}`}>
-                          {t.name}
-                          {isRevoked && <Badge variant="outline" className="text-xs">Revoked</Badge>}
-                        </p>
-                        <p className="text-xs text-muted-foreground font-mono">{t.prefix}…</p>
-                        <p className="text-xs text-muted-foreground">
-                          Last used: {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}
-                          {" · "}
-                          Created: {t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "—"}
-                          {isRevoked && t.revokedAt && (
-                            <> · Revoked: {new Date(t.revokedAt).toLocaleDateString()}</>
-                          )}
-                        </p>
-                        {!t.newIp && !isRevoked && t.newIpAcknowledgedAt && (
-                          <p
-                            className="mt-1 text-xs text-muted-foreground"
-                            data-testid={`text-last-reviewed-${t.id}`}
-                          >
-                            Last reviewed
-                            {t.newIpAcknowledgedBy?.name ? ` by ${t.newIpAcknowledgedBy.name}` : ""}
-                            {" on "}
-                            {new Date(t.newIpAcknowledgedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                      {/* ── Main token row ── */}
+                      <div className="flex items-center justify-between gap-3 p-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-sm truncate flex items-center gap-2" data-testid={`text-token-name-${t.id}`}>
+                            {t.name}
+                            {isRevoked && <Badge variant="outline" className="text-xs">Revoked</Badge>}
                           </p>
-                        )}
-                        {t.newIp && !isRevoked && (
-                          <div
-                            className="mt-2 flex items-start gap-2 text-xs rounded-md border border-amber-300/60 bg-amber-50 px-2 py-1.5 dark:border-amber-700/60 dark:bg-amber-950/40"
-                            data-testid={`alert-new-ip-${t.id}`}
-                          >
-                            <Globe className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-700 dark:text-amber-400" />
-                            <div className="min-w-0 flex-1">
-                              <p className="text-amber-900 dark:text-amber-200">
-                                <span className="font-medium">
-                                  {t.newIp.count > 1 ? `${t.newIp.count} new IPs seen` : "New IP seen"}
-                                </span>
-                                {t.newIp.ip && (
-                                  <>
-                                    {" — last from "}
-                                    <code className="font-mono" data-testid={`text-new-ip-${t.id}`}>{t.newIp.ip}</code>
-                                  </>
-                                )}
-                                {t.newIp.at && (
-                                  <span className="text-amber-700/80 dark:text-amber-300/80">
-                                    {" "}({formatDistanceToNow(new Date(t.newIp.at), { addSuffix: true })})
+                          <p className="text-xs text-muted-foreground font-mono">{t.prefix}…</p>
+                          <p className="text-xs text-muted-foreground">
+                            Last used: {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}
+                            {" · "}
+                            Created: {t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "—"}
+                            {isRevoked && t.revokedAt && (
+                              <> · Revoked: {new Date(t.revokedAt).toLocaleDateString()}</>
+                            )}
+                          </p>
+                          {!t.newIp && !isRevoked && t.newIpAcknowledgedAt && (
+                            <p
+                              className="mt-1 text-xs text-muted-foreground"
+                              data-testid={`text-last-reviewed-${t.id}`}
+                            >
+                              Last reviewed
+                              {t.newIpAcknowledgedBy?.name ? ` by ${t.newIpAcknowledgedBy.name}` : ""}
+                              {" on "}
+                              {new Date(t.newIpAcknowledgedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                            </p>
+                          )}
+                          {t.newIp && !isRevoked && (
+                            <div
+                              className="mt-2 flex items-start gap-2 text-xs rounded-md border border-amber-300/60 bg-amber-50 px-2 py-1.5 dark:border-amber-700/60 dark:bg-amber-950/40"
+                              data-testid={`alert-new-ip-${t.id}`}
+                            >
+                              <Globe className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-700 dark:text-amber-400" />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-amber-900 dark:text-amber-200">
+                                  <span className="font-medium">
+                                    {t.newIp.count > 1 ? `${t.newIp.count} new IPs seen` : "New IP seen"}
                                   </span>
-                                )}
-                              </p>
-                              <div className="flex items-center gap-3">
-                                <Link
-                                  href={`/admin/activity?action=api_token_new_ip&entityType=api_token&entityId=${encodeURIComponent(t.id)}`}
-                                  className="text-amber-800 dark:text-amber-300 hover:underline"
-                                  data-testid={`link-view-token-uses-${t.id}`}
-                                >
-                                  View all uses
-                                </Link>
-                                <button
-                                  type="button"
-                                  onClick={() => setRevokeId(t.id)}
-                                  className="font-medium text-amber-900 dark:text-amber-200 hover:underline"
-                                  data-testid={`button-revoke-token-from-alert-${t.id}`}
-                                >
-                                  Revoke token
-                                </button>
-                                {t.newIp.at && (
+                                  {t.newIp.ip && (
+                                    <>
+                                      {" — last from "}
+                                      <code className="font-mono" data-testid={`text-new-ip-${t.id}`}>{t.newIp.ip}</code>
+                                    </>
+                                  )}
+                                  {t.newIp.at && (
+                                    <span className="text-amber-700/80 dark:text-amber-300/80">
+                                      {" "}({formatDistanceToNow(new Date(t.newIp.at), { addSuffix: true })})
+                                    </span>
+                                  )}
+                                </p>
+                                <div className="flex items-center gap-3">
+                                  <Link
+                                    href={`/admin/activity?action=api_token_new_ip&entityType=api_token&entityId=${encodeURIComponent(t.id)}`}
+                                    className="text-amber-800 dark:text-amber-300 hover:underline"
+                                    data-testid={`link-view-token-uses-${t.id}`}
+                                  >
+                                    View all uses
+                                  </Link>
                                   <button
                                     type="button"
-                                    onClick={() => dismissNewIpMutation.mutate({ id: t.id, lastAt: t.newIp!.at! })}
-                                    disabled={dismissNewIpMutation.isPending}
-                                    className="text-amber-800 dark:text-amber-300 hover:underline disabled:opacity-50"
-                                    data-testid={`button-dismiss-new-ip-${t.id}`}
+                                    onClick={() => setRevokeId(t.id)}
+                                    className="font-medium text-amber-900 dark:text-amber-200 hover:underline"
+                                    data-testid={`button-revoke-token-from-alert-${t.id}`}
                                   >
-                                    Dismiss
+                                    Revoke token
                                   </button>
-                                )}
+                                  {t.newIp.at && (
+                                    <button
+                                      type="button"
+                                      onClick={() => dismissNewIpMutation.mutate({ id: t.id, lastAt: t.newIp!.at! })}
+                                      disabled={dismissNewIpMutation.isPending}
+                                      className="text-amber-800 dark:text-amber-300 hover:underline disabled:opacity-50"
+                                      data-testid={`button-dismiss-new-ip-${t.id}`}
+                                    >
+                                      Dismiss
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                             </div>
-                          </div>
+                          )}
+                        </div>
+                        {!isRevoked && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setRevokeId(t.id)}
+                            data-testid={`button-revoke-token-${t.id}`}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
                         )}
                       </div>
-                      {!isRevoked && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setRevokeId(t.id)}
-                          data-testid={`button-revoke-token-${t.id}`}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+
+                      {/* ── Operations Access section (admins/account-managers, active tokens only) ── */}
+                      {!isRevoked && isPrivileged && scopeDefs.length > 0 && (
+                        <div className="border-t">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedScopeTokenId(scopeExpanded ? null : t.id)}
+                            className="w-full flex items-center justify-between gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-muted/50 transition-colors"
+                            data-testid={`button-toggle-ops-scopes-${t.id}`}
+                          >
+                            <span className="flex items-center gap-1.5 font-medium">
+                              <Shield className="h-3.5 w-3.5" />
+                              Operations Access
+                              {t.operationsScopes.length > 0 && (
+                                <Badge variant="secondary" className="text-xs py-0 px-1.5 h-4">
+                                  {t.operationsScopes.length}
+                                </Badge>
+                              )}
+                            </span>
+                            {scopeExpanded
+                              ? <ChevronUp className="h-3.5 w-3.5" />
+                              : <ChevronDown className="h-3.5 w-3.5" />
+                            }
+                          </button>
+
+                          {scopeExpanded && (
+                            <div className="px-3 pb-3 space-y-2" data-testid={`section-ops-scopes-${t.id}`}>
+                              <div className="space-y-2">
+                                {scopeDefs.map((def) => (
+                                  <div key={def.scope} className="flex items-start gap-2.5">
+                                    <Checkbox
+                                      id={`scope-${t.id}-${def.scope}`}
+                                      checked={t.operationsScopes.includes(def.scope)}
+                                      onCheckedChange={() => toggleScope(t, def.scope)}
+                                      disabled={setScopesMutation.isPending}
+                                      data-testid={`checkbox-scope-${t.id}-${def.scope}`}
+                                    />
+                                    <label
+                                      htmlFor={`scope-${t.id}-${def.scope}`}
+                                      className="flex-1 cursor-pointer space-y-0.5"
+                                    >
+                                      <span className="text-sm font-medium leading-none block">{def.label}</span>
+                                      <span className="text-xs text-muted-foreground font-mono block">{def.scope}</span>
+                                    </label>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="flex items-center gap-2 pt-1 flex-wrap">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-xs"
+                                  onClick={() => grantMultiview(t)}
+                                  disabled={setScopesMutation.isPending || hasAllMultiview}
+                                  data-testid={`button-grant-multiview-${t.id}`}
+                                >
+                                  Grant Multiview Access
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-xs text-muted-foreground"
+                                  onClick={() => removeMultiview(t)}
+                                  disabled={setScopesMutation.isPending || !hasAnyMultiview}
+                                  data-testid={`button-remove-multiview-${t.id}`}
+                                >
+                                  Remove Multiview Access
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
                   );
@@ -898,6 +1044,37 @@ curl -X POST -H "Authorization: Bearer vm_..." \\
               data-testid="button-confirm-revoke-token"
             >
               Revoke
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirmation when removing ALL Operations scopes from a token */}
+      <AlertDialog
+        open={!!clearAllConfirm}
+        onOpenChange={(o) => !o && setClearAllConfirm(null)}
+      >
+        <AlertDialogContent data-testid="dialog-confirm-clear-scopes">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Shield className="h-5 w-5 text-destructive" />
+              Remove all Operations access?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This token will immediately lose access to the Operations API. The token itself
+              remains active and can be re-granted scopes at any time.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-clear-scopes">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() =>
+                clearAllConfirm &&
+                setScopesMutation.mutate({ id: clearAllConfirm.id, scopes: [] })
+              }
+              data-testid="button-confirm-clear-scopes"
+            >
+              Remove access
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -76,6 +76,9 @@ import { buildPlayerPairHandler } from "./playerPairHandler";
 import {
   mountOperationsRoutes,
   startMonitorSessionCleanup,
+  ADMIN_VISIBLE_SCOPES,
+  ALL_OPERATIONS_SCOPE_VALUES,
+  OPERATIONS_SCOPES,
 } from "./operations/index";
 import {
   decideVideoHealthUpdate,
@@ -670,8 +673,11 @@ export async function registerRoutes(
       const user = (req as any).dbUser;
       const tokens = await storage.getApiTokensByUser(user.id);
       const tokenIds = tokens.map(t => t.id);
-      const newIpEvents = await storage.getRecentNewIpEventsForTokens(tokenIds);
-      const ackActors = await storage.getLatestAckActorsForTokens(tokenIds);
+      const [newIpEvents, ackActors, scopesByToken] = await Promise.all([
+        storage.getRecentNewIpEventsForTokens(tokenIds),
+        storage.getLatestAckActorsForTokens(tokenIds),
+        storage.getOperationsScopesForTokens(tokenIds),
+      ]);
       res.json(tokens.map(t => {
         const event = newIpEvents.get(t.id);
         // Only surface the "last reviewed" line when there is no active alert,
@@ -690,11 +696,77 @@ export async function registerRoutes(
           newIp: event ? { ip: event.lastIp, at: event.lastAt, count: event.count } : null,
           newIpAcknowledgedAt: !event ? t.newIpAcknowledgedAt : null,
           newIpAcknowledgedBy: ack ? { id: ack.userId, name: ackName } : null,
+          operationsScopes: scopesByToken.get(t.id) ?? [],
         };
       }));
     } catch (error) {
       console.error("List api tokens error:", error);
       res.status(500).json({ error: "Failed to list tokens" });
+    }
+  });
+
+  // ── Operations scope definitions (admin UI metadata) ─────────────────────
+  // Returns the list of administrator-visible Operations scopes with labels.
+  // Human-session auth only; vm_... bearer tokens are rejected (requireAuth,
+  // not isAuthenticatedOrToken) to prevent scope escalation.
+  app.get("/api/admin/operations/scope-definitions", requireAuth, requireAdminOrAccountManager, (_req, res) => {
+    res.json(ADMIN_VISIBLE_SCOPES);
+  });
+
+  // ── Operations scope management for API tokens ────────────────────────────
+  // Human-session auth only on both GET and PUT — vm_... bearer tokens must
+  // never be able to grant or revoke scopes on other tokens.
+
+  app.get("/api/admin/api-tokens/:id/operations-scopes", requireAuth, requireAdminOrAccountManager, async (req, res) => {
+    try {
+      const user = (req as any).dbUser;
+      const token = await storage.getApiToken(getPathParam(req, "id"));
+      if (!token || (!isAdmin(req) && token.userId !== user.id)) {
+        return res.status(404).json({ error: "Token not found" });
+      }
+      const scopes = await storage.getOperationsScopesForToken(token.id);
+      res.json({ tokenId: token.id, scopes });
+    } catch (error) {
+      console.error("Get token operations scopes error:", error);
+      res.status(500).json({ error: "Failed to get token scopes" });
+    }
+  });
+
+  app.put("/api/admin/api-tokens/:id/operations-scopes", requireAuth, requireAdminOrAccountManager, async (req, res) => {
+    try {
+      const user = (req as any).dbUser;
+      const token = await storage.getApiToken(getPathParam(req, "id"));
+      if (!token || (!isAdmin(req) && token.userId !== user.id)) {
+        return res.status(404).json({ error: "Token not found" });
+      }
+
+      const raw = req.body?.scopes;
+      if (!Array.isArray(raw)) {
+        return res.status(400).json({ error: "scopes must be an array" });
+      }
+      const unknown = (raw as unknown[]).filter(
+        s => typeof s !== "string" || !ALL_OPERATIONS_SCOPE_VALUES.includes(s as string),
+      );
+      if (unknown.length > 0) {
+        return res.status(400).json({ error: `Unknown scopes: ${unknown.join(", ")}` });
+      }
+
+      const newScopes: string[] = [...new Set(raw as string[])];
+      const previousScopes = await storage.getOperationsScopesForToken(token.id);
+      await storage.setTokenOperationsScopes(token.id, newScopes);
+
+      const added = newScopes.filter(s => !previousScopes.includes(s));
+      const removed = previousScopes.filter(s => !newScopes.includes(s));
+      logAudit(req, "api_token.operations_scopes.updated", "api_token", token.id, {
+        added,
+        removed,
+        scopes: newScopes,
+      });
+
+      res.json({ tokenId: token.id, scopes: newScopes });
+    } catch (error) {
+      console.error("Set token operations scopes error:", error);
+      res.status(500).json({ error: "Failed to update token scopes" });
     }
   });
 
