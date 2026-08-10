@@ -110,7 +110,14 @@ import {
   type InsertSharedCacheEntry,
 } from "@shared/schema";
 import { users, userSites, passwordResetTokens, type User, type UpsertUser, type UserSite, type PasswordResetToken } from "@shared/models/auth";
-import { apiTokens, apiTokenKnownIps, type ApiToken, type InsertApiToken } from "@shared/schema";
+import {
+  apiTokens,
+  apiTokenKnownIps,
+  userOperationsScopes,
+  tokenOperationsScopes,
+  type ApiToken,
+  type InsertApiToken,
+} from "@shared/schema";
 
 /**
  * Task #179 — `system_settings` key recording that the Task #176
@@ -667,6 +674,14 @@ export interface IStorage {
   getRecentNewIpEventsForTokens(tokenIds: string[]): Promise<Map<string, { lastIp: string | null; lastAt: Date | null; count: number }>>;
   getLatestAckActorsForTokens(tokenIds: string[]): Promise<Map<string, { at: Date; userId: string | null; firstName: string | null; lastName: string | null; email: string | null }>>;
   acknowledgeApiTokenNewIp(tokenId: string, at: Date): Promise<void>;
+
+  // Operations permissions (Task #329)
+  getOperationsScopesForUser(userId: string): Promise<string[]>;
+  getOperationsScopesForToken(tokenId: string): Promise<string[]>;
+  grantUserOperationsScope(userId: string, scope: string, grantedBy?: string): Promise<void>;
+  grantTokenOperationsScope(tokenId: string, scope: string): Promise<void>;
+  revokeUserOperationsScope(userId: string, scope: string): Promise<boolean>;
+  revokeTokenOperationsScope(tokenId: string, scope: string): Promise<boolean>;
 
   // Shared cache (Task #290) — PostgreSQL L2 cache.
   getSharedCacheEntry(namespace: string, cacheKey: string): Promise<SharedCacheEntry | undefined>;
@@ -3459,6 +3474,65 @@ export class DatabaseStorage implements IStorage {
       .where(and(isNotNull(sharedCache.expiresAt), lt(sharedCache.expiresAt, cutoff)))
       .returning();
     return result.length;
+  }
+
+  // Operations permissions (Task #329)
+  async getOperationsScopesForUser(userId: string): Promise<string[]> {
+    const rows = await db
+      .select({ scope: userOperationsScopes.scope })
+      .from(userOperationsScopes)
+      .where(eq(userOperationsScopes.userId, userId));
+    return rows.map((r) => r.scope);
+  }
+
+  async getOperationsScopesForToken(tokenId: string): Promise<string[]> {
+    const rows = await db
+      .select({ scope: tokenOperationsScopes.scope })
+      .from(tokenOperationsScopes)
+      .where(eq(tokenOperationsScopes.tokenId, tokenId));
+    return rows.map((r) => r.scope);
+  }
+
+  async grantUserOperationsScope(
+    userId: string,
+    scope: string,
+    grantedBy?: string,
+  ): Promise<void> {
+    await db
+      .insert(userOperationsScopes)
+      .values({ userId, scope, grantedBy: grantedBy ?? null })
+      .onConflictDoNothing();
+  }
+
+  async grantTokenOperationsScope(tokenId: string, scope: string): Promise<void> {
+    await db
+      .insert(tokenOperationsScopes)
+      .values({ tokenId, scope })
+      .onConflictDoNothing();
+  }
+
+  async revokeUserOperationsScope(userId: string, scope: string): Promise<boolean> {
+    const result = await db
+      .delete(userOperationsScopes)
+      .where(
+        and(
+          eq(userOperationsScopes.userId, userId),
+          eq(userOperationsScopes.scope, scope),
+        ),
+      );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async revokeTokenOperationsScope(tokenId: string, scope: string): Promise<boolean> {
+    const result = await db
+      .delete(tokenOperationsScopes)
+      .where(
+        and(
+          eq(tokenOperationsScopes.tokenId, tokenId),
+          eq(tokenOperationsScopes.scope, scope),
+        ),
+      );
+    return (result.rowCount ?? 0) > 0;
   }
 }
 

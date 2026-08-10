@@ -1163,6 +1163,60 @@ export const apiTokenKnownIps = pgTable(
 export type ApiTokenKnownIp = typeof apiTokenKnownIps.$inferSelect;
 export type InsertApiTokenKnownIp = typeof apiTokenKnownIps.$inferInsert;
 
+// ============ OPERATIONS PERMISSIONS (Task #329) ============
+// Relational scope tables so external operational clients (e.g. Multiview)
+// can be granted fine-grained access without touching the existing role system.
+// Admins and account_managers pass all operations scope checks implicitly;
+// site_users and API tokens require explicit rows here.
+// Defined scope constants live in server/operations/index.ts.
+
+export const userOperationsScopes = pgTable(
+  "user_operations_scopes",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    grantedAt: timestamp("granted_at").defaultNow(),
+    // Nullable so the granting admin's row deletion doesn't orphan the grant.
+    grantedBy: varchar("granted_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+  },
+  (table) => ({
+    userScopeUnique: uniqueIndex("user_operations_scopes_user_scope_unique").on(
+      table.userId,
+      table.scope,
+    ),
+  }),
+);
+
+export type UserOperationsScope = typeof userOperationsScopes.$inferSelect;
+export type InsertUserOperationsScope =
+  typeof userOperationsScopes.$inferInsert;
+
+export const tokenOperationsScopes = pgTable(
+  "token_operations_scopes",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    tokenId: varchar("token_id")
+      .notNull()
+      .references(() => apiTokens.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    grantedAt: timestamp("granted_at").defaultNow(),
+  },
+  (table) => ({
+    tokenScopeUnique: uniqueIndex(
+      "token_operations_scopes_token_scope_unique",
+    ).on(table.tokenId, table.scope),
+  }),
+);
+
+export type TokenOperationsScope = typeof tokenOperationsScopes.$inferSelect;
+export type InsertTokenOperationsScope =
+  typeof tokenOperationsScopes.$inferInsert;
+
 // ============ AGENDA DISPLAY WIDGET (Task #208) ============
 
 // Central pool of agenda items per site. Each item represents one

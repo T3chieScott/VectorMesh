@@ -99,3 +99,61 @@ export async function ensureBookingMigration(): Promise<void> {
 }
 
 export const ensureBookingConstraints = ensureBookingMigration;
+
+/**
+ * Idempotent startup migration for the Display Operations API permission
+ * tables (Task #329).  Uses advisory locking so concurrent restarts
+ * (e.g. blue/green deploy) can't race.
+ *
+ * The SQL is deliberately minimal — no foreign key gymnastics — so it can
+ * run safely on any environment that already ran `npm run db:push`.
+ */
+const OPERATIONS_MIGRATION_LOCK_KEY = 715129_002n;
+
+export async function ensureOperationsScopesMigration(): Promise<void> {
+  const client = await pool.connect();
+  let haveLock = false;
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [
+      OPERATIONS_MIGRATION_LOCK_KEY.toString(),
+    ]);
+    haveLock = true;
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_operations_scopes (
+        id         VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id    VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        scope      TEXT NOT NULL,
+        granted_at TIMESTAMP DEFAULT NOW(),
+        granted_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        CONSTRAINT user_operations_scopes_user_scope_unique UNIQUE (user_id, scope)
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS token_operations_scopes (
+        id         VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        token_id   VARCHAR NOT NULL REFERENCES api_tokens(id) ON DELETE CASCADE,
+        scope      TEXT NOT NULL,
+        granted_at TIMESTAMP DEFAULT NOW(),
+        CONSTRAINT token_operations_scopes_token_scope_unique UNIQUE (token_id, scope)
+      )
+    `);
+
+    console.log("[ensureOperationsScopesMigration] operations scope tables ready");
+  } finally {
+    if (haveLock) {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [
+          OPERATIONS_MIGRATION_LOCK_KEY.toString(),
+        ]);
+      } catch (unlockErr) {
+        console.error(
+          "ensureOperationsScopesMigration: failed to release advisory lock:",
+          unlockErr,
+        );
+      }
+    }
+    client.release();
+  }
+}

@@ -73,6 +73,7 @@ import { buildScreenPatchHandler } from "./screenPatchHandler";
 import { buildScreenCreateHandler } from "./screenCreateHandler";
 import { buildScreenRegeneratePairingHandler } from "./screenRegeneratePairingHandler";
 import { buildPlayerPairHandler } from "./playerPairHandler";
+import { mountOperationsRoutes } from "./operations/index";
 import {
   decideVideoHealthUpdate,
   extractVideoStats,
@@ -4989,6 +4990,21 @@ export async function registerRoutes(
     requireAuth,
     loadUserContext,
     logAudit,
+  });
+
+  // ============ DISPLAY OPERATIONS API (Task #329) ============
+  // External operational clients (e.g. VectorMesh Multiview) use this
+  // namespace to discover projects, venues, and screens.
+  // Routes live in server/operations/index.ts so the scope/permission
+  // model and safe field mapping can be unit-tested against a stub storage.
+  mountOperationsRoutes(app, {
+    storage,
+    auth: {
+      canAccessClient: (req, clientId) => canAccessClient(req, clientId),
+      getAllowedClientIds: (req) => getAllowedClientIds(req),
+    },
+    requireAuthOrToken: requireAuthOrToken,
+    loadUserContext,
   });
 
   return httpServer;
