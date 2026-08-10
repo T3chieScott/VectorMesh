@@ -842,56 +842,54 @@ test("Admin-owned API token WITH scope grant → 200", async () => {
   }
 });
 
-// ---- Token tenant isolation — admin-owned tokens cannot cross tenants ----
-// Even with a scope grant, a bearer token must use getUserClientIds (explicit
-// DB grants) rather than the role-based null.  An admin-owned token with no
-// DB client grants must be denied access to any tenant resource.
+// ---- Token tenant isolation — admin-owned tokens inherit role-based access ----
+// The Operations API now uses auth.getAllowedClientIds(req) for all requests
+// (session and bearer-token alike), matching /api/screens behaviour.  An
+// admin-owned token therefore inherits allowedClientIds=null (unrestricted)
+// from loadUserContext, just as an admin session does.
 
-test("Admin-owned token with scope but no client grants → 403 on /projects/:id/venues", async () => {
+test("Admin-owned token with scope → 200 on /projects/:id/venues (admin = unrestricted)", async () => {
   const storage = makeFakeStorage({
     clients: [makeClient("c1")],
     groups: [{ ...makeScreenGroup("g1", "c1"), memberCount: 0 }],
     tokenScopes: { "tok-admin-granted": [OPERATIONS_SCOPES.VIEW] },
     userScopes: {},
-    // getUserClientIds returns [] for u-admin (no DB grants)
   });
   const user: FakeUser = { id: "u-admin", role: "admin" };
-  // allowedClientIds=null from loadUserContext (admin role), but token path
-  // must use getUserClientIds which returns empty
+  // allowedClientIds=null mirrors what loadUserContext sets for admin callers;
+  // the Operations API must honour this regardless of whether a token is present.
   const app = makeApp(storage, user, null, { id: "tok-admin-granted" });
   const { url, close } = await startServer(app);
   try {
     const res = await fetch(`${url}/api/operations/projects/c1/venues`);
     assert.equal(
       res.status,
-      403,
-      "Admin-owned token with no client grants must not access any tenant's venues",
+      200,
+      "Admin-owned token must access tenant venues via role-based allowedClientIds=null",
     );
   } finally {
     await close();
   }
 });
 
-test("Admin-owned token with scope and explicit client grant → 200 on /projects/:id/venues", async () => {
+test("Non-admin token scoped to a client → 200 on /projects/:id/venues for that client", async () => {
   const group: ScreenGroup & { memberCount: number } = {
     ...makeScreenGroup("g1", "c1"),
     memberCount: 3,
   };
-  // getUserClientIds returns ["c1"] for u-admin (explicit DB grant)
+  // site_user token is scoped to c1 via allowedClientIds (what loadUserContext returns)
   const storage = makeFakeStorage({
     clients: [makeClient("c1")],
     groups: [group],
-    tokenScopes: { "tok-admin-granted": [OPERATIONS_SCOPES.VIEW] },
+    tokenScopes: { "tok-site": [OPERATIONS_SCOPES.VIEW] },
     userScopes: {},
-    // Override getUserClientIds to return c1 for this user
-    userClientIds: { "u-admin": ["c1"] },
   });
-  const user: FakeUser = { id: "u-admin", role: "admin" };
-  const app = makeApp(storage, user, null, { id: "tok-admin-granted" });
+  const user: FakeUser = { id: "u-site", role: "site_user" };
+  const app = makeApp(storage, user, ["c1"], { id: "tok-site" });
   const { url, close } = await startServer(app);
   try {
     const res = await fetch(`${url}/api/operations/projects/c1/venues`);
-    assert.equal(res.status, 200, "Admin-owned token with explicit client grant must succeed");
+    assert.equal(res.status, 200, "Scoped token for c1 must access c1 venues");
   } finally {
     await close();
   }

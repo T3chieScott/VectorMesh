@@ -578,24 +578,22 @@ export function mountOperationsRoutes(
 
   // ---- Tenant-access resolution for Operations API ----
   //
-  // Session auth (no apiToken on req):
-  //   Uses role-based resolution from auth.getAllowedClientIds — admins get null
-  //   (unrestricted), site_users get their explicit DB client list.
+  // Uses req.allowedClientIds populated by loadUserContext, which applies the
+  // same role-aware logic for both session and bearer-token requests:
+  //   admin (session or token) → null (unrestricted access)
+  //   non-admin               → explicit user_sites list from getUserClientIds
   //
-  // Bearer-token auth (apiToken present on req):
-  //   ALWAYS uses the token owner's explicit DB client grants from
-  //   getUserClientIds, regardless of their role.  This means admin-owned
-  //   tokens with no explicit client grants correctly receive an empty list and
-  //   are denied all tenant access — preventing the role-based bypass.
+  // This matches the behaviour of GET /api/screens and every other
+  // token-enabled route. The previous split (bearer-token path always called
+  // getUserClientIds directly) incorrectly returned [] for admin-owned tokens
+  // because admins have no user_sites rows, causing all Operations endpoints to
+  // return empty results while /api/screens continued to work correctly.
+  //
+  // Operations scopes (operations.view, operations.multiview, etc.) gate what
+  // actions a token may perform; the owner's role/tenant association determines
+  // which data it may see. These two concerns remain separate.
   async function resolveEffectiveClientIds(req: Request): Promise<string[] | null> {
-    const token = (req as any).apiToken;
-    if (!token) {
-      // Session path: role-based (null = admin = all)
-      return auth.getAllowedClientIds(req);
-    }
-    // Bearer-token path: explicit DB grants only, never role-based
-    const user = (req as any).dbUser;
-    return st.getUserClientIds(user.id);
+    return auth.getAllowedClientIds(req);
   }
 
   async function canAccessClientForOps(req: Request, clientId: string): Promise<boolean> {
