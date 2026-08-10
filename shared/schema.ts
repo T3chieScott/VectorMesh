@@ -2087,6 +2087,61 @@ export interface PlayerContentResponse {
 
 // ============ SHARED CACHE (Task #290) ============
 //
+// ============ MONITOR SESSIONS (Task #330) ============
+//
+// A monitor session grants a short-lived, read-only view of a screen's live
+// content to external operational clients (VectorMesh Multiview, etc.)
+// WITHOUT sharing any physical player credentials (deviceToken, pairingCode)
+// or affecting the physical player's heartbeat/pairing state.
+//
+// Two-token security model:
+//   bootstrapToken  — 32-byte opaque random; single-use; never stored raw
+//                     (tokenHash = SHA-256(bootstrapToken) lives in this row)
+//   sessionSecret   — 32-byte opaque random generated at bootstrap exchange;
+//                     stored as HttpOnly SameSite=Strict cookie; never logged
+//                     (sessionSecretHash = SHA-256(secret) lives in this row)
+//
+// Auth flow:
+//   1. POST /api/operations/screens/:id/monitor-session → { monitorUrl }
+//   2. GET  /monitor-bootstrap/:screenId?token=<bootstrapToken>
+//      → sets cookie, bootstrapUsedAt stamped atomically, redirect to /monitor/:screenId
+//   3. GET  /monitor/:screenId (cookie auth) → React shell with mode=monitor
+//   4. GET  /api/monitor/:screenId/content (cookie auth) → player content
+//
+export const monitorSessions = pgTable("monitor_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  screenId: varchar("screen_id").notNull().references(() => screens.id, { onDelete: "cascade" }),
+  clientId: varchar("client_id").references(() => clients.id, { onDelete: "cascade" }),
+  // SHA-256 of the 32-byte bootstrap token. The raw token is never stored.
+  tokenHash: varchar("token_hash").notNull().unique(),
+  // SHA-256 of the 32-byte monitor-session cookie secret.
+  // null until the bootstrap exchange has been completed.
+  sessionSecretHash: varchar("session_secret_hash"),
+  // Stamped atomically on first (and only) bootstrap exchange. Subsequent
+  // requests with the same bootstrap URL receive a generic 401.
+  bootstrapUsedAt: timestamp("bootstrap_used_at"),
+  expiresAt: timestamp("expires_at").notNull(),
+  revokedAt: timestamp("revoked_at"),
+  lastAccessAt: timestamp("last_access_at"),
+  // Optional human-readable labels so admins can see what created the session.
+  clientType: text("client_type"),
+  clientName: text("client_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type MonitorSession = typeof monitorSessions.$inferSelect;
+export type InsertMonitorSession = {
+  userId: string;
+  screenId: string;
+  clientId?: string | null;
+  tokenHash: string;
+  expiresAt: Date;
+  clientType?: string | null;
+  clientName?: string | null;
+};
+
+// ============ SHARED CACHE ============
 // PostgreSQL-backed shared (L2) cache for external data (Sportmonks,
 // agenda spreadsheets, Google Sheets, Microsoft/SharePoint) and computed
 // widget/display payloads. It sits BEHIND the existing fast in-memory

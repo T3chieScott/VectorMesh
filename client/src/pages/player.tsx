@@ -1779,3 +1779,51 @@ export default function PlayerPage({ screenId }: { screenId: string }) {
     </PlayerClockProvider>
   );
 }
+
+// ============ PlayerCapabilities (Task #330) =================================
+//
+// Central deny-by-default capability policy for physical-player side-effects.
+// Defined here (player.tsx) as the canonical source. The monitor page
+// (monitor.tsx) imports and re-exports these constants so callers use the
+// same interface without a circular dependency.
+//
+// Every new physical-player side-effect MUST be added to this interface and
+// MUST default to false so monitor mode remains safe even when new capabilities
+// are introduced.
+
+export interface PlayerCapabilities {
+  /** Whether the runtime may send heartbeat POSTs that update lastSeen / isOnline. */
+  canHeartbeat: boolean;
+  /** Whether the runtime may report video-health stats to the server. */
+  canReportHealth: boolean;
+  /** Whether the runtime may initiate or receive a pairing handshake. */
+  canPair: boolean;
+  /**
+   * Whether the runtime may read or write device-identity values
+   * (deviceToken, screenId) from/to localStorage.
+   */
+  canPersistDeviceIdentity: boolean;
+  /**
+   * Whether the runtime may act on player-command signals returned by the
+   * content endpoint (refreshRequested, screenshotRequested, etc.).
+   */
+  playerCommandsEnabled: boolean;
+}
+
+/** Deny-by-default: ALL capabilities are false in monitor mode. */
+export const MONITOR_CAPABILITIES: Readonly<PlayerCapabilities> = Object.freeze({
+  canHeartbeat: false,
+  canReportHealth: false,
+  canPair: false,
+  canPersistDeviceIdentity: false,
+  playerCommandsEnabled: false,
+});
+
+/** All capabilities true — normal physical-player mode. */
+export const PLAYER_CAPABILITIES: Readonly<PlayerCapabilities> = Object.freeze({
+  canHeartbeat: true,
+  canReportHealth: true,
+  canPair: true,
+  canPersistDeviceIdentity: true,
+  playerCommandsEnabled: true,
+});

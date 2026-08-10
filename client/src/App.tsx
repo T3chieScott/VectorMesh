@@ -42,6 +42,7 @@ import ActivityLogPage from "@/pages/activity-log";
 import StreamingServerPage from "@/pages/streaming-server";
 import ControlPanelPage from "@/pages/control-panel";
 import PlayerPage from "@/pages/player";
+import { MonitorPage } from "@/pages/monitor";
 import HelpPage from "@/pages/help";
 import AgendaItemsPage from "@/pages/agenda-items";
 import AgendaConfigsPage from "@/pages/agenda-configs";
@@ -148,6 +149,12 @@ function AuthenticatedLayout() {
   );
 }
 
+function MonitorRoute() {
+  const [match, params] = useRoute("/monitor/:screenId");
+  if (!match) return null;
+  return <MonitorPage />;
+}
+
 function PlayerRoute() {
   const [matchWithId, params] = useRoute("/player/:screenId");
   const [matchBase] = useRoute("/player");
@@ -164,6 +171,12 @@ function AppContent() {
   const [isPlayerRouteWithId] = useRoute("/player/:screenId");
   const [isPlayerRouteBase] = useRoute("/player");
   const isPlayerRoute = isPlayerRouteWithId || isPlayerRouteBase;
+
+  // Task #330 — chromeless monitor display (Operations API / Multiview).
+  const [isMonitorRoute] = useRoute("/monitor/:screenId");
+  if (isMonitorRoute) {
+    return <MonitorRoute />;
+  }
 
   // Task #208 — chromeless public agenda display, no auth/sidebar.
   const [isAgendaDisplayRoute] = useRoute("/display/agenda/:configId");

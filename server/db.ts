@@ -109,6 +109,7 @@ export const ensureBookingConstraints = ensureBookingMigration;
  * run safely on any environment that already ran `npm run db:push`.
  */
 const OPERATIONS_MIGRATION_LOCK_KEY = 715129_002n;
+const MONITOR_SESSIONS_MIGRATION_LOCK_KEY = 715129_003n;
 
 export async function ensureOperationsScopesMigration(): Promise<void> {
   const client = await pool.connect();
@@ -150,6 +151,65 @@ export async function ensureOperationsScopesMigration(): Promise<void> {
       } catch (unlockErr) {
         console.error(
           "ensureOperationsScopesMigration: failed to release advisory lock:",
+          unlockErr,
+        );
+      }
+    }
+    client.release();
+  }
+}
+
+/**
+ * Idempotent startup migration for the monitor_sessions table (Task #330).
+ * Advisory-locked so concurrent restarts can't race. Safe to re-run.
+ */
+export async function ensureMonitorSessionsMigration(): Promise<void> {
+  const client = await pool.connect();
+  let haveLock = false;
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [
+      MONITOR_SESSIONS_MIGRATION_LOCK_KEY.toString(),
+    ]);
+    haveLock = true;
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS monitor_sessions (
+        id                  VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id             VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        screen_id           VARCHAR NOT NULL REFERENCES screens(id) ON DELETE CASCADE,
+        client_id           VARCHAR REFERENCES clients(id) ON DELETE CASCADE,
+        token_hash          VARCHAR NOT NULL UNIQUE,
+        session_secret_hash VARCHAR,
+        bootstrap_used_at   TIMESTAMP,
+        expires_at          TIMESTAMP NOT NULL,
+        revoked_at          TIMESTAMP,
+        last_access_at      TIMESTAMP,
+        client_type         TEXT,
+        client_name         TEXT,
+        created_at          TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await client.query(
+      `CREATE INDEX IF NOT EXISTS monitor_sessions_expires_at_idx ON monitor_sessions (expires_at)`,
+    );
+    await client.query(
+      `CREATE INDEX IF NOT EXISTS monitor_sessions_user_id_idx ON monitor_sessions (user_id)`,
+    );
+    await client.query(
+      `CREATE INDEX IF NOT EXISTS monitor_sessions_screen_id_idx ON monitor_sessions (screen_id)`,
+    );
+
+    console.log("[ensureMonitorSessionsMigration] monitor_sessions table ready");
+  } finally {
+    if (haveLock) {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [
+          MONITOR_SESSIONS_MIGRATION_LOCK_KEY.toString(),
+        ]);
+      } catch (unlockErr) {
+        console.error(
+          "ensureMonitorSessionsMigration: failed to release advisory lock:",
           unlockErr,
         );
       }

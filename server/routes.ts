@@ -73,7 +73,10 @@ import { buildScreenPatchHandler } from "./screenPatchHandler";
 import { buildScreenCreateHandler } from "./screenCreateHandler";
 import { buildScreenRegeneratePairingHandler } from "./screenRegeneratePairingHandler";
 import { buildPlayerPairHandler } from "./playerPairHandler";
-import { mountOperationsRoutes } from "./operations/index";
+import {
+  mountOperationsRoutes,
+  startMonitorSessionCleanup,
+} from "./operations/index";
 import {
   decideVideoHealthUpdate,
   extractVideoStats,
@@ -4992,9 +4995,10 @@ export async function registerRoutes(
     logAudit,
   });
 
-  // ============ DISPLAY OPERATIONS API (Task #329) ============
+  // ============ DISPLAY OPERATIONS API (Task #329 + #330) ============
   // External operational clients (e.g. VectorMesh Multiview) use this
-  // namespace to discover projects, venues, and screens.
+  // namespace to discover projects, venues, and screens, and to create
+  // monitor sessions for read-only live content views.
   // Routes live in server/operations/index.ts so the scope/permission
   // model and safe field mapping can be unit-tested against a stub storage.
   mountOperationsRoutes(app, {
@@ -5005,7 +5009,225 @@ export async function registerRoutes(
     },
     requireAuthOrToken: requireAuthOrToken,
     loadUserContext,
+    monitor: {
+      /**
+       * Resolves monitor-mode content for a screen.  Reuses the existing
+       * playerContentCache so monitor polls don't add extra DB load.
+       * Side-effect signals (refreshRequested, screenshotRequested,
+       * screenshotEnabled) are always suppressed — monitor clients never
+       * receive commands that affect physical-player behaviour.
+       */
+      async resolveMonitorContent(screenId: string): Promise<Record<string, unknown>> {
+        const screen = await storage.getScreen(screenId);
+        if (!screen) throw new Error(`Screen not found: ${screenId}`);
+
+        // Reuse the in-process player content cache when fresh
+        const cachedEntry = playerContentCache.get(screenId);
+        let stableBody: Record<string, unknown>;
+        if (cachedEntry && cachedEntry.expires > Date.now()) {
+          stableBody = cachedEntry.body;
+        } else {
+          const now = new Date();
+          const screenClient = screen.clientId
+            ? await storage.getClient(screen.clientId)
+            : null;
+          const screenTz =
+            screenClient?.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+          const resolved = await resolveScreenContent(
+            screen,
+            now,
+            storage as ResolverDeps,
+            screenTz,
+          );
+
+          const profile = screen.displayProfileId
+            ? await storage.getDisplayProfile(screen.displayProfileId)
+            : null;
+          const allMediaAssets = await storage.getMediaAssets();
+          const mediaShares = screen.clientId
+            ? await storage.getMediaSharesForClient(screen.clientId)
+            : [];
+          const mediaAssets = filterMediaAssetsForScreen(
+            allMediaAssets,
+            screen.clientId,
+            mediaShares,
+          );
+          const customFonts = screen.clientId
+            ? await storage.getCustomFonts(screen.clientId)
+            : [];
+          const allPlaylists = await storage.getPlaylists();
+          const playlistItemsMap: Record<string, any[]> = {};
+          const layoutTemplatesMap: Record<string, any> = {};
+          for (const pl of allPlaylists) {
+            const items = await storage.getPlaylistItems(pl.id);
+            playlistItemsMap[pl.id] = items;
+            for (const item of items) {
+              if (item.layoutTemplateId && !layoutTemplatesMap[item.layoutTemplateId]) {
+                const lt = await storage.getLayoutTemplate(item.layoutTemplateId);
+                if (lt) layoutTemplatesMap[item.layoutTemplateId] = lt;
+              }
+            }
+          }
+
+          const globalHideSetting = await storage.getSystemSetting(
+            GLOBAL_HIDE_NO_CONTENT_MESSAGE_KEY,
+          );
+          const globalHide = parseGlobalHideValue(globalHideSetting?.value);
+          const screenForResponse = applyGlobalHideOverride(screen, globalHide);
+
+          // Build playerVars so template variables render correctly in
+          // monitor mode (same pipeline as the player content endpoint).
+          let monitorPlayerVars: PlayerVarsPayload | null = null;
+          try {
+            monitorPlayerVars = await buildPlayerVarsForScreen(screen, now);
+          } catch (e) {
+            console.warn("[monitor] playerVars build failed:", e);
+          }
+
+          stableBody = {
+            screen: screenForResponse,
+            profile,
+            layout: resolved.layout
+              ? { ...resolved.layout, zones: sanitizeHtmlZones(resolved.layout.zones as any) }
+              : resolved.layout,
+            media: mediaAssets,
+            fonts: customFonts.map((f: any) => ({
+              id: f.id,
+              familyId: f.familyId,
+              name: f.name,
+              weight: f.weight,
+              style: f.style,
+              format: f.format,
+            })),
+            playlists: allPlaylists,
+            playlistItems: playlistItemsMap,
+            layoutTemplates: Object.fromEntries(
+              Object.entries(layoutTemplatesMap).map(([id, lt]) => [
+                id,
+                lt ? { ...lt, zones: sanitizeHtmlZones((lt as any).zones) } : lt,
+              ]),
+            ),
+            zoneSources: resolved.activeZoneSources,
+            liveOverride: resolved.liveOverride,
+            event: resolved.activeEvent,
+            // Client context — needed for playerContext.clientName in ZoneRenderer
+            client: screenClient,
+            // playerVars — needed for template-variable rendering in HTML/ticker zones
+            playerVars: monitorPlayerVars,
+          };
+        }
+
+        // Monitor mode: ALL side-effect signals are always suppressed.
+        // refreshRequested, screenshotRequested, screenshotEnabled are never
+        // included — the client-side PlayerCapabilities.playerCommandsEnabled
+        // is already false, but omitting the fields is defence-in-depth.
+        //
+        // CREDENTIAL STRIP: the stableBody.screen is the raw screen DB row
+        // which includes deviceToken, pairingCode, kioskModeEnabled, and other
+        // device-management fields. These MUST NOT be forwarded to monitor
+        // clients — a monitor session must never grant access to physical-player
+        // credentials. Strip them explicitly here (same pattern as mapScreen in
+        // server/operations/index.ts).
+        // Unconditionally strip BOTH credentials (from screen) and
+        // player-command signals (from the top-level body), regardless of
+        // whether stableBody came from the playerContentCache (where
+        // screenshotEnabled may be present from a prior player poll) or from
+        // a fresh cache-miss build.  Order-of-operations must not affect which
+        // fields reach monitor clients.
+        const {
+          screen: _rawScreen,
+          // Command / side-effect signals — NEVER forwarded to monitor clients.
+          screenshotEnabled: _se,
+          refreshRequested: _rr,
+          screenshotRequested: _sr,
+          ...safeBody
+        } = stableBody as any;
+
+        const rawScreen = (_rawScreen ?? null) as Record<string, unknown> | null;
+        const sanitizedScreen = rawScreen
+          ? (() => {
+              const {
+                deviceToken: _dt,
+                pairingCode: _pc,
+                kioskModeEnabled: _km,
+                // Any future credential/device-management fields added to the
+                // screen row must also be stripped here.  When in doubt: strip.
+                ...safeFields
+              } = rawScreen as any;
+              return safeFields;
+            })()
+          : null;
+
+        return {
+          ...safeBody,
+          screen: sanitizedScreen,
+          serverTime: Date.now(),
+        };
+      },
+
+      getPublicBaseUrl(): string {
+        if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL.replace(/\/$/, "");
+        if (process.env.REPLIT_DEV_DOMAIN)
+          return `https://${process.env.REPLIT_DEV_DOMAIN}`;
+        return "http://localhost:5000";
+      },
+
+      async serveMediaFile(
+        mediaId: string,
+        clientId: string | null | undefined,
+        req: any,
+        res: any,
+      ): Promise<void> {
+        // Deny access when the screen has no tenant — never fall back to
+        // serving the whole estate (mirrors filterMediaAssetsForScreen).
+        if (!clientId) {
+          res.status(403).json({ error: "Monitor session has no associated tenant" });
+          return;
+        }
+        const asset = await storage.getMediaAsset(mediaId);
+        if (!asset) {
+          res.status(404).json({ error: "Media asset not found" });
+          return;
+        }
+        // Tenant isolation: asset must be owned by or explicitly shared with
+        // the monitor session's client — same policy as filterMediaAssetsForScreen.
+        if (asset.clientId !== clientId) {
+          const shares = await storage.getMediaSharesForClient(clientId);
+          const sharedIds = new Set(shares.map((s) => s.mediaAssetId));
+          if (!sharedIds.has(mediaId)) {
+            res.status(403).json({ error: "Media asset not accessible to this monitor session" });
+            return;
+          }
+        }
+        if (asset.originalPath.startsWith("http")) {
+          res.redirect(asset.originalPath);
+        } else {
+          await fileStorage.streamFile(asset.originalPath, res, req);
+        }
+      },
+
+      logAudit(
+        action: string,
+        entityType: string,
+        entityId?: string,
+        payload?: Record<string, unknown>,
+      ): void {
+        // userId is null for system-level monitor session audit events (no req).
+        storage.createAuditLog({
+          userId: null,
+          action,
+          entityType,
+          entityId: entityId ?? null,
+          payload: payload ?? null,
+        }).catch((err: unknown) =>
+          console.error("[monitor-audit] createAuditLog error:", err),
+        );
+      },
+    },
   });
+
+  // Start the periodic monitor-session cleanup job (runs at startup + every 30 min)
+  startMonitorSessionCleanup(storage);
 
   return httpServer;
 }

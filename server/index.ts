@@ -5,7 +5,11 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { initStorage } from "./fileStorage";
 import { convertBadges } from "../scripts/convert-badges";
-import { ensureBookingMigration, ensureOperationsScopesMigration } from "./db";
+import {
+  ensureBookingMigration,
+  ensureOperationsScopesMigration,
+  ensureMonitorSessionsMigration,
+} from "./db";
 import { storage } from "./storage";
 
 const app = express();
@@ -62,6 +66,7 @@ app.use((req, res, next) => {
   await convertBadges();
   await ensureBookingMigration();
   await ensureOperationsScopesMigration();
+  await ensureMonitorSessionsMigration();
   // Pairing-code dedupe (Task #180): pre-#180 walls fanned the same
   // pairingCode to every tile in a wall, so an upgrading deployment
   // may carry duplicate pairing_code rows. The new schema-level

@@ -115,8 +115,11 @@ import {
   apiTokenKnownIps,
   userOperationsScopes,
   tokenOperationsScopes,
+  monitorSessions,
   type ApiToken,
   type InsertApiToken,
+  type MonitorSession,
+  type InsertMonitorSession,
 } from "@shared/schema";
 
 /**
@@ -682,6 +685,29 @@ export interface IStorage {
   grantTokenOperationsScope(tokenId: string, scope: string): Promise<void>;
   revokeUserOperationsScope(userId: string, scope: string): Promise<boolean>;
   revokeTokenOperationsScope(tokenId: string, scope: string): Promise<boolean>;
+
+  // Monitor sessions (Task #330)
+  createMonitorSession(data: InsertMonitorSession): Promise<MonitorSession>;
+  getMonitorSession(id: string): Promise<MonitorSession | undefined>;
+  getMonitorSessionByTokenHash(tokenHash: string): Promise<MonitorSession | undefined>;
+  /**
+   * Atomically marks the bootstrap token as used and records the session-secret
+   * hash in a single UPDATE … WHERE bootstrap_used_at IS NULL. Returns the
+   * updated row on success, or null if the row was not found, already used,
+   * revoked, or expired (all rejected identically to prevent oracle attacks).
+   */
+  consumeMonitorBootstrapToken(
+    id: string,
+    sessionSecretHash: string,
+    now: Date,
+  ): Promise<MonitorSession | null>;
+  touchMonitorSessionLastAccess(id: string, now: Date): Promise<void>;
+  revokeMonitorSession(id: string, revokedAt: Date): Promise<boolean>;
+  /**
+   * Deletes rows where expiresAt < (now - retentionDays). Returns the count
+   * of rows removed. Called by the periodic cleanup job.
+   */
+  cleanupExpiredMonitorSessions(retentionDays: number, now: Date): Promise<number>;
 
   // Shared cache (Task #290) — PostgreSQL L2 cache.
   getSharedCacheEntry(namespace: string, cacheKey: string): Promise<SharedCacheEntry | undefined>;
@@ -3533,6 +3559,88 @@ export class DatabaseStorage implements IStorage {
         ),
       );
     return (result.rowCount ?? 0) > 0;
+  }
+
+  // Monitor sessions (Task #330)
+  async createMonitorSession(data: InsertMonitorSession): Promise<MonitorSession> {
+    const rows = await db
+      .insert(monitorSessions)
+      .values({
+        userId: data.userId,
+        screenId: data.screenId,
+        clientId: data.clientId ?? null,
+        tokenHash: data.tokenHash,
+        expiresAt: data.expiresAt,
+        clientType: data.clientType ?? null,
+        clientName: data.clientName ?? null,
+      })
+      .returning();
+    return rows[0];
+  }
+
+  async getMonitorSession(id: string): Promise<MonitorSession | undefined> {
+    const rows = await db
+      .select()
+      .from(monitorSessions)
+      .where(eq(monitorSessions.id, id));
+    return rows[0];
+  }
+
+  async getMonitorSessionByTokenHash(tokenHash: string): Promise<MonitorSession | undefined> {
+    const rows = await db
+      .select()
+      .from(monitorSessions)
+      .where(eq(monitorSessions.tokenHash, tokenHash));
+    return rows[0];
+  }
+
+  async consumeMonitorBootstrapToken(
+    id: string,
+    sessionSecretHash: string,
+    now: Date,
+  ): Promise<MonitorSession | null> {
+    // Atomically claim the bootstrap token: only update rows where it hasn't
+    // been used yet, isn't revoked, and hasn't expired. Returns null if any
+    // of these conditions are not met — all rejection reasons look identical.
+    const rows = await db
+      .update(monitorSessions)
+      .set({ bootstrapUsedAt: now, sessionSecretHash })
+      .where(
+        and(
+          eq(monitorSessions.id, id),
+          sql`${monitorSessions.bootstrapUsedAt} IS NULL`,
+          sql`${monitorSessions.revokedAt} IS NULL`,
+          sql`${monitorSessions.expiresAt} > ${now}`,
+        ),
+      )
+      .returning();
+    return rows[0] ?? null;
+  }
+
+  async touchMonitorSessionLastAccess(id: string, now: Date): Promise<void> {
+    await db
+      .update(monitorSessions)
+      .set({ lastAccessAt: now })
+      .where(eq(monitorSessions.id, id));
+  }
+
+  async revokeMonitorSession(id: string, revokedAt: Date): Promise<boolean> {
+    const result = await db
+      .update(monitorSessions)
+      .set({ revokedAt })
+      .where(
+        and(eq(monitorSessions.id, id), sql`${monitorSessions.revokedAt} IS NULL`),
+      );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async cleanupExpiredMonitorSessions(retentionDays: number, now: Date): Promise<number> {
+    // Purge rows whose expiry is older than retentionDays before now.
+    const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
+    const result = await db
+      .delete(monitorSessions)
+      .where(lt(monitorSessions.expiresAt, cutoff));
+    return result.rowCount ?? 0;
   }
 }
 

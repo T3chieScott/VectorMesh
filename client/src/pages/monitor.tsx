@@ -1,0 +1,524 @@
+/**
+ * Task #330 — Monitor Page
+ *
+ * Chromeless, read-only view of a screen's live content.  Reached after
+ * the Multiview bootstrap flow: monitor-bootstrap URL → server validates
+ * bootstrap token → sets HttpOnly SameSite=Strict cookie → redirects here.
+ * Subsequent content polls carry the cookie automatically.
+ *
+ * ── PlayerCapabilities enforcement ──────────────────────────────────────────
+ * The MONITOR_CAPABILITIES object (imported from player.tsx) documents the
+ * deny-by-default policy.  Each capability is enforced by its ABSENCE in
+ * this component — deliberately not by conditional checks that could be
+ * accidentally enabled:
+ *
+ *   canHeartbeat:             false — no heartbeat interval is ever started
+ *   canReportHealth:          false — no video health stats are collected/sent
+ *   canPair:                  false — PairingScreen is never rendered
+ *   canPersistDeviceIdentity: false — localStorage is never read or written
+ *   playerCommandsEnabled:    false — refreshRequested / screenshotRequested
+ *                                     signals are always ignored even if
+ *                                     present (server strips them anyway)
+ *
+ * Future monitor capability additions MUST also be added to the
+ * PlayerCapabilities interface (client/src/pages/player.tsx) and
+ * MUST default to false in MONITOR_CAPABILITIES.
+ *
+ * ── Rendering parity ────────────────────────────────────────────────────────
+ * The monitor mirrors the player's rendering for all single-screen layouts:
+ *   - Normal layout with zones (media, agenda, html, montage, …)
+ *   - Fallback playlist (zoneId === "__fallback__", type === "playlist")
+ *   - Fallback agenda  (zoneId === "__fallback__", type === "agenda")
+ *   - Layout-rotation  (__fallback_rotation__ or playlist-driven layouts)
+ *
+ * Canvas-composite screens (screen.canvasEnabled = true) are not supported
+ * in monitor mode — these screens are multi-display walls rendered by the
+ * physical player across multiple physical outputs. The monitor shows a
+ * "canvas composite — not supported" placeholder for these screens.
+ */
+
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
+import type { MediaAsset, LayoutZone } from "@shared/schema";
+import { ZoneRenderer, getAspectRatioDimensions } from "@/components/zone-renderer";
+import { PlayerClockProvider, usePlayerClock } from "@/lib/playerClock";
+import { buildFontFaceCss } from "@/lib/fontFace";
+// Import the canonical capability constants so this file is the live
+// documentation of what monitor mode enforces.  The constants themselves
+// are not used in runtime conditions — each capability is enforced by
+// the absence of the corresponding code (see module-level comment above).
+import { MONITOR_CAPABILITIES } from "@/pages/player";
+
+// Validate at module load time that MONITOR_CAPABILITIES denies every
+// capability.  Any new capability added to PlayerCapabilities that is
+// accidentally set to true in MONITOR_CAPABILITIES will throw here.
+const _badCapabilities = Object.entries(MONITOR_CAPABILITIES)
+  .filter(([, v]) => v !== false)
+  .map(([k]) => k);
+if (_badCapabilities.length > 0) {
+  throw new Error(
+    `MONITOR_CAPABILITIES must deny all capabilities but ${_badCapabilities.join(", ")} is not false`,
+  );
+}
+
+// ---- Monitor bootstrap injection -------------------------------------------
+
+export function getMonitorBootstrap(): { screenId: string } | null {
+  if (typeof window === "undefined") return null;
+  const m = window.location.pathname.match(/^\/monitor\/([^/]+)/);
+  if (m?.[1]) return { screenId: m[1] };
+  return null;
+}
+
+// ---- Generic 401 placeholder ------------------------------------------------
+
+function MonitorAuthError() {
+  return (
+    <div className="fixed inset-0 bg-black flex items-center justify-center">
+      <div className="text-center text-white max-w-sm px-8">
+        <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-white/10 flex items-center justify-center">
+          <svg className="w-8 h-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v3m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <h1 className="text-xl font-bold mb-2">Monitor session expired</h1>
+        <p className="text-white/60 text-sm">
+          This monitor session is no longer valid. Create a new monitor session from the Multiview application.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ---- MonitorContent component -----------------------------------------------
+
+// Mirrors the player content payload shape (minus device credentials and
+// command signals). playerVars and client are included so ZoneRenderer
+// receives the same template variable context as the physical player.
+interface MonitorPlayerVars {
+  screenName?: string | null;
+  roomName?: string | null;
+  eventName?: string | null;
+  clientName?: string | null;
+  roomCapacity?: number | null;
+  eventStartDate?: string | null;
+  eventEndDate?: string | null;
+  nextSessionTitle?: string | null;
+  nextSessionTime?: string | null;
+  nextSessionCountdown?: string | null;
+  weatherSummary?: string | null;
+}
+
+interface MonitorContentData {
+  screen?: Record<string, any> | null;
+  profile?: { width?: number; height?: number } | null;
+  layout?: Record<string, any> | null;
+  layoutTemplates?: Record<string, Record<string, any> | null> | null;
+  media?: MediaAsset[];
+  fonts?: Array<{ id: string; familyId: string; name: string; weight?: number | null; style: string; format: string }>;
+  playlistItems?: Record<string, Array<{ id: string; order?: number; mediaAssetId?: string | null; layoutTemplateId?: string | null; duration?: number | null }>>;
+  zoneSources?: Array<{ zoneId: string; type: string; playlistId?: string | null; agendaConfigId?: string | null }>;
+  event?: { name?: string | null } | null;
+  // playerVars — pre-computed template variable values (same as player content endpoint)
+  playerVars?: MonitorPlayerVars | null;
+  // client — provides clientName fallback for playerContext
+  client?: { name?: string | null } | null;
+  serverTime?: number;
+  // Canvas composite flag — monitor does not support multi-display walls
+  canvas?: { tiles?: any[] } | null;
+}
+
+function MonitorContentInner({ screenId }: { screenId: string }) {
+  const { feedSample, getSyncedNow } = usePlayerClock();
+  const [content, setContent] = useState<MonitorContentData | null>(null);
+  const [authError, setAuthError] = useState(false);
+  const [scale, setScale] = useState(1);
+  const [zoneMediaIndices, setZoneMediaIndices] = useState<Record<string, number>>({});
+  // Layout rotation: index into the zoneSources-driven rotation list
+  const [layoutRotationIndex, setLayoutRotationIndex] = useState(0);
+  const layoutRotationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Font injection ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    const fonts = content?.fonts;
+    const STYLE_ID = "vm-custom-fonts-monitor";
+    let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
+    if (!fonts || fonts.length === 0) {
+      if (el) el.remove();
+      return;
+    }
+    if (!el) {
+      el = document.createElement("style");
+      el.id = STYLE_ID;
+      document.head.appendChild(el);
+    }
+    el.textContent = buildFontFaceCss(fonts);
+  }, [content?.fonts]);
+
+  // ── Layout rotation items (mirrors PlayerContent.layoutRotationItems) ──────
+  const layoutRotationItems = useMemo(() => {
+    if (!content?.playlistItems || !content?.layoutTemplates) return [];
+    if (!content?.zoneSources || content.zoneSources.length === 0) return [];
+    for (const source of content.zoneSources) {
+      if (source.zoneId !== "__fallback_rotation__" || source.type !== "playlist" || !source.playlistId) continue;
+      const items = content.playlistItems[source.playlistId] || [];
+      return items
+        .filter((pi) => pi.layoutTemplateId)
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    }
+    return [];
+  }, [content?.zoneSources, content?.playlistItems, content?.layoutTemplates]);
+
+  const isLayoutRotation = layoutRotationItems.length > 0;
+
+  const activeLayoutItem = isLayoutRotation
+    ? layoutRotationItems[layoutRotationIndex % layoutRotationItems.length]
+    : null;
+
+  const activeRotationLayout =
+    activeLayoutItem?.layoutTemplateId && content?.layoutTemplates?.[activeLayoutItem.layoutTemplateId]
+      ? content.layoutTemplates[activeLayoutItem.layoutTemplateId]
+      : null;
+
+  // Layout to render: rotation → layout → null (triggers fallback)
+  const layout = isLayoutRotation
+    ? activeRotationLayout || content?.layout || null
+    : content?.layout || null;
+
+  // ── Layout rotation timer (mirrors PlayerContent) ──────────────────────────
+  useEffect(() => {
+    if (!isLayoutRotation || layoutRotationItems.length <= 1) return;
+    if (layoutRotationTimerRef.current) clearTimeout(layoutRotationTimerRef.current);
+    const currentItem = layoutRotationItems[layoutRotationIndex % layoutRotationItems.length];
+    let durationSec = currentItem?.duration || 0;
+    if (!durationSec && currentItem?.mediaAssetId) {
+      const asset = content?.media?.find((m: MediaAsset) => m.id === currentItem.mediaAssetId);
+      if (asset?.duration) durationSec = asset.duration;
+    }
+    if (!durationSec) durationSec = 30;
+    layoutRotationTimerRef.current = setTimeout(() => {
+      setLayoutRotationIndex((prev) => (prev + 1) % layoutRotationItems.length);
+    }, durationSec * 1000);
+    return () => {
+      if (layoutRotationTimerRef.current) clearTimeout(layoutRotationTimerRef.current);
+    };
+  }, [isLayoutRotation, layoutRotationIndex, layoutRotationItems, content?.media]);
+
+  // ── Fallback detection (mirrors PlayerContent) ─────────────────────────────
+  const isFallbackPlaylist =
+    !layout &&
+    content?.zoneSources?.some(
+      (zs) => zs.zoneId === "__fallback__" && zs.type === "playlist",
+    );
+  const isFallbackAgenda =
+    !layout &&
+    !isFallbackPlaylist &&
+    content?.zoneSources?.some(
+      (zs) => zs.zoneId === "__fallback__" && zs.type === "agenda" && zs.agendaConfigId,
+    );
+
+  // ── rawZones (mirrors PlayerContent.rawZones) ─────────────────────────────
+  const rawZones = useMemo((): LayoutZone[] => {
+    if (layout) return (layout.zones as LayoutZone[]) || [];
+    if (isFallbackAgenda) {
+      const source = content!.zoneSources!.find(
+        (zs) => zs.zoneId === "__fallback__" && zs.type === "agenda",
+      );
+      if (source?.agendaConfigId) {
+        return [{
+          id: "__fallback__",
+          name: "Agenda",
+          type: "agenda",
+          x: 0, y: 0, width: 100, height: 100,
+          zIndex: 1,
+          agendaConfigId: source.agendaConfigId,
+        }] as LayoutZone[];
+      }
+    }
+    if (isFallbackPlaylist) {
+      const source = content!.zoneSources!.find((zs) => zs.zoneId === "__fallback__");
+      if (source?.playlistId) {
+        const playlistItemsList = content!.playlistItems?.[source.playlistId] || [];
+        const mediaOnlyItems = playlistItemsList.filter(
+          (pi) => pi.mediaAssetId && !pi.layoutTemplateId,
+        );
+        if (mediaOnlyItems.length > 0) {
+          const mediaPlayerItems = mediaOnlyItems
+            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+            .map((pi) => ({
+              id: pi.id,
+              mediaAssetId: pi.mediaAssetId!,
+              duration: pi.duration ?? undefined,
+            }));
+          return [{
+            id: "__fallback__",
+            type: "media_player",
+            x: 0, y: 0, width: 100, height: 100,
+            zIndex: 1,
+            mediaPlayerItems,
+          }] as LayoutZone[];
+        }
+      }
+    }
+    return [];
+  }, [layout, isFallbackPlaylist, isFallbackAgenda, content?.zoneSources, content?.playlistItems]);
+
+  // ── Zone injection (mirrors PlayerContent zones useMemo) ──────────────────
+  const zones = useMemo((): LayoutZone[] => {
+    if (isLayoutRotation) return rawZones;
+    if (!content?.zoneSources || content.zoneSources.length === 0) return rawZones;
+    return rawZones.map((zone) => {
+      const source = content.zoneSources!.find((zs) => zs.zoneId === zone.id);
+      if (!source || source.type !== "playlist" || !source.playlistId) return zone;
+      const items = content.playlistItems?.[source.playlistId] || [];
+      if (items.length === 0) return zone;
+      const mediaOnly = items.filter((pi) => pi.mediaAssetId && !pi.layoutTemplateId);
+      if (mediaOnly.length === 0) return zone;
+      const mediaPlayerItems = mediaOnly
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        .map((pi) => ({
+          id: pi.id,
+          mediaAssetId: pi.mediaAssetId!,
+          duration: pi.duration ?? undefined,
+        }));
+      return { ...zone, mediaPlayerItems };
+    });
+  }, [isLayoutRotation, rawZones, content?.zoneSources, content?.playlistItems]);
+
+  // ── Layout dimensions + scale ─────────────────────────────────────────────
+  const layoutAspect = useMemo(() => {
+    const l = layout || content?.layout;
+    if (!l) return null;
+    return getAspectRatioDimensions(
+      l.aspectRatio || "16:9",
+      l.customWidth,
+      l.customHeight,
+    );
+  }, [layout, content?.layout]);
+
+  useEffect(() => {
+    const updateScale = () => {
+      if (!layoutAspect) { setScale(1); return; }
+      const sx = window.innerWidth / layoutAspect.width;
+      const sy = window.innerHeight / layoutAspect.height;
+      setScale(Math.min(sx, sy));
+    };
+    updateScale();
+    window.addEventListener("resize", updateScale);
+    return () => window.removeEventListener("resize", updateScale);
+  }, [layoutAspect]);
+
+  // ── Media index rotation ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!zones.length || !content?.media?.length) return;
+    const interval = setInterval(() => {
+      setZoneMediaIndices((prev) => {
+        const next = { ...prev };
+        zones.forEach((zone) => {
+          const zoneMedia = resolveZoneMedia(zone, content?.media || []);
+          if (zoneMedia.length > 1) {
+            next[zone.id] = ((prev[zone.id] || 0) + 1) % zoneMedia.length;
+          }
+        });
+        return next;
+      });
+    }, 8000);
+    return () => clearInterval(interval);
+  }, [zones, content?.media]);
+
+  // ── Content fetch ─────────────────────────────────────────────────────────
+  // Authenticated by the HttpOnly monitor-session cookie.
+  // No device-token header is ever sent (canPersistDeviceIdentity = false).
+  const fetchContent = useCallback(async () => {
+    try {
+      const t1 = Date.now();
+      const res = await fetch(`/api/monitor/${screenId}/content`, {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (res.status === 401 || res.status === 403) {
+        setAuthError(true);
+        if (fetchIntervalRef.current) {
+          clearInterval(fetchIntervalRef.current);
+          fetchIntervalRef.current = null;
+        }
+        return;
+      }
+      if (!res.ok) return;
+      const data: MonitorContentData = await res.json();
+      const t2 = Date.now();
+      if (typeof data.serverTime === "number") {
+        feedSample(t1, data.serverTime, t2);
+      }
+      // playerCommandsEnabled = false: intentionally ignore refreshRequested,
+      // screenshotRequested, etc.  Server also strips these fields.
+      setContent(data);
+    } catch {
+      // Network error — keep last content on screen
+    }
+  }, [screenId, feedSample]);
+
+  useEffect(() => {
+    fetchContent();
+    fetchIntervalRef.current = setInterval(fetchContent, 7000);
+    return () => {
+      if (fetchIntervalRef.current) clearInterval(fetchIntervalRef.current);
+    };
+  }, [fetchContent]);
+
+  // ── Render states ──────────────────────────────────────────────────────────
+  if (authError) return <MonitorAuthError />;
+
+  if (!content) {
+    return (
+      <div className="fixed inset-0 bg-black flex items-center justify-center">
+        <div className="w-12 h-12 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
+      </div>
+    );
+  }
+
+  if (content.screen?.testPatternEnabled) {
+    return (
+      <div className="fixed inset-0 bg-black flex items-center justify-center">
+        <div className="text-white text-2xl font-mono">TEST PATTERN</div>
+      </div>
+    );
+  }
+
+  // Canvas composite (multi-display wall): detect solely from screen.canvasEnabled.
+  // Do NOT require content.canvas?.tiles — on monitor cache-miss the canvas
+  // payload is not built, so tiles will be absent even for real composite screens.
+  // The physical player renders canvas screens across multiple physical outputs
+  // using complex tile layout. The monitor shows an explicit placeholder instead
+  // of rendering garbled or incomplete composite content.
+  if (content.screen?.canvasEnabled) {
+    return (
+      <div className="fixed inset-0 bg-black flex items-center justify-center">
+        <div className="text-center text-white/60 max-w-xs px-8">
+          <div className="w-12 h-12 mx-auto mb-4 opacity-40">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+              <rect x="3" y="3" width="7" height="7" rx="1" />
+              <rect x="14" y="3" width="7" height="7" rx="1" />
+              <rect x="3" y="14" width="7" height="7" rx="1" />
+              <rect x="14" y="14" width="7" height="7" rx="1" />
+            </svg>
+          </div>
+          <p className="text-sm font-medium mb-1">Canvas composite screen</p>
+          <p className="text-xs opacity-60">
+            Multi-display wall screens are not supported in monitor mode.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (zones.length === 0) {
+    return <div className="fixed inset-0 bg-black" />;
+  }
+
+  const { width: layoutW, height: layoutH } = layoutAspect || { width: 1920, height: 1080 };
+
+  return (
+    <div
+      className="fixed inset-0 bg-black overflow-hidden flex items-center justify-center"
+      style={{ cursor: "none" }}
+    >
+      <div
+        style={{
+          width: `${layoutW}px`,
+          height: `${layoutH}px`,
+          transform: `scale(${scale})`,
+          transformOrigin: "center center",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        {zones.map((zone) => {
+          const media = resolveZoneMedia(zone, content.media || []);
+          const mediaIndex = zoneMediaIndices[zone.id] || 0;
+          return (
+            <div
+              key={zone.id}
+              className="absolute"
+              style={{
+                left: `${zone.x}%`,
+                top: `${zone.y}%`,
+                width: `${zone.width}%`,
+                height: `${zone.height}%`,
+                zIndex: zone.zIndex || 1,
+              }}
+            >
+              <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
+                <ZoneRenderer
+                  zone={zone}
+                  media={media}
+                  mediaIndex={mediaIndex}
+                  isPlaying={true}
+                  showBorder={false}
+                  fillContainer={true}
+                  // Cookie-authenticated media endpoint — no device token required.
+                  // Mirrors /api/player/media/:id/file but enforces tenant isolation
+                  // via the monitor session cookie rather than a device token.
+                  mediaBaseUrl="/api/monitor/media"
+                  // Screen IANA timezone drives time-sensitive widgets (clock, countdown, agenda)
+                  screenTimezone={content.screen?.timezone ?? undefined}
+                  agendaTestAt={undefined}
+                  // playerContext mirrors exactly what PlayerContent passes so
+                  // template-variable HTML zones, ticker text, and weather widgets
+                  // render the same content as the physical player.
+                  playerContext={{
+                    screenName: content.playerVars?.screenName ?? content.screen?.name,
+                    roomName: content.playerVars?.roomName ?? content.screen?.location,
+                    eventName: content.playerVars?.eventName ?? content.event?.name,
+                    clientName: content.playerVars?.clientName ?? content.client?.name,
+                    roomCapacity: content.playerVars?.roomCapacity,
+                    eventStartDate: content.playerVars?.eventStartDate ?? undefined,
+                    eventEndDate: content.playerVars?.eventEndDate ?? undefined,
+                    nextSessionTitle: content.playerVars?.nextSessionTitle,
+                    nextSessionTime: content.playerVars?.nextSessionTime,
+                    nextSessionCountdown: content.playerVars?.nextSessionCountdown,
+                    weatherSummary: content.playerVars?.weatherSummary,
+                    // Synced clock function — same as physical player; each
+                    // ZoneRenderer re-render gets a fresh timestamp offset.
+                    getNowMs: getSyncedNow,
+                  }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Resolves media for a zone — mirrors PlayerContent's resolveZoneMedia. */
+function resolveZoneMedia(
+  zone: Pick<LayoutZone, "id" | "mediaId"> | undefined,
+  media: MediaAsset[],
+): MediaAsset[] {
+  if (!zone) return media;
+  if (zone.mediaId) {
+    const specific = media.filter((m) => m.id === zone.mediaId);
+    if (specific.length > 0) return specific;
+  }
+  return media;
+}
+
+export function MonitorPage() {
+  const bootstrap = getMonitorBootstrap();
+
+  if (!bootstrap?.screenId) {
+    return (
+      <div className="fixed inset-0 bg-black flex items-center justify-center">
+        <div className="text-white/60 text-sm">Invalid monitor URL</div>
+      </div>
+    );
+  }
+
+  return (
+    <PlayerClockProvider>
+      <MonitorContentInner screenId={bootstrap.screenId} />
+    </PlayerClockProvider>
+  );
+}
