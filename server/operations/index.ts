@@ -182,10 +182,15 @@ export function parseMonitorCookie(
   }
   if (typeof raw !== "string") return null;
 
-  const sep = raw.indexOf(":");
+  // Express's res.cookie() URL-encodes the value by default (`:` → `%3A`).
+  // Decode before parsing so both the encoded and unencoded forms are handled.
+  let decoded = raw;
+  try { decoded = decodeURIComponent(raw); } catch { /* leave as-is */ }
+
+  const sep = decoded.indexOf(":");
   if (sep < 1) return null;
-  const monitorSessionId = raw.slice(0, sep);
-  const rawSecret = raw.slice(sep + 1);
+  const monitorSessionId = decoded.slice(0, sep);
+  const rawSecret = decoded.slice(sep + 1);
   if (!monitorSessionId || !rawSecret) return null;
   return { monitorSessionId, rawSecret };
 }
@@ -798,9 +803,12 @@ export function mountOperationsRoutes(
         }
 
         // Generate 32-byte bootstrap token; store only its SHA-256 hash.
+        // IMPORTANT: hash the hex-encoded string (not the raw Buffer) because
+        // the bootstrap route also receives and hashes the hex string from the
+        // URL query parameter. Both sides must hash the same representation.
         const bootstrapTokenBytes = crypto.randomBytes(32);
         const bootstrapTokenHex = bootstrapTokenBytes.toString("hex");
-        const tokenHash = sha256Hex(bootstrapTokenBytes);
+        const tokenHash = sha256Hex(bootstrapTokenHex);
 
         const ttlHours = getMonitorTtlHours();
         const now = new Date();
@@ -931,10 +939,12 @@ export function mountOperationsRoutes(
         if (session.bootstrapUsedAt !== null && session.bootstrapUsedAt !== undefined)
           return reject();
 
-        // Generate the session secret (never stored raw)
+        // Generate the session secret (never stored raw).
+        // Hash the hex-encoded string so validateMonitorCookie can reproduce
+        // the same hash from the hex value it reads back from the cookie.
         const secretBytes = crypto.randomBytes(32);
         const rawSecretHex = secretBytes.toString("hex");
-        const sessionSecretHash = sha256Hex(secretBytes);
+        const sessionSecretHash = sha256Hex(rawSecretHex);
 
         // Atomically claim the bootstrap token + store the secret hash
         const updated = await st.consumeMonitorBootstrapToken(
