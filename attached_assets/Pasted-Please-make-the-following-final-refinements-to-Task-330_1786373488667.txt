@@ -1,0 +1,26 @@
+Please make the following final refinements to Task #330 before implementation:
+
+1. Replace the terminology "cryptographically signed token" with "cryptographically random opaque monitor session token". The proposed `crypto.randomBytes(32)` + SHA-256-at-rest design is preferred; a JWT or self-contained signed token is not required.
+
+2. Do not leave the raw monitor token in the browser URL for the lifetime of the session. Treat the returned tokenised `monitorUrl` as a bootstrap URL. On successful first validation:
+   - establish a Secure, HttpOnly, SameSite monitor-session cookie or equivalent server-side browser session,
+   - redirect immediately to the tokenless `/monitor/:screenId` URL,
+   - ensure subsequent page/content requests do not contain the raw monitor token.
+   - set `Referrer-Policy: no-referrer` and `Cache-Control: no-store` on the bootstrap/monitor responses.
+   - if practical, make the bootstrap token single-use after successful exchange while leaving the associated monitor session active until its normal expiry/revocation.
+
+3. Construct absolute monitor URLs using an explicit canonical configuration value such as `PUBLIC_BASE_URL`. Development may fall back to the Replit development domain, but production URLs must not depend on inferred request/proxy hostnames.
+
+4. Do not artificially complicate token validation solely to claim constant-time comparison. Hash the supplied token with SHA-256 and perform the indexed lookup against the stored hash. Use constant-time comparison where two secret values are actually compared in application memory. Return the same generic 401 response for invalid, expired and revoked monitor credentials and never log the raw credential.
+
+5. Preserve the deny-by-default PlayerCapabilities design. Every new physical-player capability introduced in future must be false in monitor mode unless explicitly declared monitor-safe.
+
+6. Extend the critical invariant test so repeated monitor loads prove that all of the following physical-player state remains unchanged:
+   - lastSeen
+   - isOnline
+   - heartbeat records/count
+   - device/player identity
+   - pairing state
+   - physical device token association
+
+These refinements should not alter the scope or ordering of #329. #329 remains completely non-invasive to the player runtime.
