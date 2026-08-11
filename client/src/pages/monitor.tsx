@@ -39,7 +39,8 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { MediaAsset, LayoutZone } from "@shared/schema";
-import { ZoneRenderer, getAspectRatioDimensions } from "@/components/zone-renderer";
+import { getAspectRatioDimensions } from "@/components/zone-renderer";
+import { ScreenRenderSurface } from "@/components/screen-render-surface";
 import { PlayerClockProvider, usePlayerClock } from "@/lib/playerClock";
 import { buildFontFaceCss } from "@/lib/fontFace";
 import { TestPattern } from "@/components/test-pattern";
@@ -314,11 +315,13 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
   const monitorCanvasX = (content?.screen?.canvasX as number | null | undefined) || 0;
   const monitorCanvasY = (content?.screen?.canvasY as number | null | undefined) || 0;
 
-  // Viewport for this monitor: canvas screens scale to the screen's crop;
-  // regular screens scale to the layout's authored dimensions.
-  const { width: layoutW, height: layoutH } = layoutAspect || { width: 1920, height: 1080 };
-  const viewportW = canvasEnabled ? monitorScreenW : layoutW;
-  const viewportH = canvasEnabled ? monitorScreenH : layoutH;
+  // Both canvas and non-canvas screens use the screen's profile dimensions as
+  // the shared logical surface — the same coordinate system as the physical
+  // player.  Canvas-spanning layouts additionally apply a zone-frame offset
+  // (useCanvasMode below) so only this screen's slice is visible through the
+  // overflow:hidden viewport.
+  const viewportW = monitorScreenW;
+  const viewportH = monitorScreenH;
 
   // useCanvasMode: layout was authored at the FULL canvas dimensions so zones
   // reference canvas coords — apply the (-canvasX, -canvasY) translate so
@@ -446,92 +449,17 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
     return <div className="fixed inset-0 bg-black" />;
   }
 
-  // ── Zone frame — applies canvas translate when the layout spans the wall ──
-  // useCanvasMode: zones reference full-canvas coords → offset by -canvasX/-canvasY
-  //   so only this screen's crop is visible through the overflow:hidden viewport.
-  // !useCanvasMode (or !canvasEnabled): zones fill the viewport directly (normal).
-  const zoneFrame = (
-    <div
-      className="absolute"
-      style={
-        useCanvasMode
-          ? {
-              left: `${-monitorCanvasX}px`,
-              top: `${-monitorCanvasY}px`,
-              width: `${canvasW}px`,
-              height: `${canvasH}px`,
-            }
-          : { left: 0, top: 0, width: "100%", height: "100%" }
-      }
-    >
-      {zones.map((zone) => {
-        const media = resolveZoneMedia(zone, content.media || []);
-        const mediaIndex = zoneMediaIndices[zone.id] || 0;
-        return (
-          <div
-            key={zone.id}
-            className="absolute"
-            style={{
-              left: `${zone.x}%`,
-              top: `${zone.y}%`,
-              width: `${zone.width}%`,
-              height: `${zone.height}%`,
-              zIndex: zone.zIndex || 1,
-            }}
-          >
-            <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
-              <ZoneRenderer
-                zone={zone}
-                media={media}
-                mediaIndex={mediaIndex}
-                isPlaying={true}
-                showBorder={false}
-                fillContainer={true}
-                // Cookie-authenticated media endpoint — no device token required.
-                // Mirrors /api/player/media/:id/file but enforces tenant isolation
-                // via the monitor session cookie rather than a device token.
-                mediaBaseUrl="/api/monitor/media"
-                // Screen IANA timezone drives time-sensitive widgets (clock, countdown, agenda)
-                screenTimezone={content.screen?.timezone ?? undefined}
-                agendaTestAt={undefined}
-                // playerContext mirrors exactly what PlayerContent passes so
-                // template-variable HTML zones, ticker text, and weather widgets
-                // render the same content as the physical player.
-                playerContext={{
-                  screenName: content.playerVars?.screenName ?? content.screen?.name,
-                  roomName: content.playerVars?.roomName ?? content.screen?.location,
-                  eventName: content.playerVars?.eventName ?? content.event?.name,
-                  clientName: content.playerVars?.clientName ?? content.client?.name,
-                  roomCapacity: content.playerVars?.roomCapacity,
-                  eventStartDate: content.playerVars?.eventStartDate ?? undefined,
-                  eventEndDate: content.playerVars?.eventEndDate ?? undefined,
-                  nextSessionTitle: content.playerVars?.nextSessionTitle,
-                  nextSessionTime: content.playerVars?.nextSessionTime,
-                  nextSessionCountdown: content.playerVars?.nextSessionCountdown,
-                  weatherSummary: content.playerVars?.weatherSummary,
-                  // Synced clock function — same as physical player; each
-                  // ZoneRenderer re-render gets a fresh timestamp offset.
-                  getNowMs: getSyncedNow,
-                }}
-              />
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-
   return (
     <div
       className="fixed inset-0 bg-black overflow-hidden flex items-center justify-center"
       style={{ cursor: "none" }}
     >
       {/*
-       * viewportW × viewportH is the logical size of what this screen shows:
-       *   canvas screen  → profile.width × profile.height (the physical crop)
-       *   normal screen  → layout authored dimensions
-       * The inner div is scaled to fill the monitor window; overflow:hidden
-       * clips canvas zone frames to just this screen's slice.
+       * viewportW × viewportH is the profile dimensions of this screen.
+       * Both canvas and non-canvas screens share the same logical coordinate
+       * system as the physical player (profile.width × profile.height).
+       * The inner div is scaled to fill the monitor tile; overflow:hidden
+       * clips canvas-spanning zone frames to just this screen's crop.
        */}
       <div
         style={{
@@ -543,7 +471,42 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
           overflow: "hidden",
         }}
       >
-        {zoneFrame}
+        {/*
+         * ScreenRenderSurface is the shared rendering component used by both
+         * Player and Monitor.  Identical zone props, identical canvas geometry
+         * logic — Monitor differs only in mediaBaseUrl (cookie auth vs device
+         * token) and the absence of a live banner.
+         */}
+        <ScreenRenderSurface
+          zones={zones}
+          media={content.media || []}
+          zoneMediaIndices={zoneMediaIndices}
+          mediaBaseUrl="/api/monitor/media"
+          screenTimezone={content.screen?.timezone ?? undefined}
+          playerContext={{
+            screenName: content.playerVars?.screenName ?? content.screen?.name,
+            roomName: content.playerVars?.roomName ?? content.screen?.location,
+            eventName: content.playerVars?.eventName ?? content.event?.name,
+            clientName: content.playerVars?.clientName ?? content.client?.name,
+            roomCapacity: content.playerVars?.roomCapacity,
+            eventStartDate: content.playerVars?.eventStartDate ?? undefined,
+            eventEndDate: content.playerVars?.eventEndDate ?? undefined,
+            nextSessionTitle: content.playerVars?.nextSessionTitle,
+            nextSessionTime: content.playerVars?.nextSessionTime,
+            nextSessionCountdown: content.playerVars?.nextSessionCountdown,
+            weatherSummary: content.playerVars?.weatherSummary,
+            // Synced clock function — same as physical player; each
+            // ZoneRenderer re-render gets a fresh timestamp offset.
+            getNowMs: getSyncedNow,
+          }}
+          canvasGeometry={{
+            useOffset: useCanvasMode,
+            canvasX: monitorCanvasX,
+            canvasY: monitorCanvasY,
+            canvasW,
+            canvasH,
+          }}
+        />
       </div>
     </div>
   );

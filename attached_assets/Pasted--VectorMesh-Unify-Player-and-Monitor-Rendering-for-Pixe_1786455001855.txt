@@ -1,0 +1,497 @@
+# VectorMesh — Unify Player and Monitor Rendering for Pixel-Accurate Multiview
+
+## What & Why
+
+VectorMesh Multiview is now successfully discovering projects/screens, creating monitor sessions, rendering test patterns, and displaying Canvas/composite screens.
+
+The remaining major problem is visual fidelity.
+
+For an engineer, Multiview is only useful if the monitor tile accurately represents what the physical VectorMesh player is rendering.
+
+We have confirmed that some HTML/layout content currently renders differently in Monitor mode than on the real player.
+
+Observed symptoms include:
+
+- incorrect scaling
+- HTML elements positioned differently
+- responsive layouts reflowing inside the smaller monitor viewport
+- incorrect cropping / apparent zoom
+- content looking different from the physical display
+- Canvas rendering now works, but the broader rendering architecture still appears to contain duplicated or divergent logic
+
+The architectural requirement is therefore:
+
+> Player mode and Monitor mode must use the same visual rendering pipeline and the same logical screen coordinate system.
+
+The difference between Player and Monitor must be limited to physical-device capabilities and side effects.
+
+Do not implement a collection of one-off CSS fixes for Monitor mode.
+
+Do not create monitor-specific approximations of player content.
+
+---
+
+# Core Rendering Principle
+
+The configured physical display profile defines the logical rendering surface.
+
+Example:
+
+Physical display profile:
+
+1920 × 1080
+
+The shared VectorMesh renderer should always render onto a logical:
+
+1920 × 1080
+
+surface.
+
+For Multiview, that completed logical surface is then uniformly scaled down to fit whatever monitor tile is available.
+
+Correct:
+
+1920×1080 logical screen
+        ↓
+shared VectorMesh renderer
+        ↓
+exact physical-player visual result
+        ↓
+scale entire result to fit
+        ↓
+500×281 Multiview preview
+
+Incorrect:
+
+500×281 Electron/browser viewport
+        ↓
+HTML/CSS responds to 500×281
+        ↓
+layout reflows
+        ↓
+different result from physical player
+
+Responsive HTML must see the physical screen dimensions, not the Multiview tile dimensions.
+
+---
+
+# Phase 1 — Trace Current Rendering Architecture
+
+Before modifying anything, inspect the current codebase and report the exact rendering path for:
+
+## Physical Player
+
+Trace from player bootstrap through:
+
+- player route
+- player.tsx
+- content resolver
+- display profile resolution
+- layout selection
+- playlist/content resolution
+- zone rendering
+- HTML/web content rendering
+- image rendering
+- video rendering
+- fonts
+- playerVars
+- TestPattern
+- Canvas/composite rendering
+- viewport calculation
+- scaling/transforms
+- clipping
+
+## Monitor
+
+Trace from:
+
+- /monitor-bootstrap
+- /monitor/:screenId
+- MonitorPage / monitor component
+- /api/monitor/:screenId/content
+- content resolution
+- display profile
+- layout selection
+- zone rendering
+- HTML/web content rendering
+- TestPattern
+- Canvas rendering
+- viewport/scaling
+
+Produce a concise comparison showing exactly where the Player and Monitor paths diverge.
+
+Do not implement changes until the divergence is understood.
+
+---
+
+# Phase 2 — Compare Runtime Geometry
+
+Instrument or inspect one representative 1920×1080 screen using identical content in Player and Monitor.
+
+Compare:
+
+- profile.width
+- profile.height
+- layout width/height
+- screen width/height
+- canvasEnabled
+- canvasWidth
+- canvasHeight
+- canvasX
+- canvasY
+- logical render width
+- logical render height
+- browser viewport width
+- browser viewport height
+- window.innerWidth
+- window.innerHeight
+- visualViewport.width
+- visualViewport.height
+- devicePixelRatio
+- CSS zoom
+- transform scale
+- transform origin
+- overflow behaviour
+- iframe dimensions
+- HTML/web-zone dimensions
+- zone frame dimensions
+- body/root dimensions
+
+Produce:
+
+Property | Player | Monitor | Same? | Cause of difference
+
+Do not guess values.
+
+---
+
+# Phase 3 — Create Shared Rendering Model
+
+Refactor Player and Monitor so both consume the same shared render model.
+
+Preferred architecture:
+
+Content Resolver
+       ↓
+Screen Render Model
+       ↓
+Shared Screen Renderer
+      ↙          ↘
+ Player Host    Monitor Host
+
+The shared render model should contain everything required to reproduce the physical screen visually.
+
+Conceptually:
+
+{
+  logicalWidth,
+  logicalHeight,
+  profile,
+  layout,
+  zones,
+  media,
+  playlists,
+  fonts,
+  playerVars,
+  screen,
+  client,
+  event,
+  canvas,
+  testPattern,
+  liveOverride
+}
+
+The exact structure should follow the current application architecture.
+
+Avoid duplicating calculations between player.tsx and monitor components.
+
+---
+
+# Phase 4 — Shared Screen Renderer
+
+Player and Monitor must ultimately render through the same screen-rendering component/component tree.
+
+If there are currently separate implementations such as:
+
+PlayerLayoutRenderer
+MonitorLayoutRenderer
+
+or duplicated zone/Canvas/viewport calculations, refactor them into shared components/services.
+
+The goal is:
+
+Player:
+<PlayerHost>
+    <SharedScreenRenderer renderModel={...} />
+</PlayerHost>
+
+Monitor:
+<MonitorHost>
+    <SharedScreenRenderer renderModel={...} />
+</MonitorHost>
+
+Names are illustrative only.
+
+Do not force this exact React structure if the codebase already has a better abstraction.
+
+---
+
+# PlayerCapabilities Remain Separate
+
+Monitor mode must remain read-only.
+
+Preserve the existing deny-by-default PlayerCapabilities behaviour.
+
+Physical Player:
+
+- canHeartbeat = true
+- canReportHealth = true
+- canPair = true
+- canPersistDeviceIdentity = true
+- playerCommandsEnabled = true
+
+Monitor:
+
+- canHeartbeat = false
+- canReportHealth = false
+- canPair = false
+- canPersistDeviceIdentity = false
+- playerCommandsEnabled = false
+
+These differences must not alter visual rendering.
+
+Rendering must not branch on mode unless there is a genuinely unavoidable visual reason.
+
+---
+
+# Logical Screen Surface
+
+Introduce or reuse a shared logical screen surface.
+
+For a 1920×1080 profile, the renderer should behave as if it has a fixed 1920×1080 viewport regardless of the actual browser/Electron tile size.
+
+The monitor page should create something conceptually like:
+
+<div class="monitor-viewport">
+  <div
+    class="logical-screen"
+    style="
+      width: 1920px;
+      height: 1080px;
+      transform: scale(...);
+      transform-origin: top left;
+    "
+  >
+     SHARED SCREEN RENDERER
+  </div>
+</div>
+
+The scale factor should be:
+
+min(
+  availableMonitorWidth / logicalWidth,
+  availableMonitorHeight / logicalHeight
+)
+
+Preserve the original aspect ratio.
+
+Letterboxing/pillarboxing is acceptable and preferable to reflowing the physical-screen layout.
+
+Do not stretch independently in X and Y.
+
+---
+
+# HTML / Web Content
+
+Pay particular attention to HTML/web content.
+
+Any HTML or iframe content should believe it is running at the physical screen resolution.
+
+For a 1920×1080 screen:
+
+- iframe logical size should be 1920×1080 where appropriate
+- CSS media queries should evaluate as they do on the physical player
+- responsive sites must not see the Multiview tile dimensions
+- playerVars and injected variables must be identical
+- base URLs and asset paths must be identical
+- font loading must match
+- sandbox attributes must match unless Monitor security specifically requires otherwise
+- devicePixelRatio differences should not change layout geometry
+
+If iframe/web content currently receives the real monitor tile dimensions, correct this using the shared logical screen model rather than monitor-specific CSS hacks.
+
+---
+
+# Canvas / Composite Screens
+
+Canvas screens have recently been enabled in Monitor mode.
+
+Verify that the Canvas implementation now uses the shared logical renderer.
+
+Do not keep a separate copied Canvas geometry calculation inside Monitor.
+
+Shared Canvas logic must determine:
+
+- overall canvas dimensions
+- physical viewport dimensions
+- canvasX
+- canvasY
+- crop/translation
+- clipping
+
+Both Player and Monitor should consume the same resulting geometry.
+
+---
+
+# Test Pattern
+
+The TestPattern component has also recently been unified.
+
+Ensure TestPattern remains inside the shared renderer and is not a special Monitor-only branch.
+
+---
+
+# Portrait / Non-16:9 Screens
+
+Test the shared logical surface using:
+
+- 1920×1080 landscape
+- 1080×1920 portrait
+- other existing display profiles
+- Canvas screens
+
+Monitor preview scaling must preserve each profile's native aspect ratio.
+
+---
+
+# Monitor Tile Size Must Not Affect Rendering
+
+Add a specific regression test demonstrating:
+
+A 1920×1080 screen rendered into:
+
+- a 1920×1080 monitor viewport
+- a 960×540 monitor tile
+- a 480×270 monitor tile
+
+must produce the same logical layout.
+
+Only the final visual scale changes.
+
+DOM/layout coordinates inside the logical screen must remain identical.
+
+This is a critical invariant.
+
+---
+
+# Automated Tests
+
+Add tests covering at minimum:
+
+1. Player and Monitor produce the same logical render dimensions for the same screen.
+
+2. Player and Monitor resolve identical:
+   - profile
+   - layout
+   - zones
+   - Canvas geometry
+   - TestPattern state
+   - playerVars/render variables
+
+3. Monitor tile dimensions do not change logical layout geometry.
+
+4. 1920×1080 HTML content retains 1920×1080 layout when previewed smaller.
+
+5. Portrait screens preserve portrait aspect ratio.
+
+6. Canvas monitor viewport matches physical player viewport.
+
+7. TestPattern renders through the shared renderer.
+
+8. Monitor mode continues to suppress:
+   - heartbeat
+   - health reporting
+   - pairing
+   - device identity persistence
+   - physical player commands
+
+9. Existing physical Player rendering is unchanged.
+
+10. Existing monitor invariant tests continue to pass.
+
+---
+
+# Performance
+
+Do not implement screenshot streaming or server-side video encoding.
+
+The Monitor page should still render live content locally in Chromium.
+
+The shared logical rendering surface may be scaled visually using CSS transforms or an equivalent efficient browser mechanism.
+
+Avoid unnecessary duplicate React trees or off-screen full-resolution copies where possible.
+
+---
+
+# Security
+
+Do not weaken Monitor security to achieve visual parity.
+
+Monitor must still never receive:
+
+- physical device token
+- pairing code
+- physical-player secret
+- writable player identity
+
+Shared rendering means shared visual logic, not shared credentials or physical-device privileges.
+
+---
+
+# Documentation
+
+Update:
+
+docs/operations-api.md
+
+docs/multiview-integration.md
+
+and any relevant player architecture documentation.
+
+Document the principle:
+
+> Monitor mode renders the same logical screen surface and shared renderer as the physical player. The monitor host only scales the completed screen output to fit the Multiview tile.
+
+---
+
+# Deliverables
+
+Before implementation report:
+
+1. Current Player render path.
+2. Current Monitor render path.
+3. Exact divergence(s).
+4. Root cause of current HTML scaling/reflow problem.
+5. Proposed shared-renderer architecture.
+6. Files that will change.
+
+After implementation report:
+
+1. Files changed.
+2. Shared renderer/components created or reused.
+3. Duplicated rendering logic removed.
+4. Viewport/scaling architecture.
+5. HTML/iframe behaviour.
+6. Canvas behaviour.
+7. Portrait behaviour.
+8. Test Pattern behaviour.
+9. Automated tests added.
+10. Confirmation that physical Player visuals remain unchanged.
+11. Confirmation that Monitor output is logically identical before final scale-to-fit.
+12. Any remaining rendering types that cannot yet be guaranteed pixel-identical.
+
+Do not modify the Electron Multiview repository in this task.
+
+Do not introduce monitor-specific CSS patches purely to make screenshots look closer.
+
+Solve this at the shared VectorMesh rendering architecture level.

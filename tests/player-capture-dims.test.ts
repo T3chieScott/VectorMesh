@@ -130,17 +130,20 @@ test("each capture target has transform: scale() applied (so the onclone reset i
   }
 });
 
-test("captureW/captureH formula = canvasEnabled ? canvasW : trueWidth (and same for H)", () => {
+test("captureW/captureH formula = canvasEnabled ? canvasW : playerScreenW (profile dimensions)", () => {
   // Layout path: assert the exact formula text. This locks in the binding
   // the html2canvas capture box depends on for non-canvas screens
-  // (1280x720 from REFERENCE_HEIGHT) vs canvas-enabled screens.
+  // (profile dimensions: 1920×1080 for HD, or the screen's configured
+  // resolution) vs canvas-enabled screens (full canvas dimensions for
+  // multi-screen composites).  Both Player and Monitor now use profile
+  // dimensions as the shared logical coordinate system.
   assert.match(
     playerSource,
-    /const\s+captureW\s*=\s*canvasEnabled\s*\?\s*canvasW\s*:\s*trueWidth\s*;/,
+    /const\s+captureW\s*=\s*canvasEnabled\s*\?\s*canvasW\s*:\s*playerScreenW\s*;/,
   );
   assert.match(
     playerSource,
-    /const\s+captureH\s*=\s*canvasEnabled\s*\?\s*canvasH\s*:\s*trueHeight\s*;/,
+    /const\s+captureH\s*=\s*canvasEnabled\s*\?\s*canvasH\s*:\s*playerScreenH\s*;/,
   );
 });
 

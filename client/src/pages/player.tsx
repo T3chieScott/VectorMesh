@@ -10,6 +10,7 @@ import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, 
 
 type PlayerContentData = PlayerContentResponse;
 import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
+import { ScreenRenderSurface } from "@/components/screen-render-surface";
 import { buildFontFaceCss } from "@/lib/fontFace";
 import { TestPattern } from "@/components/test-pattern";
 import html2canvas from "html2canvas";
@@ -1045,13 +1046,9 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     return () => clearInterval(interval);
   }, [allRotatingZones.length, content?.media.length]);
 
-  const REFERENCE_HEIGHT = 720;
   const layoutAspect = layout
     ? getAspectRatioDimensions(layout.aspectRatio || "16:9", layout.customWidth, layout.customHeight)
     : null;
-  const aspectRatio = layoutAspect
-    ? layoutAspect.width / layoutAspect.height
-    : (content?.profile ? (content.profile.width || 1920) / (content.profile.height || 1080) : 16 / 9);
 
   const rawCanvasW = content?.screen?.canvasWidth ?? 0;
   const rawCanvasH = content?.screen?.canvasHeight ?? 0;
@@ -1089,28 +1086,16 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     dimsMatch(layoutAuthored.width, canvasW) &&
     dimsMatch(layoutAuthored.height, canvasH);
 
-  const displayAspect = aspectRatio;
-  const trueWidth = Math.round(REFERENCE_HEIGHT * displayAspect);
-  const trueHeight = REFERENCE_HEIGHT;
-
-  // The html2canvas capture target. For canvas-enabled screens the player
-  // renders the whole canvas as its viewport (with the screen positioned at
-  // its AOI inside it), so the capture is the whole canvas. For non-canvas
-  // screens the capture is the screen viewport (legacy behavior).
-  // These values drive both the capture target's inline style.width /
-  // style.height AND html2canvas's explicit capture-box dims (via
-  // offsetWidth/offsetHeight at capture time). The regression test in
-  // tests/player-capture-dims.test.ts statically asserts the inline-style
-  // binding so this invariant cannot silently drift.
-  const captureW = canvasEnabled ? canvasW : trueWidth;
-  const captureH = canvasEnabled ? canvasH : trueHeight;
-
-  // Inside the canvas viewport, the screen slot sits at the screen's AOI.
-  // Inside the slot, the zone frame either fills the slot (screen-fitted
-  // layouts) or is sized to the canvas and translated by -canvasX/-canvasY
-  // to display this screen's slice (canvas-spanning layouts; Task #74).
-  const slotW = canvasEnabled ? playerScreenW : trueWidth;
-  const slotH = canvasEnabled ? playerScreenH : trueHeight;
+  // Logical screen surface: profile dimensions (e.g. 1920×1080 for standard HD).
+  // Both Player and Monitor use profile dimensions as the shared logical
+  // coordinate system.  For a native-resolution player window this yields
+  // scale=1.0 (no CSS transform needed).  Canvas screens use the full canvas
+  // dimensions as the capture surface; the screen's physical slot sits at
+  // (playerCanvasX, playerCanvasY) inside that canvas viewport.
+  // The regression test in tests/player-capture-dims.test.ts statically
+  // asserts the inline-style binding so this invariant cannot silently drift.
+  const captureW = canvasEnabled ? canvasW : playerScreenW;
+  const captureH = canvasEnabled ? canvasH : playerScreenH;
 
   useEffect(() => {
     const updateScale = () => {
@@ -1140,13 +1125,6 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       if (specific.length > 0) return specific;
     }
     return content.media;
-  };
-
-  // Convenience overload kept for the seed-screen render path so the
-  // diff is small. ALWAYS prefer resolveZoneMedia(zone) for any path
-  // that walks tile-local zones.
-  const getZoneMedia = (zoneId: string): MediaAsset[] => {
-    return resolveZoneMedia(zones.find(z => z.id === zoneId));
   };
 
   const getZoneMediaIndex = (zoneId: string): number => {
@@ -1615,79 +1593,52 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const scaledWidth = captureW * scale;
   const scaledHeight = captureH * scale;
 
-  // Screen slot contents (live override banner + zone frame). When
-  // canvas-enabled, this lives at (canvasX, canvasY) inside the canvas
-  // viewport. When not, it fills the screen viewport directly.
+  // Screen slot contents — shared render surface used by both Player and Monitor.
+  // ScreenRenderSurface handles the zone frame div, canvas offset, per-zone
+  // iteration, and ZoneRenderer delegation with identical props on both hosts.
   const slotContents = (
-    <>
-      {content.liveOverride && content.screen?.showLiveBanner && (
-        <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white px-3 py-1 flex items-center justify-center gap-2 text-sm font-medium">
-          LIVE: {content.liveOverride.name}
-        </div>
-      )}
-
-      <div
-        className="absolute"
-        style={
-          useCanvasMode
-            ? {
-                left: `${-playerCanvasX}px`,
-                top: `${-playerCanvasY}px`,
-                width: `${canvasW}px`,
-                height: `${canvasH}px`,
-              }
-            : { left: 0, top: 0, width: "100%", height: "100%" }
-        }
-        data-testid="player-zone-frame"
-      >
-        {zones.map((zone) => (
-          <div
-            key={isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
-            className="absolute"
-            style={{
-              left: `${zone.x}%`,
-              top: `${zone.y}%`,
-              width: `${zone.width}%`,
-              height: `${zone.height}%`,
-              zIndex: zone.zIndex || 1,
-            }}
-          >
-            <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
-              <ZoneRenderer
-                zone={zone}
-                media={getZoneMedia(zone.id)}
-                mediaIndex={getZoneMediaIndex(zone.id)}
-                isPlaying={true}
-                showBorder={false}
-                timezone={weatherTimezone}
-                screenTimezone={content.screen?.timezone ?? undefined}
-                fillContainer={true}
-                mediaBaseUrl="/api/player/media"
-                deviceToken={token}
-                agendaTestAt={agendaTestAt}
-                playerContext={{
-                  screenName: content.playerVars?.screenName ?? content.screen?.name,
-                  roomName: content.playerVars?.roomName ?? content.screen?.location,
-                  eventName: content.playerVars?.eventName ?? content.event?.name,
-                  clientName: content.playerVars?.clientName ?? content.client?.name,
-                  roomCapacity: content.playerVars?.roomCapacity,
-                  eventStartDate: content.playerVars?.eventStartDate,
-                  eventEndDate: content.playerVars?.eventEndDate,
-                  nextSessionTitle: content.playerVars?.nextSessionTitle,
-                  nextSessionTime: content.playerVars?.nextSessionTime,
-                  nextSessionCountdown: content.playerVars?.nextSessionCountdown,
-                  weatherSummary: content.playerVars?.weatherSummary,
-                  // Pass the function (not the current value) so
-                  // each downstream re-render gets a fresh synced
-                  // timestamp.
-                  getNowMs: getSyncedNow,
-                }}
-              />
-            </div>
+    <ScreenRenderSurface
+      zones={zones}
+      zoneKey={(zone) => isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
+      media={content.media}
+      zoneMediaIndices={zoneMediaIndices}
+      mediaBaseUrl="/api/player/media"
+      deviceToken={token}
+      screenTimezone={content.screen?.timezone ?? undefined}
+      weatherTimezone={weatherTimezone}
+      agendaTestAt={agendaTestAt}
+      playerContext={{
+        screenName: content.playerVars?.screenName ?? content.screen?.name,
+        roomName: content.playerVars?.roomName ?? content.screen?.location,
+        eventName: content.playerVars?.eventName ?? content.event?.name,
+        clientName: content.playerVars?.clientName ?? content.client?.name,
+        roomCapacity: content.playerVars?.roomCapacity,
+        eventStartDate: content.playerVars?.eventStartDate,
+        eventEndDate: content.playerVars?.eventEndDate,
+        nextSessionTitle: content.playerVars?.nextSessionTitle,
+        nextSessionTime: content.playerVars?.nextSessionTime,
+        nextSessionCountdown: content.playerVars?.nextSessionCountdown,
+        weatherSummary: content.playerVars?.weatherSummary,
+        // Pass the function (not the current value) so each downstream
+        // re-render gets a fresh synced timestamp.
+        getNowMs: getSyncedNow,
+      }}
+      canvasGeometry={{
+        useOffset: useCanvasMode,
+        canvasX: playerCanvasX,
+        canvasY: playerCanvasY,
+        canvasW,
+        canvasH,
+      }}
+      liveBanner={
+        content.liveOverride && content.screen?.showLiveBanner ? (
+          <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white px-3 py-1 flex items-center justify-center gap-2 text-sm font-medium">
+            LIVE: {content.liveOverride.name}
           </div>
-        ))}
-      </div>
-    </>
+        ) : undefined
+      }
+      zoneFrameTestId="player-zone-frame"
+    />
   );
 
   return (
@@ -1716,8 +1667,8 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
               style={{
                 left: `${playerCanvasX}px`,
                 top: `${playerCanvasY}px`,
-                width: `${slotW}px`,
-                height: `${slotH}px`,
+                width: `${playerScreenW}px`,
+                height: `${playerScreenH}px`,
               }}
               data-testid="player-screen-slot"
             >

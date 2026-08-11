@@ -43,8 +43,11 @@ function computeCanvasGeometry(
   const canvasX = screen.canvasX ?? 0;
   const canvasY = screen.canvasY ?? 0;
 
-  const viewportW = canvasEnabled ? monitorScreenW : layoutAspect.width;
-  const viewportH = canvasEnabled ? monitorScreenH : layoutAspect.height;
+  // After the unification fix: always use profile dimensions as the logical
+  // viewport.  Both canvas and non-canvas screens share the same coordinate
+  // system (profile.width × profile.height).
+  const viewportW = monitorScreenW;
+  const viewportH = monitorScreenH;
 
   const useCanvasMode =
     canvasEnabled &&
@@ -223,4 +226,29 @@ test("canvas geometry: test pattern uses profile dimensions (not layout)", () =>
   // test-pattern should be rendered at monitorScreenW × monitorScreenH
   assert.equal(geom.monitorScreenW, 3840);
   assert.equal(geom.monitorScreenH, 2160);
+});
+
+test("canvas geometry: non-canvas screen uses profile dims as viewport (not layout ratio units)", () => {
+  // After the unification fix, getAspectRatioDimensions("16:9") = {width:16, height:9}
+  // must NOT be used as pixel viewport dimensions for non-canvas screens.
+  // The viewport must always equal profile.width × profile.height.
+  const geom = computeCanvasGeometry(
+    { width: 1920, height: 1080 },
+    { canvasEnabled: false },
+    { width: 16, height: 9 },  // what getAspectRatioDimensions("16:9") returns
+  );
+  assert.equal(geom.viewportW, 1920, "viewport must be profile width, not ratio numerator 16");
+  assert.equal(geom.viewportH, 1080, "viewport must be profile height, not ratio denominator 9");
+});
+
+test("canvas geometry: portrait screen uses portrait profile dimensions as viewport", () => {
+  // A 9:16 portrait screen (e.g. a vertical display) should give a portrait
+  // viewport (1080×1920), not 9×16 ratio units.
+  const geom = computeCanvasGeometry(
+    { width: 1080, height: 1920 },
+    { canvasEnabled: false },
+    { width: 9, height: 16 },  // what getAspectRatioDimensions("9:16") would return
+  );
+  assert.equal(geom.viewportW, 1080, "portrait viewport width = profile width");
+  assert.equal(geom.viewportH, 1920, "portrait viewport height = profile height");
 });

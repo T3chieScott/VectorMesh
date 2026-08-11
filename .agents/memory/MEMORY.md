@@ -9,6 +9,7 @@
 - [Sportmonks results-only sync](sportmonks-results-only-sync.md) — periodic sweepstake sync = date-window /fixtures/between merge by externalId (never /fixtures/latest, never full re-pull).
 - [Replace-all sync wipes FKs](replace-all-sync-fk-wipe.md) — delete-all+reinsert-with-new-ids nulls every ON DELETE SET NULL FK; reconcile in place (match→update keeping id) instead.
 - [Sweepstake display payload](sweepstake-display-payload.md) — teams have null group; derive group from matches/standings; join staff by lowercased team name.
+- [Shared screen render surface](screen-render-surface.md) — Player + Monitor use profile dims as logical surface; getAspectRatioDimensions("16:9")={16,9} must never be used as pixels.
 - [Signage widget container sizing](signage-widget-container-sizing.md) — full-screen display widgets must use container-query units (cqmin) + containerType:size, not vmin, so they scale inside embedded preview/zone boxes.
 - [Sportmonks v3 quirks](sportmonks-v3-quirks.md) — league id ≠ season id; wrong id returns 200+empty (silent 0); no /fixtures/seasons/:id (use filtered /fixtures or /fixtures/between); season teams include placeholders.
 - [Additive public payload fields](additive-public-payload.md) — feature-flagged new keys on shared/public responses must be OMITTED when off (byte-identical legacy shape); gate "configured" on ALL required env, not one.
