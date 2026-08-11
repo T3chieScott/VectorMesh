@@ -463,6 +463,16 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
        */}
       <div
         style={{
+          // flex-shrink:0 is required. The parent is display:flex; without
+          // this, Flexbox shrinks the logical surface from viewportW px to
+          // the available tile width BEFORE scale() is applied (transforms
+          // happen after layout). A 1920 px surface would be squished to the
+          // tile width (e.g. 525 px) before scale runs, causing portrait
+          // rendering inside a landscape tile — or any profile to appear
+          // cropped/distorted rather than scaled. Setting flex:none (shorthand
+          // for flex-grow:0; flex-shrink:0; flex-basis:auto) locks the box at
+          // its declared width × height so scale() receives the correct surface.
+          flex: "none",
           width: `${viewportW}px`,
           height: `${viewportH}px`,
           transform: `scale(${scale})`,

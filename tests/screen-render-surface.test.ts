@@ -309,6 +309,40 @@ describe("Shared logical screen surface", () => {
     );
   });
 
+  test("9c. Monitor logical surface container has flex:none to prevent Flexbox shrink", () => {
+    // The monitor outer div is display:flex (flex items-center justify-center).
+    // Without flex:none / flex-shrink:0 on the inner logical-surface div,
+    // Flexbox shrinks it from viewportW px to the available tile width BEFORE
+    // scale() is applied — because transforms happen after layout.
+    //
+    // Before fix (1920×1080 surface inside a 525 px-wide tile):
+    //   Declared logical size  : 1920 × 1080 px
+    //   Computed layout size   : 525 × 1080 px  ← Flexbox squish
+    //   BoundingClientRect.width: 525 px
+    //   Transform scale        : correct (scale = tile / 1920)
+    //   Final rendered size    : 525 × scale ≈ 525 × 0.274 ≈ 144 px wide
+    //   Appearance             : portrait strip inside a landscape tile
+    //
+    // After fix:
+    //   Declared logical size  : 1920 × 1080 px
+    //   Computed layout size   : 1920 × 1080 px  ← flex:none holds the box
+    //   BoundingClientRect.width: 1920 px
+    //   Transform scale        : correct (scale = tile / 1920)
+    //   Final rendered size    : 1920 × scale ≈ tile width (landscape)
+    //   Appearance             : correct landscape rendering
+    //
+    // This test asserts the property is present so the fix cannot silently regress.
+    const monitorSrc = readFileSync(
+      join(__dirname, "..", "client", "src", "pages", "monitor.tsx"),
+      "utf8",
+    );
+    assert.match(
+      monitorSrc,
+      /flex\s*:\s*["']none["']/,
+      'logical surface container must have flex:"none" to prevent Flexbox shrink before scale()',
+    );
+  });
+
   test("9b. Monitor viewport uses profile dimensions, not layout ratio units", () => {
     const monitorSrc = readFileSync(
       join(__dirname, "..", "client", "src", "pages", "monitor.tsx"),

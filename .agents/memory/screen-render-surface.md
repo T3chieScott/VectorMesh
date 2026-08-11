@@ -6,6 +6,12 @@ description: ScreenRenderSurface component and the profile-dimensions logical su
 ## Rule
 Both Player and Monitor use **profile dimensions** (e.g. 1920×1080) as the logical screen surface — not REFERENCE_HEIGHT=720 and not `getAspectRatioDimensions()` ratio units.
 
+## flex:none on the Monitor logical surface container
+The Monitor outer div is `display:flex` (for centering). The inner logical-surface div **must have `flex: "none"`** to prevent Flexbox from shrinking it from 1920 px to the tile width before `scale()` is applied. CSS transforms happen *after* layout, so Flexbox shrinks the box first and then scale operates on an already-corrupted width — producing portrait-strip rendering inside a landscape tile.
+
+Before fix: declared=1920px, computed layout=525px (tile width), transform applies to 525px → wrong  
+After fix: declared=1920px, computed layout=1920px (flex:none holds), transform scales correctly → landscape renders as landscape
+
 - Player: `captureW = canvasEnabled ? canvasW : playerScreenW`  (was `trueWidth = REFERENCE_HEIGHT * aspectRatio`)
 - Monitor: `viewportW = monitorScreenW` always  (was `canvasEnabled ? monitorScreenW : layoutAspect.width`, where `layoutAspect.width` for "16:9" is 16 not 1920)
 
