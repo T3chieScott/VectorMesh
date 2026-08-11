@@ -28,6 +28,7 @@ import rateLimit from "express-rate-limit";
 import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
 import type { Client, Event, ScreenGroup, Screen, DisplayProfile, MonitorSession, InsertMonitorSession } from "@shared/schema";
 import { getPathParam } from "../requestParams";
+import { find as findTz } from "geo-tz";
 
 // ============ Scope constants ============
 
@@ -593,6 +594,9 @@ export function mountOperationsRoutes(
   },
 ): void {
   const { storage: st, auth, requireAuthOrToken, loadUserContext, monitor } = deps;
+
+  // In-process cache for the monitor weather endpoint (10-minute TTL).
+  const monitorWeatherCache = new Map<string, { data: unknown; ts: number }>();
 
   // ---- Scope middleware factory ----
   //
@@ -1218,6 +1222,87 @@ export function mountOperationsRoutes(
       } catch (err) {
         console.error("[operations] GET /api/monitor/media error:", err);
         res.status(500).json({ error: "Failed to serve monitor media file" });
+      }
+    },
+  );
+
+  // ---- GET /api/monitor/widgets/weather ----
+  // Cookie-authenticated weather endpoint for monitor clients.
+  // Mirrors GET /api/player/widgets/weather but uses monitor session auth
+  // instead of device-token auth. Returns the same payload shape so the
+  // monitor can display wall-clock times in the weather location's timezone.
+  app.get(
+    "/api/monitor/widgets/weather",
+    async (req: Request, res: Response) => {
+      try {
+        const session = await validateMonitorCookie(req, st);
+        if (!session) {
+          return res.status(401).type("application/json").send(MONITOR_401_JSON);
+        }
+
+        const latStr = req.query["lat"];
+        const lngStr = req.query["lng"];
+        const unitRaw = req.query["unit"];
+        const lat = parseFloat(typeof latStr === "string" ? latStr : "");
+        const lng = parseFloat(typeof lngStr === "string" ? lngStr : "");
+        const unit = typeof unitRaw === "string" && unitRaw ? unitRaw : "celsius";
+
+        if (isNaN(lat) || isNaN(lng)) {
+          return res.status(400).json({ error: "Invalid latitude or longitude" });
+        }
+
+        // Reuse the shared weather cache key format so monitor + player hits
+        // benefit from the same in-process cache (defined in routes.ts).
+        // This endpoint proxies Open-Meteo directly with its own local cache
+        // to avoid coupling the operations module to routes.ts internals.
+        const cacheKey = `monitor:${lat.toFixed(4)},${lng.toFixed(4)},${unit}`;
+        const WEATHER_TTL = 10 * 60 * 1000;
+        const cached = monitorWeatherCache.get(cacheKey);
+        if (cached && Date.now() - cached.ts < WEATHER_TTL) {
+          return res.json(cached.data);
+        }
+
+        const tempUnit = unit === "fahrenheit" ? "fahrenheit" : "celsius";
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&temperature_unit=${tempUnit}&timezone=auto`;
+        const weatherRes = await fetch(url);
+        if (!weatherRes.ok) throw new Error("Weather API request failed");
+        const data = await weatherRes.json() as Record<string, unknown>;
+        const current = data.current as Record<string, unknown>;
+
+        const weatherConditions: Record<number, { condition: string; icon: string }> = {
+          0: { condition: "Clear", icon: "sun" }, 1: { condition: "Mainly Clear", icon: "sun" },
+          2: { condition: "Partly Cloudy", icon: "cloud-sun" }, 3: { condition: "Overcast", icon: "cloud" },
+          45: { condition: "Foggy", icon: "cloud-fog" }, 48: { condition: "Rime Fog", icon: "cloud-fog" },
+          51: { condition: "Light Drizzle", icon: "cloud-drizzle" }, 53: { condition: "Drizzle", icon: "cloud-drizzle" },
+          55: { condition: "Dense Drizzle", icon: "cloud-drizzle" }, 61: { condition: "Light Rain", icon: "cloud-rain" },
+          63: { condition: "Rain", icon: "cloud-rain" }, 65: { condition: "Heavy Rain", icon: "cloud-rain" },
+          71: { condition: "Light Snow", icon: "snowflake" }, 73: { condition: "Snow", icon: "snowflake" },
+          75: { condition: "Heavy Snow", icon: "snowflake" }, 80: { condition: "Rain Showers", icon: "cloud-rain" },
+          81: { condition: "Heavy Rain Showers", icon: "cloud-rain" }, 82: { condition: "Violent Rain", icon: "cloud-rain" },
+          95: { condition: "Thunderstorm", icon: "cloud-lightning" },
+          96: { condition: "Thunderstorm with Hail", icon: "cloud-lightning" },
+          99: { condition: "Severe Thunderstorm", icon: "cloud-lightning" },
+        };
+        const wcode = current.weather_code as number;
+        const weatherInfo = weatherConditions[wcode] ?? { condition: "Unknown", icon: "cloud" };
+        const timezones = findTz(lat, lng);
+        const timezone = timezones.length > 0 ? timezones[0] : "UTC";
+
+        const weatherData = {
+          temperature: Math.round(current.temperature_2m as number),
+          unit: unit === "fahrenheit" ? "°F" : "°C",
+          condition: weatherInfo.condition,
+          icon: weatherInfo.icon,
+          humidity: current.relative_humidity_2m,
+          windSpeed: Math.round(current.wind_speed_10m as number),
+          timestamp: new Date().toISOString(),
+          timezone,
+        };
+        monitorWeatherCache.set(cacheKey, { data: weatherData, ts: Date.now() });
+        res.json(weatherData);
+      } catch (err) {
+        console.error("[operations] GET /api/monitor/widgets/weather error:", err);
+        res.status(500).json({ error: "Failed to fetch weather data" });
       }
     },
   );

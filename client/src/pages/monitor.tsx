@@ -39,7 +39,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { MediaAsset, LayoutZone } from "@shared/schema";
-import { getAspectRatioDimensions } from "@/components/zone-renderer";
+import { getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
 import { ScreenRenderSurface } from "@/components/screen-render-surface";
 import { PlayerClockProvider, usePlayerClock } from "@/lib/playerClock";
 import { buildFontFaceCss } from "@/lib/fontFace";
@@ -136,6 +136,7 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
   const [zoneMediaIndices, setZoneMediaIndices] = useState<Record<string, number>>({});
   // Layout rotation: index into the zoneSources-driven rotation list
   const [layoutRotationIndex, setLayoutRotationIndex] = useState(0);
+  const [weatherTimezone, setWeatherTimezone] = useState<string | undefined>(undefined);
   const layoutRotationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -362,6 +363,28 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
     return () => clearInterval(interval);
   }, [zones, content?.media]);
 
+  // ── Weather timezone fetch (mirrors PlayerContent weather effect) ──────────
+  // Finds the first weather-type zone, calls the monitor weather endpoint,
+  // and stores the returned IANA timezone so weather widgets display
+  // wall-clock times in the weather location's timezone — matching the
+  // physical player's behaviour.
+  useEffect(() => {
+    const weatherZone = zones.find(
+      (z) => z.type === "weather" && z.weatherLat && z.weatherLng,
+    );
+    if (weatherZone && weatherZone.weatherLat && weatherZone.weatherLng) {
+      fetch(
+        `/api/monitor/widgets/weather?lat=${weatherZone.weatherLat}&lng=${weatherZone.weatherLng}&unit=${weatherZone.weatherUnit || "celsius"}`,
+        { credentials: "same-origin" },
+      )
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.timezone) setWeatherTimezone(data.timezone);
+        })
+        .catch(() => {});
+    }
+  }, [zones.length, layout?.id]);
+
   // ── Content fetch ─────────────────────────────────────────────────────────
   // Authenticated by the HttpOnly monitor-session cookie.
   // No device-token header is ever sent (canPersistDeviceIdentity = false).
@@ -489,10 +512,12 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
          */}
         <ScreenRenderSurface
           zones={zones}
+          zoneKey={(zone) => isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
           media={content.media || []}
           zoneMediaIndices={zoneMediaIndices}
           mediaBaseUrl="/api/monitor/media"
           screenTimezone={content.screen?.timezone ?? undefined}
+          weatherTimezone={weatherTimezone}
           playerContext={{
             screenName: content.playerVars?.screenName ?? content.screen?.name,
             roomName: content.playerVars?.roomName ?? content.screen?.location,
