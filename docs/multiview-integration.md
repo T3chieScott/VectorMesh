@@ -13,7 +13,38 @@ This guide describes how the **VectorMesh Multiview** Electron application integ
 
 ## Step 1 — Discover Screens
 
-List the screens you want to monitor.
+### Recommended: all screens in one request
+
+Use the project-screens endpoint to retrieve every screen for a project — grouped and ungrouped — in a single call:
+
+```http
+GET /api/operations/projects/{projectId}/screens
+Authorization: Bearer vm_YOUR_TOKEN
+
+→ [
+    {
+      "id": "screen-uuid",
+      "name": "Hall A — Stage Left",
+      "status": { "online": true, "lastHeartbeat": "2026-08-10T14:22:00.000Z" },
+      "display": { "width": 1920, "height": 1080 },
+      "player": { "hostname": "pi-hall-a-sl", "ipAddress": "192.168.1.10", "hardwareClass": "pi4" },
+      "groups": [{ "id": "group-uuid", "name": "Hall A" }]
+    },
+    {
+      "id": "screen-uuid-2",
+      "name": "Lobby (ungrouped)",
+      "groups": []
+    }
+  ]
+```
+
+`groups: []` means the screen is not assigned to any venue but is still returned. Screens in multiple venues appear once with all their group memberships listed.
+
+**Scope required:** `operations.screen.read`
+
+### Alternative: traverse venue-by-venue
+
+If you need to enumerate venues (screen groups) first:
 
 ```http
 GET /api/operations/projects
@@ -35,6 +66,8 @@ Authorization: Bearer vm_YOUR_TOKEN
 
 → [{ "id": "screen-uuid", "name": "Hall A — Stage Left", ... }]
 ```
+
+Note: the venue-traversal approach misses ungrouped screens. Prefer the project-screens endpoint for complete discovery.
 
 ---
 

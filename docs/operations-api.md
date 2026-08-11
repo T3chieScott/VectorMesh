@@ -79,6 +79,42 @@ Returns venues (screen groups) within a project.
 
 ---
 
+### GET /api/operations/projects/:projectId/screens
+
+Returns **every** screen belonging to a project, regardless of group membership. Each screen carries a `groups` array with the groups it belongs to — an empty array means the screen is ungrouped. This is the recommended endpoint for Multiview screen discovery; it returns all screens in one request.
+
+**Scope:** `operations.screen.read`
+
+**Response:**
+```json
+[
+  {
+    "id": "screen-uuid",
+    "name": "Hall A — Stage Left",
+    "status": { "online": true, "lastHeartbeat": "2026-08-10T14:22:00.000Z" },
+    "display": { "width": 1920, "height": 1080 },
+    "player": { "hostname": "pi-hall-a-sl", "ipAddress": "192.168.1.10", "hardwareClass": "pi4" },
+    "groups": [
+      { "id": "group-uuid", "name": "Hall A" }
+    ]
+  },
+  {
+    "id": "screen-uuid-2",
+    "name": "Lobby",
+    "status": { "online": false, "lastHeartbeat": null },
+    "display": { "width": 1920, "height": 1080 },
+    "player": { "hostname": null, "ipAddress": null, "hardwareClass": null },
+    "groups": []
+  }
+]
+```
+
+`groups: []` means the screen is ungrouped (not assigned to any venue). It is still returned by this endpoint.
+
+**Note:** `deviceToken`, `pairingCode`, and `kioskModeEnabled` are **never** returned.
+
+---
+
 ### GET /api/operations/venues/:venueId/screens
 
 Returns screens in a venue.

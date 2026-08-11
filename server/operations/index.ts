@@ -114,6 +114,16 @@ export interface OperationsRoutesStorage {
   getGroupMembers(groupId: string): Promise<Screen[]>;
   getScreen(id: string): Promise<Screen | undefined>;
   getDisplayProfile(id: string): Promise<DisplayProfile | undefined>;
+  /**
+   * Returns every screen belonging to the given client (project), regardless
+   * of group membership.  Used by GET /api/operations/projects/:id/screens.
+   */
+  getScreensByClientId(clientId: string): Promise<Screen[]>;
+  /**
+   * Returns all screen-group memberships.  Used alongside getScreensByClientId
+   * to attach group memberships to each screen in the project-screens endpoint.
+   */
+  getAllScreenGroupMemberships(): Promise<{ screenId: string; groupId: string }[]>;
 
   // Operations permissions
   getOperationsScopesForUser(userId: string): Promise<string[]>;
@@ -338,6 +348,15 @@ interface OperationsScreen {
     ipAddress: string | null;
     hardwareClass: string | null;
   };
+}
+
+/**
+ * OperationsScreen extended with group memberships, returned by
+ * GET /api/operations/projects/:projectId/screens.  A screen with no group
+ * membership has groups: [].
+ */
+interface OperationsProjectScreen extends OperationsScreen {
+  groups: { id: string; name: string }[];
 }
 
 // ============ Mapping helpers ============
@@ -636,6 +655,80 @@ export function mountOperationsRoutes(
         res.json(projects);
       } catch (err) {
         console.error("[operations] GET /projects error:", err);
+        apiError(res, 500, "INTERNAL_ERROR", "Internal server error");
+      }
+    },
+  );
+
+  // ---- GET /api/operations/projects/:projectId/screens ----
+  // Returns EVERY screen belonging to the project, regardless of group
+  // membership.  Each screen carries its group list (empty = ungrouped).
+  // This is the preferred Multiview discovery route; it supersedes the
+  // venue → venue/screens traversal for clients that want all screens in
+  // one request.  The existing venue-specific endpoint is preserved.
+  app.get(
+    "/api/operations/projects/:projectId/screens",
+    ...baseMiddleware,
+    requireScope(OPERATIONS_SCOPES.SCREEN_READ),
+    async (req: Request, res: Response) => {
+      try {
+        const projectId = getPathParam(req, "projectId");
+
+        const client = await st.getClient(projectId);
+        if (!client) return apiError(res, 404, "NOT_FOUND", "Project not found");
+        if (!(await canAccessClientForOps(req, projectId))) {
+          return apiError(res, 403, "FORBIDDEN", "Access denied");
+        }
+
+        const [projectScreens, allGroups, allMemberships] = await Promise.all([
+          st.getScreensByClientId(projectId),
+          st.getScreenGroups(),
+          st.getAllScreenGroupMemberships(),
+        ]);
+
+        // Restrict memberships to this project's screens for efficient lookup
+        const projectScreenIds = new Set(projectScreens.map((s) => s.id));
+        const relevantMemberships = allMemberships.filter((m) =>
+          projectScreenIds.has(m.screenId),
+        );
+
+        // Build group lookup
+        const groupById = new Map(allGroups.map((g) => [g.id, g]));
+
+        // Build screen → sorted group list
+        const screenGroupsMap = new Map<string, { id: string; name: string }[]>();
+        for (const m of relevantMemberships) {
+          const group = groupById.get(m.groupId);
+          if (!group) continue;
+          if (!screenGroupsMap.has(m.screenId)) screenGroupsMap.set(m.screenId, []);
+          screenGroupsMap.get(m.screenId)!.push({ id: group.id, name: group.name });
+        }
+
+        // Batch-fetch display profiles (deduplicated)
+        const profileIds = [
+          ...new Set(
+            projectScreens.map((s) => s.displayProfileId).filter(Boolean) as string[],
+          ),
+        ];
+        const profileMap = new Map<string, DisplayProfile>();
+        await Promise.all(
+          profileIds.map(async (pid) => {
+            const p = await st.getDisplayProfile(pid);
+            if (p) profileMap.set(pid, p);
+          }),
+        );
+
+        const result: OperationsProjectScreen[] = projectScreens.map((s) => ({
+          ...mapScreen(
+            s,
+            s.displayProfileId ? (profileMap.get(s.displayProfileId) ?? null) : null,
+          ),
+          groups: screenGroupsMap.get(s.id) ?? [],
+        }));
+
+        res.json(result);
+      } catch (err) {
+        console.error("[operations] GET /projects/:id/screens error:", err);
         apiError(res, 500, "INTERNAL_ERROR", "Internal server error");
       }
     },

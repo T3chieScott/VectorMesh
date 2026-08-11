@@ -36,6 +36,8 @@ function makeMinimalStorage(): OperationsRoutesStorage {
     getGroupMembers: async () => [],
     getScreen: async () => undefined,
     getDisplayProfile: async () => undefined,
+    getScreensByClientId: async () => [],
+    getAllScreenGroupMemberships: async () => [],
     getOperationsScopesForUser: async () => [],
     getOperationsScopesForToken: async () => [],
     createMonitorSession: async () => { throw new Error("not implemented"); },

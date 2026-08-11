@@ -289,6 +289,7 @@ export interface IStorage {
 
   // Screens
   getScreens(): Promise<Screen[]>;
+  getScreensByClientId(clientId: string): Promise<Screen[]>;
   getScreen(id: string): Promise<Screen | undefined>;
   getScreenByPairingCode(code: string): Promise<Screen | undefined>;
   getScreenByDeviceToken(token: string): Promise<Screen | undefined>;
@@ -1078,6 +1079,14 @@ export class DatabaseStorage implements IStorage {
     return db
       .select()
       .from(screens)
+      .orderBy(sql`${screens.displayOrder} ASC NULLS LAST`, asc(screens.createdAt));
+  }
+
+  async getScreensByClientId(clientId: string): Promise<Screen[]> {
+    return db
+      .select()
+      .from(screens)
+      .where(eq(screens.clientId, clientId))
       .orderBy(sql`${screens.displayOrder} ASC NULLS LAST`, asc(screens.createdAt));
   }
 

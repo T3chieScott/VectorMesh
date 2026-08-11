@@ -186,6 +186,12 @@ function makeFakeStorage(seed: {
     },
     async getScreen(id) { return screens.find((s) => s.id === id); },
     async getDisplayProfile(id) { return profiles.find((p) => p.id === id); },
+    async getScreensByClientId(clientId) { return screens.filter((s) => s.clientId === clientId); },
+    async getAllScreenGroupMemberships() {
+      return screens.flatMap((s) =>
+        (s as any)._groupId ? [{ screenId: s.id, groupId: (s as any)._groupId as string }] : [],
+      );
+    },
     async getOperationsScopesForUser(userId) { return userScopes[userId] ?? []; },
     async getOperationsScopesForToken(tokenId) { return tokenScopes[tokenId] ?? []; },
   };
