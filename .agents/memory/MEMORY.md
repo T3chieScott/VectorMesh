@@ -19,3 +19,4 @@
 - [Agenda session dedup](agenda-session-dedup.md) — display collapses per-speaker rows by (client,title,start,end,room); status-merge precedence must cover every AGENDA_STATUSES value or live sessions get downgraded.
 - [Display wall-clock times use site tz](display-timezone.md) — player runs on Raspberry Pis with unreliable OS clocks; format all on-screen times in clients.timezone via shared/timezone-utils, never the device clock.
 - [Sweepstake rotation timer](sweepstake-rotation-timer.md) — one shared timer pages within + rotates between slides; don't bail on slides.length<=1, re-arm on page-count growth, depend on primitive keys not the polled data object.
+- [Monitor widget auth](monitor-widget-auth.md) — Monitor has no deviceToken; widgets must use /api/monitor/widgets/… (cookie auth), not /api/widgets/… (requireAuth); widgetBaseUrl derived from mediaBaseUrl in ZoneRenderer.

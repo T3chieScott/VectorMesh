@@ -1204,6 +1204,7 @@ function HeathrowFlightsWidget({
   showFilters = false,
   visibleColumns,
   deviceToken,
+  widgetBaseUrl = "/api",
 }: {
   direction: "arrival" | "departure";
   terminal?: string;
@@ -1214,6 +1215,7 @@ function HeathrowFlightsWidget({
   showFilters?: boolean;
   visibleColumns?: string[];
   deviceToken?: string;
+  widgetBaseUrl?: string;
 }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -1232,9 +1234,7 @@ function HeathrowFlightsWidget({
     const fetchFlights = async () => {
       try {
         const dirPath = direction === "arrival" ? "arrivals" : "departures";
-        const baseEndpoint = deviceToken
-          ? `/api/player/widgets/heathrow/${dirPath}`
-          : `/api/widgets/heathrow/${dirPath}`;
+        const baseEndpoint = `${widgetBaseUrl}/widgets/heathrow/${dirPath}`;
 
         const params = new URLSearchParams();
         if (filterTerminal) params.set("terminal", filterTerminal);
@@ -1544,6 +1544,7 @@ function WeatherForecastWidget({
   showHumidity = false,
   showHourlyCondition = false,
   deviceToken,
+  widgetBaseUrl = "/api",
 }: {
   lat?: number;
   lon?: number;
@@ -1558,6 +1559,7 @@ function WeatherForecastWidget({
   showHumidity?: boolean;
   showHourlyCondition?: boolean;
   deviceToken?: string;
+  widgetBaseUrl?: string;
 }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -1568,9 +1570,7 @@ function WeatherForecastWidget({
 
     const fetchForecast = async () => {
       try {
-        const baseEndpoint = deviceToken
-          ? "/api/player/widgets/weather-forecast"
-          : "/api/widgets/weather-forecast";
+        const baseEndpoint = `${widgetBaseUrl}/widgets/weather-forecast`;
 
         const params = new URLSearchParams();
         if (lat !== undefined) params.set("lat", String(lat));
@@ -1892,6 +1892,7 @@ function EarthquakesWidget({
   itemsPerPage = 8,
   pageDuration = 8,
   deviceToken,
+  widgetBaseUrl = "/api",
 }: {
   feed?: string;
   minMagnitude?: number;
@@ -1906,6 +1907,7 @@ function EarthquakesWidget({
   itemsPerPage?: number;
   pageDuration?: number;
   deviceToken?: string;
+  widgetBaseUrl?: string;
 }) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1922,9 +1924,7 @@ function EarthquakesWidget({
 
     const fetchData = async () => {
       try {
-        const base = deviceToken
-          ? `/api/player/widgets/earthquakes/recent`
-          : `/api/widgets/earthquakes/recent`;
+        const base = `${widgetBaseUrl}/widgets/earthquakes/recent`;
         const params = new URLSearchParams();
         if (feed) params.set("feed", feed);
         if (minMagnitude > 0) params.set("minMagnitude", String(minMagnitude));
@@ -2546,6 +2546,7 @@ function AircraftRadarWidget({
   itemsPerPage = 8,
   pageDuration = 8,
   deviceToken,
+  widgetBaseUrl = "/api",
 }: {
   refreshInterval?: number;
   fontSize?: number;
@@ -2565,6 +2566,7 @@ function AircraftRadarWidget({
   itemsPerPage?: number;
   pageDuration?: number;
   deviceToken?: string;
+  widgetBaseUrl?: string;
 }) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
@@ -2579,9 +2581,7 @@ function AircraftRadarWidget({
     let mounted = true;
     const fetchData = async () => {
       try {
-        const base = deviceToken
-          ? `/api/player/widgets/aircraft/overhead`
-          : `/api/widgets/aircraft/overhead`;
+        const base = `${widgetBaseUrl}/widgets/aircraft/overhead`;
         const params = new URLSearchParams();
         params.set("lamin", String(boundsLamin));
         params.set("lomin", String(boundsLomin));
@@ -3360,6 +3360,7 @@ function SpaceXLaunchWidget({
   showLinks = false,
   showLaunchpad = true,
   deviceToken,
+  widgetBaseUrl = "/api",
 }: {
   refreshInterval?: number;
   fontSize?: number;
@@ -3368,6 +3369,7 @@ function SpaceXLaunchWidget({
   showLinks?: boolean;
   showLaunchpad?: boolean;
   deviceToken?: string;
+  widgetBaseUrl?: string;
 }) {
   const [launchData, setLaunchData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
@@ -3378,9 +3380,7 @@ function SpaceXLaunchWidget({
 
     const fetchData = async () => {
       try {
-        const base = deviceToken
-          ? `/api/player/widgets/spacex/next-launch`
-          : `/api/widgets/spacex/next-launch`;
+        const base = `${widgetBaseUrl}/widgets/spacex/next-launch`;
         const headers: Record<string, string> = {};
         if (deviceToken) headers["x-device-token"] = deviceToken;
 
@@ -3647,6 +3647,7 @@ function NewsWidget({
   textSize = 24,
   showHeader = true,
   deviceToken,
+  widgetBaseUrl = "/api",
 }: { 
   rssUrl?: string;
   scrollSpeed?: number;
@@ -3654,6 +3655,7 @@ function NewsWidget({
   textSize?: number;
   showHeader?: boolean;
   deviceToken?: string;
+  widgetBaseUrl?: string;
 }) {
   const [news, setNews] = useState<{ title: string; link: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3671,7 +3673,7 @@ function NewsWidget({
       }
 
       try {
-        const baseEndpoint = deviceToken ? "/api/player/widgets/news" : "/api/widgets/news";
+        const baseEndpoint = `${widgetBaseUrl}/widgets/news`;
         const tokenParam = deviceToken ? `&token=${deviceToken}` : "";
         const response = await fetch(`${baseEndpoint}?url=${encodeURIComponent(rssUrl)}&count=${itemCount}${tokenParam}`);
         if (!response.ok) throw new Error("RSS fetch failed");
@@ -5615,6 +5617,16 @@ export function ZoneRenderer({
   usePlayerVariableTick(30_000);
   const ctx = playerContext;
 
+  // Derive the widget fetch base URL from mediaBaseUrl so every host uses its
+  // own auth-protected endpoint rather than having each widget branch on
+  // deviceToken presence to pick a URL.
+  //   "/api/player/media"  → "/api/player"  → /api/player/widgets/…  (device-token auth)
+  //   "/api/monitor/media" → "/api/monitor" → /api/monitor/widgets/… (session-cookie auth)
+  //   undefined (admin / simulator)         → "/api"                 (user-session auth)
+  const widgetBaseUrl = mediaBaseUrl
+    ? mediaBaseUrl.replace(/\/media$/, "")
+    : "/api";
+
   const renderContent = () => {
     switch (zone.type) {
       case "media": {
@@ -5683,6 +5695,7 @@ export function ZoneRenderer({
             textSize={zone.newsTextSize}
             showHeader={showBorder}
             deviceToken={deviceToken}
+            widgetBaseUrl={widgetBaseUrl}
           />
         );
       case "text":
@@ -5873,6 +5886,7 @@ export function ZoneRenderer({
             showFilters={zone.heathrowShowFilters}
             visibleColumns={zone.heathrowColumns}
             deviceToken={deviceToken}
+            widgetBaseUrl={widgetBaseUrl}
           />
         );
       case "heathrow_departures":
@@ -5887,6 +5901,7 @@ export function ZoneRenderer({
             showFilters={zone.heathrowShowFilters}
             visibleColumns={zone.heathrowColumns}
             deviceToken={deviceToken}
+            widgetBaseUrl={widgetBaseUrl}
           />
         );
       case "weather_forecast":
@@ -5905,6 +5920,7 @@ export function ZoneRenderer({
             showHumidity={zone.forecastShowHumidity}
             showHourlyCondition={zone.forecastShowHourlyCondition}
             deviceToken={deviceToken}
+            widgetBaseUrl={widgetBaseUrl}
           />
         );
       case "earthquakes": {
@@ -5927,6 +5943,7 @@ export function ZoneRenderer({
             itemsPerPage={zone.earthquakeItemsPerPage}
             pageDuration={zone.earthquakePageDuration}
             deviceToken={deviceToken}
+            widgetBaseUrl={widgetBaseUrl}
           />
         );
       }
@@ -5951,6 +5968,7 @@ export function ZoneRenderer({
             itemsPerPage={zone.aircraftItemsPerPage}
             pageDuration={zone.aircraftPageDuration}
             deviceToken={deviceToken}
+            widgetBaseUrl={widgetBaseUrl}
           />
         );
       case "spacex_launch":
@@ -5963,6 +5981,7 @@ export function ZoneRenderer({
             showLinks={zone.spacexShowLinks}
             showLaunchpad={zone.spacexShowLaunchpad}
             deviceToken={deviceToken}
+            widgetBaseUrl={widgetBaseUrl}
           />
         );
       case "youtube_live":

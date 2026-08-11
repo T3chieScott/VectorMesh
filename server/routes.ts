@@ -80,6 +80,7 @@ import {
   ADMIN_VISIBLE_SCOPES,
   ALL_OPERATIONS_SCOPE_VALUES,
   OPERATIONS_SCOPES,
+  validateMonitorCookie,
 } from "./operations/index";
 import {
   decideVideoHealthUpdate,
@@ -315,6 +316,17 @@ function stripSensitiveFields(user: any) {
 
 const requireAuth = isAuthenticated;
 const requireAuthOrToken = isAuthenticatedOrToken;
+
+// Middleware that accepts a monitor session cookie (HttpOnly) in place of a
+// user login session.  Used for widget endpoints that Monitor clients call
+// directly — same data/handlers, different auth path.
+async function requireMonitorSession(req: Request, res: Response, next: NextFunction) {
+  const session = await validateMonitorCookie(req, storage);
+  if (!session) {
+    return res.status(401).json({ error: "Monitor session required" });
+  }
+  next();
+}
 
 async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   const user = (req as any).dbUser;
@@ -4134,6 +4146,20 @@ export async function registerRoutes(
   const handleAircraftOverhead = createAircraftOverheadHandler();
   app.get("/api/widgets/aircraft/overhead", requireAuth, handleAircraftOverhead);
   app.get("/api/player/widgets/aircraft/overhead", validateDeviceToken, handleAircraftOverhead);
+
+  // ============ MONITOR-SESSION WIDGET ENDPOINTS ============
+  // Same handlers as the player/admin variants above but authenticated via the
+  // HttpOnly monitor-session cookie rather than a device token or user login.
+  // widgetBaseUrl derived from mediaBaseUrl="/api/monitor/media" routes here.
+  app.get("/api/monitor/widgets/news", requireMonitorSession, handleNewsRequest);
+  app.get("/api/monitor/widgets/weather-forecast", requireMonitorSession, handleWeatherForecast);
+  app.get("/api/monitor/widgets/heathrow/arrivals", requireMonitorSession, handleHeathrowArrivals);
+  app.get("/api/monitor/widgets/heathrow/departures", requireMonitorSession, handleHeathrowDepartures);
+  app.get("/api/monitor/widgets/earthquakes/recent", requireMonitorSession, handleEarthquakes);
+  app.get("/api/monitor/widgets/aircraft/overhead", requireMonitorSession, handleAircraftOverhead);
+  app.get("/api/monitor/widgets/spacex/next-launch", requireMonitorSession, handleSpaceXLaunch);
+  app.get("/api/monitor/widgets/football/premier-league/table", requireMonitorSession, handlePremierLeagueTable);
+  app.get("/api/monitor/widgets/football/premier-league/fixtures", requireMonitorSession, handlePremierLeagueFixtures);
 
   // ============ ADMIN: USER MANAGEMENT ============
 
