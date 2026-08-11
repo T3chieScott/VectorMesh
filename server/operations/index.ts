@@ -429,7 +429,18 @@ function mapScreen(screen: Screen, profile: DisplayProfile | null): OperationsSc
 
 // ============ Monitor bootstrap rate limiter ============
 
-const DEFAULT_MONITOR_BOOTSTRAP_RATE_LIMIT_MAX = 10;
+/**
+ * Default maximum number of *failed* bootstrap attempts per IP per minute.
+ *
+ * This counter only increments when the bootstrap route returns a 4xx
+ * response (invalid token, expired session, etc.) because the limiter is
+ * configured with `skipSuccessfulRequests: true`.  Successful exchanges
+ * (HTTP 302 redirect) never consume budget, so a Multiview startup with
+ * 50+ screens cannot be self-throttled by valid activity.
+ *
+ * Overridable at runtime via the MONITOR_BOOTSTRAP_RATE_LIMIT_MAX env var.
+ */
+const DEFAULT_MONITOR_BOOTSTRAP_RATE_LIMIT_MAX = 50;
 
 function getMonitorBootstrapRateLimitMax(): number {
   const env = process.env.MONITOR_BOOTSTRAP_RATE_LIMIT_MAX;
@@ -452,21 +463,53 @@ const MONITOR_429_JSON = JSON.stringify({
 
 /**
  * IP-based rate limiter for the monitor bootstrap endpoint.
+ *
+ * Design:
+ *   - `skipSuccessfulRequests: true` — successful exchanges (HTTP 302) are
+ *     NOT counted against the limit.  Only failed/invalid requests (401) are
+ *     counted.  This ensures a legitimate Multiview startup with many screens
+ *     can never be rate-limited by its own valid traffic.
+ *   - `max` controls how many *failed* attempts are allowed per IP per minute.
+ *     Default is 50 (see DEFAULT_MONITOR_BOOTSTRAP_RATE_LIMIT_MAX).
+ *   - The handler logs safe diagnostics (IP, reset time) and sets a
+ *     `Retry-After` header.  Raw tokens, session secrets, and cookies are
+ *     never logged.
+ *
  * Built lazily on first mount so the env var is read at runtime.
  */
 function createMonitorBootstrapRateLimiter() {
   return rateLimit({
-    windowMs: 60 * 1000, // 1 minute
+    windowMs: 60 * 1000, // 1-minute sliding window
     max: getMonitorBootstrapRateLimitMax(),
-    standardHeaders: true,
+    standardHeaders: true,  // RFC RateLimit-* headers
     legacyHeaders: false,
-    handler: (_req: Request, res: Response) => {
+    // Only count failed requests (401/429) — successful 302 exchanges are free.
+    skipSuccessfulRequests: true,
+    handler: (req: Request, res: Response) => {
+      // Safe diagnostics — never log tokens, secrets, or session IDs.
+      const info = (req as any).rateLimit as
+        | { resetTime?: Date; remaining?: number; limit?: number }
+        | undefined;
+      const resetTime = info?.resetTime;
+      const resetIso = resetTime instanceof Date ? resetTime.toISOString() : "unknown";
+      const retryAfterSecs = resetTime instanceof Date
+        ? Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+        : 60;
+
+      console.warn(
+        `[monitor-bootstrap] rate limit exceeded` +
+          ` | route=GET /monitor-bootstrap/:screenId` +
+          ` | ip=${req.ip ?? "unknown"}` +
+          ` | resetAt=${resetIso}` +
+          ` | retryAfter=${retryAfterSecs}s`,
+      );
+
+      res.setHeader("Retry-After", String(retryAfterSecs));
       res.status(429).type("application/json").send(MONITOR_429_JSON);
     },
     // Use the library's built-in IP key handling (IPv6-safe normalization).
-    // Do NOT supply a custom keyGenerator — express-rate-limit v8+ warns
-    // about raw req.ip keys on IPv6 because callers can cycle subnet addresses
-    // to evade limits; the library default handles this correctly.
+    // Do NOT supply a custom keyGenerator — express-rate-limit v7+ warns
+    // about raw req.ip keys on IPv6; the library default handles this.
   });
 }
 
@@ -1041,9 +1084,11 @@ export function mountOperationsRoutes(
   // This route is NOT behind requireAuthOrToken — it authenticates itself
   // via the single-use bootstrap token in the query string.
   //
-  // Rate-limited: max MONITOR_BOOTSTRAP_RATE_LIMIT_MAX (default 10) attempts
-  // per IP per minute. 429 returns the same body shape as 401 so it cannot
-  // be used as a timing oracle.
+  // Rate-limited: per-IP limiter counts only FAILED (4xx) attempts.
+  // Successful 302 exchanges are NOT counted (skipSuccessfulRequests: true)
+  // so a Multiview startup with 25–50+ screens never rate-limits itself.
+  // Default cap: MONITOR_BOOTSTRAP_RATE_LIMIT_MAX (default 50) failed
+  // attempts per IP per minute. 429 returns the same body shape as 401.
   app.get(
     "/monitor-bootstrap/:screenId",
     createMonitorBootstrapRateLimiter(),
