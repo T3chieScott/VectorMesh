@@ -288,6 +288,37 @@ export async function validateMonitorCookie(
   return session;
 }
 
+/**
+ * Factory that creates a `requireMonitorSession` Express middleware backed by
+ * the provided storage implementation.
+ *
+ * Exporting the factory (rather than a single middleware closure) keeps the
+ * auth gate unit-testable: tests can inject a stub storage without spinning up
+ * the full production storage layer.
+ *
+ * Usage in routes.ts:
+ *   const requireMonitorSession = createRequireMonitorSession(storage);
+ *
+ * Usage in tests:
+ *   const requireMonitorSession = createRequireMonitorSession(stubStorage);
+ */
+export function createRequireMonitorSession(
+  st: OperationsRoutesStorage,
+): (req: Request, res: Response, next: NextFunction) => Promise<void> {
+  return async function requireMonitorSession(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    const session = await validateMonitorCookie(req, st);
+    if (!session) {
+      res.status(401).json({ error: "Monitor session required" });
+      return;
+    }
+    next();
+  };
+}
+
 /** Generic 401 body — same text for ALL monitor auth failures (no oracle). */
 const MONITOR_401_JSON = JSON.stringify({
   error: "UNAUTHORIZED",

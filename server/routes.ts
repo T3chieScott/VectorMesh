@@ -81,7 +81,9 @@ import {
   ALL_OPERATIONS_SCOPE_VALUES,
   OPERATIONS_SCOPES,
   validateMonitorCookie,
+  createRequireMonitorSession,
 } from "./operations/index";
+import { mountMonitorWidgetRoutes } from "./monitorWidgetRoutes";
 import {
   decideVideoHealthUpdate,
   extractVideoStats,
@@ -320,13 +322,9 @@ const requireAuthOrToken = isAuthenticatedOrToken;
 // Middleware that accepts a monitor session cookie (HttpOnly) in place of a
 // user login session.  Used for widget endpoints that Monitor clients call
 // directly — same data/handlers, different auth path.
-async function requireMonitorSession(req: Request, res: Response, next: NextFunction) {
-  const session = await validateMonitorCookie(req, storage);
-  if (!session) {
-    return res.status(401).json({ error: "Monitor session required" });
-  }
-  next();
-}
+// Built via the exported factory so tests can inject stub storage and verify
+// the real auth gate without duplicating the middleware implementation.
+const requireMonitorSession = createRequireMonitorSession(storage);
 
 async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   const user = (req as any).dbUser;
@@ -4150,16 +4148,19 @@ export async function registerRoutes(
   // ============ MONITOR-SESSION WIDGET ENDPOINTS ============
   // Same handlers as the player/admin variants above but authenticated via the
   // HttpOnly monitor-session cookie rather than a device token or user login.
-  // widgetBaseUrl derived from mediaBaseUrl="/api/monitor/media" routes here.
-  app.get("/api/monitor/widgets/news", requireMonitorSession, handleNewsRequest);
-  app.get("/api/monitor/widgets/weather-forecast", requireMonitorSession, handleWeatherForecast);
-  app.get("/api/monitor/widgets/heathrow/arrivals", requireMonitorSession, handleHeathrowArrivals);
-  app.get("/api/monitor/widgets/heathrow/departures", requireMonitorSession, handleHeathrowDepartures);
-  app.get("/api/monitor/widgets/earthquakes/recent", requireMonitorSession, handleEarthquakes);
-  app.get("/api/monitor/widgets/aircraft/overhead", requireMonitorSession, handleAircraftOverhead);
-  app.get("/api/monitor/widgets/spacex/next-launch", requireMonitorSession, handleSpaceXLaunch);
-  app.get("/api/monitor/widgets/football/premier-league/table", requireMonitorSession, handlePremierLeagueTable);
-  app.get("/api/monitor/widgets/football/premier-league/fixtures", requireMonitorSession, handlePremierLeagueFixtures);
+  // Route registration is delegated to mountMonitorWidgetRoutes so that tests
+  // can call the exact same function and verify the auth gate end-to-end.
+  mountMonitorWidgetRoutes(app, requireMonitorSession, {
+    news: handleNewsRequest,
+    weatherForecast: handleWeatherForecast,
+    heathrowArrivals: handleHeathrowArrivals,
+    heathrowDepartures: handleHeathrowDepartures,
+    earthquakes: handleEarthquakes,
+    aircraftOverhead: handleAircraftOverhead,
+    spacexNextLaunch: handleSpaceXLaunch,
+    premierLeagueTable: handlePremierLeagueTable,
+    premierLeagueFixtures: handlePremierLeagueFixtures,
+  });
 
   // ============ ADMIN: USER MANAGEMENT ============
 
