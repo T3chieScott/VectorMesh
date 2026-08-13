@@ -8,6 +8,11 @@
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "typecheck": "tsc",
+    "test": "TSX_TSCONFIG_PATH=tsconfig.test.json tsx --test --test-force-exit tests/*.test.ts tests/*.test.tsx",
+    "test:unit": "TSX_TSCONFIG_PATH=tsconfig.test.json tsx --test --test-force-exit tests/*.test.ts tests/*.test.tsx",
+    "test:e2e": "playwright test --reporter=list",
+    "verify": "npm run typecheck && npm run test:unit && npm run build",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
