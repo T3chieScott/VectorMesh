@@ -4158,6 +4158,7 @@ function FootballTableWidget({
   compactMode = false,
   badgeFormat = "png",
   deviceToken,
+  widgetBaseUrl = "/api",
 }: {
   league?: string;
   season?: string;
@@ -4167,6 +4168,7 @@ function FootballTableWidget({
   compactMode?: boolean;
   badgeFormat?: "png" | "svg";
   deviceToken?: string;
+  widgetBaseUrl?: string;
 }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -4176,9 +4178,7 @@ function FootballTableWidget({
     const fetchTable = async () => {
       try {
         setError(null);
-        const baseUrl = deviceToken
-          ? `/api/player/widgets/football/${league}/table`
-          : `/api/widgets/football/${league}/table`;
+        const baseUrl = `${widgetBaseUrl}/widgets/football/${league}/table`;
         const params = season !== "auto" ? `?season=${season}` : "";
         const url = deviceToken
           ? `${baseUrl}${params}${params ? "&" : "?"}token=${deviceToken}`
@@ -4197,7 +4197,7 @@ function FootballTableWidget({
     fetchTable();
     const interval = setInterval(fetchTable, refreshInterval * 1000);
     return () => clearInterval(interval);
-  }, [league, season, refreshInterval, deviceToken]);
+  }, [league, season, refreshInterval, deviceToken, widgetBaseUrl]);
 
   if (loading) {
     return (
@@ -4320,6 +4320,7 @@ function PremierLeagueFixturesWidget({
   pageDuration = 8,
   limit = 20,
   deviceToken,
+  widgetBaseUrl = "/api",
 }: {
   daysAhead?: number;
   refreshInterval?: number;
@@ -4333,6 +4334,7 @@ function PremierLeagueFixturesWidget({
   pageDuration?: number;
   limit?: number;
   deviceToken?: string;
+  widgetBaseUrl?: string;
 }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -4343,9 +4345,7 @@ function PremierLeagueFixturesWidget({
     const fetchFixtures = async () => {
       try {
         setError(null);
-        const baseUrl = deviceToken
-          ? `/api/player/widgets/football/premier-league/fixtures`
-          : `/api/widgets/football/premier-league/fixtures`;
+        const baseUrl = `${widgetBaseUrl}/widgets/football/premier-league/fixtures`;
         const params = `?days=${daysAhead}`;
         const url = deviceToken
           ? `${baseUrl}${params}&token=${deviceToken}`
@@ -4364,7 +4364,7 @@ function PremierLeagueFixturesWidget({
     fetchFixtures();
     const interval = setInterval(fetchFixtures, refreshInterval * 1000);
     return () => clearInterval(interval);
-  }, [daysAhead, refreshInterval, deviceToken]);
+  }, [daysAhead, refreshInterval, deviceToken, widgetBaseUrl]);
 
   const fixtures = useMemo(() => {
     if (!data?.fixtures) return [];
@@ -5855,6 +5855,7 @@ export function ZoneRenderer({
             compactMode={zone.footballCompactMode}
             badgeFormat={zone.footballBadgeFormat}
             deviceToken={deviceToken}
+            widgetBaseUrl={widgetBaseUrl}
           />
         );
       case "premier_league_fixtures":
@@ -5872,6 +5873,7 @@ export function ZoneRenderer({
             pageDuration={zone.plFixturesPageDuration}
             limit={zone.plFixturesLimit}
             deviceToken={deviceToken}
+            widgetBaseUrl={widgetBaseUrl}
           />
         );
       case "heathrow_arrivals":
