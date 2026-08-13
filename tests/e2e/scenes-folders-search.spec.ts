@@ -116,6 +116,12 @@ test.describe("Task #313: Scenes sidebar folders + search", () => {
     await page.getByTestId("input-scene-folder-name").fill(folderName);
     await page.getByTestId("button-save-scene-folder").click();
 
+    // Wait for the mutation's onSuccess toast before reading the DB.
+    // The toast fires only after the server returns HTTP 201, which means
+    // the INSERT is committed.  Without this, the DB assertion races the
+    // async POST and fails intermittently.
+    await expect(page.getByText("Folder created")).toBeVisible({ timeout: 10_000 });
+
     // The new (empty) folder section shows even with no scenes inside.
     const folderRows = await db
       .select({ id: layoutFolders.id, clientId: layoutFolders.clientId })

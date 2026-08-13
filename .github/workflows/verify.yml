@@ -1,0 +1,75 @@
+name: Static verification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Minimal permissions — read-only checkout only.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same branch or PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-verification:
+    name: Typecheck and build
+    runs-on: ubuntu-latest
+    # 10 minutes is ample for a cold npm ci + tsc + vite build.
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check lockfile portability
+        # package-lock.json must contain only publicly resolvable registry
+        # URLs.  Replit routes npm traffic through an internal proxy
+        # (package-firewall.replit.local) which is unreachable outside the
+        # Replit environment.  If any such URL was accidentally committed,
+        # npm ci will fail with a network error on the GitHub runner.
+        run: |
+          if grep -q "package-firewall.replit.local" package-lock.json; then
+            echo "ERROR: package-lock.json contains Replit-internal package URLs"
+            echo "       (package-firewall.replit.local) that are not portable."
+            echo "       Replace all occurrences with https://registry.npmjs.org/"
+            echo "       before pushing."
+            exit 1
+          fi
+          echo "Lockfile portability check passed."
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node.js 20 matches the Replit development runtime (v20.20.0)
+          # used to run npm run verify, npm run typecheck, and the full
+          # E2E suite.  It is not derived from @types/node alone.
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Pin npm
+        # The runner-provided npm 10.8.2 reproducibly failed during npm ci
+        # while incorrectly returning success, leaving an incomplete
+        # node_modules tree.  Pin an exact version to ensure deterministic
+        # installation on every run.
+        run: |
+          npm install --global npm@11.19.0
+          npm --version
+          [ "$(npm --version)" = "11.19.0" ] || { echo "npm version mismatch"; exit 1; }
+
+      - name: Install dependencies
+        # --no-audit and --no-fund remove non-essential network operations
+        # that are not required for static verification.
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify dependency tree
+        # Confirms node_modules is complete before typecheck and build run.
+        run: npm ls --depth=0
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build

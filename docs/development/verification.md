@@ -1,7 +1,7 @@
 # VectorMesh — Verification Baseline
 
 This document describes the repeatable verification baseline for the VectorMesh codebase.  
-All checks are designed to run in the Replit development environment. Several require PostgreSQL and are run against the Replit development database — **never the hosted production database**.
+Verification is split between GitHub Actions and the Replit development environment. Database-backed and browser checks run only in Replit against the development database — **never the hosted production database**.
 
 ---
 
@@ -15,6 +15,68 @@ The verification baseline ensures that:
 - End-to-end browser tests confirm key user flows work against the live dev server.
 
 A green baseline is required before merging any pull request. It does **not** authorise a production deployment. Production deployment follows the separate procedure in `DEPLOYMENT.md`.
+
+---
+
+## Verification gates
+
+| Gate | Checks | When | Where |
+|---|---|---|---|
+| Static CI (`verify.yml`) | `typecheck` + `build` | Every PR and push to `main` | GitHub Actions |
+| Unit and integration tests | `npm run test:unit` | Before merging | Replit development environment |
+| End-to-end browser tests | `npm run test:e2e` | Before merging | Replit development environment |
+| Full local baseline | `npm run verify` | On demand | Replit development environment |
+
+**A green static CI check is a necessary gate, not a sufficient one.** It does not replace `npm run verify` and E2E verification in Replit, and does not authorise deployment.
+
+### GitHub Actions — static verification (`verify.yml`)
+
+The workflow runs `typecheck` and `build` only. It does not require PostgreSQL, does not set `DATABASE_URL` or `SESSION_SECRET`, and does not run unit tests, E2E tests, migrations, `db:push`, or any start or deploy command.
+
+Commands executed by GitHub Actions, in order:
+
+```bash
+npm install --global npm@11.19.0
+npm --version
+npm ci --no-audit --no-fund
+npm ls --depth=0
+npm run typecheck
+npm run build
+```
+
+That is the complete list. Nothing else runs.
+
+**Why `package-lock.json` must use public registry URLs:** Replit routes npm traffic through an internal proxy (`package-firewall.replit.local`) that is unreachable outside the Replit environment. If those URLs are committed, `npm ci` on the GitHub runner silently fails the network fetch. The lockfile must use `https://registry.npmjs.org/` for all package URLs. Integrity hashes are unaffected — they verify the package artifact itself, not the URL it was fetched from.
+
+**Why the lockfile portability check runs first:** The workflow checks `package-lock.json` for Replit-internal URLs before pinning npm or installing anything. This produces a clear, actionable error message immediately rather than a cryptic network failure during install.
+
+**Why npm is pinned:** npm 10.8.2 (the runner default) was the original cause of the `npm ci` failure: it encountered a network error on the Replit-internal URLs but returned a success exit code and continued with an incomplete `node_modules` tree. The secondary TypeScript errors (`missing vite/client`, etc.) were symptoms of that incomplete install. npm 11.19.0 is pinned so that installation failures propagate correctly. The step explicitly asserts the installed version and stops the workflow if it does not match.
+
+**Why `--no-audit --no-fund`:** These flags remove non-essential network operations (vulnerability database lookup, funding metadata fetch) that are not required for static verification and add latency without changing the installed dependency tree.
+
+**Why `npm ls --depth=0`:** This confirms the top-level dependency tree is complete before `typecheck` and `build` run. If `npm ci` produces an incomplete tree it will exit non-zero here rather than producing misleading type errors downstream.
+
+**Local verification was unavailable for this change:** After the checkpoint restore, Replit's security policy blocked the restoration of `node_modules` (a transitive dependency, `webworkify-webpack → optimist@0.6.1 → minimist@0.0.10`, is not resolvable through the Replit firewall). The earlier green `npm run verify` and E2E results — obtained before the checkpoint restore on the unchanged application and test code — remain valid for those files. The lockfile portability correction and the CI workflow change are verified only by static inspection and by GitHub Actions, which is the authoritative fresh-install check for this commit.
+
+**Why unit tests are not in GitHub Actions (yet)**
+
+`npm run test:unit` connects to PostgreSQL and requires an existing schema. The unit test suite has no built-in schema bootstrap — it relies on the Replit development database, which is already initialised by `db:push` during project setup. Giving GitHub Actions a safe database requires a migration-backed schema initialisation that creates the full schema from the committed migration files rather than from `db:push`.
+
+Phase 1C should establish that mechanism. Once a clean, migration-backed disposable database is available in CI, unit tests can be added to GitHub Actions without risk of concealing inconsistent migration files.
+
+**Why E2E tests are not in GitHub Actions**
+
+Playwright E2E requires:
+- the running development server (`npm run dev`);
+- Chromium installed at the path configured in `.replit`;
+- the Replit development database with `ENABLE_TEST_AUTH_BYPASS=1`;
+- the `TEST_ADMIN_EMAIL` account present in the database.
+
+These dependencies are only available in the Replit development environment.
+
+**Rule: no GitHub Actions workflow may use `db:push`**
+
+Using `db:push` in CI would derive the ephemeral schema directly from the current ORM code, bypassing the migration files. This conceals missing, incomplete, or inconsistent migrations rather than surfacing them. Even against an ephemeral database, `db:push` is not an appropriate migration-verification mechanism.
 
 ---
 
