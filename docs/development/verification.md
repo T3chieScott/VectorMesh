@@ -62,7 +62,7 @@ That is the complete list. Nothing else runs.
 
 `npm run test:unit` connects to PostgreSQL and requires an existing schema. The unit test suite has no built-in schema bootstrap — it relies on the Replit development database, which is already initialised by `db:push` during project setup. Giving GitHub Actions a safe database requires a migration-backed schema initialisation that creates the full schema from the committed migration files rather than from `db:push`.
 
-Phase 1C should establish that mechanism. Once a clean, migration-backed disposable database is available in CI, unit tests can be added to GitHub Actions without risk of concealing inconsistent migration files.
+Once a clean, migration-backed disposable database is available in CI, unit tests can be added to GitHub Actions without risk of concealing inconsistent migration files.
 
 **Why E2E tests are not in GitHub Actions**
 
@@ -82,6 +82,26 @@ Using `db:push` in CI would derive the ephemeral schema directly from the curren
 
 ## Commands
 
+### `npm run preflight`
+
+Checks that the three required local executables — `tsc`, `tsx`, and `vite` — are present and executable before any other command runs:
+
+```bash
+node -e "['node_modules/.bin/tsc','node_modules/.bin/tsx','node_modules/.bin/vite']
+         .forEach(function(b){
+           try { require('fs').accessSync(b, require('fs').constants.X_OK) }
+           catch(e) { process.stderr.write('preflight: '+b+' is missing or not executable\n');
+                      process.exit(1) }
+         });
+         console.log('preflight: tsc tsx vite OK')"
+```
+
+This check runs as the first step of `npm run verify`. If any tool is absent, `verify` fails immediately with a clear error message rather than producing a misleading exit 0.
+
+**Why this is necessary:** npm 10.8.2 (the Replit default) has a known problem where it swallows the exit-127 produced by a missing command inside a nested npm script and returns exit 0 to the caller. A previous version of the `verify` script (`typecheck && test:unit && build`) would silently succeed even when `tsc`, `tsx`, or `vite` were absent from `node_modules`, because the exit code was swallowed in the shell pipeline. The preflight check runs first, uses only Node's built-in `fs` module, does not install anything, and exits non-zero before any other step runs.
+
+The preflight works correctly in both Replit's Linux environment and GitHub Actions (also Linux).
+
 ### `npm run typecheck`
 
 Runs `tsc` (the TypeScript compiler) in check-only mode using `tsconfig.json`.  
@@ -97,7 +117,7 @@ Alias: `npm run check` (identical command, both preserved for compatibility).
 Runs unit and integration tests using Node's built-in test runner via `tsx`:
 
 ```bash
-TSX_TSCONFIG_PATH=tsconfig.test.json tsx --test --test-force-exit \
+TSX_TSCONFIG_PATH=tsconfig.test.json tsx --test \
   tests/*.test.ts tests/*.test.tsx
 ```
 
@@ -107,6 +127,36 @@ Do not print the connection string or credentials in logs or reports.
 
 Covers: schema logic, resolver logic, content derivation, player heartbeat, video health,  
 agenda deduplication, sweepstake progression, zone fingerprinting, and more.
+
+#### Why `--test-force-exit` was removed
+
+The previous command included `--test-force-exit`. This flag terminates the Node.js process
+immediately after all test files have been _launched_, before every file has flushed its
+complete TAP output to stdout. Since Node.js v20's test runner executes all 84 test files
+concurrently by default, slower-completing files (those with more complex async operations
+or more tests, such as `tests/monitor-high-density.test.ts` and
+`tests/spreadsheet-mapping.test.ts`) had their TAP output silently truncated in some runs.
+
+**A zero exit code from the `--test-force-exit` command was not sufficient evidence that
+every test completed.** Five consecutive code-identical runs produced five different reported
+test totals: 1 142, 1 096, 1 123, 1 098, and 1 126. All reported zero failures because the
+tests that _did_ run all passed — but the total varied by up to 46 depending on how much
+output was flushed before the process was killed.
+
+The corrected command (`tsx --test` without `--test-force-exit`) exits naturally after all
+84 test files have finished and all TAP output has been written. Three consecutive runs each
+produced 1 126 tests across 49 suites with identical test-name inventories, confirming
+deterministic and complete reporting. No test was deleted, skipped, or weakened to achieve
+this result.
+
+**Concurrency:** Default concurrency (all files run in parallel) was retained. A serial run
+(`--test-concurrency=1`) was not necessary: three parallel runs produced identical results
+with no interference between test files. The ~72-second wall-clock time per run is accepted
+as the deterministic cost of complete verification.
+
+**Unit tests remain a Replit development gate.** They are not part of GitHub Actions
+(see _Why unit tests are not in GitHub Actions_, above). Adding unit tests to CI requires
+a migration-backed schema bootstrap that has not yet been established.
 
 ### `npm run test:e2e`
 
@@ -143,10 +193,19 @@ Do not require byte-for-byte equality between successive builds — frontend ass
 Convenience alias that runs all non-browser checks in sequence:
 
 ```bash
-npm run typecheck && npm run test:unit && npm run build
+npm run preflight && npm run typecheck && npm run test:unit && npm run build
 ```
 
+`preflight` runs first and fails immediately with a clear error if `tsc`, `tsx`, or `vite`
+are missing from `node_modules/.bin/`. This protects against npm 10.x's known false-success
+behaviour when a required executable is absent.
+
 This is the recommended pre-merge gate. It does not run E2E tests (those require a live server).
+
+**A green `npm run verify` does not authorise deployment.** It confirms that the code
+compiles, types check, all 1 126 unit tests pass (as of the current baseline), and a
+production bundle is produced. It does not confirm end-to-end browser flows, production
+server startup, migration state, hosted environment secrets, or performance.
 
 ---
 

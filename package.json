@@ -9,10 +9,11 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "typecheck": "tsc",
-    "test": "TSX_TSCONFIG_PATH=tsconfig.test.json tsx --test --test-force-exit tests/*.test.ts tests/*.test.tsx",
-    "test:unit": "TSX_TSCONFIG_PATH=tsconfig.test.json tsx --test --test-force-exit tests/*.test.ts tests/*.test.tsx",
+    "test": "TSX_TSCONFIG_PATH=tsconfig.test.json tsx --test tests/*.test.ts tests/*.test.tsx",
+    "test:unit": "TSX_TSCONFIG_PATH=tsconfig.test.json tsx --test tests/*.test.ts tests/*.test.tsx",
     "test:e2e": "playwright test --reporter=list",
-    "verify": "npm run typecheck && npm run test:unit && npm run build",
+    "preflight": "node -e \"['node_modules/.bin/tsc','node_modules/.bin/tsx','node_modules/.bin/vite'].forEach(function(b){try{require('fs').accessSync(b,require('fs').constants.X_OK)}catch(e){process.stderr.write('preflight: '+b+' is missing or not executable\\n');process.exit(1)}});console.log('preflight: tsc tsx vite OK')\"",
+    "verify": "npm run preflight && npm run typecheck && npm run test:unit && npm run build",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
