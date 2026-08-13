@@ -1,0 +1,43 @@
+name: Static verification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Minimal permissions — read-only checkout only.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same branch or PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-verification:
+    name: Typecheck and build
+    runs-on: ubuntu-latest
+    # 10 minutes is ample for a cold npm ci + tsc + vite build.
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node.js 20 matches the Replit development runtime (v20.20.0)
+          # used to run npm run verify, npm run typecheck, and the full
+          # E2E suite.  It is not derived from @types/node alone.
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build

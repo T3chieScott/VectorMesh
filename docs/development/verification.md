@@ -18,6 +18,53 @@ A green baseline is required before merging any pull request. It does **not** au
 
 ---
 
+## Verification gates
+
+| Gate | Checks | When | Where |
+|---|---|---|---|
+| Static CI (`verify.yml`) | `typecheck` + `build` | Every PR and push to `main` | GitHub Actions |
+| Unit and integration tests | `npm run test:unit` | Before merging | Replit development environment |
+| End-to-end browser tests | `npm run test:e2e` | Before merging | Replit development environment |
+| Full local baseline | `npm run verify` | On demand | Replit development environment |
+
+**A green static CI check is a necessary gate, not a sufficient one.** It does not replace `npm run verify` and E2E verification in Replit, and does not authorise deployment.
+
+### GitHub Actions — static verification (`verify.yml`)
+
+The workflow runs `typecheck` and `build` only. It does not require PostgreSQL, does not set `DATABASE_URL` or `SESSION_SECRET`, and does not run unit tests, E2E tests, migrations, `db:push`, or any start or deploy command.
+
+Commands executed by GitHub Actions, in order:
+
+```bash
+npm ci
+npm run typecheck
+npm run build
+```
+
+That is the complete list. Nothing else runs.
+
+**Why unit tests are not in GitHub Actions (yet)**
+
+`npm run test:unit` connects to PostgreSQL and requires an existing schema. The unit test suite has no built-in schema bootstrap — it relies on the Replit development database, which is already initialised by `db:push` during project setup. Giving GitHub Actions a safe database requires a migration-backed schema initialisation that creates the full schema from the committed migration files rather than from `db:push`.
+
+Phase 1C should establish that mechanism. Once a clean, migration-backed disposable database is available in CI, unit tests can be added to GitHub Actions without risk of concealing inconsistent migration files.
+
+**Why E2E tests are not in GitHub Actions**
+
+Playwright E2E requires:
+- the running development server (`npm run dev`);
+- Chromium installed at the path configured in `.replit`;
+- the Replit development database with `ENABLE_TEST_AUTH_BYPASS=1`;
+- the `TEST_ADMIN_EMAIL` account present in the database.
+
+These dependencies are only available in the Replit development environment.
+
+**Rule: no GitHub Actions workflow may use `db:push`**
+
+Using `db:push` in CI would derive the ephemeral schema directly from the current ORM code, bypassing the migration files. This conceals missing, incomplete, or inconsistent migrations rather than surfacing them. Even against an ephemeral database, `db:push` is not an appropriate migration-verification mechanism.
+
+---
+
 ## Commands
 
 ### `npm run typecheck`
