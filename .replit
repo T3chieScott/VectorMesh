@@ -61,12 +61,12 @@ outputType = "webview"
 name = "e2e"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "PLAYWRIGHT_BROWSERS_PATH=/home/runner/workspace/.cache/ms-playwright npx playwright test --reporter=list"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PLAYWRIGHT_BROWSERS_PATH=/home/runner/workspace/.cache/ms-playwright npm run test:e2e"
 
 [[workflows.workflow]]
 name = "test"
@@ -77,16 +77,12 @@ isValidation = true
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "TSX_TSCONFIG_PATH=tsconfig.test.json npx tsx --test --test-force-exit tests/*.test.ts tests/*.test.tsx"
+args = "npm run test:unit"
 
 [agent]
 integrations = ["javascript_object_storage:2.0.0", "javascript_log_in_with_replit:2.0.0", "javascript_database:1.0.0", "onedrive:1.0.0", "sharepoint:1.0.0"]
 
 [userenv]
-
-[userenv.shared]
-OPENSKY_CLIENT_ID = "scott@treetops.me-api-client"
-OPENSKY_CLIENT_SECRET = "OajgltiLKEKxmHpgHeNuLZVwAKLCmlnr"
 
 [userenv.development]
 ENABLE_TEST_AUTH_BYPASS = "1"
