@@ -23,7 +23,9 @@ A green baseline is required before merging any pull request. It does **not** au
 ### `npm run typecheck`
 
 Runs `tsc` (the TypeScript compiler) in check-only mode using `tsconfig.json`.  
-Validates types across all of `client/`, `server/`, `shared/`, and `tests/`.  
+Validates types across `client/`, `server/`, and `shared/`. Test files are excluded
+from the main `tsconfig.json`; they are executed through the configured test runner
+(`npm run test:unit`), which uses `tsconfig.test.json` instead.
 Exits non-zero on any type error.
 
 Alias: `npm run check` (identical command, both preserved for compatibility).
@@ -186,8 +188,8 @@ Do not change application source, test code, database state, or behaviour merely
 After `npm run build`:
 
 ```bash
-ls -la dist/index.cjs
-node dist/index.cjs --help 2>&1 | head -5   # optional smoke test
+test -f dist/index.cjs
+ls -lh dist/index.cjs
 ```
 
 The file must exist and must be the target of `npm run start`:
