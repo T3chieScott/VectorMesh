@@ -46,11 +46,17 @@ npm run build
 
 That is the complete list. Nothing else runs.
 
-**Why npm is pinned:** The runner-provided npm 10.8.2 reproducibly failed during `npm ci` while incorrectly returning a success exit code, leaving an incomplete `node_modules` tree and causing secondary TypeScript errors. npm 11.19.0 is pinned to guarantee deterministic installation on every run. The step explicitly asserts the installed version and stops the workflow if it does not match.
+**Why `package-lock.json` must use public registry URLs:** Replit routes npm traffic through an internal proxy (`package-firewall.replit.local`) that is unreachable outside the Replit environment. If those URLs are committed, `npm ci` on the GitHub runner silently fails the network fetch. The lockfile must use `https://registry.npmjs.org/` for all package URLs. Integrity hashes are unaffected — they verify the package artifact itself, not the URL it was fetched from.
+
+**Why the lockfile portability check runs first:** The workflow checks `package-lock.json` for Replit-internal URLs before pinning npm or installing anything. This produces a clear, actionable error message immediately rather than a cryptic network failure during install.
+
+**Why npm is pinned:** npm 10.8.2 (the runner default) was the original cause of the `npm ci` failure: it encountered a network error on the Replit-internal URLs but returned a success exit code and continued with an incomplete `node_modules` tree. The secondary TypeScript errors (`missing vite/client`, etc.) were symptoms of that incomplete install. npm 11.19.0 is pinned so that installation failures propagate correctly. The step explicitly asserts the installed version and stops the workflow if it does not match.
 
 **Why `--no-audit --no-fund`:** These flags remove non-essential network operations (vulnerability database lookup, funding metadata fetch) that are not required for static verification and add latency without changing the installed dependency tree.
 
 **Why `npm ls --depth=0`:** This confirms the top-level dependency tree is complete before `typecheck` and `build` run. If `npm ci` produces an incomplete tree it will exit non-zero here rather than producing misleading type errors downstream.
+
+**Local verification was unavailable for this change:** After the checkpoint restore, Replit's security policy blocked the restoration of `node_modules` (a transitive dependency, `webworkify-webpack → optimist@0.6.1 → minimist@0.0.10`, is not resolvable through the Replit firewall). The earlier green `npm run verify` and E2E results — obtained before the checkpoint restore on the unchanged application and test code — remain valid for those files. The lockfile portability correction and the CI workflow change are verified only by static inspection and by GitHub Actions, which is the authoritative fresh-install check for this commit.
 
 **Why unit tests are not in GitHub Actions (yet)**
 

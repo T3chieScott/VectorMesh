@@ -25,6 +25,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check lockfile portability
+        # package-lock.json must contain only publicly resolvable registry
+        # URLs.  Replit routes npm traffic through an internal proxy
+        # (package-firewall.replit.local) which is unreachable outside the
+        # Replit environment.  If any such URL was accidentally committed,
+        # npm ci will fail with a network error on the GitHub runner.
+        run: |
+          if grep -q "package-firewall.replit.local" package-lock.json; then
+            echo "ERROR: package-lock.json contains Replit-internal package URLs"
+            echo "       (package-firewall.replit.local) that are not portable."
+            echo "       Replace all occurrences with https://registry.npmjs.org/"
+            echo "       before pushing."
+            exit 1
+          fi
+          echo "Lockfile portability check passed."
+
       - uses: actions/setup-node@v4
         with:
           # Node.js 20 matches the Replit development runtime (v20.20.0)
