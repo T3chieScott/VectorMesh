@@ -1,7 +1,7 @@
 # VectorMesh — Verification Baseline
 
 This document describes the repeatable verification baseline for the VectorMesh codebase.  
-All checks are designed to run in the Replit development environment. Several require PostgreSQL and are run against the Replit development database — **never the hosted production database**.
+Verification is split between GitHub Actions and the Replit development environment. Database-backed and browser checks run only in Replit against the development database — **never the hosted production database**.
 
 ---
 
