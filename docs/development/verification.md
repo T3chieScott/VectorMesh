@@ -130,11 +130,11 @@ agenda deduplication, sweepstake progression, zone fingerprinting, and more.
 
 #### Why `--test-force-exit` was removed
 
-The previous command included `--test-force-exit`. This flag terminates the Node.js process
-immediately after all test files have been _launched_, before every file has flushed its
-complete TAP output to stdout. Since Node.js v20's test runner executes all 84 test files
-concurrently by default, slower-completing files (those with more complex async operations
-or more tests, such as `tests/monitor-high-density.test.ts` and
+The previous command included `--test-force-exit`. The observed behaviour is consistent with
+`--test-force-exit` terminating the process before all concurrent test reporting had completed.
+The exact internal timing was not established, but the incomplete and varying TAP output was
+directly observed: Node.js v20's test runner executes all 84 test files concurrently by default,
+and slower-completing files (such as `tests/monitor-high-density.test.ts` and
 `tests/spreadsheet-mapping.test.ts`) had their TAP output silently truncated in some runs.
 
 **A zero exit code from the `--test-force-exit` command was not sufficient evidence that
