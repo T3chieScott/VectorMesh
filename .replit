@@ -84,10 +84,6 @@ integrations = ["javascript_object_storage:2.0.0", "javascript_log_in_with_repli
 
 [userenv]
 
-[userenv.shared]
-OPENSKY_CLIENT_ID = "scott@treetops.me-api-client"
-OPENSKY_CLIENT_SECRET = "OajgltiLKEKxmHpgHeNuLZVwAKLCmlnr"
-
 [userenv.development]
 ENABLE_TEST_AUTH_BYPASS = "1"
 
