@@ -1,0 +1,462 @@
+# VectorMesh Phase 1A — Non-Breaking Verification Baseline
+
+You are working on the production VectorMesh codebase.
+
+VectorMesh contains many carefully repaired behaviours and operational safeguards. This task establishes a repeatable verification baseline only. It must not refactor application code, alter runtime behaviour, change the database or affect the production deployment.
+
+## Branch and deployment restrictions
+
+Create and work on a new branch:
+
+`chore/phase-1-verification-baseline`
+
+Do not:
+
+- Work directly on `main`.
+- Merge the branch.
+- deploy to Replit production.
+- deploy to the externally hosted production server.
+- Connect to, migrate or modify the production database.
+- Restart or modify the production server.
+
+Commit the completed work to the feature branch, but stop before merging or deploying.
+
+## Protected existing behaviour
+
+Existing functionality must continue working exactly as it does now.
+
+Do not alter:
+
+- Player pairing or unpairing.
+- Pairing codes or kiosk pairing.
+- Device tokens.
+- Player heartbeats or online/offline detection.
+- Offline player behaviour.
+- Service Worker or cache behaviour.
+- Canvas groups or video-wall behaviour.
+- Screen creation or regeneration.
+- Scheduling, programmes or bookings.
+- Timezone and DST behaviour.
+- Live overrides and fallback content.
+- Player, simulator or monitor rendering.
+- Zone rendering or widget behaviour.
+- Media delivery or upload behaviour.
+- Operations API routes, scopes or response payloads.
+- Monitor sessions or monitor authentication.
+- Multiview integration contracts.
+- Tenant isolation or authorisation.
+- API-token behaviour.
+- Database schema, migrations or data.
+- Session or cookie behaviour.
+- Public URLs, API URLs or media URLs.
+- Replit deployment commands.
+- Hosted production deployment commands.
+
+Before making changes, read:
+
+- `.agents/memory/MEMORY.md`
+- Every directly relevant document linked from that file
+- `replit.md`
+- `DEPLOYMENT.md`
+- `docs/runbook.md`
+- `playwright.config.ts`
+- `.replit`
+- `package.json`
+
+If any requested change conflicts with documented existing behaviour, stop and report the conflict.
+
+# Dual-environment compatibility — mandatory
+
+VectorMesh operates in two separate environments:
+
+1. **Development and testing:** Replit, using Replit’s development database, Secrets, workflows and preview URL.
+2. **Production:** An externally hosted Linux server, using its own PostgreSQL database, environment variables, persistent media storage, public domain, reverse proxy and process manager.
+
+The Replit environment itself is not transferred to production. The tested Git source and the output from `npm run build` are transferred and deployed to the hosted server.
+
+The repository and production build must remain portable between both environments.
+
+A successful Replit test does not prove production compatibility by itself. Any proposed change must be checked for both environments.
+
+## Production compatibility rules
+
+Do not:
+
+- Add Replit-only runtime dependencies to application or production code.
+- Require Replit integrations, Replit database objects or Replit URLs in production.
+- Hard-code Replit domains, `localhost`, `127.0.0.1`, development ports or local filesystem paths into application code.
+- Rename, remove or change the meaning of existing environment variables.
+- Change `APP_URL` or existing public URL resolution.
+- Change media URLs, monitor URLs, API routes or callback URLs.
+- Change the production build command.
+- Change the production build output entry point.
+- Change the production start command.
+- Change PostgreSQL schema, migrations or production data.
+- Change upload paths, stored media paths or persistent-storage behaviour.
+- Change session, cookie, HTTPS, host or reverse-proxy behaviour.
+- Replace environment-based secrets with values stored in source control.
+- Run tests, migrations, schema pushes or cleanup operations against production.
+- Introduce assumptions that only work inside Replit.
+
+Preserve:
+
+- `npm run build`
+- Production entry point `dist/index.cjs`
+- `NODE_ENV=production`
+- Existing `DATABASE_URL` contract
+- Existing `SESSION_SECRET` contract
+- Existing `APP_URL` contract
+- Existing `UPLOAD_DIR` contract
+- Existing SMTP environment-variable contracts
+- Existing external-integration environment-variable contracts
+- Existing relative API and media URL behaviour
+- Existing reverse-proxy compatibility
+- Existing PostgreSQL compatibility
+- Existing persistent upload-directory layout
+- Existing Replit development workflows
+- Existing hosted-server deployment workflow
+
+All database-backed verification must use the Replit development database or a disposable test database.
+
+Before running any database-backed test:
+
+- Establish that `DATABASE_URL` is not the production database.
+- Do not print the database URL or credentials.
+- Do not reveal the database password, hostname or connection string in logs or the report.
+- If the database cannot safely be identified as non-production, stop and report the blocker.
+
+## Environment compatibility review
+
+Before editing files, inspect and record:
+
+- Existing Replit build command.
+- Existing Replit start command.
+- Existing hosted-server build command from `DEPLOYMENT.md`.
+- Existing hosted-server start command.
+- Existing production entry point.
+- Environment-variable names relevant to this task.
+- Replit-specific assumptions.
+- Hosted-server assumptions.
+- Whether this task would affect URLs, database access, file paths, secrets, cookies, ports, storage or proxy handling.
+
+For this task, the expected answer for every runtime-impact category is **no**.
+
+Any unexpected production impact is a blocker. Do not work around it silently.
+
+# 1. Secure the committed OpenSky credentials
+
+The repository currently contains plaintext OpenSky credentials in `.replit`.
+
+Do not print, repeat, copy or expose either existing credential value.
+
+Before removing the plaintext values:
+
+- Confirm `OPENSKY_CLIENT_ID` is available through Replit Secrets or its environment.
+- Confirm `OPENSKY_CLIENT_SECRET` is available through Replit Secrets or its environment.
+- Confirm this without printing either value.
+- Report that the hosted production server requires its own corresponding environment variables.
+- Do not attempt to inspect or modify the hosted production server.
+
+If the replacement Replit Secrets are not present, stop and report the blocker. Do not remove the existing configuration and do not continue with changes that could disable the integration.
+
+Once the replacement Replit Secrets are confirmed:
+
+- Remove the plaintext OpenSky values from `.replit`.
+- Preserve the environment-variable names.
+- Preserve existing application lookup behaviour.
+- Do not add literal replacement values.
+- Do not add a Replit-specific application fallback.
+- Do not change OpenSky application code.
+- Do not rewrite Git history during this task.
+
+The exposed OpenSky secret must be rotated separately. Removing it from the current file does not remove it from Git history.
+
+# 2. Establish the pre-change baseline
+
+Before modifying `package.json`, `.replit` or documentation, run the existing verification commands.
+
+Use only the confirmed non-production development database.
+
+Run:
+
+```bash
+npm run check
+```
+
+Run the existing unit and integration test command:
+
+```bash
+TSX_TSCONFIG_PATH=tsconfig.test.json npx tsx --test --test-force-exit tests/*.test.ts tests/*.test.tsx
+```
+
+Run the production build:
+
+```bash
+npm run build
+```
+
+Run Playwright separately using the existing Replit requirements:
+
+```bash
+PLAYWRIGHT_BROWSERS_PATH=/home/runner/workspace/.cache/ms-playwright npx playwright test --reporter=list
+```
+
+Preserve:
+
+- The existing `127.0.0.1` Playwright base URL.
+- Existing Playwright configuration.
+- Existing authentication-bypass safety gates.
+- Existing E2E database behaviour.
+- Existing Replit browser path.
+
+Do not change tests or application code merely to produce a green baseline.
+
+For each command, record:
+
+- Command executed.
+- Exit status.
+- Number of tests passed, failed and skipped where available.
+- Whether the result appears repeatable.
+- Any relevant configuration requirement.
+
+If a baseline command fails, classify it as one of:
+
+- Existing application failure.
+- Test-environment failure.
+- Missing development configuration.
+- Flaky test.
+- Order-dependent test.
+- Unknown and requiring investigation.
+
+If resolving a failure would require application source changes, test rewrites, database changes or altered behaviour, stop and report it. Do not fix it as part of this task.
+
+# 3. Add standard npm verification scripts
+
+Update `package.json` to add standard wrappers around the existing commands:
+
+```json
+{
+  "typecheck": "tsc",
+  "test": "TSX_TSCONFIG_PATH=tsconfig.test.json tsx --test --test-force-exit tests/*.test.ts tests/*.test.tsx",
+  "test:unit": "TSX_TSCONFIG_PATH=tsconfig.test.json tsx --test --test-force-exit tests/*.test.ts tests/*.test.tsx",
+  "test:e2e": "playwright test --reporter=list",
+  "verify": "npm run typecheck && npm run test:unit && npm run build"
+}
+```
+
+Requirements:
+
+- Retain every existing script.
+- Keep `npm run check` working.
+- Do not add dependencies.
+- Do not upgrade dependencies.
+- Do not change `package-lock.json`.
+- Do not change application source code.
+- Do not add linting or formatting dependencies in this task.
+- Do not add GitHub Actions in this task.
+
+The scripts must remain usable on the hosted Linux server after a normal dependency installation. They must not depend on Replit-specific paths, services or commands.
+
+The Replit workflow may supply Replit-specific environment configuration around a portable npm script, but the script itself must remain portable.
+
+# 4. Update Replit verification workflows
+
+Update the existing `.replit` workflows to use the new npm scripts.
+
+The unit/integration test workflow should call:
+
+```bash
+npm run test:unit
+```
+
+The E2E workflow should preserve the required Replit browser path and call:
+
+```bash
+PLAYWRIGHT_BROWSERS_PATH=/home/runner/workspace/.cache/ms-playwright npm run test:e2e
+```
+
+Preserve:
+
+- The existing application start workflow.
+- `NODE_OPTIONS=--max-old-space-size=4096`.
+- Port `5000`.
+- Existing E2E environment behaviour.
+- Existing workflow names unless changing a name is demonstrably necessary.
+- Existing Replit deployment build command.
+- Existing Replit deployment start command.
+- Existing post-merge behaviour.
+
+Do not modify the `[deployment]` section.
+
+Do not introduce any workflow that deploys or modifies production.
+
+# 5. Add verification documentation
+
+Create:
+
+`docs/development/verification.md`
+
+Document:
+
+- The purpose of the verification baseline.
+- What `npm run typecheck` checks.
+- What `npm run test:unit` checks.
+- What `npm run test:e2e` checks.
+- What `npm run build` checks.
+- What `npm run verify` runs.
+- Which tests require PostgreSQL.
+- Required development environment variables.
+- Replit-specific Playwright requirements.
+- The requirement to use `127.0.0.1`.
+- The difference between Replit development and hosted production.
+- The rule that tests must never use production data.
+- The rule that `npm run db:push` must not be part of verification.
+- The rule that a green build does not authorise production deployment.
+- How to record an existing failure without changing unrelated code.
+- How to verify that `dist/index.cjs` remains the production entry point.
+- That hosted production secrets must be configured independently from Replit Secrets.
+- That secret values must never appear in documentation, logs or reports.
+
+Create a short root-level:
+
+`README.md`
+
+The README should briefly describe VectorMesh and link to:
+
+- `replit.md`
+- `DEPLOYMENT.md`
+- `OPERATING_MANUAL.md`
+- `docs/development/verification.md`
+- `docs/runbook.md`
+
+Do not duplicate the contents of those documents.
+
+# 6. Verify the completed change
+
+After making the permitted changes, run:
+
+```bash
+npm run verify
+```
+
+Run E2E verification with the required Replit environment:
+
+```bash
+PLAYWRIGHT_BROWSERS_PATH=/home/runner/workspace/.cache/ms-playwright npm run test:e2e
+```
+
+Run:
+
+```bash
+git diff --check
+```
+
+Confirm that:
+
+- The pre-change production build completed or its existing failure was recorded.
+- The post-change production build completes.
+- `dist/index.cjs` remains the server entry point.
+- The Replit deployment configuration still points to the existing build and start commands.
+- The hosted-server instructions still use the existing build and start commands.
+- No application source file changed.
+- No database or migration file changed.
+- No dependency or lockfile changed.
+- No secret value appears in the resulting diff.
+- No production deployment occurred.
+
+Do not require byte-for-byte equality between production builds. Generated frontend filenames, hashes or bundle ordering may legitimately differ.
+
+Investigate and report any material difference involving:
+
+- Runtime entry points.
+- Missing client or server bundles.
+- Changed routes.
+- Changed environment-variable requirements.
+- Changed asset paths.
+- Changed deployment commands.
+
+A material difference is a blocker.
+
+# Permitted files
+
+This task may change only:
+
+- `package.json`
+- `.replit`
+- `README.md`
+- `docs/development/verification.md`
+
+Do not change any other file without stopping and requesting approval.
+
+In particular, do not change:
+
+- `client/**`
+- `server/**`
+- `shared/**`
+- `tests/**`
+- `migrations/**`
+- `playwright.config.ts`
+- `package-lock.json`
+- `DEPLOYMENT.md`
+- `replit.md`
+- `OPERATING_MANUAL.md`
+- `docs/runbook.md`
+- `scripts/**`
+- `script/**`
+
+# Acceptance criteria
+
+The task is complete only when:
+
+- Work exists on `chore/phase-1-verification-baseline`.
+- No application source files changed.
+- No tests changed.
+- No database schema or migration changed.
+- No dependencies changed.
+- `package-lock.json` is unchanged.
+- No production deployment occurred.
+- No hosted-server modification occurred.
+- Plaintext OpenSky credentials are absent from the resulting `.replit`.
+- Replacement OpenSky values are sourced from Replit Secrets.
+- Existing environment-variable names are preserved.
+- Existing Replit development workflows still operate.
+- Existing Replit deployment configuration is unchanged.
+- Hosted-server build and start compatibility is preserved.
+- `dist/index.cjs` remains the production entry point.
+- Standard verification commands work, or pre-existing failures are accurately reported.
+- Documentation clearly separates Replit development from hosted production.
+- No secret or full connection string appears in the report, logs or diff.
+
+# Required completion report
+
+Provide:
+
+1. Branch name.
+2. Commit SHA.
+3. Every changed file.
+4. A concise explanation of every change.
+5. Pre-change verification results.
+6. Post-change verification results.
+7. E2E results.
+8. Confirmation that no production database was used.
+9. Confirmation that no production deployment occurred.
+10. Confirmation that no application source, test, migration or lockfile changed.
+11. Confirmation that no secret value appears in the diff.
+12. Confirmation that `dist/index.cjs` remains the production entry point.
+13. The following compatibility table:
+
+| Area | Replit development | Hosted production | Changed? |
+|---|---|---|---|
+| Build command | | | |
+| Start command | | | |
+| Database source | | | |
+| Secrets source | | | |
+| Public URL handling | | | |
+| Media storage | | | |
+| Sessions/cookies | | | |
+| Reverse proxy | | | |
+| Production entry point | | | |
+
+14. Any failures, uncertainties or follow-up actions.
+
+Do not merge or deploy after producing the report. Stop and wait for architectural review.

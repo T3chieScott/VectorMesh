@@ -1,0 +1,120 @@
+Continue Phase 1A on the existing branch:
+
+`chore/phase-1-verification-baseline`
+
+Do not merge or deploy.
+
+## Preconditions
+
+Confirm, without printing their values, that these now exist as independent Replit Secrets:
+
+- `OPENSKY_CLIENT_ID`
+- `OPENSKY_CLIENT_SECRET`
+
+If either is absent, stop without modifying `.replit`.
+
+Do not inspect, print or include either value in your response.
+
+## 1. Remove the tracked credential declarations
+
+Once both Replit Secrets are confirmed, remove the complete `[userenv.shared]` OpenSky credential declarations from `.replit`.
+
+Preserve:
+
+- The environment-variable names used by application code.
+- The `[userenv.development]` section.
+- `ENABLE_TEST_AUTH_BYPASS = "1"`.
+- All workflows.
+- All ports.
+- The deployment configuration.
+- The post-merge configuration.
+- All other `.replit` behaviour.
+
+Do not modify application source code.
+
+The removed historical secret may necessarily appear as a deleted line in the local Git diff because it was previously tracked. Do not quote it in the completion report, commit message or any new documentation.
+
+## 2. Verify Replit environment injection
+
+Confirm through presence checks only that the application process receives both OpenSky variables from Replit Secrets.
+
+Do not print their values.
+
+Start the development application and confirm that removing the tracked declarations does not produce a missing-OpenSky-configuration error.
+
+If possible, perform a safe development-environment check of the aircraft-radar integration. Do not contact or modify the hosted production server.
+
+## 3. Run the complete post-change verification
+
+Using only the confirmed Replit development database, run:
+
+```bash
+npm run verify
+```
+
+Then run the complete post-change E2E suite:
+
+```bash
+PLAYWRIGHT_BROWSERS_PATH=/home/runner/workspace/.cache/ms-playwright npm run test:e2e
+```
+
+Run:
+
+```bash
+git diff --check
+```
+
+The post-change E2E suite must actually be run. Do not infer its result from the pre-change run.
+
+If the two previously observed E2E failures occur again, record their exact outcome. Do not change application or test code to address them in this task.
+
+If additional tests fail, stop and report the regression.
+
+## 4. Verify committed scope accurately
+
+Use:
+
+```bash
+git status --short
+git show --stat --oneline HEAD
+git show --name-only --pretty="" HEAD
+git diff main...HEAD --name-only
+```
+
+The complete branch difference from `main` must contain only:
+
+- `.replit`
+- `package.json`
+- `README.md`
+- `docs/development/verification.md`
+
+No application source, test, migration, lockfile or deployment file may change.
+
+## 5. Commit and push for review
+
+Commit the follow-up credential-removal change on the existing feature branch.
+
+Push:
+
+`chore/phase-1-verification-baseline`
+
+to GitHub.
+
+Do not open a merge commit, merge to `main` or deploy.
+
+Provide:
+
+- Full 40-character commit SHA.
+- Confirmation that the branch was pushed.
+- GitHub branch URL.
+- Complete changed-file list relative to `main`.
+- `npm run verify` result.
+- Actual post-change E2E result.
+- Confirmation that only the Replit development database was used.
+- Confirmation that both OpenSky variables now come from Replit Secrets.
+- Confirmation that `.replit` no longer declares their literal values.
+- Confirmation that no application source, test, migration or lockfile changed.
+- Confirmation that no deployment occurred.
+- Any remaining blockers.
+
+Do not include any credential value in the report.
