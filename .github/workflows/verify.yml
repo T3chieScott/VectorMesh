@@ -33,8 +33,24 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Pin npm
+        # The runner-provided npm 10.8.2 reproducibly failed during npm ci
+        # while incorrectly returning success, leaving an incomplete
+        # node_modules tree.  Pin an exact version to ensure deterministic
+        # installation on every run.
+        run: |
+          npm install --global npm@11.19.0
+          npm --version
+          [ "$(npm --version)" = "11.19.0" ] || { echo "npm version mismatch"; exit 1; }
+
       - name: Install dependencies
-        run: npm ci
+        # --no-audit and --no-fund remove non-essential network operations
+        # that are not required for static verification.
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify dependency tree
+        # Confirms node_modules is complete before typecheck and build run.
+        run: npm ls --depth=0
 
       - name: Typecheck
         run: npm run typecheck

@@ -36,12 +36,21 @@ The workflow runs `typecheck` and `build` only. It does not require PostgreSQL, 
 Commands executed by GitHub Actions, in order:
 
 ```bash
-npm ci
+npm install --global npm@11.19.0
+npm --version
+npm ci --no-audit --no-fund
+npm ls --depth=0
 npm run typecheck
 npm run build
 ```
 
 That is the complete list. Nothing else runs.
+
+**Why npm is pinned:** The runner-provided npm 10.8.2 reproducibly failed during `npm ci` while incorrectly returning a success exit code, leaving an incomplete `node_modules` tree and causing secondary TypeScript errors. npm 11.19.0 is pinned to guarantee deterministic installation on every run. The step explicitly asserts the installed version and stops the workflow if it does not match.
+
+**Why `--no-audit --no-fund`:** These flags remove non-essential network operations (vulnerability database lookup, funding metadata fetch) that are not required for static verification and add latency without changing the installed dependency tree.
+
+**Why `npm ls --depth=0`:** This confirms the top-level dependency tree is complete before `typecheck` and `build` run. If `npm ci` produces an incomplete tree it will exit non-zero here rather than producing misleading type errors downstream.
 
 **Why unit tests are not in GitHub Actions (yet)**
 
