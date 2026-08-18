@@ -17,7 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Pencil, Trash2, Upload, Download, Calendar, FileText, RefreshCw, AlertTriangle, CheckCircle2, Link2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, Download, Calendar, FileText, RefreshCw, AlertTriangle, CheckCircle2, Link2, Lock, WifiOff, Archive } from "lucide-react";
 import {
   AGENDA_STATUSES,
   AGENDA_SYNC_SOURCE_TYPES,
@@ -462,7 +462,8 @@ function SyncConfigDialog({
   const [microsoftAuth, setMicrosoftAuth] = useState<boolean>(initial?.microsoftAuth ?? false);
   const [msDriveId, setMsDriveId] = useState<string | null>(initial?.msDriveId ?? null);
   const [msItemId, setMsItemId] = useState<string | null>(initial?.msItemId ?? null);
-  const [msFileName, setMsFileName] = useState<string | null>(null);
+  // Task #362 — persist the workbook display name so the health panel can show it.
+  const [msFileName, setMsFileName] = useState<string | null>(initial?.msFileName ?? null);
   const [msSearch, setMsSearch] = useState("");
 
   const isMapped = MAPPED_TYPES.includes(sourceType);
@@ -711,6 +712,8 @@ function SyncConfigDialog({
           microsoftAuth: isMicrosoftType ? microsoftAuth : false,
           msDriveId: isMicrosoftType && microsoftAuth ? msDriveId : null,
           msItemId: isMicrosoftType && microsoftAuth ? msItemId : null,
+          // Task #362 — persist workbook name for the health details panel.
+          msFileName: isMicrosoftType && microsoftAuth ? msFileName : null,
         });
       } else {
         Object.assign(base, { sourceUrl });
@@ -1309,6 +1312,206 @@ function SyncConfigDialog({
   );
 }
 
+/** True for Microsoft-backed read-only sources (SharePoint / OneDrive Excel). */
+function isMsReadOnly(cfg: AgendaSyncConfig): boolean {
+  return (
+    !!cfg.microsoftAuth &&
+    (cfg.sourceType === "excel_onedrive" || cfg.sourceType === "sharepoint_excel")
+  );
+}
+
+/**
+ * Task #362 — Inline source-health and display-continuity badges for a
+ * Microsoft-backed sync config.  Fetches the /errors endpoint once per
+ * config and surfaces:
+ *  - Source connected / Source unreachable (SourceConnectionHealth)
+ *  - Snapshot active (DisplayContinuity — last-good snapshot is serving players)
+ */
+// ─── Task #362 — authoritative health-state colour map ─────────────────
+type SourceHealthState =
+  | "Healthy" | "Checking" | "Workbook unchanged" | "Updating"
+  | "Validation warning" | "Authentication required"
+  | "Access revoked" | "Source unavailable";
+
+type DisplayContinuityState = "Current" | "Using last-known-good" | "No valid snapshot";
+
+function healthStateVariant(state: SourceHealthState): "secondary" | "destructive" | "outline" {
+  if (state === "Healthy" || state === "Workbook unchanged" || state === "Checking" || state === "Updating") return "secondary";
+  if (state === "Validation warning") return "outline";
+  return "destructive";
+}
+
+function healthStateClass(state: SourceHealthState): string {
+  if (state === "Healthy") return "text-sky-700 dark:text-sky-400";
+  if (state === "Workbook unchanged" || state === "Checking" || state === "Updating") return "text-slate-600 dark:text-slate-400";
+  if (state === "Validation warning") return "text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-700";
+  return "";
+}
+
+function continuityStateClass(state: DisplayContinuityState): string {
+  if (state === "Current") return "text-emerald-700 dark:text-emerald-400";
+  if (state === "Using last-known-good") return "text-amber-700 dark:text-amber-400";
+  return "text-slate-500 dark:text-slate-400";
+}
+
+interface SyncHealthDetails {
+  msAccountConnected: boolean;
+  isReadOnly: boolean;
+  msFileName: string | null;
+  msConfiguredSheetName: string | null;
+  lastCheckedAt: string | null;
+  lastCTagChangedAt: string | null;
+  lastPublishedAt: string | null;
+  snapshotVersion: number | null;
+  itemCount: number | null;
+  syncIntervalMinutes: number;
+  consecutiveFailures: number;
+  lastActionableWarning: string | null;
+}
+
+interface SyncHealthResponse {
+  sourceHealthState?: SourceHealthState;
+  displayContinuityState?: DisplayContinuityState;
+  details?: SyncHealthDetails;
+  lastError?: string | null;
+  lastErrorAt?: string | null;
+  lastSyncOk?: boolean | null;
+}
+
+function fmt(dateStr: string | null | undefined): string {
+  if (!dateStr) return "—";
+  const d = new Date(dateStr);
+  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function SyncHealthBadges({ configId }: { configId: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const { data } = useQuery<SyncHealthResponse>({
+    queryKey: ["/api/agenda/sync-configs", configId, "errors"],
+    queryFn: async () => {
+      const r = await fetch(`/api/agenda/sync-configs/${configId}/errors`, {
+        credentials: "include",
+      });
+      if (!r.ok) return {};
+      return r.json();
+    },
+    staleTime: 30_000,
+  });
+
+  const healthState = data?.sourceHealthState;
+  const continuityState = data?.displayContinuityState;
+  const details = data?.details;
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap items-center gap-1">
+        {/* Source health badge (authoritative server-side state) */}
+        {healthState ? (
+          <Badge
+            variant={healthStateVariant(healthState)}
+            className={healthStateClass(healthState)}
+            data-testid={`badge-source-health-${configId}`}
+          >
+            {(healthState === "Checking" || healthState === "Updating") && (
+              <span className="mr-1 animate-pulse">●</span>
+            )}
+            {healthState === "Source unavailable" && <WifiOff className="h-3 w-3 mr-1" />}
+            {healthState === "Authentication required" && <Lock className="h-3 w-3 mr-1" />}
+            {healthState === "Access revoked" && <Lock className="h-3 w-3 mr-1" />}
+            {healthState}
+          </Badge>
+        ) : (
+          // Legacy fallback when server hasn't returned new contract yet.
+          <Badge variant="secondary" className="text-slate-500 dark:text-slate-400"
+            data-testid={`badge-source-health-${configId}`}>
+            —
+          </Badge>
+        )}
+
+        {/* Display continuity badge */}
+        {continuityState && (
+          <Badge
+            variant="secondary"
+            className={continuityStateClass(continuityState)}
+            data-testid={`badge-continuity-${configId}`}
+          >
+            {continuityState === "Current" && <Archive className="h-3 w-3 mr-1" />}
+            {continuityState}
+          </Badge>
+        )}
+
+        {/* Expandable toggle */}
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="ml-1 text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+          data-testid={`health-details-toggle-${configId}`}
+        >
+          {expanded ? "Hide details" : "Details"}
+        </button>
+      </div>
+
+      {/* ── Expandable details panel (Task #362 health contract) ─────────── */}
+      {expanded && (
+        <div
+          className="mt-1 rounded-md border bg-muted/40 p-3 text-xs grid grid-cols-2 gap-x-4 gap-y-1"
+          data-testid={`health-details-panel-${configId}`}
+        >
+          <span className="text-muted-foreground">Account</span>
+          <span>{details?.msAccountConnected ? "Microsoft account" : "—"}</span>
+
+          <span className="text-muted-foreground">Workbook</span>
+          <span>{details?.msFileName ?? "—"}</span>
+
+          <span className="text-muted-foreground">Sheet</span>
+          <span>{details?.msConfiguredSheetName ?? "Auto (first sheet)"}</span>
+
+          <span className="text-muted-foreground">Source type</span>
+          <span>Read-only</span>
+
+          <span className="text-muted-foreground">Last checked</span>
+          <span>{fmt(details?.lastCheckedAt)}</span>
+
+          <span className="text-muted-foreground">Source last changed</span>
+          <span>{fmt(details?.lastCTagChangedAt)}</span>
+
+          <span className="text-muted-foreground">Last published</span>
+          <span>{fmt(details?.lastPublishedAt)}</span>
+
+          <span className="text-muted-foreground">Snapshot version</span>
+          <span>{details?.snapshotVersion ?? "—"}</span>
+
+          <span className="text-muted-foreground">Item count</span>
+          <span>{details?.itemCount ?? "—"}</span>
+
+          <span className="text-muted-foreground">Sync interval</span>
+          <span>{details?.syncIntervalMinutes ?? "—"} min</span>
+
+          <span className="text-muted-foreground">Consecutive failures</span>
+          <span>{details?.consecutiveFailures ?? 0}</span>
+
+          {details?.lastActionableWarning && (
+            <>
+              <span className="text-muted-foreground">Last warning</span>
+              <span className="text-amber-700 dark:text-amber-400 break-all">
+                {details.lastActionableWarning}
+              </span>
+            </>
+          )}
+
+          {data?.lastError && (
+            <>
+              <span className="text-muted-foreground">Last error</span>
+              <span className="text-destructive break-all">{data.lastError}</span>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SyncSourcesSection({ clientId }: { clientId: string }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -1366,6 +1569,30 @@ function SyncSourcesSection({ clientId }: { clientId: string }) {
     },
   });
 
+  // Task #362 — Disconnect the Microsoft account from a read-only source.
+  // Clears the microsoftAuth flag and the Drive/Item IDs so the config
+  // becomes a plain URL-based source (or can be reconfigured via the
+  // edit dialog). Operators use this when decommissioning a SharePoint
+  // integration without deleting the config entirely.
+  const disconnectMsMutation = useMutation({
+    mutationFn: (id: string) =>
+      apiRequest("PATCH", `/api/agenda/sync-configs/${id}`, {
+        microsoftAuth: false,
+        msDriveId: null,
+        msItemId: null,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agenda/sync-configs"] });
+      toast({ title: "Microsoft connection removed from source" });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to disconnect Microsoft account",
+        variant: "destructive",
+      });
+    },
+  });
+
   return (
     <Card data-testid="card-sync-sources">
       <CardHeader className="flex flex-row items-start justify-between gap-2">
@@ -1403,6 +1630,16 @@ function SyncSourcesSection({ clientId }: { clientId: string }) {
                     <Badge variant="outline">
                       {SOURCE_TYPE_LABELS[cfg.sourceType as SourceType] ?? cfg.sourceType}
                     </Badge>
+                    {/* Task #362 — Explicit read-only indicator for Microsoft-backed sources */}
+                    {isMsReadOnly(cfg) && (
+                      <Badge
+                        variant="outline"
+                        className="text-sky-700 dark:text-sky-400 border-sky-300"
+                        data-testid={`badge-readonly-${cfg.id}`}
+                      >
+                        <Lock className="h-3 w-3 mr-1" /> Read-only source
+                      </Badge>
+                    )}
                     {cfg.enabled ? (
                       <Badge variant="secondary">Enabled · every {cfg.syncIntervalMinutes}m</Badge>
                     ) : (
@@ -1418,8 +1655,10 @@ function SyncSourcesSection({ clientId }: { clientId: string }) {
                         <AlertTriangle className="h-3 w-3 mr-1" /> Last sync failed
                       </Badge>
                     )}
+                    {/* Task #362 — Live source health + display-continuity badges */}
+                    {isMsReadOnly(cfg) && <SyncHealthBadges configId={cfg.id} />}
                   </div>
-                  <div className="flex gap-1">
+                  <div className="flex gap-1 flex-wrap">
                     <Button
                       size="sm"
                       variant="outline"
@@ -1427,8 +1666,45 @@ function SyncSourcesSection({ clientId }: { clientId: string }) {
                       disabled={runMutation.isPending}
                       data-testid={`button-run-sync-${cfg.id}`}
                     >
-                      <RefreshCw className={`h-4 w-4 mr-1 ${runMutation.isPending ? "animate-spin" : ""}`} /> Sync now
+                      <RefreshCw
+                        className={`h-4 w-4 mr-1 ${runMutation.isPending ? "animate-spin" : ""}`}
+                      />
+                      {/* Task #362 — "Refresh now" for read-only sources; "Sync now" otherwise */}
+                      {isMsReadOnly(cfg) ? "Refresh now" : "Sync now"}
                     </Button>
+                    {/* Task #362 — Reconnect: opens the edit dialog to repair the MS connection */}
+                    {isMsReadOnly(cfg) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => { setEditing(cfg); setOpen(true); }}
+                        data-testid={`button-reconnect-sync-${cfg.id}`}
+                        title="Open settings to reconnect the Microsoft account"
+                      >
+                        Reconnect
+                      </Button>
+                    )}
+                    {/* Task #362 — Disconnect: clears MS auth without deleting the config */}
+                    {isMsReadOnly(cfg) && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          if (
+                            confirm(
+                              "Remove the Microsoft connection from this source? The config will remain but the Microsoft account link will be cleared.",
+                            )
+                          ) {
+                            disconnectMsMutation.mutate(cfg.id);
+                          }
+                        }}
+                        disabled={disconnectMsMutation.isPending}
+                        data-testid={`button-disconnect-ms-${cfg.id}`}
+                        title="Remove Microsoft account connection from this source"
+                      >
+                        Disconnect
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="ghost"

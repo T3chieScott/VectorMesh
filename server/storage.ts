@@ -84,12 +84,14 @@ import {
   agendaItems,
   agendaWidgetConfigs,
   agendaSyncConfigs,
+  agendaItemSnapshots,
   type AgendaItem,
   type InsertAgendaItem,
   type AgendaWidgetConfig,
   type InsertAgendaWidgetConfig,
   type AgendaSyncConfig,
   type InsertAgendaSyncConfig,
+  type AgendaItemSnapshot,
   sweepstakeWidgetConfigs,
   tournamentTeams,
   tournamentMatches,
@@ -746,6 +748,56 @@ export interface IStorage {
  * `getCanvasMembers` and `backfillCanvasPairingState` produce) so the
  * fallback branch is deterministic.
  */
+/**
+ * Task #362 — Merge snapshot items with live manualOverride rows.
+ *
+ * The snapshot is the authoritative base for MS-backed agenda configs, but
+ * operator edits (manualOverride=true) made AFTER the last successful sync
+ * must be immediately visible. This pure function overlays live manual-
+ * override rows on top of snapshot items:
+ *
+ *  - If a live manualOverride row shares an externalId with a snapshot item,
+ *    the live row replaces the snapshot item (operator preference wins).
+ *  - If a live manualOverride row has no matching snapshot item (manually
+ *    added after sync, or has no externalId), it is appended.
+ *  - Snapshot items with no matching manual override are kept as-is.
+ *
+ * Exported for unit testing without a DB connection.
+ */
+export function mergeSnapshotWithManualOverrides(
+  snapItems: AgendaItem[],
+  liveManualOverrides: AgendaItem[],
+  now: Date,
+): AgendaItem[] {
+  if (liveManualOverrides.length === 0) return snapItems;
+
+  // Index live overrides by externalId for O(1) replacement lookups.
+  const overrideByExtId = new Map<string, AgendaItem>();
+  for (const mo of liveManualOverrides) {
+    if (mo.externalId) overrideByExtId.set(mo.externalId, mo);
+  }
+
+  // Replace matching snapshot items with the live override version.
+  const snapExtIds = new Set(snapItems.map((si) => si.externalId).filter(Boolean) as string[]);
+  const merged: AgendaItem[] = snapItems.map((si) => {
+    if (si.externalId) {
+      const override = overrideByExtId.get(si.externalId);
+      if (override) return override;
+    }
+    return si;
+  });
+
+  // Append live overrides that have no corresponding snapshot item.
+  for (const mo of liveManualOverrides) {
+    const alreadyReplaced = mo.externalId && snapExtIds.has(mo.externalId);
+    if (!alreadyReplaced) {
+      merged.push(mo);
+    }
+  }
+
+  return merged;
+}
+
 export function pickCanvasPairingWinner(members: Screen[]): Screen {
   if (members.length === 0) {
     throw new Error("pickCanvasPairingWinner requires at least one member");
@@ -3099,6 +3151,199 @@ export class DatabaseStorage implements IStorage {
     return (result.rowCount ?? 0) > 0;
   }
 
+  // Task #362 — Atomic snapshot promotion for Microsoft-backed agenda sources.
+  //
+  // Performs the entire upsert + tombstone + snapshot write + cTag record in
+  // a single Drizzle transaction so a failure cannot leave agenda_items in a
+  // partially-updated state. The previous snapshot remains serving displays
+  // until this transaction commits, at which point the pointer atomically
+  // swaps to the new snapshot. Returns the item-level counts and the new
+  // snapshot ID so the caller can update lastSyncAt etc. separately.
+  async atomicMicrosoftSync(params: {
+    configId: string;
+    clientId: string;
+    newItems: InsertAgendaItem[];
+    existingItems: AgendaItem[];
+    removeMissingItems: boolean;
+    seenExternalIds: Set<string>;
+    newCTag: string | null;
+    /** Task #362 health contract — when items were committed (always now()). */
+    lastPublishedAt?: Date | null;
+    /** Task #362 health contract — when the cTag last changed (null = skip update). */
+    lastCTagChangedAt?: Date | null;
+  }): Promise<{ inserted: number; updated: number; skippedManual: number; removed: number; snapshotId: string; snapshotVersion: number }> {
+    const { configId, clientId, newItems, existingItems, removeMissingItems, seenExternalIds, newCTag } = params;
+
+    const existingByExt = new Map<string, AgendaItem>();
+    for (const row of existingItems) {
+      if (row.externalId) existingByExt.set(row.externalId, row);
+    }
+
+    let inserted = 0;
+    let updated = 0;
+    let skippedManual = 0;
+    let removed = 0;
+    let snapshotId = "";
+    let snapshotVersion = 0;
+
+    await db.transaction(async (tx) => {
+      // Determine the next snapshot version for this config.
+      const versionResult = await tx
+        .select({ maxVersion: sql<number>`COALESCE(MAX(snapshot_version), 0)` })
+        .from(agendaItemSnapshots)
+        .where(eq(agendaItemSnapshots.syncConfigId, configId));
+      const nextVersion = (versionResult[0]?.maxVersion ?? 0) + 1;
+      snapshotVersion = nextVersion;
+
+      // ── Step 1: Upsert agenda_items (honour manualOverride). ─────────────
+      for (const item of newItems) {
+        const prev = item.externalId ? existingByExt.get(item.externalId) : undefined;
+        if (prev) {
+          if (prev.manualOverride) {
+            skippedManual++;
+            continue;
+          }
+          // Task #362 — guard against a concurrent admin edit that enables
+          // manualOverride between the pre-fetch and this transaction.
+          // The WHERE clause includes manual_override = false so we never
+          // overwrite a row that was concurrently marked as a manual override.
+          const updateResult = await tx
+            .update(agendaItems)
+            .set({
+              title: item.title,
+              description: item.description ?? null,
+              room: item.room ?? null,
+              track: item.track ?? null,
+              presenter: item.presenter ?? null,
+              startsAt: item.startsAt,
+              endsAt: item.endsAt,
+              status: (item.status ?? "scheduled") as AgendaItem["status"],
+              statusMessage: item.statusMessage ?? null,
+              updatedAt: new Date(),
+            })
+            .where(and(eq(agendaItems.id, prev.id), eq(agendaItems.manualOverride, false)))
+            .returning({ id: agendaItems.id });
+          if (updateResult.length > 0) {
+            updated++;
+          } else {
+            // Zero rows affected — manualOverride was concurrently set to true.
+            skippedManual++;
+          }
+        } else {
+          await tx.insert(agendaItems).values({
+            clientId,
+            title: item.title,
+            description: item.description ?? null,
+            room: item.room ?? null,
+            track: item.track ?? null,
+            presenter: item.presenter ?? null,
+            startsAt: item.startsAt,
+            endsAt: item.endsAt,
+            status: (item.status ?? "scheduled") as AgendaItem["status"],
+            statusMessage: item.statusMessage ?? null,
+            externalSyncConfigId: configId,
+            externalId: item.externalId,
+            manualOverride: false,
+          });
+          inserted++;
+        }
+      }
+
+      // ── Step 2: Tombstone removal: drop non-manual rows not in upstream. ──
+      if (removeMissingItems) {
+        for (const row of existingItems) {
+          if (!row.externalId) continue;
+          if (seenExternalIds.has(row.externalId)) continue;
+          if (row.manualOverride) continue;
+          // Guard against a concurrent manualOverride edit: only delete
+          // rows that are still manual_override = false at commit time.
+          const deleteResult = await tx
+            .delete(agendaItems)
+            .where(and(eq(agendaItems.id, row.id), eq(agendaItems.manualOverride, false)))
+            .returning({ id: agendaItems.id });
+          if (deleteResult.length > 0) removed++;
+        }
+      }
+
+      // ── Step 3: Capture the effective post-sync state inside the tx. ─────
+      // Querying the DB here (not newItems alone) is authoritative: it includes
+      // manualOverride rows the sync left untouched, rows retained when
+      // removeMissingItems=false, and all newly upserted upstream items. The
+      // snapshot therefore captures exactly what players will see.
+      const effectiveRows = await tx
+        .select()
+        .from(agendaItems)
+        .where(eq(agendaItems.externalSyncConfigId, configId))
+        .orderBy(asc(agendaItems.startsAt));
+
+      // ── Step 4: Write snapshot with the authoritative effective payload. ──
+      const [snap] = await tx
+        .insert(agendaItemSnapshots)
+        .values({
+          syncConfigId: configId,
+          snapshotVersion: nextVersion,
+          items: effectiveRows,
+          itemCount: effectiveRows.length,
+        })
+        .returning({ id: agendaItemSnapshots.id });
+      snapshotId = snap.id;
+
+      // ── Step 5: Atomically promote the pointer and record the new cTag. ──
+      // This single UPDATE is the moment players start seeing the new data.
+      const configUpdate: Partial<AgendaSyncConfig> = {
+        lastGoodSnapshotId: snapshotId,
+        // Task #362 health contract: denormalize snapshot version so the
+        // status endpoint can show it without a join.
+        lastSnapshotVersion: nextVersion,
+        updatedAt: new Date(),
+      };
+      if (newCTag !== null) {
+        configUpdate.lastCTag = newCTag;
+      }
+      // Task #362 health contract: persist publish timestamp and optional
+      // cTag-change timestamp inside the same transaction so they are
+      // always consistent with the promoted snapshot.
+      if (params.lastPublishedAt) {
+        configUpdate.lastPublishedAt = params.lastPublishedAt;
+      }
+      if (params.lastCTagChangedAt) {
+        configUpdate.lastCTagChangedAt = params.lastCTagChangedAt;
+      }
+      await tx
+        .update(agendaSyncConfigs)
+        .set(configUpdate)
+        .where(eq(agendaSyncConfigs.id, configId));
+    });
+
+    return { inserted, updated, skippedManual, removed, snapshotId, snapshotVersion };
+  }
+
+  async getAgendaSnapshot(snapshotId: string): Promise<AgendaItemSnapshot | undefined> {
+    const [row] = await db
+      .select()
+      .from(agendaItemSnapshots)
+      .where(eq(agendaItemSnapshots.id, snapshotId));
+    return row;
+  }
+
+  // Prune old snapshots for a config, keeping the latest `keepLast` rows.
+  // Called in the background after each successful Microsoft-backed sync.
+  async pruneOldAgendaSnapshots(configId: string, keepLast: number): Promise<void> {
+    // Find the IDs of snapshots to delete (all except the latest keepLast).
+    const candidates = await db
+      .select({ id: agendaItemSnapshots.id })
+      .from(agendaItemSnapshots)
+      .where(eq(agendaItemSnapshots.syncConfigId, configId))
+      .orderBy(desc(agendaItemSnapshots.snapshotVersion));
+
+    if (candidates.length <= keepLast) return;
+    const toDelete = candidates.slice(keepLast).map((r) => r.id);
+    if (toDelete.length === 0) return;
+    await db
+      .delete(agendaItemSnapshots)
+      .where(inArray(agendaItemSnapshots.id, toDelete));
+  }
+
   async getAgendaItemsBySyncConfig(syncConfigId: string): Promise<AgendaItem[]> {
     return db
       .select()
@@ -3152,11 +3397,94 @@ export class DatabaseStorage implements IStorage {
   ): Promise<{ config: AgendaWidgetConfig; items: AgendaItem[] } | undefined> {
     const config = await this.getAgendaWidgetConfig(configId);
     if (!config) return undefined;
-    const pool = await this.getAgendaItems(config.clientId);
+
     const { resolveAgendaItems } = await import("@shared/agenda-resolver");
+    const client = await this.getClient(config.clientId);
+
+    // Task #362 — snapshot-authoritative display resolution for MS-backed configs.
+    //
+    // For Microsoft-backed sync configs (excel_onedrive / sharepoint_excel with
+    // microsoftAuth=true) that have a promoted lastGoodSnapshotId, the snapshot
+    // is the authoritative display source, not the live agenda_items rows. This
+    // guarantees:
+    //   - The snapshot captured the full effective post-sync state (including
+    //     manualOverride rows and removeMissingItems=false retained rows).
+    //   - A partial corruption of agenda_items never partially degrades the
+    //     schedule — displays always see a coherent, point-in-time view.
+    //
+    // For configs without a snapshot (pre-Task-362 or first sync not yet
+    // complete) and for all non-MS sources, live agenda_items are used as before.
+
+    const syncConfigs = await this.getAgendaSyncConfigs(config.clientId);
+
+    // Identify MS-backed configs with an available snapshot.
+    const msSnapshotConfigIds = new Set<string>();
+    const snapshotItemsByConfigId = new Map<string, AgendaItem[]>();
+
+    for (const sc of syncConfigs) {
+      const isMsBacked =
+        sc.microsoftAuth === true &&
+        (sc.sourceType === "excel_onedrive" || sc.sourceType === "sharepoint_excel");
+      if (!isMsBacked || !sc.lastGoodSnapshotId) continue;
+
+      msSnapshotConfigIds.add(sc.id);
+      const snap = await this.getAgendaSnapshot(sc.lastGoodSnapshotId);
+      if (!snap || !Array.isArray(snap.items)) continue;
+
+      // Deserialize snapshot rows — JSONB round-trip converts Date fields to
+      // ISO strings so we restore them to real Date objects for the resolver.
+      const snapItems = (snap.items as AgendaItem[]).map((si) => ({
+        ...si,
+        startsAt: new Date(si.startsAt),
+        endsAt: new Date(si.endsAt),
+        createdAt: si.createdAt ? new Date(si.createdAt) : now,
+        updatedAt: si.updatedAt ? new Date(si.updatedAt) : now,
+      }));
+      snapshotItemsByConfigId.set(sc.id, snapItems);
+    }
+
+    // Load live items. For MS-snapshot-served configs we use snapshot as the
+    // authoritative base, BUT we still overlay live manualOverride rows so
+    // operator edits made after the last successful sync are immediately visible.
+    const allLive = await this.getAgendaItems(config.clientId);
+
+    // Items that do NOT belong to any MS-snapshot-served config → live pool.
+    const livePool = allLive.filter(
+      (i) => !i.externalSyncConfigId || !msSnapshotConfigIds.has(i.externalSyncConfigId),
+    );
+
+    // For each MS-snapshot-served config, overlay the live manualOverride rows
+    // on top of the snapshot so post-sync admin edits are rendered immediately.
+    const mergedSnapshotItems: AgendaItem[] = [];
+    for (const [configId, snapItems] of snapshotItemsByConfigId) {
+      const liveMoRows = allLive.filter(
+        (i) => i.externalSyncConfigId === configId && i.manualOverride,
+      );
+      mergedSnapshotItems.push(...mergeSnapshotWithManualOverrides(snapItems, liveMoRows, now));
+    }
+    // For MS-backed configs without a snapshot yet, fall back to live rows.
+    const msNoSnapshotPool = allLive.filter(
+      (i) =>
+        i.externalSyncConfigId &&
+        msSnapshotConfigIds.size > 0 &&
+        !msSnapshotConfigIds.has(i.externalSyncConfigId) &&
+        syncConfigs.some(
+          (sc) =>
+            sc.id === i.externalSyncConfigId &&
+            sc.microsoftAuth === true &&
+            (sc.sourceType === "excel_onedrive" || sc.sourceType === "sharepoint_excel"),
+        ),
+    );
+
+    // Merge live pool + snapshot items from all MS-backed configs.
+    const pool: AgendaItem[] = [
+      ...livePool,
+      ...mergedSnapshotItems,
+      ...msNoSnapshotPool,
+    ];
+
     // Task #240 — pass the client's tz so today_tomorrow mode buckets
     // items by the site's local calendar day, not the server's UTC day.
-    const client = await this.getClient(config.clientId);
     const items = resolveAgendaItems({
       items: pool,
       config,

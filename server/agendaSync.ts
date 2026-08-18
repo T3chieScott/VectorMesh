@@ -34,6 +34,45 @@ import type {
 } from "@shared/schema";
 import { AGENDA_XLSX_SOURCE_TYPES } from "@shared/schema";
 
+// ===== Snapshot / atomic-sync types (Task #362) =====
+//
+// These types are defined here (close to AgendaSyncStorage) so storage.ts
+// can implement atomicMicrosoftSync without importing from agendaSync.ts
+// and creating a circular dependency.
+export interface AtomicMicrosoftSyncParams {
+  configId: string;
+  clientId: string;
+  /** Full InsertAgendaItem rows to upsert, built from the upstream parse. */
+  newItems: InsertAgendaItem[];
+  /** Current DB rows for this sync config (used for update/tombstone logic). */
+  existingItems: AgendaItem[];
+  removeMissingItems: boolean;
+  /** External IDs present in the upstream — used to compute tombstones. */
+  seenExternalIds: Set<string>;
+  /**
+   * cTag fetched just before the download; null when unavailable.
+   * The snapshot payload is computed by storage from the effective
+   * post-sync rows (not passed in), ensuring manualOverride rows and
+   * retained-missing rows are captured accurately.
+   */
+  newCTag: string | null;
+  /** Task #362 health contract — when items were committed. Set by caller. */
+  lastPublishedAt?: Date | null;
+  /** Task #362 health contract — when the cTag last changed; null = no update. */
+  lastCTagChangedAt?: Date | null;
+}
+
+export interface AtomicMicrosoftSyncResult {
+  inserted: number;
+  updated: number;
+  skippedManual: number;
+  removed: number;
+  /** ID of the newly created agenda_item_snapshots row. */
+  snapshotId: string;
+  /** Snapshot version number (1-based, increments per successful sync). */
+  snapshotVersion: number;
+}
+
 export interface AgendaSyncStorage {
   getAgendaSyncConfigs(clientId?: string): Promise<AgendaSyncConfig[]>;
   getAgendaSyncConfig(id: string): Promise<AgendaSyncConfig | undefined>;
@@ -52,6 +91,16 @@ export interface AgendaSyncStorage {
   // spreadsheet date parsing (config tz → client tz → fallback).
   // Optional so legacy ics/google_sheets_csv stubs don't need it.
   getClient?(id: string): Promise<Client | undefined>;
+  // Task #362 — atomic snapshot promotion for Microsoft-backed sources.
+  // When present, the sync engine performs the upsert + snapshot write
+  // inside a single DB transaction for true atomicity. When absent the
+  // legacy per-row upsert path is used instead (backwards compatible
+  // with all existing test stubs that don't implement it).
+  atomicMicrosoftSync?(
+    params: AtomicMicrosoftSyncParams,
+  ): Promise<AtomicMicrosoftSyncResult>;
+  // Optional: prune old snapshots for a config after a successful sync.
+  pruneOldAgendaSnapshots?(configId: string, keepLast: number): Promise<void>;
 }
 
 // Shown when an Excel/OneDrive/SharePoint link can't be fetched as a
@@ -71,6 +120,202 @@ export interface AgendaSyncResult {
   totalUpstream: number;
   error?: string;
   parseWarnings?: string[];
+  /**
+   * True when the Microsoft file's cTag matched the stored cTag and the
+   * download was skipped entirely. DB counts are all zero; `ok` is true.
+   * Also set when a sync for the same config is already in progress
+   * (in-flight de-duplication).
+   */
+  noChange?: boolean;
+}
+
+// ===== Health status types (Task #362) =====
+//
+// SourceConnectionHealth describes whether the upstream source is
+// reachable and parsing correctly. DisplayContinuity describes whether
+// the last-known-good snapshot is available to serve players if the
+// live source is temporarily unreachable. The two are intentionally
+// separate: a source can fail (connection unhealthy) while the display
+// stays live (continuity maintained via snapshot).
+
+/** Authoritative source-health states shown in the admin health panel. */
+export type SourceHealthState =
+  | "Healthy"            // last sync OK, no warnings, content changed or initial
+  | "Checking"           // in-flight: fetching cTag before deciding to download
+  | "Workbook unchanged" // last sync OK, cTag matched, no bytes transferred
+  | "Updating"           // in-flight: cTag changed, currently downloading
+  | "Validation warning" // last sync OK but row-level parse warnings exist
+  | "Authentication required" // last sync failed with an auth/token error
+  | "Access revoked"     // last sync failed with a permissions/forbidden error
+  | "Source unavailable"; // last sync failed for any other reason (network, etc.)
+
+/** Authoritative display-continuity states shown in the admin health panel. */
+export type DisplayContinuityState =
+  | "Current"              // serving live synced data (lastSyncOk true + snapshot)
+  | "Using last-known-good" // live source unavailable but last-good snapshot is serving
+  | "No valid snapshot";   // never synced successfully or snapshot was pruned
+
+// ===== In-process per-source phase tracking (production only) =====
+//
+// Tracks which phase of the sync cycle a config is currently in so the
+// health status endpoint can return "Checking" / "Updating" rather than
+// the previous DB-persisted state. Only updated for production syncs
+// (not test-injected lock paths). Multi-process deployments that share
+// no in-process state should use an external store.
+const IN_FLIGHT_PHASES = new Map<string, "checking" | "updating">();
+
+/**
+ * Returns the current in-flight phase for a sync config, or null when no
+ * sync is running. Used by the health status endpoint to surface live state
+ * without an additional round-trip.
+ */
+export function getConfigSyncPhase(id: string): "checking" | "updating" | null {
+  return IN_FLIGHT_PHASES.get(id) ?? null;
+}
+
+/**
+ * Derives the authoritative SourceHealthState from persisted DB fields and
+ * the optional in-flight phase (from getConfigSyncPhase). Exported for unit
+ * tests.
+ */
+export function computeSourceHealthState(
+  config: Pick<
+    AgendaSyncConfig,
+    "lastSyncOk" | "lastSyncWarnings" | "consecutiveFailureCount" | "lastError"
+  >,
+  syncPhase: "checking" | "updating" | null = null,
+): SourceHealthState {
+  if (syncPhase === "checking") return "Checking";
+  if (syncPhase === "updating") return "Updating";
+
+  if (config.lastSyncOk === null || config.lastSyncOk === undefined) {
+    // Never synced.
+    return "Source unavailable";
+  }
+
+  if (config.lastSyncOk === false) {
+    const err = (config.lastError ?? "").toLowerCase();
+    // Auth/token errors — operator must reconnect.
+    if (/auth|token|401|unauthorized|unauthenticated|credential|login|sign.?in/.test(err)) {
+      return "Authentication required";
+    }
+    // Access/permission errors — the account lacks read access to the file.
+    if (/access|permission|forbidden|403|not found|no permission|revoked/.test(err)) {
+      return "Access revoked";
+    }
+    // Any other failure.
+    return "Source unavailable";
+  }
+
+  // lastSyncOk === true
+  if (Array.isArray(config.lastSyncWarnings) && config.lastSyncWarnings.length > 0) {
+    return "Validation warning";
+  }
+  return "Healthy";
+}
+
+/**
+ * Like computeSourceHealthState but also signals when the last sync was a
+ * cTag-skip (no bytes transferred). This requires the extra persisted
+ * `lastCTagChangedAt` / `lastPublishedAt` timestamps to distinguish a genuine
+ * "no content change" tick from an ordinary successful download.
+ */
+export function computeSourceHealthStateWithTimestamps(
+  config: Pick<
+    AgendaSyncConfig,
+    | "lastSyncOk"
+    | "lastSyncWarnings"
+    | "consecutiveFailureCount"
+    | "lastError"
+    | "lastSyncAt"
+    | "lastPublishedAt"
+    | "lastCTagChangedAt"
+  >,
+  syncPhase: "checking" | "updating" | null = null,
+): SourceHealthState {
+  const base = computeSourceHealthState(config, syncPhase);
+  if (base !== "Healthy") return base;
+
+  // If the last sync time is strictly AFTER the last time the cTag changed
+  // (or the cTag has never changed — lastCTagChangedAt is null while
+  // lastSyncAt is not), the most recent tick was a cTag-skip.
+  const lastSyncTs = config.lastSyncAt ? new Date(config.lastSyncAt).getTime() : null;
+  const lastChangedTs = config.lastCTagChangedAt
+    ? new Date(config.lastCTagChangedAt).getTime()
+    : null;
+  const lastPublishedTs = config.lastPublishedAt
+    ? new Date(config.lastPublishedAt).getTime()
+    : null;
+
+  if (
+    lastSyncTs !== null &&
+    (lastPublishedTs === null || lastSyncTs > lastPublishedTs) &&
+    (lastChangedTs === null || lastSyncTs > lastChangedTs)
+  ) {
+    return "Workbook unchanged";
+  }
+  return "Healthy";
+}
+
+/**
+ * Derives the authoritative DisplayContinuityState from persisted DB fields.
+ * Exported for unit tests.
+ */
+export function computeDisplayContinuityState(
+  config: Pick<AgendaSyncConfig, "lastSyncOk" | "lastGoodSnapshotId">,
+): DisplayContinuityState {
+  if (config.lastSyncOk === true && config.lastGoodSnapshotId) return "Current";
+  if (config.lastGoodSnapshotId) return "Using last-known-good";
+  return "No valid snapshot";
+}
+
+// ===== Legacy compatibility wrappers (used by existing routes/tests) =====
+
+export interface SourceConnectionHealth {
+  configId: string;
+  configName: string;
+  sourceType: string;
+  /** null = never synced */
+  ok: boolean | null;
+  consecutiveFailures: number;
+  lastError: string | null;
+  lastErrorAt: Date | null;
+}
+
+export interface DisplayContinuity {
+  configId: string;
+  configName: string;
+  /** True when a last-good snapshot exists for this config. */
+  hasLastGoodSnapshot: boolean;
+  /** Item count from the last successful sync, or null if never synced. */
+  lastItemCount: number | null;
+  lastSyncOk: boolean | null;
+}
+
+export function extractSourceConnectionHealth(
+  config: AgendaSyncConfig,
+): SourceConnectionHealth {
+  return {
+    configId: config.id,
+    configName: config.name,
+    sourceType: config.sourceType,
+    ok: config.lastSyncOk ?? null,
+    consecutiveFailures: config.consecutiveFailureCount ?? 0,
+    lastError: config.lastError ?? null,
+    lastErrorAt: config.lastErrorAt ?? null,
+  };
+}
+
+export function extractDisplayContinuity(
+  config: AgendaSyncConfig,
+): DisplayContinuity {
+  return {
+    configId: config.id,
+    configName: config.name,
+    hasLastGoodSnapshot: !!config.lastGoodSnapshotId,
+    lastItemCount: config.lastItemCount ?? null,
+    lastSyncOk: config.lastSyncOk ?? null,
+  };
 }
 
 /**
@@ -128,6 +373,56 @@ export interface AgendaSyncDeps {
    * the connect-Microsoft guidance instead of the generic message.
    */
   graphFetch?: (config: AgendaSyncConfig) => Promise<Uint8Array>;
+  /**
+   * Task #362 — fetches the Microsoft Graph cTag (change tag) for the
+   * source file without downloading its bytes. When the cTag matches the
+   * stored `lastCTag`, the sync is skipped (no download, no parse, no DB
+   * write). When absent or when cTag is unavailable, a full download is
+   * always performed. Supplied by the route layer (fetchMicrosoftCTag from
+   * server/microsoftGraph.ts). Returns null on any error so the caller
+   * treats it as "unknown → always download" rather than surfacing an error.
+   */
+  graphCTagFetch?: (config: AgendaSyncConfig) => Promise<string | null>;
+  /**
+   * Task #362 — injectable in-process sync lock. Defaults to the module-global
+   * IN_FLIGHT_SYNCS set (correct for production). Tests that exercise concurrent
+   * runAgendaSync calls should inject a fresh `new Set<string>()` to avoid
+   * cross-test pollution of the shared global.
+   */
+  inFlightLock?: Set<string>;
+}
+
+// ===== In-process per-source lock (Task #362) =====
+//
+// Prevents two concurrent runAgendaSync calls for the same Microsoft-backed
+// config (e.g. two scheduler ticks overlapping during a slow download).
+// A Set is sufficient because this is a single-process deployment.
+// Multi-process deployments should use pg_try_advisory_xact_lock instead.
+const IN_FLIGHT_SYNCS = new Set<string>();
+// Rate-limit map for manual /run requests (production only, per config).
+// Prevents an operator from hammering Refresh Now faster than the cooldown.
+export const MANUAL_RUN_COOLDOWN_MS = 30_000;
+const lastManualRunAt = new Map<string, number>();
+
+/**
+ * Returns the remaining milliseconds of the rate-limit window for a manual
+ * /run trigger, or 0 if the next manual run is allowed. Used by the route
+ * layer to enforce the cooldown without knowledge of the map internals.
+ */
+export function manualRunCooldownRemainingMs(configId: string): number {
+  const last = lastManualRunAt.get(configId);
+  if (last === undefined) return 0;
+  const elapsed = Date.now() - last;
+  return elapsed >= MANUAL_RUN_COOLDOWN_MS ? 0 : MANUAL_RUN_COOLDOWN_MS - elapsed;
+}
+
+/**
+ * Records a manual /run trigger for rate-limiting purposes.
+ * Call immediately before dispatching the sync so the cooldown starts
+ * at the trigger moment, not after the (potentially slow) sync completes.
+ */
+export function recordManualRun(configId: string): void {
+  lastManualRunAt.set(configId, Date.now());
 }
 
 // True when a config is a Microsoft Graph-backed OneDrive/SharePoint
@@ -626,7 +921,58 @@ export async function runAgendaSync(
     removed: 0,
     totalUpstream: 0,
   };
+
+  const isMsBacked = isMicrosoftBackedSource(config);
+
+  // Task #362 — in-process lock. Prevent a slow Microsoft download from
+  // overlapping with the next scheduler tick for the same config.
+  // Use the caller-injected lock set when provided (test isolation); fall
+  // back to the module-global for production.
+  const lockSet = deps.inFlightLock ?? IN_FLIGHT_SYNCS;
+  // Track in-flight phase via the production-global map only when the caller
+  // is NOT injecting their own lock (i.e. this is a production run, not a
+  // test). Tests use injected locks for isolation; phases aren't meaningful
+  // in test-controlled environments.
+  const trackPhase = isMsBacked && !deps.inFlightLock;
+  if (isMsBacked) {
+    if (lockSet.has(config.id)) {
+      result.ok = true;
+      result.noChange = true;
+      return result;
+    }
+    lockSet.add(config.id);
+  }
+  if (trackPhase) IN_FLIGHT_PHASES.set(config.id, "checking");
+
   try {
+    // Task #362 — cTag pre-check. Fetch the file's metadata-level change
+    // tag BEFORE downloading bytes. If the cTag matches the one we stored
+    // after the last successful sync, the file hasn't changed and we can
+    // record the check time without transferring any bytes.
+    let prefetchedCTag: string | null = null;
+    if (isMsBacked && deps.graphCTagFetch) {
+      prefetchedCTag = await deps.graphCTagFetch(config);
+      if (
+        prefetchedCTag !== null &&
+        config.lastCTag !== null &&
+        config.lastCTag !== undefined &&
+        prefetchedCTag === config.lastCTag
+      ) {
+        // File unchanged — record the check time and return without downloading.
+        await deps.storage.updateAgendaSyncConfig(config.id, {
+          lastSyncAt: now,
+          lastSyncOk: true,
+          consecutiveFailureCount: 0,
+          failureAlertSent: false,
+        });
+        result.ok = true;
+        result.noChange = true;
+        return result;
+      }
+    }
+    // cTag changed (or unavailable) — we are about to download bytes.
+    if (trackPhase) IN_FLIGHT_PHASES.set(config.id, "updating");
+
     // Load + parse the source. URL normalisation (Google Sheets,
     // OneDrive/SharePoint) and XLSX-vs-text handling live in
     // loadSourceContent; column mapping for the generic spreadsheet
@@ -649,66 +995,138 @@ export async function runAgendaSync(
     if (trimmedWarnings.length > 0) result.parseWarnings = trimmedWarnings;
 
     const existing = await deps.storage.getAgendaItemsBySyncConfig(config.id);
-    const existingByExt = new Map<string, AgendaItem>();
-    for (const row of existing) {
-      if (row.externalId) existingByExt.set(row.externalId, row);
-    }
-    const seenExt = new Set<string>();
 
-    for (const up of upstream) {
-      seenExt.add(up.externalId);
-      const prev = existingByExt.get(up.externalId);
-      if (prev) {
-        if (prev.manualOverride) {
-          result.skippedManual++;
-          continue;
+    // Task #362 — atomic promotion path for Microsoft-backed sources.
+    // When storage provides atomicMicrosoftSync, the entire upsert +
+    // tombstone + snapshot write + cTag record happens in one DB
+    // transaction. A failure leaves the previous snapshot serving players
+    // untouched. When not provided, fall back to the legacy per-row path.
+    if (isMsBacked && deps.storage.atomicMicrosoftSync) {
+      const seenExternalIds = new Set(upstream.map((u) => u.externalId));
+      const newItems: InsertAgendaItem[] = upstream.map((up) => ({
+        clientId: config.clientId,
+        title: up.data.title,
+        description: up.data.description ?? null,
+        room: up.data.room ?? null,
+        track: up.data.track ?? null,
+        presenter: up.data.presenter ?? null,
+        startsAt: up.data.startsAt,
+        endsAt: up.data.endsAt,
+        status: up.data.status ?? "scheduled",
+        statusMessage: up.data.statusMessage ?? null,
+        externalSyncConfigId: config.id,
+        externalId: up.externalId,
+        manualOverride: false,
+      }));
+      // Task #362 — bookend cTag: fetch the metadata cTag again AFTER the
+      // download+parse succeed. Only store the cTag when pre == post, which
+      // demonstrates the file was stable across the entire download window.
+      // If the file changed during our download (pre != post), we pass null
+      // so the stored lastCTag is NOT updated — the next tick will detect the
+      // new cTag and re-download. This prevents permanently serving stale data
+      // when a file changes exactly between our cTag fetch and content fetch.
+      let cTagToStore: string | null = null;
+      if (isMsBacked && deps.graphCTagFetch && prefetchedCTag !== null) {
+        const postDownloadCTag = await deps.graphCTagFetch(config).catch(() => null);
+        if (postDownloadCTag !== null && postDownloadCTag === prefetchedCTag) {
+          // File was stable across the whole download window — the stored cTag
+          // is demonstrably for the data we are about to commit.
+          cTagToStore = postDownloadCTag;
         }
-        await deps.storage.updateAgendaItem(prev.id, {
-          title: up.data.title,
-          description: up.data.description ?? null,
-          room: up.data.room ?? null,
-          track: up.data.track ?? null,
-          presenter: up.data.presenter ?? null,
-          startsAt: up.data.startsAt,
-          endsAt: up.data.endsAt,
-          status: up.data.status ?? "scheduled",
-          statusMessage: up.data.statusMessage ?? null,
-        });
-        result.updated++;
-      } else {
-        await deps.storage.createAgendaItem({
-          clientId: config.clientId,
-          title: up.data.title,
-          description: up.data.description ?? null,
-          room: up.data.room ?? null,
-          track: up.data.track ?? null,
-          presenter: up.data.presenter ?? null,
-          startsAt: up.data.startsAt,
-          endsAt: up.data.endsAt,
-          status: up.data.status ?? "scheduled",
-          statusMessage: up.data.statusMessage ?? null,
-          externalSyncConfigId: config.id,
-          externalId: up.externalId,
-          manualOverride: false,
-        });
-        result.inserted++;
+        // If postDownloadCTag !== prefetchedCTag: file changed during download.
+        // Leave cTagToStore = null so lastCTag is not updated, forcing a
+        // re-download on the next tick against the newer file version.
       }
-    }
 
-    // Tombstone removal: anything we used to own that no longer
-    // appears upstream is dropped, unless the operator marked it
-    // manualOverride (in which case we treat it as locally owned).
-    // When removeMissingItems is false the operator wants to keep
-    // previously-synced rows even when they drop out of the source, so
-    // we skip removal entirely. (Default true preserves legacy
-    // behaviour for ics / google_sheets_csv feeds.)
-    if (config.removeMissingItems !== false) {
+      // lastCTagChangedAt: set when a new cTag is being stored (the file's
+      // content changed relative to the last stored cTag). Also set on the
+      // very first download (no stored cTag to compare against).
+      const cTagChanged = cTagToStore !== null;
+      const atomicResult = await deps.storage.atomicMicrosoftSync({
+        configId: config.id,
+        clientId: config.clientId,
+        newItems,
+        existingItems: existing,
+        removeMissingItems: config.removeMissingItems !== false,
+        seenExternalIds,
+        newCTag: cTagToStore,
+        lastPublishedAt: now,
+        lastCTagChangedAt: cTagChanged ? now : null,
+      });
+      result.inserted = atomicResult.inserted;
+      result.updated = atomicResult.updated;
+      result.skippedManual = atomicResult.skippedManual;
+      result.removed = atomicResult.removed;
+
+      // Prune old snapshots in the background (keep last 5).
+      if (deps.storage.pruneOldAgendaSnapshots) {
+        deps.storage.pruneOldAgendaSnapshots(config.id, 5).catch((err) => {
+          console.error(`[agenda-sync] snapshot prune failed for ${config.id}:`, err);
+        });
+      }
+    } else {
+      // Legacy per-row upsert path (non-MS sources and test stubs).
+      const existingByExt = new Map<string, AgendaItem>();
       for (const row of existing) {
-        if (!row.externalId) continue;
-        if (seenExt.has(row.externalId)) continue;
-        if (row.manualOverride) continue;
-        await deps.storage.deleteAgendaItem(row.id);
-        result.removed++;
+        if (row.externalId) existingByExt.set(row.externalId, row);
+      }
+      const seenExt = new Set<string>();
+
+      for (const up of upstream) {
+        seenExt.add(up.externalId);
+        const prev = existingByExt.get(up.externalId);
+        if (prev) {
+          if (prev.manualOverride) {
+            result.skippedManual++;
+            continue;
+          }
+          await deps.storage.updateAgendaItem(prev.id, {
+            title: up.data.title,
+            description: up.data.description ?? null,
+            room: up.data.room ?? null,
+            track: up.data.track ?? null,
+            presenter: up.data.presenter ?? null,
+            startsAt: up.data.startsAt,
+            endsAt: up.data.endsAt,
+            status: up.data.status ?? "scheduled",
+            statusMessage: up.data.statusMessage ?? null,
+          });
+          result.updated++;
+        } else {
+          await deps.storage.createAgendaItem({
+            clientId: config.clientId,
+            title: up.data.title,
+            description: up.data.description ?? null,
+            room: up.data.room ?? null,
+            track: up.data.track ?? null,
+            presenter: up.data.presenter ?? null,
+            startsAt: up.data.startsAt,
+            endsAt: up.data.endsAt,
+            status: up.data.status ?? "scheduled",
+            statusMessage: up.data.statusMessage ?? null,
+            externalSyncConfigId: config.id,
+            externalId: up.externalId,
+            manualOverride: false,
+          });
+          result.inserted++;
+        }
+      }
+
+      // Tombstone removal: anything we used to own that no longer
+      // appears upstream is dropped, unless the operator marked it
+      // manualOverride (in which case we treat it as locally owned).
+      // When removeMissingItems is false the operator wants to keep
+      // previously-synced rows even when they drop out of the source, so
+      // we skip removal entirely. (Default true preserves legacy
+      // behaviour for ics / google_sheets_csv feeds.)
+      if (config.removeMissingItems !== false) {
+        for (const row of existing) {
+          if (!row.externalId) continue;
+          if (seenExt.has(row.externalId)) continue;
+          if (row.manualOverride) continue;
+          await deps.storage.deleteAgendaItem(row.id);
+          result.removed++;
+        }
       }
     }
 
@@ -768,6 +1186,12 @@ export async function runAgendaSync(
       }
     }
     return result;
+  } finally {
+    // Release in-process lock and clear phase so the next scheduler tick can run.
+    if (isMsBacked) {
+      lockSet.delete(config.id);
+    }
+    if (trackPhase) IN_FLIGHT_PHASES.delete(config.id);
   }
 }
 

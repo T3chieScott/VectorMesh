@@ -34,7 +34,7 @@ import {
   CACHE_NAMESPACES,
   STALE_GRACE_MS,
 } from "./sharedCache";
-import { fetchMicrosoftXlsxBytes } from "./microsoftGraph";
+import { fetchMicrosoftXlsxBytes, fetchMicrosoftCTag } from "./microsoftGraph";
 import { mountMediaLayoutRoutes } from "./mediaLayoutRoutes";
 import { mountCustomerDataRoutes } from "./customerDataRoutes";
 import { runDueAgendaSyncs } from "./agendaSync";
@@ -1126,6 +1126,7 @@ export async function registerRoutes(
         alerter: agendaAlerter,
         resolveStoredPath: (p) => fileStorage.getAbsolutePath(p),
         graphFetch: (cfg) => fetchMicrosoftXlsxBytes(cfg),
+        graphCTagFetch: (cfg) => fetchMicrosoftCTag(cfg),
       });
       if (ran > 0) {
         const failed = results.filter((r) => !r.result.ok).length;
@@ -5081,6 +5082,7 @@ export async function registerRoutes(
     logAudit,
     resolveStoredPath: (p) => fileStorage.getAbsolutePath(p),
     graphFetch: (cfg) => fetchMicrosoftXlsxBytes(cfg),
+    graphCTagFetch: (cfg) => fetchMicrosoftCTag(cfg),
   });
 
   mountSweepstakeRoutes(app, {

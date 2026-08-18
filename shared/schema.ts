@@ -1424,6 +1424,32 @@ export const agendaSyncConfigs = pgTable("agenda_sync_configs", {
   // email and clears the flag.
   consecutiveFailureCount: integer("consecutive_failure_count").notNull().default(0),
   failureAlertSent: boolean("failure_alert_sent").notNull().default(false),
+  // Task #362 — SharePoint Excel snapshot support. last_ctag caches the
+  // Microsoft Graph cTag at the time of the last successful download so
+  // subsequent ticks can skip the download entirely when the file hasn't
+  // changed. last_good_snapshot_id points to the last successfully promoted
+  // agenda_item_snapshots row for atomic display promotion; it is SET NULL
+  // by the DB when that snapshot is pruned (old rows cleaned up after sync).
+  lastCTag: text("last_ctag"),
+  // Note: this is a varchar FK to agenda_item_snapshots.id enforced at the
+  // SQL level (see migration 0026). Drizzle omits the .references() callback
+  // here to avoid a circular dependency (agendaItemSnapshots is defined below
+  // and both tables reference each other).
+  lastGoodSnapshotId: varchar("last_good_snapshot_id"),
+  // Task #362 source-health contract additions (see migration 0026).
+  // msFileName: display name of the selected Excel workbook (e.g.
+  //   "Agenda 2026.xlsx"). Never a URL or pre-authenticated link.
+  msFileName: text("ms_file_name"),
+  // lastPublishedAt: when agenda_items were last atomically committed from a
+  //   snapshot. Only set on successful content writes; not on cTag-skip or
+  //   failure.
+  lastPublishedAt: timestamp("last_published_at"),
+  // lastCTagChangedAt: when the Microsoft Graph cTag last CHANGED. Used to
+  //   surface "last source-content change" without exposing the cTag value.
+  lastCTagChangedAt: timestamp("last_ctag_changed_at"),
+  // lastSnapshotVersion: denormalised snapshot version number from the last
+  //   promoted snapshot. Avoids a JOIN in the health details response.
+  lastSnapshotVersion: integer("last_snapshot_version"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1445,6 +1471,12 @@ export const insertAgendaSyncConfigSchema = createInsertSchema(agendaSyncConfigs
     consecutiveFailureCount: true,
     failureAlertSent: true,
     lastSyncWarnings: true,
+    // Task #362 — runtime-managed snapshot/cTag fields; never set via the API.
+    lastCTag: true,
+    lastGoodSnapshotId: true,
+    lastPublishedAt: true,
+    lastCTagChangedAt: true,
+    lastSnapshotVersion: true,
   })
   .extend({
     name: z.string().min(1, "Name is required"),
@@ -1484,9 +1516,42 @@ export const insertAgendaSyncConfigSchema = createInsertSchema(agendaSyncConfigs
     msDriveId: z.string().optional().nullable(),
     msItemId: z.string().optional().nullable(),
     msSiteId: z.string().optional().nullable(),
+    // Task #362 — workbook display name (set by client, never a URL/token).
+    msFileName: z.string().optional().nullable(),
   });
 export type InsertAgendaSyncConfig = z.infer<typeof insertAgendaSyncConfigSchema>;
 export type AgendaSyncConfig = typeof agendaSyncConfigs.$inferSelect;
+
+// Task #362 — Snapshot of a single successful Microsoft-backed sync.
+// Each row holds the full set of normalised agenda items as JSONB;
+// agenda_sync_configs.last_good_snapshot_id points to the latest one.
+// Pruned to the last N snapshots per config after each successful sync.
+export const agendaItemSnapshots = pgTable("agenda_item_snapshots", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  syncConfigId: varchar("sync_config_id")
+    .notNull()
+    .references(() => agendaSyncConfigs.id, { onDelete: "cascade" }),
+  snapshotVersion: integer("snapshot_version").notNull(),
+  // Serialised normalised items — the full payload written to agenda_items
+  // in the same transaction. Typed as unknown[] to avoid importing InsertAgendaItem
+  // here (it would create a schema self-dependency).
+  items: jsonb("items").$type<unknown[]>().notNull(),
+  itemCount: integer("item_count").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  configVersionIdx: index("idx_agenda_snapshots_config_version")
+    .on(t.syncConfigId, t.snapshotVersion),
+}));
+
+export const agendaItemSnapshotsRelations = relations(agendaItemSnapshots, ({ one }) => ({
+  syncConfig: one(agendaSyncConfigs, {
+    fields: [agendaItemSnapshots.syncConfigId],
+    references: [agendaSyncConfigs.id],
+  }),
+}));
+
+export type AgendaItemSnapshot = typeof agendaItemSnapshots.$inferSelect;
+export type InsertAgendaItemSnapshot = typeof agendaItemSnapshots.$inferInsert;
 
 // Per-screen / per-display configuration for the Agenda Display
 // Widget. One config drives one full-screen display URL

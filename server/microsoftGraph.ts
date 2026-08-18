@@ -371,6 +371,99 @@ export interface MicrosoftBackedSource {
   sourceUrl?: string | null;
 }
 
+// ===== cTag helpers (Task #362 — SharePoint Excel connector) =====
+//
+// cTag is the Microsoft Graph change-detection tag for a drive item. It
+// changes whenever the file content changes. By caching the last-seen cTag
+// and comparing it on each sync tick, we can skip the full XLSX download
+// entirely when nothing has changed — no bytes transferred, no parse, no DB
+// writes. When cTag is absent (e.g. business OneDrive w/ old API) or the
+// request fails, the functions return null, which the sync engine treats as
+// "unknown → always download" to guarantee correctness over efficiency.
+
+interface RawDriveItemMeta {
+  id: string;
+  cTag?: string;
+}
+
+/**
+ * Fetch the cTag for a file addressed by (driveId, itemId).
+ * Returns null if cTag is absent or the request fails.
+ */
+export async function fetchDriveItemCTag(
+  driveId: string,
+  itemId: string,
+  opts: MicrosoftGraphOptions = {},
+): Promise<string | null> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  let token: string;
+  try {
+    token = await resolveAccessToken(opts.prefer, fetchImpl);
+  } catch {
+    return null;
+  }
+  try {
+    const raw = await graphGetJson<RawDriveItemMeta>(
+      `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}?$select=id,cTag`,
+      token,
+      fetchImpl,
+    );
+    return raw.cTag ?? null;
+  } catch {
+    // Any Graph error (4xx, network, etc.) → treat as unknown → always download.
+    return null;
+  }
+}
+
+/**
+ * Fetch the cTag for a file behind a share link via the Graph shares API.
+ * Returns null if cTag is absent or the request fails.
+ */
+export async function fetchShareLinkCTag(
+  shareUrl: string,
+  opts: MicrosoftGraphOptions = {},
+): Promise<string | null> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  let token: string;
+  try {
+    token = await resolveAccessToken(opts.prefer, fetchImpl);
+  } catch {
+    return null;
+  }
+  const encoded = encodeShareUrl(shareUrl);
+  try {
+    const raw = await graphGetJson<RawDriveItemMeta>(
+      `/shares/${encoded}/driveItem?$select=id,cTag`,
+      token,
+      fetchImpl,
+    );
+    return raw.cTag ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch the cTag for any Microsoft-backed agenda source. Prefers the
+ * (driveId, itemId) path when set; falls back to share-link resolution.
+ * Returns null when cTag cannot be determined — the sync engine treats
+ * null as "always download" to stay correct.
+ */
+export async function fetchMicrosoftCTag(
+  source: MicrosoftBackedSource,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string | null> {
+  const prefer: MicrosoftConnectorName =
+    source.sourceType === "sharepoint_excel" ? "sharepoint" : "onedrive";
+  if (source.msDriveId && source.msItemId) {
+    return fetchDriveItemCTag(source.msDriveId, source.msItemId, { fetchImpl, prefer });
+  }
+  if (source.sourceUrl) {
+    return fetchShareLinkCTag(source.sourceUrl, { fetchImpl, prefer });
+  }
+  return null;
+}
+
 /**
  * Fetch the .xlsx bytes for a Microsoft-backed agenda source. Prefers a
  * concrete (driveId, itemId) set by the file picker; otherwise resolves
