@@ -101,6 +101,90 @@ export async function ensureBookingMigration(): Promise<void> {
 export const ensureBookingConstraints = ensureBookingMigration;
 
 /**
+ * Idempotent startup migration for the agenda_item_snapshots table
+ * (Task #362 — SharePoint Excel connector). Advisory-locked so concurrent
+ * restarts can't race. Adds last_ctag and last_good_snapshot_id to
+ * agenda_sync_configs in the same pass.
+ */
+const AGENDA_SNAPSHOTS_MIGRATION_LOCK_KEY = 715129_004n;
+
+export async function ensureAgendaSnapshotsMigration(): Promise<void> {
+  const client = await pool.connect();
+  let haveLock = false;
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [
+      AGENDA_SNAPSHOTS_MIGRATION_LOCK_KEY.toString(),
+    ]);
+    haveLock = true;
+
+    // Create snapshot table first so the FK from agenda_sync_configs can resolve.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS agenda_item_snapshots (
+        id               VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        sync_config_id   VARCHAR NOT NULL REFERENCES agenda_sync_configs(id) ON DELETE CASCADE,
+        snapshot_version INTEGER NOT NULL,
+        items            JSONB NOT NULL,
+        item_count       INTEGER NOT NULL,
+        created_at       TIMESTAMP DEFAULT NOW() NOT NULL
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_agenda_snapshots_config_version
+        ON agenda_item_snapshots (sync_config_id, snapshot_version DESC)
+    `);
+
+    // Add cTag cache column to agenda_sync_configs.
+    await client.query(`
+      ALTER TABLE agenda_sync_configs
+        ADD COLUMN IF NOT EXISTS last_ctag TEXT
+    `);
+
+    // Add snapshot pointer column. Must come after CREATE TABLE above.
+    await client.query(`
+      ALTER TABLE agenda_sync_configs
+        ADD COLUMN IF NOT EXISTS last_good_snapshot_id VARCHAR
+          REFERENCES agenda_item_snapshots(id) ON DELETE SET NULL
+    `);
+
+    // Task #362 source-health contract columns (added in migrations/0026).
+    // Idempotent: safe to run on databases that already have these columns.
+    await client.query(`
+      ALTER TABLE agenda_sync_configs
+        ADD COLUMN IF NOT EXISTS ms_file_name TEXT
+    `);
+    await client.query(`
+      ALTER TABLE agenda_sync_configs
+        ADD COLUMN IF NOT EXISTS last_published_at TIMESTAMP
+    `);
+    await client.query(`
+      ALTER TABLE agenda_sync_configs
+        ADD COLUMN IF NOT EXISTS last_ctag_changed_at TIMESTAMP
+    `);
+    await client.query(`
+      ALTER TABLE agenda_sync_configs
+        ADD COLUMN IF NOT EXISTS last_snapshot_version INTEGER
+    `);
+
+    console.log("[ensureAgendaSnapshotsMigration] agenda_item_snapshots table ready");
+  } finally {
+    if (haveLock) {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [
+          AGENDA_SNAPSHOTS_MIGRATION_LOCK_KEY.toString(),
+        ]);
+      } catch (unlockErr) {
+        console.error(
+          "ensureAgendaSnapshotsMigration: failed to release advisory lock:",
+          unlockErr,
+        );
+      }
+    }
+    client.release();
+  }
+}
+
+/**
  * Idempotent startup migration for the Display Operations API permission
  * tables (Task #329).  Uses advisory locking so concurrent restarts
  * (e.g. blue/green deploy) can't race.

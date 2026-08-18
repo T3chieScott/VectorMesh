@@ -20,6 +20,14 @@ import { parseAgendaCsv } from "@shared/agenda-csv";
 import {
   runAgendaSync,
   previewAgendaSource,
+  extractSourceConnectionHealth,
+  extractDisplayContinuity,
+  computeSourceHealthState,
+  computeSourceHealthStateWithTimestamps,
+  computeDisplayContinuityState,
+  getConfigSyncPhase,
+  manualRunCooldownRemainingMs,
+  recordManualRun,
   type AgendaSyncStorage,
 } from "./agendaSync";
 import {
@@ -112,6 +120,12 @@ export interface AgendaRoutesDeps {
    * the public-link path.
    */
   graphFetch?: (config: AgendaSyncConfig) => Promise<Uint8Array>;
+  /**
+   * Task #362 — fetches the Microsoft Graph cTag for a source file without
+   * downloading its bytes. Used by runAgendaSync to skip downloads when the
+   * file is unchanged. Returns null when unavailable.
+   */
+  graphCTagFetch?: (config: AgendaSyncConfig) => Promise<string | null>;
 }
 
 // Shape of the public payload returned by GET /api/agenda/display/:configId.
@@ -192,6 +206,7 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
   const audit: NonNullable<typeof logAudit> = logAudit ?? (() => {});
   const resolveStoredPath = deps.resolveStoredPath;
   const graphFetch = deps.graphFetch;
+  const graphCTagFetch = deps.graphCTagFetch;
 
   // A mapped source (Task #267) must carry either a URL (URL types) or a
   // storedFilePath (uploaded_xlsx) before it can be saved. Returns an
@@ -499,10 +514,37 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       if (!auth.canAccessClient(req, existing.clientId)) {
         return res.status(403).json({ error: "Access denied to this site" });
       }
+
+      // Task #362 — rate-limit manual Refresh Now to 30 s per config so an
+      // operator cannot hammer the Microsoft Graph API or the DB by clicking
+      // repeatedly.  Applies only to manual triggers, not background ticks.
+      const cooldownMs = manualRunCooldownRemainingMs(id);
+      if (cooldownMs > 0) {
+        return res.status(429).json({
+          error: "Please wait before refreshing again",
+          retryAfterMs: cooldownMs,
+        });
+      }
+
+      // Task #362 — surface an explicit conflict when a background tick is
+      // already in flight for this config, rather than silently returning
+      // noChange:true from the lock-skip path.
+      const phase = getConfigSyncPhase(id);
+      if (phase) {
+        return res.status(409).json({
+          error: "A sync is already in progress for this source",
+          phase,
+        });
+      }
+
+      // Record the trigger time before dispatching so the cooldown starts at
+      // the moment the operator clicks, not after the (potentially slow) sync.
+      recordManualRun(id);
+
       // AgendaRoutesStorage is structurally a superset of AgendaSyncStorage
       // (both reference identical method signatures from the @shared/schema
       // types), so this pass-through is type-safe.
-      const result = await runAgendaSync(existing, { storage, now, resolveStoredPath, graphFetch });
+      const result = await runAgendaSync(existing, { storage, now, resolveStoredPath, graphFetch, graphCTagFetch });
       await invalidateAgendaDisplayForClient(existing.clientId);
       audit(req, "run", "agenda_sync_config", id, {
         ok: result.ok,
@@ -695,13 +737,57 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       if (!auth.canAccessClient(req, existing.clientId)) {
         return res.status(403).json({ error: "Access denied to this site" });
       }
+
+      // Task #362 — authoritative health contract.
+      // Compute states server-side so the UI never derives health from
+      // temporary React state alone.
+      const syncPhase = getConfigSyncPhase(id);
+      const sourceHealthState = computeSourceHealthStateWithTimestamps(existing, syncPhase);
+      const displayContinuityState = computeDisplayContinuityState(existing);
+
+      // Safe details object: never includes the raw sourceUrl, msDriveId,
+      // msItemId, or any pre-authenticated download URL / token.
+      const details = {
+        // Connected account — we expose only a static string; the actual
+        // Microsoft account email is not stored in VectorMesh.
+        msAccountConnected: existing.microsoftAuth === true,
+        isReadOnly: existing.microsoftAuth === true,
+        // Workbook display name (set by the file picker; never a URL).
+        msFileName: existing.msFileName ?? null,
+        // Worksheet name as configured by the operator; null = first sheet.
+        msConfiguredSheetName: existing.sheetName ?? null,
+        // Timestamps
+        lastCheckedAt: existing.lastSyncAt ?? null,
+        lastCTagChangedAt: existing.lastCTagChangedAt ?? null,
+        lastPublishedAt: existing.lastPublishedAt ?? null,
+        // Snapshot details
+        snapshotVersion: existing.lastSnapshotVersion ?? null,
+        itemCount: existing.lastItemCount ?? null,
+        // Config
+        syncIntervalMinutes: existing.syncIntervalMinutes,
+        consecutiveFailures: existing.consecutiveFailureCount ?? 0,
+        // Last actionable warning (first entry; up to 50 are stored).
+        lastActionableWarning:
+          Array.isArray(existing.lastSyncWarnings) && existing.lastSyncWarnings.length > 0
+            ? existing.lastSyncWarnings[0]
+            : null,
+      };
+
       res.json({
+        // ── Existing fields (preserved for backward compatibility) ──────
         lastError: existing.lastError ?? null,
         lastErrorAt: existing.lastErrorAt ?? null,
         lastSyncOk: existing.lastSyncOk ?? null,
         lastSyncAt: existing.lastSyncAt ?? null,
         lastItemCount: existing.lastItemCount ?? null,
         warnings: existing.lastSyncWarnings ?? [],
+        // ── Task #362 authoritative health contract ──────────────────────
+        sourceHealthState,
+        displayContinuityState,
+        details,
+        // Legacy shape kept for any existing callers.
+        sourceConnectionHealth: extractSourceConnectionHealth(existing),
+        displayContinuity: extractDisplayContinuity(existing),
       });
     } catch (error) {
       console.error("Error fetching agenda sync errors:", error);

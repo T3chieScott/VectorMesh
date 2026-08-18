@@ -120,7 +120,13 @@ test.describe("Task #313: Scenes sidebar folders + search", () => {
     // The toast fires only after the server returns HTTP 201, which means
     // the INSERT is committed.  Without this, the DB assertion races the
     // async POST and fails intermittently.
-    await expect(page.getByText("Folder created")).toBeVisible({ timeout: 10_000 });
+    // Use exact:true so Playwright matches only the visual toast title element
+    // ("Folder created") and not the toast library's ARIA live-region
+    // ("Notification Folder created"), which contains the title as a substring.
+    // Without exact:true the strict-mode assertion fails intermittently when
+    // Playwright evaluates the locator at the brief moment both elements are
+    // present in the DOM simultaneously.
+    await expect(page.getByText("Folder created", { exact: true })).toBeVisible({ timeout: 10_000 });
 
     // The new (empty) folder section shows even with no scenes inside.
     const folderRows = await db
