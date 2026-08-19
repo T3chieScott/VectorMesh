@@ -28,6 +28,7 @@ import rateLimit from "express-rate-limit";
 import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
 import type { Client, Event, ScreenGroup, Screen, DisplayProfile, MonitorSession, InsertMonitorSession } from "@shared/schema";
 import { getPathParam } from "../requestParams";
+import { validatePreviewAtFormat } from "@shared/previewTime";
 import { find as findTz } from "geo-tz";
 
 // ============ Scope constants ============
@@ -163,7 +164,14 @@ export interface OperationsMonitorDeps {
    * device credentials (deviceToken, pairingCode, kioskModeEnabled) removed).
    * Implemented in routes.ts using the full resolveScreenContent pipeline.
    */
-  resolveMonitorContent(screenId: string): Promise<Record<string, unknown>>;
+  /**
+   * @param atRaw     Optional naïve "YYYY-MM-DDTHH:mm:ss" preview anchor, already
+   *                  validated by validatePreviewAtFormat at the route boundary.
+   * @param elapsedMs Real milliseconds elapsed since the monitor page loaded;
+   *                  added to the anchor so the preview clock advances rather than
+   *                  freezing.  Ignored when atRaw is absent.
+   */
+  resolveMonitorContent(screenId: string, atRaw?: string, elapsedMs?: number): Promise<Record<string, unknown>>;
   /**
    * Returns the absolute public base URL (no trailing slash) used to
    * construct `monitorUrl` in POST monitor-session responses.
@@ -1326,7 +1334,23 @@ export function mountOperationsRoutes(
           return res.status(401).type("application/json").send(MONITOR_401_JSON);
         }
 
-        const content = await monitor.resolveMonitorContent(screenId);
+        // Preview-time support: ?at=YYYY-MM-DDTHH:mm:ss&elapsed_ms=N
+        // atRaw is the naïve wall-clock anchor (no Z, no offset) interpreted in
+        // the screen's configured timezone server-side.  elapsed_ms is real
+        // milliseconds since the monitor page loaded; the server adds it to the
+        // anchor so the preview clock advances between polls without client-side
+        // timezone knowledge.  Missing or malformed values fall back silently to
+        // live time and never crash the monitor page.
+        const atRaw = validatePreviewAtFormat(
+          Array.isArray(req.query.at)
+            ? String(req.query.at[0])
+            : (req.query.at as string | undefined),
+        );
+        const elapsedMs = atRaw
+          ? Math.max(0, parseInt(String(req.query.elapsed_ms ?? "0"), 10) || 0)
+          : undefined;
+
+        const content = await monitor.resolveMonitorContent(screenId, atRaw, elapsedMs);
         res.json(content);
       } catch (err) {
         console.error("[operations] GET /api/monitor/:screenId/content error:", err);

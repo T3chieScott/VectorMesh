@@ -54,6 +54,7 @@ import { buildBulkBlocksHandler, type BulkBlockResult } from "./bulkBlocksHandle
 import { resolveSimulatorContent } from "./simulatorContent";
 import { filterMediaAssetsForScreen } from "./playerMediaFilter";
 import { sanitizeHtmlZones } from "@shared/html-widget-sanitize";
+import { naiveWallClockToAbsolute } from "@shared/previewTime";
 import {
   applyGlobalHideOverride,
   parseGlobalHideValue,
@@ -5123,22 +5124,45 @@ export async function registerRoutes(
        * screenshotEnabled) are always suppressed — monitor clients never
        * receive commands that affect physical-player behaviour.
        */
-      async resolveMonitorContent(screenId: string): Promise<Record<string, unknown>> {
+      async resolveMonitorContent(screenId: string, atRaw?: string, elapsedMs?: number): Promise<Record<string, unknown>> {
         const screen = await storage.getScreen(screenId);
         if (!screen) throw new Error(`Screen not found: ${screenId}`);
 
-        // Reuse the in-process player content cache when fresh
-        const cachedEntry = playerContentCache.get(screenId);
+        // Preview-time requests bypass the shared player content cache — the
+        // effective time is request-specific and must not pollute real-time
+        // cache entries used by physical player polls.
+        const cachedEntry = !atRaw ? playerContentCache.get(screenId) : null;
         let stableBody: Record<string, unknown>;
+        let previewAnchorEpoch: number | undefined;
         if (cachedEntry && cachedEntry.expires > Date.now()) {
           stableBody = cachedEntry.body;
         } else {
-          const now = new Date();
           const screenClient = screen.clientId
             ? await storage.getClient(screen.clientId)
             : null;
           const screenTz =
             screenClient?.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
+          // Compute the effective evaluation time.  For preview requests the
+          // anchor is the naïve wall-clock value converted to an absolute
+          // instant in the screen's configured timezone (independent of the
+          // server's own local timezone); elapsed real time since page-load
+          // is added so the preview clock continues advancing rather than
+          // freezing at the original anchor value.
+          let now: Date;
+          if (atRaw) {
+            const anchor = naiveWallClockToAbsolute(atRaw, screenTz);
+            if (anchor) {
+              previewAnchorEpoch = anchor.getTime();
+              now = new Date(anchor.getTime() + (elapsedMs ?? 0));
+            } else {
+              // Format was pre-validated at the route boundary; this branch
+              // only fires for impossible calendar values (e.g. Feb 30).
+              // Fall back silently to live time.
+              now = new Date();
+            }
+          } else {
+            now = new Date();
+          }
           const resolved = await resolveScreenContent(
             screen,
             now,
@@ -5268,6 +5292,10 @@ export async function registerRoutes(
           ...safeBody,
           screen: sanitizedScreen,
           serverTime: Date.now(),
+          // When a preview anchor was resolved, echo its epoch ms so the client
+          // can compute an advancing agendaTestAt without re-doing the timezone
+          // conversion on every poll.
+          ...(previewAnchorEpoch !== undefined && { previewAnchorEpoch }),
         };
       },
 

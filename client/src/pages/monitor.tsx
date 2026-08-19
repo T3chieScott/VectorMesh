@@ -43,6 +43,7 @@ import { getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-
 import { ScreenRenderSurface } from "@/components/screen-render-surface";
 import { PlayerClockProvider, usePlayerClock } from "@/lib/playerClock";
 import { buildFontFaceCss } from "@/lib/fontFace";
+import { validatePreviewAtFormat } from "@shared/previewTime";
 import { TestPattern } from "@/components/test-pattern";
 // Import the canonical capability constants so this file is the live
 // documentation of what monitor mode enforces.  The constants themselves
@@ -125,6 +126,12 @@ interface MonitorContentData {
   // client — provides clientName fallback for playerContext
   client?: { name?: string | null } | null;
   serverTime?: number;
+  /**
+   * Epoch milliseconds of the timezone-resolved preview anchor, returned by
+   * the server when ?at= is active. The client uses it to compute the
+   * advancing agendaTestAt on each render: anchor + (now − realAnchorMs).
+   */
+  previewAnchorEpoch?: number;
   canvas?: { tiles?: any[] } | null;
 }
 
@@ -139,6 +146,14 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
   const [weatherTimezone, setWeatherTimezone] = useState<string | undefined>(undefined);
   const layoutRotationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Preview-time: read ?at= once on mount (stable across renders), track the
+  // real-clock anchor so elapsed time can be computed on each subsequent poll.
+  const previewAtRaw = useMemo(
+    () => validatePreviewAtFormat(new URLSearchParams(window.location.search).get("at")),
+    [],
+  );
+  const previewRealAnchorMs = useRef(Date.now());
+  const [previewAnchorEpoch, setPreviewAnchorEpoch] = useState<number | undefined>(undefined);
 
   // ── Font injection ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -391,7 +406,15 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
   const fetchContent = useCallback(async () => {
     try {
       const t1 = Date.now();
-      const res = await fetch(`/api/monitor/${screenId}/content`, {
+      // Preview-time: append ?at= and elapsed_ms when a preview anchor is active.
+      // The server converts the naïve anchor to an absolute time in the screen's
+      // configured timezone and adds elapsed_ms so the preview clock advances
+      // between polls without client-side timezone knowledge.
+      const elapsedMs = t1 - previewRealAnchorMs.current;
+      const previewParams = previewAtRaw
+        ? `?at=${encodeURIComponent(previewAtRaw)}&elapsed_ms=${elapsedMs}`
+        : "";
+      const res = await fetch(`/api/monitor/${screenId}/content${previewParams}`, {
         credentials: "same-origin",
         cache: "no-store",
       });
@@ -409,13 +432,18 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
       if (typeof data.serverTime === "number") {
         feedSample(t1, data.serverTime, t2);
       }
+      // Capture the server-resolved preview anchor epoch so agendaTestAt can
+      // be computed from it without repeating the timezone conversion.
+      if (typeof data.previewAnchorEpoch === "number") {
+        setPreviewAnchorEpoch(data.previewAnchorEpoch);
+      }
       // playerCommandsEnabled = false: intentionally ignore refreshRequested,
       // screenshotRequested, etc.  Server also strips these fields.
       setContent(data);
     } catch {
       // Network error — keep last content on screen
     }
-  }, [screenId, feedSample]);
+  }, [screenId, feedSample, previewAtRaw]);
 
   useEffect(() => {
     fetchContent();
@@ -472,6 +500,16 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
     return <div className="fixed inset-0 bg-black" />;
   }
 
+  // Compute the advancing agendaTestAt from the server-resolved preview anchor.
+  // Keeps agenda zones in sync with the server-side schedule selection.
+  // Updates automatically on each content fetch (≈7 s polling interval).
+  const agendaTestAt =
+    previewAtRaw !== undefined && previewAnchorEpoch !== undefined
+      ? new Date(
+          previewAnchorEpoch + (Date.now() - previewRealAnchorMs.current),
+        ).toISOString()
+      : undefined;
+
   return (
     <div
       className="fixed inset-0 bg-black overflow-hidden flex items-center justify-center"
@@ -518,6 +556,7 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
           mediaBaseUrl="/api/monitor/media"
           screenTimezone={content.screen?.timezone ?? undefined}
           weatherTimezone={weatherTimezone}
+          agendaTestAt={agendaTestAt}
           playerContext={{
             screenName: content.playerVars?.screenName ?? content.screen?.name,
             roomName: content.playerVars?.roomName ?? content.screen?.location,
