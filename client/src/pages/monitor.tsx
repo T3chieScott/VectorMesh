@@ -569,6 +569,9 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
             nextSessionTime: content.playerVars?.nextSessionTime,
             nextSessionCountdown: content.playerVars?.nextSessionCountdown,
             weatherSummary: content.playerVars?.weatherSummary,
+            // Screen's site timezone so {{time}}/{{date}}/{{day}} display in
+            // the configured local time rather than the browser's timezone.
+            timezone: content.screen?.timezone ?? undefined,
             // Synced clock function — same as physical player; each
             // ZoneRenderer re-render gets a fresh timestamp offset.
             getNowMs: getSyncedNow,

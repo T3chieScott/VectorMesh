@@ -825,6 +825,14 @@ function HtmlWidget({
   // flex item and stops honouring `max-width`.) The base reset only zeroes
   // margins and makes the body fill the reference canvas; authors choose how
   // their content fills or centres within it.
+  // Re-compute srcDoc on the same 30-second cadence as ZoneRenderer's own
+  // usePlayerVariableTick, so {{time}}/{{date}}/{{day}} stay current.
+  //
+  // Without this, useMemo caches the srcdoc keyed on `ctx` — but when
+  // ZoneRenderer's tick fires only ZoneRenderer re-renders; the `ctx` prop
+  // reference it received from the parent is unchanged, so useMemo skips
+  // recomputing and {{time}} is frozen inside the iframe.
+  const htmlTick = usePlayerVariableTick(30_000);
   const srcDoc = useMemo(() => {
     // Order matters: resolve {{player variables}}, then {{media:…}} references
     // (turned into real token-aware URLs the same way media zones build them),
@@ -847,7 +855,8 @@ html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;box-sizing:b
 *,*::before,*::after{box-sizing:inherit;}
 ${styles}
 </style></head><body>${html}</body></html>`;
-  }, [content, css, ctx, media, mediaBaseUrl, deviceToken]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content, css, ctx, media, mediaBaseUrl, deviceToken, htmlTick]);
 
   // Render the widget on a fixed-WIDTH reference canvas (REFERENCE_WIDTH px
   // wide, height derived from the container's actual aspect ratio) and CSS-scale

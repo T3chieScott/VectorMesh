@@ -225,6 +225,12 @@ test(`${PREFIX} {{time}} token re-evaluates with getNowMs (no frozen snapshot)`,
   // Sanity: a/b are both well-formed time strings.
   assert.match(a, TIME_RE);
   assert.match(b, TIME_RE);
+
+  const pinned24 = resolvePlayerVariables("{{time24}}", {
+    nowMs: Date.UTC(2025, 0, 1, 17, 5),
+    timezone: "UTC",
+  });
+  assert.match(pinned24, /^17:05$/, `expected 24-hour time, got ${pinned24}`);
 });
 
 test(`${PREFIX} ClockWidget falls back to LOCAL time without provider`, () => {

@@ -1452,6 +1452,9 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                       nextSessionCountdown:
                         content!.playerVars?.nextSessionCountdown,
                       weatherSummary: content!.playerVars?.weatherSummary,
+                      // Site timezone so {{time}}/{{date}}/{{day}} display in
+                      // the screen's local time, not the browser's timezone.
+                      timezone: content!.screen?.timezone ?? undefined,
                       // Pass the function (not the current value)
                       // so each downstream re-render gets a fresh
                       // synced timestamp.
@@ -1619,6 +1622,9 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         nextSessionTime: content.playerVars?.nextSessionTime,
         nextSessionCountdown: content.playerVars?.nextSessionCountdown,
         weatherSummary: content.playerVars?.weatherSummary,
+        // Site timezone so {{time}}/{{date}}/{{day}} display in the screen's
+        // local time rather than the browser/OS timezone (often UTC on Pi).
+        timezone: content.screen?.timezone ?? undefined,
         // Pass the function (not the current value) so each downstream
         // re-render gets a fresh synced timestamp.
         getNowMs: getSyncedNow,

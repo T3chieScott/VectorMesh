@@ -9,14 +9,51 @@ export interface PlayerVariableDef {
 
 // Optional `nowMs` lets the player pass server-synced time;
 // undefined falls back to local Date.now() (admin previews etc).
-function sampleDate(nowMs?: number) {
-  return new Date(nowMs ?? Date.now()).toLocaleDateString();
+// Optional `tz` (IANA timezone) formats in the screen's site timezone rather
+// than the browser's local timezone — critical on Raspberry Pi players where
+// the OS clock/locale may be set to UTC or a different zone.
+function sampleDate(nowMs?: number, tz?: string) {
+  const d = new Date(nowMs ?? Date.now());
+  if (tz) {
+    return new Intl.DateTimeFormat(undefined, {
+      timeZone: tz,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+    }).format(d);
+  }
+  return d.toLocaleDateString();
 }
-function sampleTime(nowMs?: number) {
-  return new Date(nowMs ?? Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function sampleTime(nowMs?: number, tz?: string) {
+  const d = new Date(nowMs ?? Date.now());
+  if (tz) {
+    return new Intl.DateTimeFormat(undefined, {
+      timeZone: tz,
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(d);
+  }
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
-function sampleDay(nowMs?: number) {
-  return new Date(nowMs ?? Date.now()).toLocaleDateString("en", { weekday: "long" });
+function sampleTime24(nowMs?: number, tz?: string) {
+  const d = new Date(nowMs ?? Date.now());
+  const options: Intl.DateTimeFormatOptions = {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  };
+  if (tz) options.timeZone = tz;
+  return new Intl.DateTimeFormat(undefined, options).format(d);
+}
+function sampleDay(nowMs?: number, tz?: string) {
+  const d = new Date(nowMs ?? Date.now());
+  if (tz) {
+    return new Intl.DateTimeFormat("en", {
+      timeZone: tz,
+      weekday: "long",
+    }).format(d);
+  }
+  return d.toLocaleDateString("en", { weekday: "long" });
 }
 
 export const PLAYER_VARIABLES: PlayerVariableDef[] = [
@@ -26,6 +63,7 @@ export const PLAYER_VARIABLES: PlayerVariableDef[] = [
   { token: "{{client_name}}", label: "Client Name", description: "Client/brand name", preview: "Acme Corp" },
   { token: "{{date}}", label: "Date", description: "Current date", preview: sampleDate() },
   { token: "{{time}}", label: "Time", description: "Current time", preview: sampleTime() },
+  { token: "{{time24}}", label: "Time (24-hour)", description: "Current time in 24-hour format", preview: sampleTime24() },
   { token: "{{day}}", label: "Day of Week", description: "Current day name", preview: sampleDay() },
   { token: "{{room_capacity}}", label: "Room Capacity", description: "Maximum capacity of the screen's room (set on the screen)", preview: "250" },
   { token: "{{event_start_date}}", label: "Event Start Date", description: "Start date of the screen's current event", preview: "Mar 12, 2026" },
@@ -49,7 +87,15 @@ export interface PlayerVariableContext {
   nextSessionCountdown?: string | null;
   weatherSummary?: string | null;
   /**
-   * Server-synced "now" for {{date}}/{{time}}/{{day}}. Prefer
+   * IANA timezone for {{time}}/{{time24}}/{{date}}/{{day}} resolution.
+   * When set, Intl.DateTimeFormat uses this timezone so the displayed
+   * time matches the screen's configured site timezone rather than the
+   * browser/OS timezone (which on Raspberry Pi players is often UTC).
+   * When absent, the browser's local timezone is used (admin previews).
+   */
+  timezone?: string | null;
+  /**
+   * Server-synced "now" for {{date}}/{{time}}/{{time24}}/{{day}}. Prefer
    * `getNowMs` (invoked per render) over `nowMs` (a static snapshot
    * that would freeze when child components re-render independently
    * of the context provider). `nowMs` is retained for tests that
@@ -75,14 +121,16 @@ function buildResolved(ctx?: PlayerVariableContext): Record<string, string> {
     : typeof ctx.nowMs === "number"
       ? ctx.nowMs
       : undefined;
+  const tz = ctx.timezone ?? undefined;
   return {
     "{{screen_name}}": ctx.screenName ?? empty,
     "{{room_name}}": ctx.roomName ?? empty,
     "{{event_name}}": ctx.eventName ?? empty,
     "{{client_name}}": ctx.clientName ?? empty,
-    "{{date}}": sampleDate(nowMs),
-    "{{time}}": sampleTime(nowMs),
-    "{{day}}": sampleDay(nowMs),
+    "{{date}}": sampleDate(nowMs, tz),
+    "{{time}}": sampleTime(nowMs, tz),
+    "{{time24}}": sampleTime24(nowMs, tz),
+    "{{day}}": sampleDay(nowMs, tz),
     "{{room_capacity}}": cap === null || cap === undefined || cap === "" ? empty : String(cap),
     "{{event_start_date}}": ctx.eventStartDate ?? empty,
     "{{event_end_date}}": ctx.eventEndDate ?? empty,
