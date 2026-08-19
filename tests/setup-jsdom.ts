@@ -35,7 +35,14 @@ function copyProps(src: any, target: any) {
 
 (globalThis as any).window = window;
 (globalThis as any).document = window.document;
-(globalThis as any).navigator = window.navigator;
+// Node 24 made `navigator` a built-in getter-only property on globalThis.
+// Direct assignment throws "Cannot set property … which has only a getter".
+// Use defineProperty so we can substitute jsdom's navigator on any Node version.
+Object.defineProperty(globalThis, "navigator", {
+  value: window.navigator,
+  writable: true,
+  configurable: true,
+});
 (globalThis as any).HTMLElement = window.HTMLElement;
 (globalThis as any).HTMLDivElement = window.HTMLDivElement;
 (globalThis as any).HTMLButtonElement = window.HTMLButtonElement;

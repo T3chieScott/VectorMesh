@@ -1,29 +1,43 @@
-// Task #268 — Microsoft Graph access for the Agenda Spreadsheet Source
-// Mapper.
+// Task #268 — Microsoft Graph access for the Agenda Spreadsheet Source Mapper.
+// Task #369 — Replaced Replit-only connector proxy with production Entra OAuth.
 //
-// Lets the agenda sync engine read PRIVATE OneDrive / SharePoint Excel
-// files. OAuth, token storage and refresh are owned entirely by Replit's
-// first-party Microsoft connectors (OneDrive + SharePoint Online) — this
-// module never stores Microsoft passwords or tokens. It fetches a fresh
-// access token from the Replit connectors credential proxy on every call
-// (tokens expire; never cache them) and uses it to call Microsoft Graph.
+// Token resolution order (see resolveAccessToken):
+//   1. Entra OAuth via @azure/msal-node (production path — getEntraAccessToken).
+//   2. Replit connector proxy (development-only adapter, disabled in production).
 //
-// Scope: ONE system-level Microsoft account. Per-client / multi-tenant
-// Microsoft accounts are explicitly out of scope — the `connectorName`
-// seam below is where that would later be threaded. Read-only: only GET
-// requests are issued.
+// Graph transport is strictly read-only:
+//   - Only GET and HEAD are allowed (assertGraphMethodAllowed).
+//   - Only graph.microsoft.com is reachable (assertGraphHost).
+//   - The Authorization header is never forwarded to any other host.
 
-// The Replit connector names for the two Microsoft connectors. Either
-// connector authorises the same Microsoft account; their scopes differ
-// (OneDrive → Files.*, SharePoint → Sites.*), so we prefer the one that
-// matches the source type and fall back to the other.
+import {
+  getEntraAccessToken,
+  getMicrosoftEntraStatus,
+  MicrosoftEntraNotConfiguredError,
+  MicrosoftEntraNotConnectedError,
+  MicrosoftEntraRefreshError,
+} from "./microsoftOAuth";
+
+// =====================================================================
+// Replit connector adapter (development-only)
+// =====================================================================
+//
+// The original Task #268 implementation used Replit's connector credential
+// proxy (REPLIT_CONNECTORS_HOSTNAME) to fetch access tokens. This adapter is
+// retained ONLY for local Replit development and is hard-disabled in
+// production (NODE_ENV=production). It must never be used on Plesk.
+//
+// Amendment #2 requirements:
+//   - Disabled when NODE_ENV=production (fails closed).
+//   - Requires REPLIT_CONNECTORS_HOSTNAME to be present.
+//   - Production missing Entra config → MicrosoftNotConnectedError (no fallback).
+
 export type MicrosoftConnectorName = "onedrive" | "sharepoint";
 const MICROSOFT_CONNECTOR_NAMES: MicrosoftConnectorName[] = ["onedrive", "sharepoint"];
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+const GRAPH_HOST = "graph.microsoft.com";
 
-// A connection as returned by the connectors credential proxy (only the
-// fields we use).
 interface ConnectorConnection {
   access_token?: string;
   settings?: {
@@ -36,6 +50,10 @@ interface ConnectorConnection {
 export interface MicrosoftConnectionStatus {
   connected: boolean;
   connectors: MicrosoftConnectorName[];
+  /** "entra" in production; "replit_dev" in development via Replit adapter; null = disconnected. */
+  provider: "entra" | "replit_dev" | null;
+  /** True when the calling user is a system admin who can trigger the connect flow. */
+  canConnect?: boolean;
 }
 
 export class MicrosoftNotConnectedError extends Error {
@@ -46,7 +64,7 @@ export class MicrosoftNotConnectedError extends Error {
 }
 
 export const MICROSOFT_NOT_CONNECTED_MESSAGE =
-  "Microsoft isn't connected yet. Connect a Microsoft account in the agenda source settings so VectorMesh can read this private OneDrive/SharePoint file.";
+  "Microsoft isn't connected yet. An administrator must connect a Microsoft account before VectorMesh can read private OneDrive/SharePoint files.";
 
 function getReplitToken(): string | null {
   if (process.env.REPL_IDENTITY) return `repl ${process.env.REPL_IDENTITY}`;
@@ -64,14 +82,15 @@ function extractAccessToken(conn: ConnectorConnection | undefined): string | nul
   );
 }
 
-// Fetch a fresh access token for a specific connector from the Replit
-// connectors credential proxy. Returns null when the connector is not
-// authorised / bound for this Repl. Never cache the result — tokens
-// expire and the proxy refreshes them for us.
+/**
+ * Fetch a token from the Replit connector proxy.
+ * NEVER called in production (NODE_ENV=production).
+ */
 async function fetchConnectorToken(
   connectorName: MicrosoftConnectorName,
   fetchImpl: typeof fetch = fetch,
 ): Promise<string | null> {
+  if (process.env.NODE_ENV === "production") return null;
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
   const xReplitToken = getReplitToken();
   if (!hostname || !xReplitToken) return null;
@@ -96,28 +115,96 @@ async function fetchConnectorToken(
   return extractAccessToken(data.items?.[0]);
 }
 
+// =====================================================================
+// Transport guards
+// =====================================================================
+
 /**
- * Report which Microsoft connectors are currently usable (have a live
- * token) for this Repl. Drives the "Connect Microsoft" UI state and the
- * fetch-time decision of whether to attempt Graph vs the public path.
+ * Assert the Graph request method is GET or HEAD.
+ * POST, PUT, PATCH and DELETE are statically forbidden — this module is
+ * read-only and must never mutate Microsoft Graph resources.
  */
-export async function getMicrosoftConnectionStatus(
-  fetchImpl: typeof fetch = fetch,
-): Promise<MicrosoftConnectionStatus> {
-  const connectors: MicrosoftConnectorName[] = [];
-  for (const name of MICROSOFT_CONNECTOR_NAMES) {
-    const token = await fetchConnectorToken(name, fetchImpl);
-    if (token) connectors.push(name);
+export function assertGraphMethodAllowed(method: string): void {
+  if (method !== "GET" && method !== "HEAD") {
+    throw new Error(
+      `Microsoft Graph transport: method "${method}" is not permitted. ` +
+        "Only GET and HEAD requests are issued by VectorMesh.",
+    );
   }
-  return { connected: connectors.length > 0, connectors };
 }
 
-// Resolve an access token, preferring the connector that matches the
-// source type. Throws MicrosoftNotConnectedError when nothing is bound.
+/**
+ * Assert the URL targets graph.microsoft.com and no other host.
+ * Prevents the Authorization header from being forwarded to a different host.
+ */
+export function assertGraphHost(urlString: string): void {
+  let u: URL;
+  try {
+    u = new URL(urlString);
+  } catch {
+    throw new Error(`Microsoft Graph transport: invalid URL: ${urlString}`);
+  }
+  if (u.protocol !== "https:") {
+    throw new Error(`Microsoft Graph transport: only HTTPS is permitted, got ${u.protocol}`);
+  }
+  if (u.hostname !== GRAPH_HOST) {
+    throw new Error(
+      `Microsoft Graph transport: host "${u.hostname}" is not allowed. ` +
+        `Only ${GRAPH_HOST} may be contacted.`,
+    );
+  }
+}
+
+// =====================================================================
+// Token resolution
+// =====================================================================
+
+/**
+ * Resolve a live Microsoft Graph access token.
+ *
+ * Production path: Entra OAuth via getEntraAccessToken.
+ * Development fallback (NODE_ENV ≠ production AND REPLIT_CONNECTORS_HOSTNAME set):
+ *   Replit connector proxy as explicit opt-in dev adapter.
+ * Otherwise: throws MicrosoftNotConnectedError.
+ */
 async function resolveAccessToken(
   prefer: MicrosoftConnectorName | undefined,
   fetchImpl: typeof fetch,
 ): Promise<string> {
+  // 1. Entra OAuth (always tried first).
+  try {
+    return await getEntraAccessToken(fetchImpl);
+  } catch (e) {
+    if (
+      !(e instanceof MicrosoftEntraNotConnectedError) &&
+      !(e instanceof MicrosoftEntraNotConfiguredError) &&
+      !(e instanceof MicrosoftEntraRefreshError)
+    ) {
+      // Unexpected error (e.g. encryption key missing) — rethrow.
+      throw e;
+    }
+    // MicrosoftEntraRefreshError: refresh failed (revoked/expired consent).
+    // Surface as MicrosoftNotConnectedError so callers show the connect UI.
+    if (e instanceof MicrosoftEntraRefreshError) {
+      throw new MicrosoftNotConnectedError(
+        "Microsoft connection lost — the token could not be refreshed. " +
+          "An administrator must reconnect the Microsoft account.",
+      );
+    }
+    // MicrosoftEntraNotConnectedError: no credential row → try dev adapter.
+    // MicrosoftEntraNotConfiguredError: env vars absent → try dev adapter (dev only).
+    // Both fall through; production guard below ensures fail-closed in prod.
+  }
+
+  // 2. Replit connector adapter — DEVELOPMENT ONLY.
+  //    Hard-disabled in production: NODE_ENV=production fails closed.
+  if (process.env.NODE_ENV === "production") {
+    throw new MicrosoftNotConnectedError();
+  }
+  if (!process.env.REPLIT_CONNECTORS_HOSTNAME) {
+    throw new MicrosoftNotConnectedError();
+  }
+
   const order: MicrosoftConnectorName[] = prefer
     ? [prefer, ...MICROSOFT_CONNECTOR_NAMES.filter((n) => n !== prefer)]
     : [...MICROSOFT_CONNECTOR_NAMES];
@@ -128,12 +215,49 @@ async function resolveAccessToken(
   throw new MicrosoftNotConnectedError();
 }
 
+/**
+ * Report which Microsoft provider is currently usable.
+ * Drives the "Connect Microsoft" UI state.
+ */
+export async function getMicrosoftConnectionStatus(
+  fetchImpl: typeof fetch = fetch,
+): Promise<MicrosoftConnectionStatus> {
+  // Check Entra first.
+  const entraStatus = await getMicrosoftEntraStatus();
+  if (entraStatus.connected) {
+    return { connected: true, connectors: [], provider: "entra" };
+  }
+
+  // Check Replit dev adapter (only outside production).
+  if (
+    process.env.NODE_ENV !== "production" &&
+    process.env.REPLIT_CONNECTORS_HOSTNAME
+  ) {
+    const connectors: MicrosoftConnectorName[] = [];
+    for (const name of MICROSOFT_CONNECTOR_NAMES) {
+      const token = await fetchConnectorToken(name, fetchImpl);
+      if (token) connectors.push(name);
+    }
+    if (connectors.length > 0) {
+      return { connected: true, connectors, provider: "replit_dev" };
+    }
+  }
+
+  return { connected: false, connectors: [], provider: null };
+}
+
+// =====================================================================
+// Graph HTTP helpers
+// =====================================================================
+
 async function graphGet(
   path: string,
   token: string,
   fetchImpl: typeof fetch,
 ): Promise<Response> {
   const url = path.startsWith("http") ? path : `${GRAPH_BASE}${path}`;
+  assertGraphHost(url);
+  assertGraphMethodAllowed("GET");
   return fetchImpl(url, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
@@ -162,13 +286,19 @@ async function safeReadError(res: Response): Promise<string> {
   return "";
 }
 
-// Encode a sharing URL into the Graph `shares` API id form:
-// "u!" + base64url(url) with trailing "=" stripped.
+// =====================================================================
+// Share URL encoding
+// =====================================================================
+
 export function encodeShareUrl(shareUrl: string): string {
   const b64 = Buffer.from(shareUrl, "utf8").toString("base64");
   const encoded = b64.replace(/=+$/, "").replace(/\//g, "_").replace(/\+/g, "-");
   return `u!${encoded}`;
 }
+
+// =====================================================================
+// Drive item types
+// =====================================================================
 
 export interface MicrosoftDriveItem {
   id: string;
@@ -209,11 +339,10 @@ export interface MicrosoftGraphOptions {
   prefer?: MicrosoftConnectorName;
 }
 
-/**
- * Resolve a OneDrive/SharePoint share link to its (driveId, itemId,
- * name) via the Graph `shares` API. Lets an operator paste a "Copy link"
- * URL instead of browsing the picker.
- */
+// =====================================================================
+// Public Graph functions
+// =====================================================================
+
 export async function resolveShareLink(
   shareUrl: string,
   opts: MicrosoftGraphOptions = {},
@@ -230,28 +359,17 @@ export async function resolveShareLink(
     return toDriveItem(raw);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // 403/404 here is almost always a *scope* limit, not a dead link: the
-    // Microsoft connector is granted Files.Read (the user's OWN OneDrive)
-    // only — it cannot read files that live in a SharePoint site or are
-    // owned by someone else, even ones the user can open in a browser.
-    // Reading those would need Files.Read.All / Sites.Read.All, which the
-    // connector doesn't request. Not fixable in code; steer to workarounds.
     if (/HTTP 40[34]/.test(msg)) {
       throw new Error(
-        `Microsoft Graph request failed (HTTP 403). VectorMesh's Microsoft connection can only read files in ` +
-          `your own OneDrive — not files that live in a SharePoint site or are owned by someone else, even if you ` +
-          `can open them in your browser. To use this file: open it in OneDrive/SharePoint and choose "Save a copy" ` +
-          `into your own OneDrive (then pick it from the list above), or download it and use the "Upload .xlsx" option.`,
+        `Microsoft Graph request failed (HTTP 403). VectorMesh's Microsoft connection can only read files ` +
+          `accessible to the connected integration identity. Ensure the identity has been granted at least ` +
+          `Read access to the target SharePoint site and file.`,
       );
     }
     throw err;
   }
 }
 
-/**
- * List the signed-in account's recent Excel files (OneDrive). Powers the
- * default file-picker view.
- */
 export async function listRecentXlsxFiles(
   opts: MicrosoftGraphOptions = {},
 ): Promise<MicrosoftDriveItem[]> {
@@ -260,8 +378,6 @@ export async function listRecentXlsxFiles(
   const byId = new Map<string, MicrosoftDriveItem>();
   let rootError: unknown;
   let recentError: unknown;
-  // Root children are the reliable default: `/me/drive/recent` is often
-  // near-empty on business accounts even when OneDrive is full of files.
   try {
     const root = await graphGetJson<{ value: RawDriveItem[] }>(
       `/me/drive/root/children?$select=id,name,webUrl,size,lastModifiedDateTime,parentReference&$top=200`,
@@ -274,7 +390,6 @@ export async function listRecentXlsxFiles(
   } catch (err) {
     rootError = err;
   }
-  // Recently-used files round out the list (may include shared-library items).
   try {
     const recent = await graphGetJson<{ value: RawDriveItem[] }>(
       `/me/drive/recent`,
@@ -287,16 +402,10 @@ export async function listRecentXlsxFiles(
   } catch (err) {
     recentError = err;
   }
-  // Surface an error only if BOTH calls failed and we collected nothing.
-  // If either call succeeded (even empty), an empty list is a valid answer.
   if (byId.size === 0 && rootError && recentError) throw rootError;
   return [...byId.values()];
 }
 
-/**
- * Search the signed-in account's OneDrive for Excel files matching a
- * query string.
- */
 export async function searchXlsxFiles(
   query: string,
   opts: MicrosoftGraphOptions = {},
@@ -314,15 +423,11 @@ export async function searchXlsxFiles(
     .map(toDriveItem);
 }
 
-// Read the raw bytes of a Graph response body as a Uint8Array.
 async function readBytes(res: Response): Promise<Uint8Array> {
   const buf = await res.arrayBuffer();
   return new Uint8Array(buf);
 }
 
-/**
- * Download the bytes of a drive item addressed by (driveId, itemId).
- */
 export async function downloadDriveItem(
   driveId: string,
   itemId: string,
@@ -342,10 +447,6 @@ export async function downloadDriveItem(
   return readBytes(res);
 }
 
-/**
- * Download the bytes of a file behind a share link via the Graph
- * `shares` API.
- */
 export async function downloadShareLink(
   shareUrl: string,
   opts: MicrosoftGraphOptions = {},
@@ -361,8 +462,6 @@ export async function downloadShareLink(
   return readBytes(res);
 }
 
-// The subset of an agenda sync config this module needs to address a
-// Graph-backed file.
 export interface MicrosoftBackedSource {
   sourceType: string;
   microsoftAuth?: boolean | null;
@@ -371,25 +470,15 @@ export interface MicrosoftBackedSource {
   sourceUrl?: string | null;
 }
 
-// ===== cTag helpers (Task #362 — SharePoint Excel connector) =====
-//
-// cTag is the Microsoft Graph change-detection tag for a drive item. It
-// changes whenever the file content changes. By caching the last-seen cTag
-// and comparing it on each sync tick, we can skip the full XLSX download
-// entirely when nothing has changed — no bytes transferred, no parse, no DB
-// writes. When cTag is absent (e.g. business OneDrive w/ old API) or the
-// request fails, the functions return null, which the sync engine treats as
-// "unknown → always download" to guarantee correctness over efficiency.
+// =====================================================================
+// cTag helpers (Task #362)
+// =====================================================================
 
 interface RawDriveItemMeta {
   id: string;
   cTag?: string;
 }
 
-/**
- * Fetch the cTag for a file addressed by (driveId, itemId).
- * Returns null if cTag is absent or the request fails.
- */
 export async function fetchDriveItemCTag(
   driveId: string,
   itemId: string,
@@ -410,15 +499,10 @@ export async function fetchDriveItemCTag(
     );
     return raw.cTag ?? null;
   } catch {
-    // Any Graph error (4xx, network, etc.) → treat as unknown → always download.
     return null;
   }
 }
 
-/**
- * Fetch the cTag for a file behind a share link via the Graph shares API.
- * Returns null if cTag is absent or the request fails.
- */
 export async function fetchShareLinkCTag(
   shareUrl: string,
   opts: MicrosoftGraphOptions = {},
@@ -443,12 +527,6 @@ export async function fetchShareLinkCTag(
   }
 }
 
-/**
- * Fetch the cTag for any Microsoft-backed agenda source. Prefers the
- * (driveId, itemId) path when set; falls back to share-link resolution.
- * Returns null when cTag cannot be determined — the sync engine treats
- * null as "always download" to stay correct.
- */
 export async function fetchMicrosoftCTag(
   source: MicrosoftBackedSource,
   fetchImpl: typeof fetch = fetch,
@@ -464,15 +542,6 @@ export async function fetchMicrosoftCTag(
   return null;
 }
 
-/**
- * Fetch the .xlsx bytes for a Microsoft-backed agenda source. Prefers a
- * concrete (driveId, itemId) set by the file picker; otherwise resolves
- * the file from the pasted share link in `sourceUrl`. The connector that
- * matches the source type is tried first.
- *
- * Throws MicrosoftNotConnectedError when no Microsoft account is bound,
- * so the caller can surface the connect-Microsoft guidance.
- */
 export async function fetchMicrosoftXlsxBytes(
   source: MicrosoftBackedSource,
   fetchImpl: typeof fetch = fetch,

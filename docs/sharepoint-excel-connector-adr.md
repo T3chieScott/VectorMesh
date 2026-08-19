@@ -467,3 +467,78 @@ Task #362 may proceed subject to the mandatory modifications in §20 and the pre
 ---
 
 *ADR published: 2026-08-18. This is the only file changed by Task #361.*
+
+---
+
+## §21. Task #369 — Replace Replit connector proxy with production Entra OAuth (2026-08-19)
+
+### Context
+
+The original Task #268 implementation used Replit's first-party Microsoft connector
+proxy (OneDrive + SharePoint Online integrations) to obtain Graph access tokens at
+runtime. This proxy is valid in the Replit-hosted development environment but is
+architecturally unsound for Plesk-hosted production deployments:
+
+1. `REPLIT_CONNECTORS_HOSTNAME` is a Replit-specific environment variable
+   not available on Plesk.
+2. The Replit proxy depends on OAuth sessions maintained inside Replit's
+   infrastructure — these cannot be exported or replicated.
+3. The proxy token is a delegated credential belonging to the development
+   account, not a stable integration identity.
+4. There is no mechanism to rotate or audit the credential outside Replit's
+   dashboard.
+
+### Decision
+
+Replace the Replit connector proxy with a standards-compliant OAuth 2.0
+authorisation-code + PKCE flow using Microsoft's official `@azure/msal-node`
+`ConfidentialClientApplication`. The implementation:
+
+- **Never hand-rolls OAuth.** MSAL owns URL construction, code exchange,
+  token refresh, PKCE verification and token caching.
+- **Uses a tenant-specific authority** (`organizations` or a concrete tenant ID
+  from `MICROSOFT_TENANT_ID`). The `common` multi-tenant endpoint is disallowed.
+- **Encrypts the entire MSAL token cache** (accounts + access tokens + refresh
+  tokens) with AES-256-GCM before any DB write. Random IV per write, auth tag
+  validated on read. Key version stored for future rotation.
+- **Restricts scopes** to `openid profile offline_access User.Read Files.Read.All`
+  exactly. Any grant containing a write-capable scope throws at runtime.
+- **Enforces read-only Graph transport**: only GET and HEAD to graph.microsoft.com.
+- **Binds authorisation transactions** to the initiating admin session (state,
+  nonce, PKCE verifier, 15-minute expiry, single-use consume).
+- **Gates connect/disconnect to system administrators** via `requireAdmin`.
+- **Disables the Replit adapter in production** (`NODE_ENV=production` fails
+  closed; the adapter is active only when `REPLIT_CONNECTORS_HOSTNAME` is
+  present in a non-production environment).
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `server/microsoftOAuth.ts` | New — MSAL engine, encrypted cache plugin, PKCE, scope enforcement |
+| `server/microsoftGraph.ts` | Replaced `resolveAccessToken` with Entra-first + Replit dev adapter |
+| `shared/schema.ts` | Added `microsoftOauthTokens` Drizzle table |
+| `migrations/0027_microsoft_oauth.sql` | Additive, idempotent, reversible CREATE TABLE |
+| `server/db.ts` | Added `ensureMicrosoftOAuthMigration()` with advisory lock |
+| `server/agendaRoutes.ts` | Added connect / callback / disconnect routes; extended status response |
+| `server/routes.ts` | Threaded `requireAdmin` into `mountAgendaRoutes` |
+| `client/src/pages/agenda-items.tsx` | Real Connect / Disconnect buttons for admins |
+| `tests/microsoft-oauth-security.test.ts` | New — 11 security test categories |
+| `docs/sharepoint-excel-production-checklist.md` | Microsoft integration section updated |
+
+### Required environment variables (production)
+
+`MICROSOFT_TENANT_ID`, `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`,
+`MICROSOFT_REDIRECT_URI`, `MICROSOFT_TOKEN_ENCRYPTION_KEY`.
+
+Server startup validates all five are present in production and throws if any
+are missing. Their values are never logged.
+
+### Consequences
+
+- The Replit OneDrive and SharePoint Online integrations are no longer required
+  in production and may be left in place (they are harmless) or removed.
+- A one-time administrator-driven OAuth flow is required after first deployment
+  to populate the encrypted credential store.
+- Future key rotation increments `KEY_VERSION` in `microsoftOAuth.ts` and
+  re-encrypts the credential row; old rows are identifiable by `key_version < N`.

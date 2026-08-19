@@ -531,7 +531,12 @@ function SyncConfigDialog({
   // Task #268 — is a system-level Microsoft account connected? Only
   // queried while a Microsoft source type is selected. Drives the
   // Connect-Microsoft UI and whether the can't-read fallback shows.
-  const msStatusQuery = useQuery<{ connected: boolean; connectors: string[] }>({
+  const msStatusQuery = useQuery<{
+    connected: boolean;
+    connectors: string[];
+    provider: "entra" | "replit_dev" | null;
+    canConnect: boolean;
+  }>({
     queryKey: ["/api/agenda/microsoft/status", clientId],
     queryFn: async () => {
       const res = await apiRequest(
@@ -543,6 +548,31 @@ function SyncConfigDialog({
     enabled: open && isMicrosoftType,
   });
   const msConnected = msStatusQuery.data?.connected ?? false;
+  const msCanConnect = msStatusQuery.data?.canConnect ?? false;
+
+  // Task #369 — Disconnect the connected Microsoft Entra account (admin only).
+  const disconnectMsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/agenda/microsoft/disconnect");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(err.error ?? "Failed to disconnect Microsoft account");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/agenda/microsoft/status", clientId],
+      });
+      toast({ title: "Microsoft account disconnected" });
+    },
+    onError: (e: unknown) =>
+      toast({
+        title: "Disconnect failed",
+        description: String(e instanceof Error ? e.message : e),
+        variant: "destructive",
+      }),
+  });
 
   // Recent / searched Excel files in the connected account.
   const msFilesQuery = useQuery<
@@ -821,9 +851,45 @@ function SyncConfigDialog({
                   {msStatusQuery.isLoading ? (
                     <p className="text-xs text-muted-foreground">Checking Microsoft connection…</p>
                   ) : msConnected ? (
-                    <p className="text-xs text-green-600 dark:text-green-400" data-testid="text-ms-connected">
-                      Microsoft account connected.
-                    </p>
+                    <div className="flex items-center gap-3" data-testid="text-ms-connected">
+                      <p className="text-xs text-green-600 dark:text-green-400">
+                        Microsoft account connected.
+                      </p>
+                      {msCanConnect && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-auto py-0.5 px-2 text-xs text-muted-foreground hover:text-destructive"
+                          onClick={() => disconnectMsMutation.mutate()}
+                          disabled={disconnectMsMutation.isPending}
+                        >
+                          Disconnect
+                        </Button>
+                      )}
+                    </div>
+                  ) : msCanConnect ? (
+                    <div className="space-y-2" data-testid="text-ms-not-connected">
+                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                        No Microsoft account is connected yet.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        asChild
+                      >
+                        <a
+                          href={`/api/agenda/microsoft/connect?returnTo=${encodeURIComponent(
+                            typeof window !== "undefined"
+                              ? window.location.pathname + window.location.search
+                              : "/",
+                          )}`}
+                        >
+                          Connect Microsoft account
+                        </a>
+                      </Button>
+                    </div>
                   ) : (
                     <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="text-ms-not-connected">
                       No Microsoft account is connected yet. Ask an administrator to connect a

@@ -5075,11 +5075,16 @@ export async function registerRoutes(
     auth: {
       canAccessClient: (req, clientId) => canAccessClient(req, clientId),
       getAllowedClientIds: (req) => getAllowedClientIds(req),
+      isAdminById: async (userId: string) => {
+        const user = await storage.getUser(userId);
+        return user?.role === "admin";
+      },
     },
     requireAuth,
     requireAuthOrToken,
     loadUserContext,
     logAudit,
+    requireAdmin,
     resolveStoredPath: (p) => fileStorage.getAbsolutePath(p),
     graphFetch: (cfg) => fetchMicrosoftXlsxBytes(cfg),
     graphCTagFetch: (cfg) => fetchMicrosoftCTag(cfg),

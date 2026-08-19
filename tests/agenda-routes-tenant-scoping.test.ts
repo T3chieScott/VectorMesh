@@ -305,6 +305,7 @@ async function startTestServer(opts: {
         return allowed ? allowed.includes(clientId) : false;
       },
       getAllowedClientIds: (req) => (req as any).allowedClientIds ?? null,
+      isAdminById: async (_userId: string) => true,
     },
     requireAuth,
     requireAuthOrToken,

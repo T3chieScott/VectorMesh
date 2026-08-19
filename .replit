@@ -1,4 +1,4 @@
-modules = ["nodejs-20", "web", "python-3.11", "postgresql-16"]
+modules = ["nodejs-24", "web", "python-3.11", "postgresql-16"]
 run = "npm run dev"
 hidden = [".config", ".git", "generated-icon.png", "node_modules", "dist"]
 
@@ -61,9 +61,6 @@ outputType = "webview"
 name = "e2e"
 author = "agent"
 
-[workflows.workflow.metadata]
-outputType = "console"
-
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "PLAYWRIGHT_BROWSERS_PATH=/home/runner/workspace/.cache/ms-playwright npm run test:e2e"
@@ -72,21 +69,6 @@ args = "PLAYWRIGHT_BROWSERS_PATH=/home/runner/workspace/.cache/ms-playwright npm
 name = "test"
 author = "agent"
 
-[workflows.workflow.metadata]
-isValidation = true
-
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npm run test:unit"
-
-[agent]
-integrations = ["javascript_object_storage:2.0.0", "javascript_log_in_with_replit:2.0.0", "javascript_database:1.0.0", "onedrive:1.0.0", "sharepoint:1.0.0"]
-
-[userenv]
-
-[userenv.development]
-ENABLE_TEST_AUTH_BYPASS = "1"
-
-[postMerge]
-path = "scripts/post-merge.sh"
-timeoutMs = 20000
