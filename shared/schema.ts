@@ -1553,6 +1553,25 @@ export const agendaItemSnapshotsRelations = relations(agendaItemSnapshots, ({ on
 export type AgendaItemSnapshot = typeof agendaItemSnapshots.$inferSelect;
 export type InsertAgendaItemSnapshot = typeof agendaItemSnapshots.$inferInsert;
 
+// Task #369 — Production Entra OAuth credential store.
+// Holds exactly ONE row (id = 'singleton') containing the AES-256-GCM
+// encrypted MSAL token cache for the system-level Microsoft integration
+// identity.  Access tokens are included in the cache blob but are encrypted;
+// they are never stored unencrypted.  key_version enables future key rotation.
+export const microsoftOauthTokens = pgTable("microsoft_oauth_tokens", {
+  id: varchar("id").primaryKey(),
+  encryptedCache: text("encrypted_cache").notNull(),
+  cacheIv: text("cache_iv").notNull(),
+  cacheTag: text("cache_tag").notNull(),
+  keyVersion: integer("key_version").notNull().default(1),
+  scope: text("scope").notNull(),
+  connectedBy: text("connected_by").notNull(),
+  connectedAt: timestamp("connected_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type MicrosoftOauthToken = typeof microsoftOauthTokens.$inferSelect;
+
 // Per-screen / per-display configuration for the Agenda Display
 // Widget. One config drives one full-screen display URL
 // (/display/agenda/:configId). All filters and visual options live

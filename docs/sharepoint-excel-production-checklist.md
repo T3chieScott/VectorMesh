@@ -25,12 +25,48 @@ in a production environment.
 
 ---
 
-## Microsoft integration
+## Microsoft integration (Entra OAuth — Task #369)
 
-- [ ] Microsoft OneDrive integration is **Connected** in Settings → Integrations.
-- [ ] The service account / delegated user has at least **Read** permission on
-  the target SharePoint site and Excel workbook.
+> **Changed in Task #369.** The connector now uses a first-party
+> Microsoft Entra (Azure AD) application instead of the Replit connector
+> proxy. The Replit OneDrive/SharePoint connectors are **no longer required**
+> in production. They are only used as a development fallback in Replit
+> when `NODE_ENV` is not `production`.
+
+### Entra app registration (one-time)
+
+1. Register a new **single-tenant** application in Entra (or Azure Portal →
+   App registrations → New registration).
+2. Add a **Web** redirect URI: the value of `MICROSOFT_REDIRECT_URI` below.
+3. Generate a **Client secret** and note the Application (client) ID,
+   Directory (tenant) ID and the secret value.
+4. Grant **API permissions** (Microsoft Graph, Delegated):
+   - `openid`, `profile`, `offline_access`
+   - `User.Read`
+   - `Files.Read.All`
+   No write scopes must appear. Admin consent is required for `Files.Read.All`.
+
+### First-time connection
+
+After deploying with the environment variables set, a **system administrator**
+must visit **Agenda → Sync Sources → (any Microsoft source) → Edit** and click
+**Connect Microsoft account**. This triggers the Entra OAuth flow in the browser
+and persists the encrypted credential to the database.
+
+### Verification
+
+- [ ] Server log shows `[ensureMicrosoftOAuthMigration] microsoft_oauth_tokens table ready`.
+- [ ] A system administrator has completed the connect flow (status shows
+  "Microsoft account connected" in the sync-source dialog).
+- [ ] A manual **Refresh now** succeeds on at least one Microsoft-backed
+  sync config.
 - [ ] OAuth token refresh is working (check that syncs succeed after > 1 hour).
+
+### Disconnect / revoke
+
+A system administrator can disconnect the account from the sync-source dialog.
+This deletes only the encrypted credential row; no agenda data is affected.
+To fully revoke access, also remove the app's delegated permissions in Entra.
 
 ---
 
@@ -40,11 +76,22 @@ in a production environment.
 |---|---|---|
 | `SESSION_SECRET` | Yes | Express session signing |
 | `DATABASE_URL` | Yes | PostgreSQL connection |
-| OneDrive OAuth credentials | Yes | Managed by the Replit OneDrive integration |
+| `MICROSOFT_TENANT_ID` | Yes | Entra tenant ID (or `organizations` for multi-tenant work accounts) |
+| `MICROSOFT_CLIENT_ID` | Yes | Entra app Application (client) ID |
+| `MICROSOFT_CLIENT_SECRET` | Yes | Entra app client secret |
+| `MICROSOFT_REDIRECT_URI` | Yes | Full callback URL, e.g. `https://your-domain.com/api/agenda/microsoft/callback` |
+| `MICROSOFT_TOKEN_ENCRYPTION_KEY` | Yes | 32-byte key as 64-char hex string — generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 
-No additional environment variables are required for the SharePoint Excel
-connector itself — all Graph API access flows through the shared OneDrive
-integration credential.
+> **Never log or commit these values.** The server performs strict startup
+> validation and will throw if any of the five Microsoft env vars are absent
+> in production.
+
+### Rollback for Microsoft OAuth migration
+
+```sql
+-- Remove the credential table only. No agenda data is affected.
+DROP TABLE IF EXISTS microsoft_oauth_tokens;
+```
 
 ---
 

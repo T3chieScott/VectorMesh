@@ -38,6 +38,16 @@ import {
   MicrosoftNotConnectedError,
   MICROSOFT_NOT_CONNECTED_MESSAGE,
 } from "./microsoftGraph";
+import {
+  buildConnectUrl,
+  generateOAuthInitParams,
+  handleOAuthCallback,
+  disconnectEntraOAuth,
+  sanitizeReturnTo,
+  validateOAuthCallbackParams,
+  OAUTH_STATE_TTL_MS,
+  type MsOAuthSessionState,
+} from "./microsoftOAuth";
 import { getPathParam, getQueryString } from "./requestParams";
 import { getOrSet, set, del, buildCacheKey, registerRefresher, CACHE_NAMESPACES, DEFAULT_TTLS } from "./sharedCache";
 
@@ -91,6 +101,12 @@ export interface AgendaRoutesStorage {
 export interface AgendaRoutesAuth {
   canAccessClient(req: Request, clientId: string): boolean;
   getAllowedClientIds(req: Request): string[] | null;
+  /**
+   * Returns true when userId refers to a user whose role is currently "admin".
+   * Used by the OAuth callback to verify the initiating admin has not been
+   * demoted or deleted between connect-initiation and callback arrival.
+   */
+  isAdminById(userId: string): Promise<boolean>;
 }
 
 export interface AgendaRoutesDeps {
@@ -99,6 +115,8 @@ export interface AgendaRoutesDeps {
   requireAuth: RequestHandler;
   requireAuthOrToken: RequestHandler;
   loadUserContext: (req: Request, res: Response, next: NextFunction) => any;
+  /** Gates the Microsoft connect/disconnect routes to system administrators. */
+  requireAdmin?: RequestHandler;
   logAudit?: (
     req: Request,
     action: string,
@@ -207,6 +225,13 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
   const resolveStoredPath = deps.resolveStoredPath;
   const graphFetch = deps.graphFetch;
   const graphCTagFetch = deps.graphCTagFetch;
+  // Fail closed: if requireAdmin is not injected, every admin-only route
+  // returns 403 rather than silently passing. routes.ts always provides it.
+  const requireAdmin: RequestHandler =
+    deps.requireAdmin ??
+    ((_req, res) => {
+      res.status(403).json({ error: "Administrator access required" });
+    });
 
   // A mapped source (Task #267) must carry either a URL (URL types) or a
   // storedFilePath (uploaded_xlsx) before it can be saved. Returns an
@@ -669,7 +694,10 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         return res.status(403).json({ error: "Access denied to requested site" });
       }
       const status = await getMicrosoftConnectionStatus();
-      res.json(status);
+      // canConnect: true only for system admins — used by the client to decide
+      // whether to show the Connect / Disconnect controls.
+      const isAdmin = (req as any).dbUser?.role === "admin";
+      res.json({ ...status, canConnect: isAdmin });
     } catch (error) {
       console.error("Error checking Microsoft connection status:", error);
       res.status(500).json({ error: "Failed to check Microsoft connection status" });
@@ -726,6 +754,168 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       res.status(400).json({ error: message });
     }
   });
+
+  // ----- Microsoft Entra OAuth connect / disconnect (Task #369) -----
+  //
+  // These routes implement the authorisation-code + PKCE flow via
+  // @azure/msal-node. Only system administrators may connect or disconnect
+  // (requireAdmin guard). The callback is unguarded (Microsoft redirects to
+  // it without a session cookie) but validates the cryptographic state from
+  // the initiating session.
+
+  // GET /api/agenda/microsoft/connect?returnTo=/agenda
+  // Generates PKCE, stores state in session, redirects to Microsoft.
+  app.get(
+    "/api/agenda/microsoft/connect",
+    requireAuth,
+    loadUserContext,
+    requireAdmin,
+    async (req, res) => {
+      try {
+        const rawReturn = typeof req.query.returnTo === "string" ? req.query.returnTo : "";
+        const returnTo = sanitizeReturnTo(rawReturn);
+        const params = generateOAuthInitParams();
+        // initiatedBy must never be blank: if the session user cannot be
+        // identified here, the callback has no way to enforce session binding.
+        const initiatedBy = ((req as any).dbUser?.id as string | undefined) ?? "";
+        if (!initiatedBy) {
+          return res.status(403).json({
+            error: "Session user cannot be determined. Please sign in again.",
+          });
+        }
+        const sessionState: MsOAuthSessionState = {
+          state: params.state,
+          nonce: params.nonce,
+          codeVerifier: params.codeVerifier,
+          initiatedBy,
+          returnTo,
+          expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
+        };
+        (req.session as any).msOauthState = sessionState;
+        await new Promise<void>((resolve, reject) =>
+          req.session.save((err) => (err ? reject(err) : resolve())),
+        );
+        const authUrl = await buildConnectUrl({
+          state: params.state,
+          nonce: params.nonce,
+          codeChallenge: params.codeChallenge,
+        });
+        res.redirect(authUrl);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[agenda] Microsoft connect error:", msg);
+        res.status(500).json({ error: `Failed to start Microsoft connection: ${msg}` });
+      }
+    },
+  );
+
+  // GET /api/agenda/microsoft/callback
+  // Handles the redirect from Microsoft. Validates state / nonce / expiry,
+  // exchanges the code, persists the encrypted MSAL cache, then redirects
+  // back to returnTo.  No auth middleware — the browser is arriving from
+  // login.microsoftonline.com and will not carry the session auth cookie
+  // automatically in some configurations; session state is sufficient.
+  app.get("/api/agenda/microsoft/callback", async (req, res) => {
+    const oauthError = req.query.error;
+    if (oauthError) {
+      const desc = req.query.error_description ?? oauthError;
+      console.error("[agenda] Microsoft OAuth error from Microsoft:", String(desc));
+      return res.status(400).send(
+        `<!DOCTYPE html><html><body><p>Microsoft sign-in failed: <strong>${String(oauthError)}</strong>. ` +
+          `<a href="/">Return to VectorMesh</a></p></body></html>`,
+      );
+    }
+
+    const sessionState = (req.session as any)?.msOauthState as MsOAuthSessionState | undefined;
+    // currentUserId is populated when the browser has an active authenticated session.
+    // When it is defined, it must match the admin who initiated the flow (session binding).
+    const currentUserId: string | undefined = (req.session as any)?.userId;
+
+    // Validate all callback parameters via the pure helper.
+    let validatedState: MsOAuthSessionState;
+    try {
+      validatedState = validateOAuthCallbackParams({
+        sessionState,
+        returnedState: req.query.state as string | undefined,
+        code: req.query.code as string | undefined,
+        currentUserId,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Consume state on ALL validation failures — not just expiry.
+      // Prevents any replay window regardless of which check fired.
+      if (sessionState) {
+        delete (req.session as any).msOauthState;
+        await new Promise<void>((resolve) => req.session.save(() => resolve()));
+      }
+      return res.status(400).send(
+        `<!DOCTYPE html><html><body><p>${msg}. ` +
+          '<a href="/">Start the connection again</a></p></body></html>',
+      );
+    }
+
+    // Consume the state token immediately after successful validation —
+    // before any further async work so that failures in subsequent checks
+    // cannot be replayed.
+    delete (req.session as any).msOauthState;
+    await new Promise<void>((resolve, reject) =>
+      req.session.save((err) => (err ? reject(err) : resolve())),
+    );
+
+    // Verify the initiating admin still holds the admin role.  Catches the
+    // case where an account is demoted or deleted between initiation and
+    // callback arrival.
+    const isStillAdmin = await auth.isAdminById(validatedState.initiatedBy);
+    if (!isStillAdmin) {
+      return res.status(403).send(
+        `<!DOCTYPE html><html><body>` +
+          `<p>Microsoft connection failed: the initiating account no longer ` +
+          `has administrator access. ` +
+          `<a href="/">Return to VectorMesh</a></p></body></html>`,
+      );
+    }
+
+    try {
+      await handleOAuthCallback({
+        code: req.query.code as string,
+        codeVerifier: validatedState.codeVerifier,
+        nonce: validatedState.nonce,
+        connectedBy: validatedState.initiatedBy,
+      });
+      const dest = validatedState.returnTo || "/";
+      const sep = dest.includes("?") ? "&" : "?";
+      res.redirect(`${dest}${sep}msConnected=1`);
+    } catch (err) {
+      // State already consumed — a failed token exchange cannot be replayed.
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[agenda] Microsoft OAuth callback failed:", msg);
+      res.status(400).send(
+        `<!DOCTYPE html><html><body><p>Microsoft connection failed: ${msg}. ` +
+          '<a href="/">Return to VectorMesh</a></p></body></html>',
+      );
+    }
+  });
+
+  // POST /api/agenda/microsoft/disconnect
+  // Deletes the encrypted credential row and resets the MSAL singleton.
+  // Only the Microsoft OAuth credentials are removed; agenda sync configs,
+  // snapshots and items are untouched.
+  app.post(
+    "/api/agenda/microsoft/disconnect",
+    requireAuth,
+    loadUserContext,
+    requireAdmin,
+    async (req, res) => {
+      try {
+        await disconnectEntraOAuth();
+        res.json({ disconnected: true });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[agenda] Microsoft disconnect error:", msg);
+        res.status(500).json({ error: msg });
+      }
+    },
+  );
 
   // Surface the most recent sync warnings / error for a config so the UI
   // can show per-row parse problems without re-running the sync.

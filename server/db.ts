@@ -301,3 +301,68 @@ export async function ensureMonitorSessionsMigration(): Promise<void> {
     client.release();
   }
 }
+
+// =====================================================================
+// Migration 0027 — Microsoft OAuth credential store (Task #369)
+// =====================================================================
+
+const MICROSOFT_OAUTH_MIGRATION_LOCK_KEY = 715129_005n;
+
+/**
+ * Idempotent online migration for the microsoft_oauth_tokens table.
+ * Safe to call on every server start.
+ *
+ * Concurrency model:
+ * ─ Uses a dedicated pg client (not pool.query) so the transaction advisory
+ *   lock is never silently re-used by another query on a different pool client.
+ * ─ pg_advisory_xact_lock is transaction-level: it BLOCKS until the lock is
+ *   available (no spin-wait, no 500 ms sleep + skip) and releases automatically
+ *   on COMMIT or ROLLBACK — no separate unlock call required.
+ * ─ The table's existence is verified inside the transaction before COMMIT so a
+ *   failed CREATE is never silently swallowed.
+ */
+export async function ensureMicrosoftOAuthMigration(): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Blocks until no other process holds the same key.
+    // Released automatically when this transaction ends.
+    await client.query("SELECT pg_advisory_xact_lock($1)", [
+      MICROSOFT_OAUTH_MIGRATION_LOCK_KEY.toString(),
+    ]);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS microsoft_oauth_tokens (
+        id              VARCHAR     PRIMARY KEY,
+        encrypted_cache TEXT        NOT NULL,
+        cache_iv        TEXT        NOT NULL,
+        cache_tag       TEXT        NOT NULL,
+        key_version     INTEGER     NOT NULL DEFAULT 1,
+        scope           TEXT        NOT NULL,
+        connected_by    TEXT        NOT NULL,
+        connected_at    TIMESTAMP   NOT NULL DEFAULT NOW(),
+        updated_at      TIMESTAMP   NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    // Verify the table is visible before committing.
+    const { rows } = await client.query<{ tbl: string }>(
+      `SELECT table_name AS tbl FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = 'microsoft_oauth_tokens'`,
+    );
+    if (rows.length === 0) {
+      throw new Error(
+        "ensureMicrosoftOAuthMigration: table did not appear in information_schema after CREATE — aborting",
+      );
+    }
+
+    await client.query("COMMIT");
+    console.log("[ensureMicrosoftOAuthMigration] microsoft_oauth_tokens table ready");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
