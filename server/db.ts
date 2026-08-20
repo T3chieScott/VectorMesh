@@ -107,6 +107,7 @@ export const ensureBookingConstraints = ensureBookingMigration;
  * agenda_sync_configs in the same pass.
  */
 const AGENDA_SNAPSHOTS_MIGRATION_LOCK_KEY = 715129_004n;
+const AGENDA_CONFIG_FINGERPRINT_MIGRATION_LOCK_KEY = 715129_006n;
 
 export async function ensureAgendaSnapshotsMigration(): Promise<void> {
   const client = await pool.connect();
@@ -176,6 +177,41 @@ export async function ensureAgendaSnapshotsMigration(): Promise<void> {
       } catch (unlockErr) {
         console.error(
           "ensureAgendaSnapshotsMigration: failed to release advisory lock:",
+          unlockErr,
+        );
+      }
+    }
+    client.release();
+  }
+}
+
+/**
+ * Adds the persisted parsing/merge fingerprint used by Microsoft-backed
+ * agenda syncs. Existing rows are intentionally left NULL so they reprocess
+ * once before becoming eligible for cTag skips.
+ */
+export async function ensureAgendaConfigFingerprintMigration(): Promise<void> {
+  const client = await pool.connect();
+  let haveLock = false;
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [
+      AGENDA_CONFIG_FINGERPRINT_MIGRATION_LOCK_KEY.toString(),
+    ]);
+    haveLock = true;
+    await client.query(`
+      ALTER TABLE agenda_sync_configs
+        ADD COLUMN IF NOT EXISTS last_processed_config_fingerprint TEXT
+    `);
+    console.log("[ensureAgendaConfigFingerprintMigration] agenda config fingerprint column ready");
+  } finally {
+    if (haveLock) {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [
+          AGENDA_CONFIG_FINGERPRINT_MIGRATION_LOCK_KEY.toString(),
+        ]);
+      } catch (unlockErr) {
+        console.error(
+          "ensureAgendaConfigFingerprintMigration: failed to release advisory lock:",
           unlockErr,
         );
       }

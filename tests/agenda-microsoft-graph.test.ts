@@ -13,6 +13,7 @@ import {
   manualRunCooldownRemainingMs,
   recordManualRun,
   MANUAL_RUN_COOLDOWN_MS,
+  computeAgendaParsingConfigFingerprint,
   type SourceHealthState,
   type DisplayContinuityState,
 } from "../server/agendaSync";
@@ -129,6 +130,7 @@ function msConfig(overrides: Partial<AgendaSyncConfig> = {}): AgendaSyncConfig {
     msSiteId: null,
     // Task #362 — snapshot/cTag fields
     lastCTag: null,
+    lastProcessedConfigFingerprint: null,
     lastGoodSnapshotId: null,
     // Task #362 health contract additions
     msFileName: null,
@@ -139,6 +141,45 @@ function msConfig(overrides: Partial<AgendaSyncConfig> = {}): AgendaSyncConfig {
     updatedAt: new Date(),
     ...overrides,
   } as AgendaSyncConfig;
+}
+
+function makeAtomicSnapshotStorage(configRow: AgendaSyncConfig) {
+  const base = makeStubStorage(configRow);
+  const snapshots: Array<{ id: string; items: InsertAgendaItem[] }> = [];
+  let atomicCalls = 0;
+  const storage = {
+    ...base.storage,
+    async atomicMicrosoftSync(params: any) {
+      atomicCalls++;
+      const snapshotId = `snapshot-${snapshots.length + 1}`;
+      snapshots.push({ id: snapshotId, items: params.newItems });
+      await base.storage.updateAgendaSyncConfig(params.configId, {
+        lastCTag: params.newCTag ?? base.config.lastCTag,
+        lastProcessedConfigFingerprint: params.configFingerprint,
+        lastGoodSnapshotId: snapshotId,
+        lastSnapshotVersion: snapshots.length,
+      });
+      return {
+        inserted: params.newItems.length,
+        updated: 0,
+        skippedManual: 0,
+        removed: 0,
+        snapshotId,
+        snapshotVersion: snapshots.length,
+      };
+    },
+  };
+  return {
+    items: base.items,
+    storage,
+    snapshots,
+    get atomicCalls() {
+      return atomicCalls;
+    },
+    get config() {
+      return base.config;
+    },
+  };
 }
 
 async function buildXlsxBytes(): Promise<Uint8Array> {
@@ -432,6 +473,7 @@ test("fetchMicrosoftCTag returns null when source has no drive info or URL", asy
 
 test("runAgendaSync skips download when cTag is unchanged (noChange=true)", async () => {
   const cfg = msConfig({ lastCTag: "unchanged-tag" });
+  cfg.lastProcessedConfigFingerprint = computeAgendaParsingConfigFingerprint(cfg);
   const s = makeStubStorage(cfg);
   let graphFetchCalled = false;
   let cTagFetchCalled = false;
@@ -448,6 +490,201 @@ test("runAgendaSync skips download when cTag is unchanged (noChange=true)", asyn
   assert.equal(r.removed, 0);
   // lastSyncAt must be updated even on a skip
   assert.ok(s.config.lastSyncAt !== null, "lastSyncAt should be updated on skip");
+});
+
+test("parsing config fingerprints are stable, non-sensitive, and cover every parsing field", () => {
+  const base = msConfig({
+    sheetName: "Agenda",
+    firstDataRowIndex: 1,
+    externalIdColumn: "Session ID",
+    dateFormatHint: "uk",
+    startTimeColumn: "Start time",
+    endTimeColumn: "End time",
+    dateBaseMonth: 9,
+    dateBaseYear: 2026,
+  });
+  const reordered = {
+    ...base,
+    columnMapping: { endsAt: "End", title: "Title", startsAt: "Start" },
+  };
+  const baseline = computeAgendaParsingConfigFingerprint(base);
+  assert.equal(baseline.length, 64);
+  assert.equal(computeAgendaParsingConfigFingerprint(reordered), baseline);
+  assert.equal(baseline.includes("drive-123"), false, "fingerprint must not include source identifiers");
+
+  const changes: Array<Partial<AgendaSyncConfig>> = [
+    { sheetName: "Second sheet" },
+    { headerRowIndex: 2 },
+    { firstDataRowIndex: 3 },
+    { columnMapping: { ...base.columnMapping, room: "Room" } },
+    { externalIdColumn: "Alternative ID" },
+    { timezone: "UTC" },
+    { dateFormatHint: "us" },
+    { startTimeColumn: "Alternative start" },
+    { endTimeColumn: "Alternative end" },
+    { dateBaseMonth: 10 },
+    { dateBaseYear: 2027 },
+    { removeMissingItems: false },
+  ];
+  for (const change of changes) {
+    assert.notEqual(
+      computeAgendaParsingConfigFingerprint({ ...base, ...change }),
+      baseline,
+      `expected ${Object.keys(change)[0]} to invalidate the fingerprint`,
+    );
+  }
+});
+
+test("unchanged Microsoft cTag reparses a corrected config, publishes a snapshot, then fast-skips", async () => {
+  const xlsx = await buildXlsxBytes();
+  const validMapping = { title: "Title", startsAt: "Start", endsAt: "End" };
+  const invalidConfig = msConfig({
+    lastCTag: "stable-tag",
+    lastGoodSnapshotId: "previous-snapshot",
+    columnMapping: { title: "Title", startsAt: "Missing start", endsAt: "Missing end" },
+  });
+
+  // Simulate the legacy persisted state after an invalid mapping run: its
+  // cTag was recorded, but no parsing fingerprint exists yet.
+  const s = makeAtomicSnapshotStorage(invalidConfig);
+  let downloads = 0;
+  const deps = {
+    storage: s.storage as any,
+    graphFetch: async () => {
+      downloads++;
+      return xlsx;
+    },
+    graphCTagFetch: async () => "stable-tag",
+  };
+
+  const invalidRun = await runAgendaSync(s.config, deps);
+  assert.equal(invalidRun.ok, true);
+  assert.equal(invalidRun.totalUpstream, 0);
+  assert.ok(invalidRun.parseWarnings?.length);
+  assert.equal(downloads, 1, "a config fingerprint mismatch must bypass the cTag skip");
+  assert.equal(s.atomicCalls, 0, "all-invalid data must not publish an empty snapshot");
+  assert.equal(s.config.lastGoodSnapshotId, "previous-snapshot");
+  assert.equal(s.config.lastCTag, "stable-tag");
+
+  // Correct only the persisted mapping; the workbook cTag remains unchanged.
+  await s.storage.updateAgendaSyncConfig(s.config.id, { columnMapping: validMapping });
+  const correctedRun = await runAgendaSync(s.config, deps);
+  assert.equal(correctedRun.ok, true);
+  assert.equal(correctedRun.totalUpstream, 1);
+  assert.equal(correctedRun.parseWarnings, undefined);
+  assert.equal(downloads, 2, "the corrected mapping must reparse unchanged workbook bytes");
+  assert.equal(s.atomicCalls, 1);
+  assert.equal(s.snapshots.length, 1);
+  assert.equal(s.config.lastGoodSnapshotId, "snapshot-1");
+  assert.equal(s.config.lastSyncWarnings, null);
+  assert.equal(
+    s.config.lastProcessedConfigFingerprint,
+    computeAgendaParsingConfigFingerprint(s.config),
+  );
+
+  // A reconstructed config models a process restart: persisted state alone
+  // must retain the correct fast-skip decision.
+  const restartedConfig = {
+    ...s.config,
+    columnMapping: { ...s.config.columnMapping! },
+  };
+  const unchangedRun = await runAgendaSync(restartedConfig, deps);
+  assert.equal(unchangedRun.ok, true);
+  assert.equal(unchangedRun.noChange, true);
+  assert.equal(downloads, 2, "unchanged cTag plus fingerprint must not download again");
+  assert.equal(s.atomicCalls, 1, "a cTag skip must not create another snapshot");
+});
+
+test("same-cTag parsing changes reprocess only the affected Microsoft config", async () => {
+  const xlsx = await buildXlsxBytes();
+  const sourceA = msConfig({ id: "source-A", lastCTag: "stable-tag" });
+  const sourceB = msConfig({ id: "source-B", lastCTag: "stable-tag" });
+  sourceA.lastProcessedConfigFingerprint = computeAgendaParsingConfigFingerprint(sourceA);
+  sourceB.lastProcessedConfigFingerprint = computeAgendaParsingConfigFingerprint(sourceB);
+  const changedSourceA = {
+    ...sourceA,
+    columnMapping: { ...sourceA.columnMapping, description: "Title" },
+  };
+  const storageA = makeStubStorage(changedSourceA);
+  const storageB = makeStubStorage(sourceB);
+  let downloads = 0;
+  const graphFetch = async () => {
+    downloads++;
+    return xlsx;
+  };
+  const graphCTagFetch = async () => "stable-tag";
+
+  const resultA = await runAgendaSync(storageA.config, {
+    storage: storageA.storage as any,
+    graphFetch,
+    graphCTagFetch,
+  });
+  const resultB = await runAgendaSync(storageB.config, {
+    storage: storageB.storage as any,
+    graphFetch,
+    graphCTagFetch,
+  });
+
+  assert.equal(resultA.ok, true);
+  assert.equal(resultA.noChange, undefined);
+  assert.equal(resultB.ok, true);
+  assert.equal(resultB.noChange, true);
+  assert.equal(downloads, 1, "only the source with a changed mapping may reparse");
+});
+
+test("a changed inherited site timezone bypasses an otherwise matching cTag", async () => {
+  const xlsx = await buildXlsxBytes();
+  const config = msConfig({ timezone: null, lastCTag: "stable-tag" });
+  config.lastProcessedConfigFingerprint = computeAgendaParsingConfigFingerprint(
+    config,
+    "Europe/London",
+  );
+  const s = makeStubStorage(config);
+  let downloaded = false;
+
+  const result = await runAgendaSync(s.config, {
+    storage: {
+      ...s.storage,
+      async getClient() {
+        return { id: config.clientId, timezone: "America/New_York" } as any;
+      },
+    } as any,
+    graphFetch: async () => {
+      downloaded = true;
+      return xlsx;
+    },
+    graphCTagFetch: async () => "stable-tag",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(downloaded, true, "the effective parsing timezone changed");
+  assert.equal(result.noChange, undefined);
+});
+
+test("sheet, split-time, and removal settings each bypass an otherwise matching cTag", async () => {
+  const xlsx = await buildXlsxBytes();
+  const changes: Array<Partial<AgendaSyncConfig>> = [
+    { sheetName: "Other worksheet" },
+    { startTimeColumn: "Title", endTimeColumn: "Title" },
+    { removeMissingItems: false },
+  ];
+
+  for (const change of changes) {
+    const baseline = msConfig({ lastCTag: "stable-tag" });
+    baseline.lastProcessedConfigFingerprint = computeAgendaParsingConfigFingerprint(baseline);
+    const changed = { ...baseline, ...change };
+    const s = makeStubStorage(changed);
+    let downloaded = false;
+    await runAgendaSync(s.config, {
+      storage: s.storage as any,
+      graphFetch: async () => {
+        downloaded = true;
+        return xlsx;
+      },
+      graphCTagFetch: async () => "stable-tag",
+    });
+    assert.equal(downloaded, true, `${Object.keys(change).join(", ")} must reprocess`);
+  }
 });
 
 test("runAgendaSync skips cTag check when lastCTag is null (first sync always downloads)", async () => {

@@ -504,7 +504,25 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       if (mergedFile && !storedPathBelongsToClient(mergedFile, mergedClient)) {
         return res.status(403).json({ error: "Uploaded file does not belong to this site" });
       }
-      const cfg = await storage.updateAgendaSyncConfig(id, data);
+      // A cTag is only meaningful for the exact workbook it was read from.
+      // Reset its per-config cache whenever source identity/addressing changes;
+      // parsing-only edits are covered independently by the sync fingerprint.
+      const sourceIdentityChanged =
+        (data.sourceType !== undefined && data.sourceType !== existing.sourceType) ||
+        (data.sourceUrl !== undefined && data.sourceUrl !== existing.sourceUrl) ||
+        (data.storedFilePath !== undefined && data.storedFilePath !== existing.storedFilePath) ||
+        (data.microsoftAuth !== undefined && data.microsoftAuth !== existing.microsoftAuth) ||
+        (data.msDriveId !== undefined && data.msDriveId !== existing.msDriveId) ||
+        (data.msItemId !== undefined && data.msItemId !== existing.msItemId) ||
+        (data.msSiteId !== undefined && data.msSiteId !== existing.msSiteId);
+      const update: Partial<AgendaSyncConfig> = sourceIdentityChanged
+        ? {
+            ...data,
+            lastCTag: null,
+            lastProcessedConfigFingerprint: null,
+          }
+        : data;
+      const cfg = await storage.updateAgendaSyncConfig(id, update);
       audit(req, "update", "agenda_sync_config", id, { name: cfg?.name });
       res.json(cfg);
     } catch (error) {

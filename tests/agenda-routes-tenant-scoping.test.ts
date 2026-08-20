@@ -907,6 +907,40 @@ test("PATCH /api/agenda/sync-configs/:id — site A user cannot reassign config 
   }
 });
 
+test("PATCH /api/agenda/sync-configs/:id clears cTag cache when Microsoft workbook identity changes", async () => {
+  const syncA = makeSyncConfig({
+    id: "syncA",
+    clientId: "siteA",
+    sourceType: "excel_onedrive" as AgendaSyncConfig["sourceType"],
+    sourceUrl: null,
+  });
+  Object.assign(syncA, {
+    microsoftAuth: true,
+    msDriveId: "drive-1",
+    msItemId: "item-old",
+    lastCTag: "opaque-tag",
+    lastProcessedConfigFingerprint: "previous-fingerprint",
+  });
+  const storage = makeFakeStorage({ syncConfigs: [syncA] });
+  const srv = await startTestServer({
+    storage,
+    user: { role: "site_user", allowedClientIds: ["siteA"] },
+  });
+  try {
+    const res = await fetch(`${srv.base}/api/agenda/sync-configs/syncA`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ msItemId: "item-new" }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(storage.syncConfigs[0].msItemId, "item-new");
+    assert.equal(storage.syncConfigs[0].lastCTag, null);
+    assert.equal(storage.syncConfigs[0].lastProcessedConfigFingerprint, null);
+  } finally {
+    await srv.close();
+  }
+});
+
 test("DELETE /api/agenda/sync-configs/:id — site A user cannot delete a site B config", async () => {
   const syncB = makeSyncConfig({ id: "syncB", clientId: "siteB" });
   const storage = makeFakeStorage({ syncConfigs: [syncB] });
