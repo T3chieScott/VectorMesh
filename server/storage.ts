@@ -3167,6 +3167,7 @@ export class DatabaseStorage implements IStorage {
     removeMissingItems: boolean;
     seenExternalIds: Set<string>;
     newCTag: string | null;
+    configFingerprint: string;
     /** Task #362 health contract — when items were committed (always now()). */
     lastPublishedAt?: Date | null;
     /** Task #362 health contract — when the cTag last changed (null = skip update). */
@@ -3292,6 +3293,7 @@ export class DatabaseStorage implements IStorage {
       // This single UPDATE is the moment players start seeing the new data.
       const configUpdate: Partial<AgendaSyncConfig> = {
         lastGoodSnapshotId: snapshotId,
+        lastProcessedConfigFingerprint: params.configFingerprint,
         // Task #362 health contract: denormalize snapshot version so the
         // status endpoint can show it without a join.
         lastSnapshotVersion: nextVersion,

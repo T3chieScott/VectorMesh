@@ -1431,6 +1431,10 @@ export const agendaSyncConfigs = pgTable("agenda_sync_configs", {
   // agenda_item_snapshots row for atomic display promotion; it is SET NULL
   // by the DB when that snapshot is pruned (old rows cleaned up after sync).
   lastCTag: text("last_ctag"),
+  // Fingerprint of the parsing and merge settings used by the last successful
+  // processing attempt. A matching workbook cTag is only safe to skip when
+  // this also matches the current source configuration.
+  lastProcessedConfigFingerprint: text("last_processed_config_fingerprint"),
   // Note: this is a varchar FK to agenda_item_snapshots.id enforced at the
   // SQL level (see migration 0026). Drizzle omits the .references() callback
   // here to avoid a circular dependency (agendaItemSnapshots is defined below
@@ -1473,6 +1477,7 @@ export const insertAgendaSyncConfigSchema = createInsertSchema(agendaSyncConfigs
     lastSyncWarnings: true,
     // Task #362 — runtime-managed snapshot/cTag fields; never set via the API.
     lastCTag: true,
+    lastProcessedConfigFingerprint: true,
     lastGoodSnapshotId: true,
     lastPublishedAt: true,
     lastCTagChangedAt: true,

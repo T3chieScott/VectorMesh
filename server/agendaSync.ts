@@ -12,6 +12,7 @@
 // instead of being silently swallowed, so the UI can surface them.
 
 import { readFile } from "fs/promises";
+import { createHash } from "node:crypto";
 import { parseIcs } from "@shared/agenda-ics";
 import { parseAgendaCsv } from "@shared/agenda-csv";
 import {
@@ -56,6 +57,8 @@ export interface AtomicMicrosoftSyncParams {
    * retained-missing rows are captured accurately.
    */
   newCTag: string | null;
+  /** Fingerprint of the parsing/merge settings used for this successful sync. */
+  configFingerprint: string;
   /** Task #362 health contract — when items were committed. Set by caller. */
   lastPublishedAt?: Date | null;
   /** Task #362 health contract — when the cTag last changed; null = no update. */
@@ -127,6 +130,59 @@ export interface AgendaSyncResult {
    * (in-flight de-duplication).
    */
   noChange?: boolean;
+}
+
+type AgendaParsingConfig = Pick<
+  AgendaSyncConfig,
+  | "sheetName"
+  | "headerRowIndex"
+  | "firstDataRowIndex"
+  | "columnMapping"
+  | "externalIdColumn"
+  | "timezone"
+  | "dateFormatHint"
+  | "startTimeColumn"
+  | "endTimeColumn"
+  | "dateBaseMonth"
+  | "dateBaseYear"
+  | "removeMissingItems"
+>;
+
+/**
+ * Produces a restart-safe fingerprint for the settings that affect how a
+ * workbook is interpreted or merged. It deliberately excludes source URLs,
+ * Microsoft identifiers, and any credential-bearing data.
+ */
+export function computeAgendaParsingConfigFingerprint(
+  config: AgendaParsingConfig,
+  effectiveTimezone?: string,
+): string {
+  const mapping = config.columnMapping
+    ? Object.fromEntries(
+        Object.entries(config.columnMapping).sort(([left], [right]) => {
+          if (left < right) return -1;
+          if (left > right) return 1;
+          return 0;
+        }),
+      )
+    : null;
+  const canonical = JSON.stringify({
+    sheetName: config.sheetName ?? null,
+    headerRowIndex: config.headerRowIndex ?? 0,
+    firstDataRowIndex: config.firstDataRowIndex ?? null,
+    columnMapping: mapping,
+    externalIdColumn: config.externalIdColumn ?? null,
+    // When the source inherits its site's timezone, this records the resolved
+    // value that the mapper actually used rather than the nullable override.
+    timezone: effectiveTimezone ?? config.timezone ?? null,
+    dateFormatHint: config.dateFormatHint ?? null,
+    startTimeColumn: config.startTimeColumn ?? null,
+    endTimeColumn: config.endTimeColumn ?? null,
+    dateBaseMonth: config.dateBaseMonth ?? null,
+    dateBaseYear: config.dateBaseYear ?? null,
+    removeMissingItems: config.removeMissingItems !== false,
+  });
+  return createHash("sha256").update(canonical).digest("hex");
 }
 
 // ===== Health status types (Task #362) =====
@@ -923,6 +979,16 @@ export async function runAgendaSync(
   };
 
   const isMsBacked = isMicrosoftBackedSource(config);
+  // A null source timezone inherits the site's timezone. Resolve it before
+  // the cTag check so changing the site timezone also safely triggers a
+  // reparse rather than reusing instants interpreted under the old timezone.
+  const effectiveTimezone = isMsBacked
+    ? await resolveTimezone(config, deps.storage)
+    : undefined;
+  const configFingerprint = computeAgendaParsingConfigFingerprint(
+    config,
+    effectiveTimezone,
+  );
 
   // Task #362 — in-process lock. Prevent a slow Microsoft download from
   // overlapping with the next scheduler tick for the same config.
@@ -956,9 +1022,11 @@ export async function runAgendaSync(
         prefetchedCTag !== null &&
         config.lastCTag !== null &&
         config.lastCTag !== undefined &&
-        prefetchedCTag === config.lastCTag
+        prefetchedCTag === config.lastCTag &&
+        config.lastProcessedConfigFingerprint === configFingerprint
       ) {
-        // File unchanged — record the check time and return without downloading.
+        // The file and the parsing/merge configuration are unchanged — record
+        // the check time and return without downloading.
         await deps.storage.updateAgendaSyncConfig(config.id, {
           lastSyncAt: now,
           lastSyncOk: true,
@@ -993,6 +1061,25 @@ export async function runAgendaSync(
     result.totalUpstream = upstream.length;
     const trimmedWarnings = warnings.slice(0, 50);
     if (trimmedWarnings.length > 0) result.parseWarnings = trimmedWarnings;
+
+    // A workbook that produced only validation errors must never replace the
+    // last-known-good snapshot with an empty one or tombstone its existing
+    // rows. We deliberately do not record the current fingerprint here, so a
+    // corrected configuration retries even if the workbook cTag is unchanged.
+    if (isMsBacked && upstream.length === 0 && trimmedWarnings.length > 0) {
+      await deps.storage.updateAgendaSyncConfig(config.id, {
+        lastSyncAt: now,
+        lastSyncOk: true,
+        lastError: null,
+        lastErrorAt: null,
+        lastItemCount: 0,
+        lastSyncWarnings: trimmedWarnings,
+        consecutiveFailureCount: 0,
+        failureAlertSent: false,
+      });
+      result.ok = true;
+      return result;
+    }
 
     const existing = await deps.storage.getAgendaItemsBySyncConfig(config.id);
 
@@ -1041,7 +1128,7 @@ export async function runAgendaSync(
       // lastCTagChangedAt: set when a new cTag is being stored (the file's
       // content changed relative to the last stored cTag). Also set on the
       // very first download (no stored cTag to compare against).
-      const cTagChanged = cTagToStore !== null;
+      const cTagChanged = cTagToStore !== null && cTagToStore !== config.lastCTag;
       const atomicResult = await deps.storage.atomicMicrosoftSync({
         configId: config.id,
         clientId: config.clientId,
@@ -1050,6 +1137,7 @@ export async function runAgendaSync(
         removeMissingItems: config.removeMissingItems !== false,
         seenExternalIds,
         newCTag: cTagToStore,
+        configFingerprint,
         lastPublishedAt: now,
         lastCTagChangedAt: cTagChanged ? now : null,
       });
@@ -1143,6 +1231,7 @@ export async function runAgendaSync(
       lastSyncWarnings: trimmedWarnings.length > 0 ? trimmedWarnings : null,
       consecutiveFailureCount: 0,
       failureAlertSent: false,
+      ...(isMsBacked ? { lastProcessedConfigFingerprint: configFingerprint } : {}),
     });
     result.ok = true;
     if (wasAlerting && deps.alerter) {
