@@ -30,6 +30,7 @@
 import test, { describe, it, beforeEach, afterEach, before } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { ConfidentialClientApplication } from "@azure/msal-node";
 
 // Pure-function imports — no DB or MSAL I/O needed.
 import {
@@ -43,7 +44,9 @@ import {
   sanitizeReturnTo,
   redactTokens,
   DISALLOWED_WRITE_SCOPES,
+  ALLOWED_OIDC_SCOPES,
   ENTRA_SCOPE_LIST,
+  REQUIRED_GRAPH_SCOPES,
   OAUTH_STATE_TTL_MS,
   SINGLETON_ROW_ID,
   type MsOAuthSessionState,
@@ -533,14 +536,41 @@ describe("In-process refresh mutex chain structure", () => {
 // =====================================================================
 
 describe("Scope enforcement — assertExactGrantedScopes (allowlist)", () => {
-  it("ENTRA_SCOPE_LIST contains exactly the required scopes", () => {
+  it("authorization requests keep the exact required OIDC and Graph scopes", () => {
     const expected = ["Files.Read.All", "User.Read", "offline_access", "openid", "profile"].sort();
     assert.deepEqual([...ENTRA_SCOPE_LIST].sort(), expected);
+  });
+
+  it("permits exactly the standard OIDC scopes, including Entra's email default", () => {
+    assert.deepEqual(
+      [...ALLOWED_OIDC_SCOPES].sort(),
+      ["email", "offline_access", "openid", "profile"].sort(),
+    );
+  });
+
+  it("requires exactly the two least-privilege Graph delegated scopes", () => {
+    assert.deepEqual(
+      [...REQUIRED_GRAPH_SCOPES].sort(),
+      ["Files.Read.All", "User.Read"],
+    );
   });
 
   it("passes for the exact canonical scope set", () => {
     assert.doesNotThrow(() =>
       assertExactGrantedScopes(["openid", "profile", "offline_access", "User.Read", "Files.Read.All"]),
+    );
+  });
+
+  it("accepts email when Microsoft returns it as a standard OIDC default", () => {
+    assert.doesNotThrow(() =>
+      assertExactGrantedScopes([
+        "openid",
+        "profile",
+        "email",
+        "offline_access",
+        "User.Read",
+        "Files.Read.All",
+      ]),
     );
   });
 
@@ -564,12 +594,11 @@ describe("Scope enforcement — assertExactGrantedScopes (allowlist)", () => {
     );
   });
 
-  it("throws for every unexpected scope (not in ENTRA_SCOPE_LIST)", () => {
+  it("throws for every unexpected scope, including unknown Graph read scopes", () => {
     const unexpected = [
       "Mail.Read",
       "Calendars.Read",
       "Sites.Read.All",
-      "email",
       "https://graph.microsoft.com/.default",
     ];
     for (const extra of unexpected) {
@@ -1050,6 +1079,59 @@ describe("validateOAuthCallbackParams — callback lifecycle", () => {
 // =====================================================================
 
 describe("Disconnect semantics (integration — real dev DB)", () => {
+  it("a successful MSAL cache update persists exactly one encrypted credential row", async () => {
+    const { pool } = await import("../server/db");
+    const {
+      DbEncryptedCachePlugin,
+      getMicrosoftEntraStatus,
+      disconnectEntraOAuth,
+      resetMsalSingleton,
+    } = await import("../server/microsoftOAuth");
+
+    process.env.MICROSOFT_TOKEN_ENCRYPTION_KEY = makeHexKey();
+    await disconnectEntraOAuth();
+    resetMsalSingleton();
+
+    const cachePlugin = new DbEncryptedCachePlugin();
+    const serializedCache = JSON.stringify({
+      Account: { "home-account-id": { username: "admin@example.invalid" } },
+      AccessToken: { "access-token-key": { secret: "never-plaintext-in-db" } },
+    });
+    cachePlugin.setInitialConnection(
+      "test-admin",
+      "openid profile offline_access User.Read Files.Read.All",
+    );
+    await cachePlugin.afterCacheAccess({
+      hasChanged: true,
+      tokenCache: { serialize: () => serializedCache },
+    } as any);
+
+    const persisted = await pool.query<{
+      encrypted_cache: string;
+      scope: string;
+      connected_by: string;
+    }>(
+      `SELECT encrypted_cache, scope, connected_by
+         FROM microsoft_oauth_tokens
+        WHERE id = $1`,
+      [SINGLETON_ROW_ID],
+    );
+    assert.equal(persisted.rows.length, 1, "exactly one credential row must exist");
+    assert.notEqual(
+      persisted.rows[0].encrypted_cache,
+      serializedCache,
+      "the token cache must be encrypted before persistence",
+    );
+    assert.equal(persisted.rows[0].connected_by, "test-admin");
+
+    const status = await getMicrosoftEntraStatus();
+    assert.equal(status.connected, true);
+    assert.equal(status.scope, "openid profile offline_access User.Read Files.Read.All");
+
+    await disconnectEntraOAuth();
+    delete process.env.MICROSOFT_TOKEN_ENCRYPTION_KEY;
+  });
+
   it("disconnectEntraOAuth deletes the singleton row and resets the MSAL singleton", async () => {
     const { pool } = await import("../server/db");
     const { disconnectEntraOAuth, resetMsalSingleton } = await import(
@@ -1101,6 +1183,139 @@ describe("Disconnect semantics (integration — real dev DB)", () => {
     assert.equal(syncCheck.rows.length, 1, "agenda_sync_configs table must still exist");
 
     delete process.env.MICROSOFT_TOKEN_ENCRYPTION_KEY;
+  });
+});
+
+// =====================================================================
+// Category 12 — Callback post-exchange scope-validation cleanup
+// =====================================================================
+
+describe("OAuth callback failed scope-validation cleanup (integration — real dev DB)", () => {
+  it("deletes the persisted cache, resets to disconnected, and leaves agenda data untouched", async () => {
+    const { pool } = await import("../server/db");
+    const {
+      disconnectEntraOAuth,
+      encryptCacheBlob,
+      getMicrosoftEntraStatus,
+      handleOAuthCallback,
+      resetMsalSingleton,
+    } = await import("../server/microsoftOAuth");
+
+    const savedEnv = {
+      clientId: process.env.MICROSOFT_CLIENT_ID,
+      clientSecret: process.env.MICROSOFT_CLIENT_SECRET,
+      redirectUri: process.env.MICROSOFT_REDIRECT_URI,
+      encryptionKey: process.env.MICROSOFT_TOKEN_ENCRYPTION_KEY,
+    };
+    const originalAcquireTokenByCode =
+      ConfidentialClientApplication.prototype.acquireTokenByCode;
+
+    process.env.MICROSOFT_CLIENT_ID = "00000000-0000-0000-0000-000000000001";
+    process.env.MICROSOFT_CLIENT_SECRET = "test-client-secret";
+    process.env.MICROSOFT_REDIRECT_URI = "https://example.invalid/microsoft/callback";
+    process.env.MICROSOFT_TOKEN_ENCRYPTION_KEY = makeHexKey();
+
+    try {
+      await disconnectEntraOAuth();
+      resetMsalSingleton();
+
+      const agendaCountsBefore = await pool.query<{
+        configs: string;
+        snapshots: string;
+        items: string;
+      }>(
+        `SELECT
+          (SELECT COUNT(*)::text FROM agenda_sync_configs) AS configs,
+          (SELECT COUNT(*)::text FROM agenda_item_snapshots) AS snapshots,
+          (SELECT COUNT(*)::text FROM agenda_items) AS items`,
+      );
+
+      // Simulate MSAL having persisted its encrypted cache during the code
+      // exchange, before handleOAuthCallback sees result.scopes.
+      const cacheBlob = encryptCacheBlob('{"msal":"persisted-before-validation"}');
+      await pool.query(
+        `INSERT INTO microsoft_oauth_tokens
+           (id, encrypted_cache, cache_iv, cache_tag, key_version, scope, connected_by, connected_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+        [
+          SINGLETON_ROW_ID,
+          cacheBlob.ciphertext,
+          cacheBlob.iv,
+          cacheBlob.tag,
+          1,
+          "openid profile offline_access User.Read Files.Read.All Mail.Read",
+          "test-admin",
+        ],
+      );
+
+      // Return a valid nonce but an unapproved Graph scope. The callback must
+      // reject this *after* exchange and erase the persisted cache row.
+      (ConfidentialClientApplication.prototype as any).acquireTokenByCode =
+        async () => ({
+          accessToken: "test-access-token",
+          idToken: makeIdToken({ nonce: "expected-nonce" }),
+          scopes: [
+            "openid",
+            "profile",
+            "offline_access",
+            "User.Read",
+            "Files.Read.All",
+            "Mail.Read",
+          ],
+        });
+
+      await assert.rejects(
+        handleOAuthCallback({
+          code: "test-authorisation-code",
+          codeVerifier: "test-code-verifier",
+          nonce: "expected-nonce",
+          connectedBy: "test-admin",
+        }),
+        /unexpected scope/i,
+      );
+
+      const credentialRows = await pool.query(
+        "SELECT id FROM microsoft_oauth_tokens WHERE id = $1",
+        [SINGLETON_ROW_ID],
+      );
+      assert.equal(
+        credentialRows.rows.length,
+        0,
+        "failed scope validation must leave zero credential rows",
+      );
+
+      assert.deepEqual(await getMicrosoftEntraStatus(), {
+        connected: false,
+        scope: "",
+        connectedBy: "",
+      });
+
+      const agendaCountsAfter = await pool.query(
+        `SELECT
+          (SELECT COUNT(*)::text FROM agenda_sync_configs) AS configs,
+          (SELECT COUNT(*)::text FROM agenda_item_snapshots) AS snapshots,
+          (SELECT COUNT(*)::text FROM agenda_items) AS items`,
+      );
+      assert.deepEqual(
+        agendaCountsAfter.rows[0],
+        agendaCountsBefore.rows[0],
+        "credential cleanup must not modify configs, snapshots, or agenda items",
+      );
+    } finally {
+      (ConfidentialClientApplication.prototype as any).acquireTokenByCode =
+        originalAcquireTokenByCode;
+      await disconnectEntraOAuth();
+      resetMsalSingleton();
+
+      if (savedEnv.clientId === undefined) delete process.env.MICROSOFT_CLIENT_ID;
+      else process.env.MICROSOFT_CLIENT_ID = savedEnv.clientId;
+      if (savedEnv.clientSecret === undefined) delete process.env.MICROSOFT_CLIENT_SECRET;
+      else process.env.MICROSOFT_CLIENT_SECRET = savedEnv.clientSecret;
+      if (savedEnv.redirectUri === undefined) delete process.env.MICROSOFT_REDIRECT_URI;
+      else process.env.MICROSOFT_REDIRECT_URI = savedEnv.redirectUri;
+      if (savedEnv.encryptionKey === undefined) delete process.env.MICROSOFT_TOKEN_ENCRYPTION_KEY;
+      else process.env.MICROSOFT_TOKEN_ENCRYPTION_KEY = savedEnv.encryptionKey;
+    }
   });
 });
 

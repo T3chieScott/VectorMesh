@@ -20,9 +20,11 @@
  * ─ key_version stored alongside ciphertext to support future key rotation.
  * ─ In-process mutex prevents concurrent refresh races (single-process PM2
  *   deployment on Plesk).
- * ─ Scopes: openid profile offline_access User.Read Files.Read.All only.
- * ─ Exact allowlist (assertExactGrantedScopes) requires User.Read + Files.Read.All
- *   and rejects every unexpected scope; write-scope denylist is defence-in-depth.
+ * ─ Scopes: standard OIDC scopes plus User.Read and Files.Read.All only.
+ * ─ Exact Graph allowlist (assertExactGrantedScopes) requires User.Read +
+ *   Files.Read.All and rejects every unknown Graph scope; write-scope denylist
+ *   is defence-in-depth. Microsoft may return the standard OIDC `email` scope
+ *   even though it is not requested.
  * ─ OAuth transport → login.microsoftonline.com only (MSAL enforced).
  * ─ Replit connector adapter disabled when NODE_ENV=production.
  * ─ Disconnect deletes credentials only; no Graph call; snapshots untouched.
@@ -54,6 +56,28 @@ export const ENTRA_SCOPE_LIST = [
 
 /** Space-separated scope string (convenience alias). */
 export const ENTRA_SCOPES = ENTRA_SCOPE_LIST.join(" ");
+
+/**
+ * Standard OpenID Connect identity scopes Microsoft may return on a grant.
+ * `email` is intentionally allowed on responses but is not requested in
+ * ENTRA_SCOPE_LIST: MSAL/Entra may add it as a standard OIDC default.
+ */
+export const ALLOWED_OIDC_SCOPES = [
+  "openid",
+  "profile",
+  "email",
+  "offline_access",
+] as const;
+
+/**
+ * The complete and only Microsoft Graph delegated permissions this
+ * integration requires. Keep this separate from OIDC identity scopes so the
+ * Graph allowlist cannot be broadened accidentally.
+ */
+export const REQUIRED_GRAPH_SCOPES = [
+  "User.Read",
+  "Files.Read.All",
+] as const;
 
 /**
  * Write-capable (or otherwise disallowed) scopes — normalised to lowercase.
@@ -362,7 +386,7 @@ export const SINGLETON_ROW_ID = "singleton";
  * beforeCacheAccess: load from DB → decrypt → deserialise into MSAL cache.
  * afterCacheAccess: if changed, serialise MSAL cache → encrypt → write to DB.
  */
-class DbEncryptedCachePlugin implements ICachePlugin {
+export class DbEncryptedCachePlugin implements ICachePlugin {
   /**
    * Set before calling acquireTokenByCode so afterCacheAccess can write
    * connected_by.  Cleared immediately after the first write.
@@ -523,8 +547,10 @@ export function assertNoWriteScopes(scopes: string[] | string | undefined): void
  *
  * 1. Normalises scope strings case-insensitively.
  * 2. Requires User.Read and Files.Read.All to be present.
- * 3. Rejects every scope not in ENTRA_SCOPE_LIST (unexpected Graph permissions).
- * 4. Runs the static write-scope denylist as defence-in-depth.
+ * 3. Allows only standard OIDC identity scopes plus the two required Graph
+ *    delegated scopes; `email` is tolerated as an Entra/MSAL OIDC default.
+ * 4. Rejects every other scope (including every unknown Graph permission).
+ * 5. Runs the static write-scope denylist as defence-in-depth.
  *
  * Called both at grant time (handleOAuthCallback) and at refresh time (_doGetToken).
  */
@@ -547,26 +573,27 @@ export function assertExactGrantedScopes(scopes: string[] | string | undefined):
   }
 
   // Mandatory Graph read scopes — both must be present in the grant.
-  if (!granted.includes("user.read")) {
-    throw new Error(
-      "Microsoft grant is missing required scope User.Read. " +
-        "Check the Entra app registration consent.",
-    );
-  }
-  if (!granted.includes("files.read.all")) {
-    throw new Error(
-      "Microsoft grant is missing required scope Files.Read.All. " +
-        "Check the Entra app registration consent.",
-    );
+  for (const requiredScope of REQUIRED_GRAPH_SCOPES) {
+    if (!granted.includes(requiredScope.toLowerCase())) {
+      throw new Error(
+        `Microsoft grant is missing required scope ${requiredScope}. ` +
+          "Check the Entra app registration consent.",
+      );
+    }
   }
 
-  // Strict allowlist — reject every scope not in the known-good set.
-  const allowed = new Set(ENTRA_SCOPE_LIST.map((s) => s.toLowerCase()));
+  // Strict allowlist — OIDC identity scopes are intentionally separate from
+  // Graph delegated scopes. This allows only the documented `email` default
+  // without broadening Graph access.
+  const allowed = new Set([
+    ...ALLOWED_OIDC_SCOPES,
+    ...REQUIRED_GRAPH_SCOPES,
+  ].map((s) => s.toLowerCase()));
   for (const scope of granted) {
     if (!allowed.has(scope)) {
       throw new Error(
         `Microsoft granted an unexpected scope: "${scope}". ` +
-          "Only scopes in ENTRA_SCOPE_LIST should be consented in the Entra app registration.",
+          "Only standard OIDC scopes and the required read-only Graph scopes should be consented in the Entra app registration.",
       );
     }
   }
@@ -718,7 +745,12 @@ export async function buildConnectUrl(params: {
 
 /**
  * Handle the OAuth callback: exchange the authorisation code for tokens,
- * validate the nonce, assert no write scopes, persist encrypted cache.
+ * validate the nonce and scopes, then retain the encrypted MSAL cache.
+ *
+ * MSAL's cache plugin may persist during acquireTokenByCode, before the token
+ * result's scopes are available for validation. A failed post-exchange nonce
+ * or scope check therefore MUST delete that row and reset the in-memory MSAL
+ * singleton before the error is returned.
  *
  * @param connectedBy - Admin user ID from the validated session.
  */
@@ -757,12 +789,30 @@ export async function handleOAuthCallback(params: {
   // Update scope with what Microsoft actually granted.
   plugin.setInitialConnection(params.connectedBy, result.scopes.join(" "));
 
-  // Validate nonce to bind the token to the initiating session.
-  validateIdTokenNonce(result.idToken, params.nonce);
+  try {
+    // Validate nonce to bind the token to the initiating session.
+    validateIdTokenNonce(result.idToken, params.nonce);
 
-  // Exact allowlist: require User.Read + Files.Read.All, reject unexpected
-  // scopes; also runs the write-scope denylist as defence-in-depth.
-  assertExactGrantedScopes(result.scopes);
+    // Exact allowlist: require User.Read + Files.Read.All, tolerate standard
+    // OIDC `email`, reject unknown scopes, and run the write denylist.
+    assertExactGrantedScopes(result.scopes);
+  } catch (validationError) {
+    // MSAL can write its encrypted cache during acquireTokenByCode, before
+    // result.scopes is available. Never leave an unvalidated connection behind:
+    // remove the singleton row and discard all in-memory account/token state.
+    plugin.setInitialConnection("", "");
+    try {
+      await disconnectEntraOAuth();
+    } catch (cleanupError) {
+      const cleanupMessage = cleanupError instanceof Error
+        ? redactTokens(cleanupError.message)
+        : "unknown cleanup error";
+      throw new Error(
+        `Microsoft OAuth callback validation failed and credential cleanup failed: ${cleanupMessage}`,
+      );
+    }
+    throw validationError;
+  }
 
   return result;
 }
