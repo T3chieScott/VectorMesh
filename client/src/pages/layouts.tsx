@@ -1920,6 +1920,12 @@ function HtmlWidgetLivePreview({
   // authoring (no device token here — session auth covers /api/media/:id/file).
   const mediaQueryOpts = useSiteFilteredQuery<MediaAsset[]>("/api/media");
   const { data: mediaData = [] } = useQuery<MediaAsset[]>(mediaQueryOpts);
+  // Stable ctx with a live getNowMs so {{time}}/{{time24}} tokens resolve to
+  // the real clock on every HtmlWidget srcDoc recompute (every second when
+  // those tokens are present). Without this, ctx is undefined and buildResolved
+  // falls back to the frozen preview strings computed at module-load time,
+  // making clocks appear frozen.
+  const liveCtx = useMemo(() => ({ getNowMs: () => Date.now() }), []);
   return (
     <div
       className="relative w-full mx-auto rounded-md border border-input overflow-hidden bg-background"
@@ -1940,6 +1946,7 @@ function HtmlWidgetLivePreview({
         }}
         media={mediaData}
         fillContainer={true}
+        playerContext={liveCtx}
       />
     </div>
   );
