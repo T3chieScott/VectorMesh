@@ -226,6 +226,9 @@ export async function ensureAgendaConfigFingerprintMigration(): Promise<void> {
  * agenda_widget_configs (Task #376). Advisory-locked so concurrent restarts
  * (e.g. blue/green deploy) can't race. NULL = Full (no clamp);
  * DEFAULT 2 preserves the previous hard-coded behaviour for all existing rows.
+ *
+ * MUST run before ensureAgendaDescriptionAutoScrollMigration (Task #382)
+ * because the auto-scroll feature depends on description_lines being present.
  */
 export async function ensureAgendaDescriptionLinesMigration(): Promise<void> {
   const client = await pool.connect();
@@ -249,6 +252,47 @@ export async function ensureAgendaDescriptionLinesMigration(): Promise<void> {
       } catch (unlockErr) {
         console.error(
           "ensureAgendaDescriptionLinesMigration: failed to release advisory lock:",
+          unlockErr,
+        );
+      }
+    }
+    client.release();
+  }
+}
+
+const AGENDA_DESCRIPTION_AUTO_SCROLL_MIGRATION_LOCK_KEY = 715129_008n;
+
+/**
+ * Idempotent startup migration for the description_auto_scroll column on
+ * agenda_widget_configs (Task #382). Advisory-locked so concurrent restarts
+ * (e.g. blue/green deploy) can't race.
+ *
+ * MUST run after ensureAgendaDescriptionLinesMigration because the feature
+ * depends on description_lines being present. DEFAULT FALSE preserves the
+ * existing rendering for all existing rows.
+ */
+export async function ensureAgendaDescriptionAutoScrollMigration(): Promise<void> {
+  const client = await pool.connect();
+  let haveLock = false;
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [
+      AGENDA_DESCRIPTION_AUTO_SCROLL_MIGRATION_LOCK_KEY.toString(),
+    ]);
+    haveLock = true;
+    await client.query(`
+      ALTER TABLE agenda_widget_configs
+        ADD COLUMN IF NOT EXISTS description_auto_scroll BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    console.log("[ensureAgendaDescriptionAutoScrollMigration] agenda_widget_configs.description_auto_scroll ready");
+  } finally {
+    if (haveLock) {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [
+          AGENDA_DESCRIPTION_AUTO_SCROLL_MIGRATION_LOCK_KEY.toString(),
+        ]);
+      } catch (unlockErr) {
+        console.error(
+          "ensureAgendaDescriptionAutoScrollMigration: failed to release advisory lock:",
           unlockErr,
         );
       }

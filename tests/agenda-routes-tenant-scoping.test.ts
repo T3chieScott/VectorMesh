@@ -507,7 +507,9 @@ test("GET /api/agenda/display/:configId — public payload never leaks internal 
   // Unauthenticated — the public display endpoint must not require a user.
   const srv = await startTestServer({ storage, user: null, now: () => fixedNow });
   try {
-    const res = await fetch(`${srv.base}/api/agenda/display/cfgPub`);
+    const res = await fetch(
+      `${srv.base}/api/agenda/display/cfgPub?at=${encodeURIComponent(fixedNow.toISOString())}`,
+    );
     assert.equal(res.status, 200);
     const body = (await res.json()) as {
       config: Record<string, unknown>;
@@ -533,6 +535,13 @@ test("GET /api/agenda/display/:configId — public payload never leaks internal 
         `public config payload must not leak ${banned}`,
       );
     }
+
+    // Task #382 — descriptionAutoScroll must always be present and default false.
+    assert.equal(
+      body.config.descriptionAutoScroll,
+      false,
+      "missing/legacy descriptionAutoScroll must be emitted as false",
+    );
 
     // Items: same whitelist check.
     assert.equal(body.items.length, 1);

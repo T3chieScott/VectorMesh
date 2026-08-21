@@ -1745,6 +1745,10 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   // integer = clamp to N lines. DEFAULT 2 preserves the previous
   // hard-coded two-line behaviour for all existing rows.
   descriptionLines: integer("description_lines").default(2),
+  // Task #382 — when true and descriptionLines is null (Full), descriptions
+  // that overflow their available card space scroll automatically.
+  // FALSE default preserves existing rendering for all existing rows.
+  descriptionAutoScroll: boolean("description_auto_scroll").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1794,6 +1798,9 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
     // (no clamp). 0 and negatives are rejected; missing/undefined defaults
     // to 2 (matching the DB DEFAULT and the renderer's own fallback).
     descriptionLines: z.number().int().min(1).max(10).nullable().optional(),
+    // Task #382 — enables auto-scroll for Full (no-clamp) descriptions.
+    // false is the default; missing/undefined preserves the DB DEFAULT FALSE.
+    descriptionAutoScroll: z.boolean().optional(),
   });
 export type InsertAgendaWidgetConfig = z.infer<typeof insertAgendaWidgetConfigSchema>;
 export type AgendaWidgetConfig = typeof agendaWidgetConfigs.$inferSelect;
