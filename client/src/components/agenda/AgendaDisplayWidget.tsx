@@ -1150,6 +1150,16 @@ export function AgendaDisplayWidget({
     pages.length > 0 ? Math.min(pageIndex, pages.length - 1) : 0;
   const pageItems = pages[safePageIndex] ?? [];
 
+  // Keep a ref so the dwell effect can read the latest pageItems without
+  // listing the array itself as a dep. AgendaConfigZoneWidget polls every
+  // ~30 s and produces a freshly-parsed JSON array each time; even when no
+  // data changed the new reference would cancel and restart the dwell timer,
+  // preventing it from ever firing. All meaningful changes that should restart
+  // the timer (page advance, scrollMetrics update, pages.length change) are
+  // already captured by their own deps.
+  const pageItemsRef = useRef<AgendaItem[]>(pageItems);
+  pageItemsRef.current = pageItems;
+
   // Task #382 — active when the feature flag is set, Full description mode
   // is selected, and prefers-reduced-motion is not in force.
   const descScrollActive =
@@ -1176,16 +1186,25 @@ export function AgendaDisplayWidget({
   // Page-rotation timer: replaced from setInterval to setTimeout so each
   // page can carry a variable effective dwell time. Effect re-arms on each
   // pageIndex / scrollResetTick change (the "loop" for single-page widgets).
+  //
+  // pageItems is intentionally NOT in the deps array — it is read via
+  // pageItemsRef so that the periodic JSON re-fetch in AgendaConfigZoneWidget
+  // (which produces a new array reference every ~30 s even when the data is
+  // unchanged) does not cancel and restart the timer before it can fire.
+  // Every meaningful change that should restart the timer (page advance,
+  // scrollMetrics update, pages.length change) is already captured by its
+  // own dep.
   useEffect(() => {
     const configuredMs = Math.max(3, config.rotationIntervalSeconds) * 1_000;
+    const currentItems = pageItemsRef.current;
 
     // When auto-scroll is active, extend dwell to cover the full scroll
     // cycle so the page never advances while a description is still moving.
     let effectiveMs = configuredMs;
-    if (descScrollActive && pageItems.length > 0) {
+    if (descScrollActive && currentItems.length > 0) {
       const maxOverflow = Math.max(
         0,
-        ...pageItems.map((it) => scrollMetrics[it.id] ?? 0),
+        ...currentItems.map((it) => scrollMetrics[it.id] ?? 0),
       );
       if (maxOverflow > 0) {
         const scrollDuration = descScrollDurationMs(maxOverflow);
@@ -1213,7 +1232,8 @@ export function AgendaDisplayWidget({
       effectiveMs,
     );
     return () => clearTimeout(id);
-  }, [pageIndex, scrollResetTick, pages.length, config.rotationIntervalSeconds, descScrollActive, pageItems, scrollMetrics]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageIndex, scrollResetTick, pages.length, config.rotationIntervalSeconds, descScrollActive, scrollMetrics]);
 
   // In now_next mode every layout (not only totem/room_door) gets a
   // strong "live now" highlight on the currently-running row(s).
