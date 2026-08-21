@@ -62,7 +62,7 @@ export const PLAYER_VARIABLES: PlayerVariableDef[] = [
   { token: "{{event_name}}", label: "Event Name", description: "Current event name", preview: "Tech Summit 2025" },
   { token: "{{client_name}}", label: "Client Name", description: "Client/brand name", preview: "Acme Corp" },
   { token: "{{date}}", label: "Date", description: "Current date", preview: sampleDate() },
-  { token: "{{time}}", label: "Time", description: "Current time", preview: sampleTime() },
+  { token: "{{time}}", label: "Time (12-hour)", description: "Current time in 12-hour format", preview: sampleTime() },
   { token: "{{time24}}", label: "Time (24-hour)", description: "Current time in 24-hour format", preview: sampleTime24() },
   { token: "{{day}}", label: "Day of Week", description: "Current day name", preview: sampleDay() },
   { token: "{{room_capacity}}", label: "Room Capacity", description: "Maximum capacity of the screen's room (set on the screen)", preview: "250" },
@@ -212,6 +212,21 @@ export function unresolvedTokenReason(token: string, ctx?: PlayerVariableContext
     default:
       return "Token has no value for this screen";
   }
+}
+
+/**
+ * Returns the variable refresh interval (ms) appropriate for the given HTML
+ * widget content.
+ *
+ * 1 000 ms  — content contains {{time}} or {{time24}} (clocks must tick every second).
+ * 30 000 ms — everything else (date/day/other tokens; no needless rerender).
+ *
+ * Uses exact-literal matching so tokens like {{timeout}} are not misclassified.
+ * Exported so HtmlWidget and its tests both exercise the same decision.
+ */
+export function htmlWidgetRefreshMs(content?: string): number {
+  const c = content ?? "";
+  return c.includes("{{time}}") || c.includes("{{time24}}") ? 1_000 : 30_000;
 }
 
 export function usePlayerVariableTick(intervalMs = 30_000): number {

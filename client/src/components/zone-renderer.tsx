@@ -56,6 +56,7 @@ import { usePlayerClock } from "@/lib/playerClock";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
 import {
   resolvePlayerVariables as resolveVars,
+  htmlWidgetRefreshMs,
   usePlayerVariableTick,
   type PlayerVariableContext,
 } from "@/lib/player-variables";
@@ -825,14 +826,28 @@ function HtmlWidget({
   // flex item and stops honouring `max-width`.) The base reset only zeroes
   // margins and makes the body fill the reference canvas; authors choose how
   // their content fills or centres within it.
-  // Re-compute srcDoc on the same 30-second cadence as ZoneRenderer's own
-  // usePlayerVariableTick, so {{time}}/{{date}}/{{day}} stay current.
+  // Re-compute srcDoc whenever variables change. The refresh cadence is
+  // content-aware: if the HTML contains a time token ({{time}} or {{time24}})
+  // we tick every second so the displayed clock stays accurate; otherwise we
+  // fall back to the existing 30-second cadence for date/day/other tokens.
   //
-  // Without this, useMemo caches the srcdoc keyed on `ctx` — but when
-  // ZoneRenderer's tick fires only ZoneRenderer re-renders; the `ctx` prop
-  // reference it received from the parent is unchanged, so useMemo skips
+  // Without a local tick, useMemo caches the srcdoc keyed on `ctx` — but when
+  // ZoneRenderer's outer tick fires only ZoneRenderer re-renders; the `ctx`
+  // prop reference it received from the parent is unchanged, so useMemo skips
   // recomputing and {{time}} is frozen inside the iframe.
-  const htmlTick = usePlayerVariableTick(30_000);
+  //
+  // Exact-string matching on the two known literals avoids accidentally
+  // classifying unrelated tokens (e.g. a hypothetical {{timeout}}).
+  // `htmlWidgetRefreshMs` returns 1 000 for time tokens and 30 000 otherwise;
+  // using its return value as the sole effect dependency means the interval
+  // is automatically replaced when content switches between time-bearing and
+  // static (1 000 → 30 000 or vice-versa).
+  const htmlTickMs = htmlWidgetRefreshMs(content);
+  const [htmlTick, setHtmlTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setHtmlTick((t) => t + 1), htmlTickMs);
+    return () => window.clearInterval(id);
+  }, [htmlTickMs]);
   const srcDoc = useMemo(() => {
     // Order matters: resolve {{player variables}}, then {{media:…}} references
     // (turned into real token-aware URLs the same way media zones build them),
