@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   AgendaItem,
   AgendaWidgetConfig,
@@ -327,6 +327,33 @@ function resolveDescriptionClamp(
   };
 }
 
+// ---- Task #382 — auto-scroll constants & helper -------------------------
+
+/** Pause at the top of the card before scrolling begins (ms). */
+export const TOP_PAUSE_MS = 3_000;
+/** Pause at the bottom after scrolling completes (ms). */
+export const BOTTOM_PAUSE_MS = 3_000;
+/** Scroll speed (pixels per second). */
+export const SCROLL_PX_PER_SEC = 28;
+/**
+ * Row gap (px) matching the CSS gap-3 used by PortraitCards so the
+ * per-card height allocation formula in AgendaRow is accurate.
+ */
+const SCROLL_ROW_GAP = 12;
+
+/**
+ * How many milliseconds the CSS translateY transition should last for a
+ * given overflow amount at the configured scroll speed (linear easing).
+ * Exported so the parent widget can compute effective dwell times and
+ * tests can verify timing without touching the DOM.
+ */
+export function descScrollDurationMs(overflowPx: number): number {
+  if (overflowPx <= 0) return 0;
+  return Math.ceil((overflowPx / SCROLL_PX_PER_SEC) * 1_000);
+}
+
+// -------------------------------------------------------------------------
+
 function isCurrentlyRunning(item: AgendaItem, now: Date): boolean {
   const start = new Date(item.startsAt).getTime();
   const end = new Date(item.endsAt).getTime();
@@ -344,6 +371,10 @@ function AgendaRow({
   roleColors,
   showCardDate,
   suppressTestId,
+  pageH,
+  pageItemCount,
+  onScrollOverflow,
+  scrollResetTick,
 }: {
   item: AgendaItem;
   config: AgendaWidgetConfig;
@@ -358,6 +389,12 @@ function AgendaRow({
   // its measurer twin both match `agenda-row-<id>` and break Playwright's
   // strict-mode locators.
   suppressTestId?: boolean;
+  // Task #382 — auto-scroll coordination. Only set when
+  // descriptionAutoScroll is active on the parent widget.
+  pageH?: number;
+  pageItemCount?: number;
+  onScrollOverflow?: (id: string, px: number) => void;
+  scrollResetTick?: number;
 }) {
   const timeStyle = timeRoleStyle(config, roleColors?.time);
   const bodyStyle = roleColors?.body ? { color: roleColors.body } : undefined;
@@ -388,10 +425,132 @@ function AgendaRow({
   // visible row and its hidden twin match the same selector and break
   // Playwright's strict-mode locators (agenda-row, agenda-title, …).
   const tid = (id: string) => (suppressTestId ? undefined : id);
+
+  // ---- Task #382 — auto-scroll per-description -------------------------
+  // Active only when: feature flag on, descriptionLines is null (Full mode),
+  // there is description text, and this is NOT an off-screen measurer copy
+  // (suppressTestId identifies measurer twins; they must NOT animate).
+  const scrollEnabled =
+    !suppressTestId &&
+    Boolean(config.descriptionAutoScroll) &&
+    config.descriptionLines === null &&
+    Boolean(item.description);
+
+  // Refs used for DOM measurement. cardRef on the outer card element
+  // (measures total natural height); descInnerRef on the <p> element
+  // (measures the full text scrollHeight which is immune to clipping).
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const descInnerRef = useRef<HTMLParagraphElement | null>(null);
+
+  // viewportH: constrained height given to the description overflow wrapper.
+  //   null  → not yet measured; description renders at natural height.
+  //   ≥ 0   → viewport is constrained to this many pixels.
+  const [viewportH, setViewportH] = useState<number | null>(null);
+  const [overflowPx, setOverflowPx] = useState(0);
+
+  // CSS transform state for the scrolling animation.
+  const [translateY, setTranslateY] = useState(0);
+  const [transitionMs, setTransitionMs] = useState(0);
+
+  // Composite key encoding all inputs that affect overflow. When the key
+  // changes the layout effect resets and re-measures.
+  const scrollKey = scrollEnabled
+    ? `${pageH ?? 0}:${pageItemCount ?? 0}:${item.id}:${item.description ?? ""}`
+    : "off";
+  const prevScrollKey = useRef("");
+  // Incrementing this state forces a re-render → layout effect re-runs.
+  const [measureTick, setMeasureTick] = useState(0);
+
+  // ---- Viewport height measurement (before paint) ----------------------
+  useLayoutEffect(() => {
+    if (scrollKey !== prevScrollKey.current) {
+      // Inputs changed — reset and schedule a fresh measurement pass.
+      prevScrollKey.current = scrollKey;
+      setViewportH(null);
+      setOverflowPx(0);
+      if (scrollEnabled && pageH && pageItemCount) {
+        setMeasureTick((t) => t + 1);
+      }
+      return;
+    }
+
+    if (!scrollEnabled || !pageH || !pageItemCount) return;
+    // Already measured for this key — avoid re-running.
+    if (viewportH !== null) return;
+
+    const card = cardRef.current;
+    const inner = descInnerRef.current;
+    if (!card || !inner) return;
+
+    // The card is unconstrained here (viewportH is null → the description
+    // wrapper has height:auto), so offsetHeight is the full natural height.
+    const cardH = card.offsetHeight;
+    // scrollHeight reflects the FULL text height even when the container
+    // clips with overflow:hidden, so it survives future re-renders.
+    const descNatH = inner.scrollHeight;
+    if (cardH <= 0 || descNatH <= 0) return;
+
+    // nonDescH = padding + static content + gap between static and desc.
+    const nonDescH = cardH - descNatH;
+    // Give each card an equal share of the page height, accounting for
+    // inter-card row gaps.
+    const allocatedH = (pageH - (pageItemCount - 1) * SCROLL_ROW_GAP) / pageItemCount;
+    const vH = Math.max(0, allocatedH - nonDescH);
+    const oPx = Math.max(0, descNatH - vH);
+
+    setViewportH(vH);
+    setOverflowPx(oPx);
+    onScrollOverflow?.(item.id, oPx);
+  }, [scrollKey, measureTick, viewportH, scrollEnabled, pageH, pageItemCount, item.id, onScrollOverflow]);
+
+  // ---- Scroll state machine (top-pause → scroll → bottom-pause) --------
+  useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const clear = () => { timers.forEach(clearTimeout); };
+
+    // Reset position — handles page-change and scrollResetTick cases.
+    setTranslateY(0);
+    setTransitionMs(0);
+
+    if (!scrollEnabled || overflowPx <= 0) return clear;
+    // Honour prefers-reduced-motion with a live matchMedia read so the
+    // reduced-motion preference takes effect immediately without a
+    // re-render cycle.
+    if (
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return clear;
+    }
+
+    const scrollDuration = descScrollDurationMs(overflowPx);
+
+    // Phase 1: top-pause — card stays at translateY(0) for TOP_PAUSE_MS.
+    const t1 = setTimeout(() => {
+      // Phase 2: scrolling — CSS transition drives the movement.
+      setTransitionMs(scrollDuration);
+      setTranslateY(overflowPx);
+
+      // Phase 3: bottom-pause — no visual change; the parent's rotation
+      // timer has already incorporated the total cycle time via
+      // effectiveDwellMs and will advance the page at the right moment.
+      const t2 = setTimeout(() => {
+        setTransitionMs(0); // Disable transition so the next reset is instant
+      }, scrollDuration);
+      timers.push(t2);
+    }, TOP_PAUSE_MS);
+    timers.push(t1);
+
+    return clear;
+  }, [overflowPx, scrollEnabled, scrollResetTick]);
+  // ---- End Task #382 ---------------------------------------------------
+
   return (
     <div
       className="flex items-start gap-4 rounded-lg px-4 py-3"
       style={cardStyle}
+      ref={scrollEnabled ? cardRef : undefined}
       data-testid={tid(`agenda-row-${item.id}`)}
       data-current={isCurrent ? "true" : undefined}
     >
@@ -456,13 +615,45 @@ function AgendaRow({
           </div>
         ) : null}
         {config.showDescription && item.description && (
-          <p
-            className="mt-1 opacity-75"
-            style={{ fontSize: scale * descMult, ...bodyStyle, ...resolveDescriptionClamp(config.descriptionLines) }}
-            data-testid={tid(`agenda-description-${item.id}`)}
-          >
-            {item.description}
-          </p>
+          scrollEnabled ? (
+            // Task #382 — scrolling viewport: outer div clips to viewportH,
+            // inner <p> translates upward during the scroll phase.
+            // height:auto when unmeasured (viewportH null) so the layout
+            // effect can read the card's natural unconstrained height.
+            <div
+              className="mt-1"
+              style={{
+                overflow: "hidden",
+                height: viewportH !== null ? viewportH : "auto",
+              }}
+            >
+              <p
+                ref={descInnerRef}
+                className="opacity-75"
+                style={{
+                  fontSize: scale * descMult,
+                  ...bodyStyle,
+                  transform: `translateY(-${translateY}px)`,
+                  transition:
+                    transitionMs > 0
+                      ? `transform ${transitionMs}ms linear`
+                      : "none",
+                  willChange: translateY > 0 ? "transform" : "auto",
+                }}
+                data-testid={tid(`agenda-description-${item.id}`)}
+              >
+                {item.description}
+              </p>
+            </div>
+          ) : (
+            <p
+              className="mt-1 opacity-75"
+              style={{ fontSize: scale * descMult, ...bodyStyle, ...resolveDescriptionClamp(config.descriptionLines) }}
+              data-testid={tid(`agenda-description-${item.id}`)}
+            >
+              {item.description}
+            </p>
+          )
         )}
         {item.statusMessage && item.status !== "scheduled" && (
           <p
@@ -489,6 +680,12 @@ interface RowGridProps {
   highlightCurrent: boolean;
   roleColors: RoleColors;
   showCardDate?: boolean;
+  // Task #382 — auto-scroll coordination. Passed only when
+  // descriptionAutoScroll is active in the parent widget.
+  scrollPageH?: number;
+  scrollItemCount?: number;
+  onScrollOverflow?: (id: string, px: number) => void;
+  scrollResetTick?: number;
 }
 
 // Multi-column layouts use CSS columns rather than a grid so sessions
@@ -506,6 +703,10 @@ function ColumnFlow({
   highlightCurrent,
   roleColors,
   showCardDate,
+  scrollPageH,
+  scrollItemCount,
+  onScrollOverflow,
+  scrollResetTick,
   columnsClass,
 }: RowGridProps & { columnsClass: string }) {
   return (
@@ -521,6 +722,10 @@ function ColumnFlow({
             accentColor={config.accentColor}
             roleColors={roleColors}
             showCardDate={showCardDate}
+            pageH={scrollPageH}
+            pageItemCount={scrollItemCount}
+            onScrollOverflow={onScrollOverflow}
+            scrollResetTick={scrollResetTick}
           />
         </div>
       ))}
@@ -532,7 +737,7 @@ function LandscapeGrid(props: RowGridProps) {
   return <ColumnFlow {...props} columnsClass="columns-2" />;
 }
 
-function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, roleColors, showCardDate }: RowGridProps) {
+function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, roleColors, showCardDate, scrollPageH, scrollItemCount, onScrollOverflow, scrollResetTick }: RowGridProps) {
   return (
     <div className="flex-1 flex flex-col gap-3 overflow-hidden">
       {pageItems.map((it) => (
@@ -546,6 +751,10 @@ function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, ro
           accentColor={config.accentColor}
           roleColors={roleColors}
           showCardDate={showCardDate}
+          pageH={scrollPageH}
+          pageItemCount={scrollItemCount}
+          onScrollOverflow={onScrollOverflow}
+          scrollResetTick={scrollResetTick}
         />
       ))}
     </div>
@@ -716,6 +925,20 @@ export function AgendaDisplayWidget({
   const [now, setNow] = useState(() => nowProp ?? new Date());
   const [pageIndex, setPageIndex] = useState(0);
 
+  // Task #382 — reduced-motion preference, scroll metrics, and reset tick.
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      : false,
+  );
+  const [scrollMetrics, setScrollMetrics] = useState<Record<string, number>>({});
+  const [scrollResetTick, setScrollResetTick] = useState(0);
+
+  // Stable callback — AgendaRow reports its overflow amount after measuring.
+  const handleScrollOverflow = useCallback((id: string, px: number) => {
+    setScrollMetrics((prev) => (prev[id] === px ? prev : { ...prev, [id]: px }));
+  }, []);
+
   // Resize observer for auto layout selection when consumer doesn't
   // pass explicit dims.
   useEffect(() => {
@@ -742,6 +965,15 @@ export function AgendaDisplayWidget({
     const id = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(id);
   }, [nowProp]);
+
+  // Task #382 — update the reduced-motion preference when OS setting changes.
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const handler = (e: MediaQueryListEvent) => setPrefersReducedMotion(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
 
   const layout = useMemo(
     () => pickAgendaLayout(
@@ -904,23 +1136,84 @@ export function AgendaDisplayWidget({
     [autoPages, items, fallbackPageSize],
   );
 
-  // Rotate pages every rotationIntervalSeconds; reset when the page set changes.
+  // Reset page index and scroll state whenever the item set or page layout
+  // changes (e.g. real-time agenda updates while the screen is showing).
   useEffect(() => {
     setPageIndex(0);
+    setScrollMetrics({});
+    setScrollResetTick(0);
   }, [items.length, pages.length]);
 
-  useEffect(() => {
-    if (pages.length <= 1) return;
-    const ms = Math.max(3, config.rotationIntervalSeconds) * 1000;
-    const id = setInterval(() => {
-      setPageIndex((i) => (i + 1) % pages.length);
-    }, ms);
-    return () => clearInterval(id);
-  }, [pages.length, config.rotationIntervalSeconds]);
-
+  // safePageIndex / pageItems must be declared before the rotation effect so
+  // the effect closure can capture them for the effectiveDwellMs computation.
   const safePageIndex =
     pages.length > 0 ? Math.min(pageIndex, pages.length - 1) : 0;
   const pageItems = pages[safePageIndex] ?? [];
+
+  // Task #382 — active when the feature flag is set, Full description mode
+  // is selected, and prefers-reduced-motion is not in force.
+  const descScrollActive =
+    Boolean(config.descriptionAutoScroll) &&
+    config.descriptionLines === null &&
+    !prefersReducedMotion;
+
+  // Per-column card count for the scroll viewport allocation formula.
+  // Portrait: equal share across all cards on the page.
+  // Multi-column: approximate equal share per column.
+  const scrollItemCount =
+    descScrollActive && cardLayout && pageItems.length > 0
+      ? layout === "portrait"
+        ? pageItems.length
+        : Math.max(1, Math.ceil(pageItems.length / numCols))
+      : undefined;
+
+  // Reset scroll metrics on each page advance so cards re-report fresh
+  // overflow measurements for the incoming page.
+  useEffect(() => {
+    setScrollMetrics({});
+  }, [pageIndex]);
+
+  // Page-rotation timer: replaced from setInterval to setTimeout so each
+  // page can carry a variable effective dwell time. Effect re-arms on each
+  // pageIndex / scrollResetTick change (the "loop" for single-page widgets).
+  useEffect(() => {
+    const configuredMs = Math.max(3, config.rotationIntervalSeconds) * 1_000;
+
+    // When auto-scroll is active, extend dwell to cover the full scroll
+    // cycle so the page never advances while a description is still moving.
+    let effectiveMs = configuredMs;
+    if (descScrollActive && pageItems.length > 0) {
+      const maxOverflow = Math.max(
+        0,
+        ...pageItems.map((it) => scrollMetrics[it.id] ?? 0),
+      );
+      if (maxOverflow > 0) {
+        const scrollDuration = descScrollDurationMs(maxOverflow);
+        effectiveMs = Math.max(
+          configuredMs,
+          TOP_PAUSE_MS + scrollDuration + BOTTOM_PAUSE_MS,
+        );
+      }
+    }
+
+    if (pages.length <= 1) {
+      // Single-page: loop scroll animations via the reset tick after the
+      // effective dwell. No timer when auto-scroll is off (legacy no-op).
+      if (!descScrollActive) return;
+      const id = setTimeout(
+        () => setScrollResetTick((t) => t + 1),
+        effectiveMs,
+      );
+      return () => clearTimeout(id);
+    }
+
+    // Multi-page: advance to the next page after the effective dwell.
+    const id = setTimeout(
+      () => setPageIndex((i) => (i + 1) % pages.length),
+      effectiveMs,
+    );
+    return () => clearTimeout(id);
+  }, [pageIndex, scrollResetTick, pages.length, config.rotationIntervalSeconds, descScrollActive, pageItems, scrollMetrics]);
 
   // In now_next mode every layout (not only totem/room_door) gets a
   // strong "live now" highlight on the currently-running row(s).
@@ -1063,15 +1356,54 @@ export function AgendaDisplayWidget({
             No agenda items match this display right now.
           </div>
         ) : layout === "ultrawide" ? (
-          <UltraWideGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} showCardDate={multiDay} />
+          <UltraWideGrid
+            pageItems={pageItems}
+            config={config}
+            tz={timezone}
+            scale={scale}
+            now={now}
+            highlightCurrent={highlightCurrent}
+            roleColors={roleColors}
+            showCardDate={multiDay}
+            scrollPageH={descScrollActive ? contentBox.h : undefined}
+            scrollItemCount={scrollItemCount}
+            onScrollOverflow={descScrollActive ? handleScrollOverflow : undefined}
+            scrollResetTick={descScrollActive ? scrollResetTick : undefined}
+          />
         ) : layout === "portrait" ? (
-          <PortraitCards pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} showCardDate={multiDay} />
+          <PortraitCards
+            pageItems={pageItems}
+            config={config}
+            tz={timezone}
+            scale={scale}
+            now={now}
+            highlightCurrent={highlightCurrent}
+            roleColors={roleColors}
+            showCardDate={multiDay}
+            scrollPageH={descScrollActive ? contentBox.h : undefined}
+            scrollItemCount={scrollItemCount}
+            onScrollOverflow={descScrollActive ? handleScrollOverflow : undefined}
+            scrollResetTick={descScrollActive ? scrollResetTick : undefined}
+          />
         ) : layout === "totem" ? (
           <TotemNowNext items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} showCardDate={multiDay} />
         ) : layout === "room_door" ? (
           <RoomDoor items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} showCardDate={multiDay} />
         ) : (
-          <LandscapeGrid pageItems={pageItems} config={config} tz={timezone} scale={scale} now={now} highlightCurrent={highlightCurrent} roleColors={roleColors} showCardDate={multiDay} />
+          <LandscapeGrid
+            pageItems={pageItems}
+            config={config}
+            tz={timezone}
+            scale={scale}
+            now={now}
+            highlightCurrent={highlightCurrent}
+            roleColors={roleColors}
+            showCardDate={multiDay}
+            scrollPageH={descScrollActive ? contentBox.h : undefined}
+            scrollItemCount={scrollItemCount}
+            onScrollOverflow={descScrollActive ? handleScrollOverflow : undefined}
+            scrollResetTick={descScrollActive ? scrollResetTick : undefined}
+          />
         )}
       </div>
 

@@ -120,6 +120,8 @@ const configFormSchema = z.object({
   // "full" is the string sentinel for null (no clamp); "1"–"10" for a
   // specific line count. Kept as a string because Select values are strings.
   descriptionLines: z.string(),
+  // Task #382 — auto-scroll; only active when descriptionLines === "full".
+  descriptionAutoScroll: z.boolean(),
   showPresenter: z.boolean(),
   showRoom: z.boolean(),
   showStatus: z.boolean(),
@@ -164,6 +166,8 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     showDescription: c?.showDescription ?? true,
     // null from DB = Full; undefined (new form) = "2" (default two-line clamp).
     descriptionLines: c?.descriptionLines === null ? "full" : String(c?.descriptionLines ?? 2),
+    // Task #382 — default false; only meaningful when descriptionLines = "full".
+    descriptionAutoScroll: c?.descriptionAutoScroll ?? false,
     showPresenter: c?.showPresenter ?? true,
     showRoom: c?.showRoom ?? true,
     showStatus: c?.showStatus ?? true,
@@ -213,6 +217,9 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     showDescription: values.showDescription,
     // "full" → null (no clamp); string number → integer.
     descriptionLines: values.descriptionLines === "full" ? null : Number(values.descriptionLines),
+    // Task #382 — only persist true when descriptionLines is Full; clear it
+    // if the operator switches away from Full so there are no phantom flags.
+    descriptionAutoScroll: values.descriptionLines === "full" ? values.descriptionAutoScroll : false,
     showPresenter: values.showPresenter,
     showRoom: values.showRoom,
     showStatus: values.showStatus,
@@ -714,6 +721,26 @@ function ConfigEditor({
                         <SelectItem value="full">Full (no limit)</SelectItem>
                       </SelectContent>
                     </Select>
+                  </FormItem>
+                )} />
+              )}
+              {/* Task #382 — auto-scroll, only when description is Full */}
+              {form.watch("showDescription") && form.watch("descriptionLines") === "full" && (
+                <FormField control={form.control} name="descriptionAutoScroll" render={({ field }) => (
+                  <FormItem className="flex items-center justify-between rounded-md border px-3 py-2">
+                    <div className="space-y-0.5">
+                      <FormLabel className="m-0">Auto-scroll long descriptions</FormLabel>
+                      <p className="text-xs text-muted-foreground">
+                        Pauses, then scrolls descriptions that are too long to fit.
+                      </p>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        data-testid="switch-description-auto-scroll"
+                      />
+                    </FormControl>
                   </FormItem>
                 )} />
               )}

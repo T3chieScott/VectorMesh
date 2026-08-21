@@ -176,6 +176,8 @@ export const PUBLIC_AGENDA_CONFIG_FIELDS = [
   "showDate",
   // Task #376 — operator-selectable description line limit. null = Full.
   "descriptionLines",
+  // Task #382 — auto-scroll overflowing descriptions (Full mode only).
+  "descriptionAutoScroll",
   // Task #231 — optional typography & role-colour overrides. All
   // nullable; widget renders identically when they are null.
   "fontFamily",
@@ -1204,6 +1206,9 @@ async function buildAgendaDisplayPayload(
         // — do NOT coerce with ?? 2 here; null is a meaningful value. The
         // renderer falls back to 2 only for undefined (missing legacy key).
         descriptionLines: config.descriptionLines !== undefined ? config.descriptionLines : 2,
+        // Task #382 — always present; pre-migration rows and missing values
+        // both default to false so existing displays are unchanged.
+        descriptionAutoScroll: config.descriptionAutoScroll ?? false,
         // Task #231 — typography & role-colour overrides (all nullable).
         // Coerce undefined → null so the keys are always present in the
         // public payload, matching PUBLIC_AGENDA_CONFIG_FIELDS exactly
