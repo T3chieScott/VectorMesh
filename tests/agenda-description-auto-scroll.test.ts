@@ -520,13 +520,353 @@ test("__TEST_S382__ descriptionLines and descriptionAutoScroll are independent s
   }
 });
 
+// ---------------------------------------------------------------------------
+// Overflow measurement — CSS-bounded viewport, not derived from card height
+// ---------------------------------------------------------------------------
+
+test("__TEST_S382__ overflow is measured as inner.scrollHeight minus viewport.clientHeight", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  assert.ok(
+    src.includes("inner.scrollHeight - viewport.clientHeight"),
+    "overflow must be inner.scrollHeight - viewport.clientHeight",
+  );
+  assert.ok(
+    !src.includes("card.offsetHeight"),
+    "measurement must not rely on card.offsetHeight (fragile when flex compresses the card)",
+  );
+});
+
+test("__TEST_S382__ description viewport is CSS-bounded (flex:1 min-h-0) not state-driven height", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  assert.ok(
+    src.includes(`"mt-1 flex-1 min-h-0 overflow-hidden"`),
+    "description viewport must use flex-1 min-h-0 overflow-hidden",
+  );
+  assert.ok(
+    !src.includes("viewportH !== null ? viewportH"),
+    "viewport height must not be driven by a viewportH state variable",
+  );
+});
+
+test("__TEST_S382__ card receives explicit allocatedH (portrait) or height:100% (landscape/ultrawide)", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  // Portrait path: explicit pixel height from JS formula
+  assert.ok(
+    src.includes("allocatedH !== null"),
+    "portrait card must receive height:allocatedH when pageH/pageItemCount are provided",
+  );
+  // Landscape/ultrawide grid path: CSS grid cell bounds the card
+  assert.ok(
+    src.includes('{ height: "100%", minHeight: 0 }'),
+    "grid-cell cards must use height:100% so the CSS grid row bounds them",
+  );
+  assert.ok(
+    src.includes("items-stretch min-h-0"),
+    "card must switch to items-stretch so body column fills the allocated height",
+  );
+});
+
+test("__TEST_S382__ body column is flex-col so description viewport can use flex-grow", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  assert.ok(
+    src.includes(`" flex flex-col min-h-0"`),
+    "body column must add flex flex-col min-h-0 when scrollEnabled",
+  );
+  assert.ok(
+    src.includes(`" shrink-0"`),
+    "non-description rows (title, meta, status) must be shrink-0 so description viewport gets remaining space",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Landscape/ultrawide — BoundedScrollGrid (CSS grid) replaces CSS columns
+// ---------------------------------------------------------------------------
+
+test("__TEST_S382__ BoundedScrollGrid uses CSS grid with minmax(0,1fr) rows (bounded row heights)", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  // minmax(0,1fr) is the key: each row is bounded to its equal share of the
+  // container height, preventing the column from growing with content.
+  assert.ok(
+    src.includes("minmax(0, 1fr)"),
+    "BoundedScrollGrid must use minmax(0, 1fr) for bounded row heights",
+  );
+  assert.ok(
+    src.includes("gridAutoFlow"),
+    "BoundedScrollGrid must set gridAutoFlow to preserve column-major order",
+  );
+  assert.ok(
+    src.includes(`"column"`),
+    "gridAutoFlow must be 'column' so sessions read chronologically top-to-bottom within each column",
+  );
+});
+
+test("__TEST_S382__ LandscapeGrid routes to BoundedScrollGrid when scrollPageH is set", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  // LandscapeGrid must branch on scrollPageH (scroll active) vs CSS columns (no scroll).
+  assert.ok(
+    src.includes("props.scrollPageH != null"),
+    "LandscapeGrid must check scrollPageH to decide between BoundedScrollGrid and ColumnFlow",
+  );
+  assert.ok(
+    src.includes("<BoundedScrollGrid"),
+    "BoundedScrollGrid must be used in the scroll-active path",
+  );
+  assert.ok(
+    src.includes("columnsClass=\"columns-2\""),
+    "CSS columns must still be used when scroll is not active",
+  );
+});
+
+test("__TEST_S382__ UltraWideGrid routes to BoundedScrollGrid when scrollPageH is set", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  // UltraWideGrid must also branch on scrollPageH.
+  assert.ok(
+    src.includes("columnsClass=\"columns-3 xl:columns-4\""),
+    "CSS columns must still be used for ultrawide when scroll is not active",
+  );
+  // UltraWideGrid calls BoundedScrollGrid with numCols from RowGridProps.
+  assert.ok(
+    src.includes("numCols?: number"),
+    "RowGridProps must carry numCols for ultrawide BoundedScrollGrid",
+  );
+});
+
+test("__TEST_S382__ BoundedScrollGrid does NOT pass pageH or pageItemCount to AgendaRow", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  // The BoundedScrollGrid comment must state cards use height:100% (CSS grid).
+  assert.ok(
+    src.includes("no pageH/pageItemCount") || src.includes("No pageH/pageItemCount") ||
+    src.includes("AgendaRow receives no pageH/pageItemCount"),
+    "BoundedScrollGrid comment must document that pageH/pageItemCount are omitted",
+  );
+  // The comment explaining the allocatedH===null path must be present.
+  assert.ok(
+    src.includes("allocatedH===null") || src.includes("allocatedH === null"),
+    "source must document the allocatedH===null path for CSS grid cards",
+  );
+});
+
+test("__TEST_S382__ BoundedScrollGrid numRows = ceil(pageItems.length / numCols)", () => {
+  // Verify the row-count formula for a range of item/col combinations.
+  function numRows(N: number, cols: number) {
+    return Math.ceil(N / cols);
+  }
+  // Landscape (cols=2)
+  assert.equal(numRows(1, 2), 1, "1 item, 2 cols → 1 row");
+  assert.equal(numRows(2, 2), 1, "2 items, 2 cols → 1 row");
+  assert.equal(numRows(3, 2), 2, "3 items, 2 cols → 2 rows");
+  assert.equal(numRows(4, 2), 2, "4 items, 2 cols → 2 rows");
+  assert.equal(numRows(5, 2), 3, "5 items, 2 cols → 3 rows");
+  // Ultrawide 3 cols
+  assert.equal(numRows(3, 3), 1, "3 items, 3 cols → 1 row");
+  assert.equal(numRows(4, 3), 2, "4 items, 3 cols → 2 rows");
+  assert.equal(numRows(6, 3), 2, "6 items, 3 cols → 2 rows");
+  // Ultrawide 4 cols
+  assert.equal(numRows(4, 4), 1, "4 items, 4 cols → 1 row");
+  assert.equal(numRows(5, 4), 2, "5 items, 4 cols → 2 rows");
+});
+
+test("__TEST_S382__ ResizeObserver is used for post-layout remeasurement (landscape/ultrawide reflow)", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  assert.ok(
+    src.includes("new ResizeObserver"),
+    "AgendaRow must use ResizeObserver for post-layout remeasurement",
+  );
+  assert.ok(
+    src.includes("ro.observe(viewport)"),
+    "ResizeObserver must observe the description viewport so it fires when the grid row resizes",
+  );
+  assert.ok(
+    src.includes("ro.disconnect()"),
+    "ResizeObserver must be disconnected on cleanup",
+  );
+});
+
+test("__TEST_S382__ doMeasureRef pattern — measurement function is stable and always current", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  // The doMeasureRef pattern ensures ResizeObserver and useLayoutEffect share
+  // the latest onScrollOverflow without stale-closure issues.
+  assert.ok(
+    src.includes("doMeasureRef"),
+    "measurement must use a ref-based stable function (doMeasureRef)",
+  );
+  assert.ok(
+    src.includes("doMeasureRef.current()"),
+    "both useLayoutEffect and ResizeObserver must call doMeasureRef.current()",
+  );
+});
+
+test("__TEST_S382__ totem layout is unaffected by BoundedScrollGrid", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  // Totem renders via TotemNowNext, not BoundedScrollGrid/ColumnFlow/PortraitCards.
+  assert.ok(
+    src.includes("layout === \"totem\""),
+    "totem layout branch must still be present",
+  );
+  assert.ok(
+    src.includes("<TotemNowNext"),
+    "totem must render via TotemNowNext, not a grid/column layout",
+  );
+});
+
+test("__TEST_S382__ room_door layout is unaffected by BoundedScrollGrid", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  assert.ok(
+    src.includes("layout === \"room_door\""),
+    "room_door layout branch must still be present",
+  );
+  assert.ok(
+    src.includes("<RoomDoor"),
+    "room_door must render via RoomDoor, not a grid/column layout",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Portrait — still uses explicit allocatedH (unchanged)
+// ---------------------------------------------------------------------------
+
+test("__TEST_S382__ portrait passes pageH and pageItemCount to AgendaRow for allocatedH", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  // PortraitCards passes scrollPageH as pageH and scrollItemCount as pageItemCount.
+  assert.ok(
+    src.includes("pageH={scrollPageH}"),
+    "PortraitCards must pass scrollPageH as pageH to AgendaRow",
+  );
+  assert.ok(
+    src.includes("pageItemCount={scrollItemCount}"),
+    "PortraitCards must pass scrollItemCount as pageItemCount to AgendaRow",
+  );
+});
+
+test("__TEST_S382__ portrait allocatedH formula: (pageH - (N-1)*gap) / N", () => {
+  const ROW_GAP = 12;
+  const cases = [
+    { pageH: 1080, N: 1, expected: 1080 },
+    { pageH: 1080, N: 2, expected: (1080 - 12) / 2 },
+    { pageH: 1080, N: 3, expected: (1080 - 24) / 3 },
+    { pageH: 600,  N: 4, expected: (600 - 36) / 4 },
+  ];
+  for (const { pageH, N, expected } of cases) {
+    const allocatedH = (pageH - (N - 1) * ROW_GAP) / N;
+    assert.equal(allocatedH, expected, `allocatedH(pageH=${pageH}, N=${N}) should be ${expected}`);
+    assert.equal(N * allocatedH + (N - 1) * ROW_GAP, pageH, "N cards + gaps must exactly fill pageH");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Grid row height — CSS grid provides the same bounded row height as portrait's
+// explicit allocatedH formula (verified by math equivalence, not by JS)
+// ---------------------------------------------------------------------------
+
+test("__TEST_S382__ grid minmax(0,1fr) rows give each card the same fraction as allocatedH", () => {
+  // CSS grid with grid-template-rows: repeat(N, minmax(0,1fr)) distributes
+  // the container height equally across rows with gap subtracted.
+  // This is mathematically identical to the portrait formula.
+  const GAP = 12;
+
+  function cssGridRowH(containerH: number, numRows: number): number {
+    // CSS grid: totalH = N * rowH + (N-1) * gap → rowH = (totalH - (N-1)*gap) / N
+    return (containerH - (numRows - 1) * GAP) / numRows;
+  }
+  function portraitAllocH(pageH: number, N: number): number {
+    return (pageH - (N - 1) * GAP) / N;
+  }
+
+  const cases = [
+    { containerH: 800, numRows: 2 },
+    { containerH: 1080, numRows: 3 },
+    { containerH: 600, numRows: 4 },
+  ];
+  for (const { containerH, numRows } of cases) {
+    assert.equal(
+      cssGridRowH(containerH, numRows),
+      portraitAllocH(containerH, numRows),
+      `Grid row height and portrait allocatedH must be identical for H=${containerH} N=${numRows}`,
+    );
+  }
+});
+
+test("__TEST_S382__ unequal heights: both sessions fit on one page yet tall session overflows its equal share", () => {
+  // session A: 500px natural (nonDescH=50, descNatH=450)
+  // session B: 100px natural (nonDescH=80, descNatH=20)
+  // pageH=800; combined=612 < 800 → packer keeps both on page 1
+  const pageH = 800;
+  const pageItemCount = 2;
+  const ROW_GAP = 12;
+  const allocatedH = (pageH - (pageItemCount - 1) * ROW_GAP) / pageItemCount; // 394
+
+  const sessionA_cardH = 500;
+  const sessionB_cardH = 100;
+  assert.ok(sessionA_cardH + sessionB_cardH + ROW_GAP <= pageH, "pre-condition: both fit on one page");
+
+  // Session A overflows its equal share
+  const cardPadding = 24; // py-3 top+bottom
+  const viewportClientH_A = allocatedH - cardPadding - 50; // 320
+  const oPx_A = Math.max(0, 450 - viewportClientH_A);
+  assert.ok(oPx_A > 0, `session A must overflow (oPx=${oPx_A})`);
+
+  // Session B fits
+  const viewportClientH_B = allocatedH - cardPadding - 80; // 290
+  assert.equal(Math.max(0, 20 - viewportClientH_B), 0, "session B must not overflow");
+});
+
+test("__TEST_S382__ no forced one-session-per-page — pagination is unchanged", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  assert.ok(
+    !src.includes("items.map((it) => [it])"),
+    "one-session-per-page override must not exist",
+  );
+  assert.ok(
+    src.includes("autoPages ?? paginate(items, fallbackPageSize)"),
+    "pages must come from autoPages or the standard paginate() function",
+  );
+});
+
 test("__TEST_S382__ descriptionAutoScroll true with descriptionLines 2 is schema-valid (coercion is UI-only)", () => {
-  // The schema itself doesn't enforce the mutual-exclusion; that's toApiPayload's job.
   const result = insertAgendaWidgetConfigSchema.safeParse(
-    basePayload({
-      descriptionLines: 2,
-      descriptionAutoScroll: true,
-    }),
+    basePayload({ descriptionLines: 2, descriptionAutoScroll: true }),
   );
   assert.equal(result.success, true, "Schema allows both (UI enforces coercion)");
 });

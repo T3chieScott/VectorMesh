@@ -436,72 +436,76 @@ function AgendaRow({
     config.descriptionLines === null &&
     Boolean(item.description);
 
-  // Refs used for DOM measurement. cardRef on the outer card element
-  // (measures total natural height); descInnerRef on the <p> element
-  // (measures the full text scrollHeight which is immune to clipping).
-  const cardRef = useRef<HTMLDivElement | null>(null);
+  // Task #382 — DOM refs for the description scroll viewport and inner text.
+  // descViewportRef: the clipping outer div (flex:1 within the body column);
+  //   clientHeight is the bounded space available for the description text.
+  // descInnerRef: the <p> element whose scrollHeight is the full text height
+  //   regardless of any ancestor overflow:hidden.
+  const descViewportRef = useRef<HTMLDivElement | null>(null);
   const descInnerRef = useRef<HTMLParagraphElement | null>(null);
 
-  // viewportH: constrained height given to the description overflow wrapper.
-  //   null  → not yet measured; description renders at natural height.
-  //   ≥ 0   → viewport is constrained to this many pixels.
-  const [viewportH, setViewportH] = useState<number | null>(null);
   const [overflowPx, setOverflowPx] = useState(0);
 
   // CSS transform state for the scrolling animation.
   const [translateY, setTranslateY] = useState(0);
   const [transitionMs, setTransitionMs] = useState(0);
 
-  // Composite key encoding all inputs that affect overflow. When the key
-  // changes the layout effect resets and re-measures.
-  const scrollKey = scrollEnabled
-    ? `${pageH ?? 0}:${pageItemCount ?? 0}:${item.id}:${item.description ?? ""}`
-    : "off";
-  const prevScrollKey = useRef("");
-  // Incrementing this state forces a re-render → layout effect re-runs.
-  const [measureTick, setMeasureTick] = useState(0);
+  // Portrait: explicit pixel height = equal share of the page, accounting
+  // for inter-card row gaps. Passes as an inline style so the body flex
+  // column has a concrete height to fill.
+  // Landscape/ultrawide: the parent BoundedScrollGrid places each card in a
+  // CSS grid cell sized to minmax(0, 1fr). The card uses height:100% to fill
+  // the cell; no allocatedH is needed from JS. null signals "use CSS".
+  const allocatedH =
+    scrollEnabled && pageH != null && pageItemCount != null
+      ? Math.max(0, (pageH - (pageItemCount - 1) * SCROLL_ROW_GAP) / pageItemCount)
+      : null;
+
+  // ---- Stable measurement ref ------------------------------------------
+  // Written every render so ResizeObserver and useLayoutEffect always call
+  // the freshest version without stale-closure issues.
+  const doMeasureRef = useRef<() => void>(() => {});
+  doMeasureRef.current = () => {
+    const viewport = descViewportRef.current;
+    const inner = descInnerRef.current;
+    // viewport.clientHeight is the bounded space. Only measure once the CSS
+    // has settled (clientHeight > 0). Both values are read from separate
+    // elements so neither is affected by overflow:hidden on an ancestor.
+    if (!viewport || !inner || viewport.clientHeight <= 0) return;
+    const oPx = Math.max(0, inner.scrollHeight - viewport.clientHeight);
+    setOverflowPx((prev) => (prev === oPx ? prev : oPx));
+    onScrollOverflow?.(item.id, oPx);
+  };
 
   // ---- Viewport height measurement (before paint) ----------------------
+  // Runs before paint whenever scroll inputs change. allocatedH is in deps
+  // so portrait re-measures when the page height changes (new page, resize).
+  // Landscape/ultrawide: allocatedH stays null — the ResizeObserver below
+  // fires after the CSS grid has allocated row heights and triggers the
+  // real measurement.
   useLayoutEffect(() => {
-    if (scrollKey !== prevScrollKey.current) {
-      // Inputs changed — reset and schedule a fresh measurement pass.
-      prevScrollKey.current = scrollKey;
-      setViewportH(null);
+    if (!scrollEnabled) {
       setOverflowPx(0);
-      if (scrollEnabled && pageH && pageItemCount) {
-        setMeasureTick((t) => t + 1);
-      }
       return;
     }
+    doMeasureRef.current();
+  // onScrollOverflow intentionally omitted — captured via doMeasureRef.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollEnabled, allocatedH, item.id, item.description]);
 
-    if (!scrollEnabled || !pageH || !pageItemCount) return;
-    // Already measured for this key — avoid re-running.
-    if (viewportH !== null) return;
-
-    const card = cardRef.current;
-    const inner = descInnerRef.current;
-    if (!card || !inner) return;
-
-    // The card is unconstrained here (viewportH is null → the description
-    // wrapper has height:auto), so offsetHeight is the full natural height.
-    const cardH = card.offsetHeight;
-    // scrollHeight reflects the FULL text height even when the container
-    // clips with overflow:hidden, so it survives future re-renders.
-    const descNatH = inner.scrollHeight;
-    if (cardH <= 0 || descNatH <= 0) return;
-
-    // nonDescH = padding + static content + gap between static and desc.
-    const nonDescH = cardH - descNatH;
-    // Give each card an equal share of the page height, accounting for
-    // inter-card row gaps.
-    const allocatedH = (pageH - (pageItemCount - 1) * SCROLL_ROW_GAP) / pageItemCount;
-    const vH = Math.max(0, allocatedH - nonDescH);
-    const oPx = Math.max(0, descNatH - vH);
-
-    setViewportH(vH);
-    setOverflowPx(oPx);
-    onScrollOverflow?.(item.id, oPx);
-  }, [scrollKey, measureTick, viewportH, scrollEnabled, pageH, pageItemCount, item.id, onScrollOverflow]);
+  // ---- ResizeObserver — post-layout remeasurement ----------------------
+  // Fires after the CSS grid or flex container has finished allocating row
+  // heights (window resize, zoom, font load, initial grid render for
+  // landscape/ultrawide). Complements the useLayoutEffect above which only
+  // runs synchronously during React's commit phase.
+  useEffect(() => {
+    if (!scrollEnabled) return;
+    const viewport = descViewportRef.current;
+    if (!viewport) return;
+    const ro = new ResizeObserver(() => doMeasureRef.current());
+    ro.observe(viewport);
+    return () => ro.disconnect();
+  }, [scrollEnabled]);
 
   // ---- Scroll state machine (top-pause → scroll → bottom-pause) --------
   useEffect(() => {
@@ -548,9 +552,23 @@ function AgendaRow({
 
   return (
     <div
-      className="flex items-start gap-4 rounded-lg px-4 py-3"
-      style={cardStyle}
-      ref={scrollEnabled ? cardRef : undefined}
+      // Task #382 — when scrollEnabled the card is sized so the flex body
+      // column has a concrete height and the description viewport (flex:1
+      // min-h-0) expands into the remaining space.
+      //
+      // Portrait: explicit pixel height = allocatedH (equal share of pageH).
+      // Landscape/ultrawide: the CSS grid cell is bounded by minmax(0,1fr);
+      //   height:100% fills the cell. minHeight:0 lets flex honour the bound
+      //   even when description text is taller.
+      className={`flex gap-4 rounded-lg px-4 py-3${scrollEnabled ? " items-stretch min-h-0" : " items-start"}`}
+      style={{
+        ...cardStyle,
+        ...(scrollEnabled
+          ? (allocatedH !== null
+              ? { height: allocatedH, minHeight: 0 }   // portrait
+              : { height: "100%", minHeight: 0 })       // landscape/ultrawide (CSS grid cell)
+          : {}),
+      }}
       data-testid={tid(`agenda-row-${item.id}`)}
       data-current={isCurrent ? "true" : undefined}
     >
@@ -582,8 +600,12 @@ function AgendaRow({
           </span>
         )}
       </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
+      {/* Task #382 — body column becomes flex-col when scrollEnabled so the
+          description viewport (flex:1 below) fills whatever vertical space
+          remains after the title, meta and status rows. shrink-0 on the
+          static rows prevents them from being squeezed by the viewport. */}
+      <div className={`flex-1 min-w-0${scrollEnabled ? " flex flex-col min-h-0" : ""}`}>
+        <div className={`flex items-center gap-2 flex-wrap${scrollEnabled ? " shrink-0" : ""}`}>
           <h3
             className="font-semibold leading-tight break-words"
             style={{ fontSize: scale * roleSizes.title, ...bodyStyle }}
@@ -599,8 +621,11 @@ function AgendaRow({
             />
           )}
         </div>
-        {(config.showRoom && item.room) || (item.track) || (config.showPresenter && item.presenter) ? (
-          <div className="mt-1 flex flex-col gap-1 opacity-80" style={{ fontSize: scale * roleSizes.body, ...bodyStyle }}>
+        {(config.showRoom && item.room) || item.track || (config.showPresenter && item.presenter) ? (
+          <div
+            className={`mt-1 flex flex-col gap-1 opacity-80${scrollEnabled ? " shrink-0" : ""}`}
+            style={{ fontSize: scale * roleSizes.body, ...bodyStyle }}
+          >
             {((config.showRoom && item.room) || item.track) && (
               <div className="flex flex-wrap gap-3">
                 {config.showRoom && item.room && (
@@ -616,16 +641,15 @@ function AgendaRow({
         ) : null}
         {config.showDescription && item.description && (
           scrollEnabled ? (
-            // Task #382 — scrolling viewport: outer div clips to viewportH,
-            // inner <p> translates upward during the scroll phase.
-            // height:auto when unmeasured (viewportH null) so the layout
-            // effect can read the card's natural unconstrained height.
+            // Task #382 — description viewport: flex:1 fills all remaining
+            // body-column height after title/meta/status (which are shrink-0).
+            // min-h-0 lets the flex child honour a smaller allocation;
+            // overflow:hidden clips text that extends beyond the viewport.
+            // The inner <p> retains its natural height (scrollHeight) so we
+            // can measure true overflow independently of clipping.
             <div
-              className="mt-1"
-              style={{
-                overflow: "hidden",
-                height: viewportH !== null ? viewportH : "auto",
-              }}
+              ref={descViewportRef}
+              className="mt-1 flex-1 min-h-0 overflow-hidden"
             >
               <p
                 ref={descInnerRef}
@@ -657,7 +681,7 @@ function AgendaRow({
         )}
         {item.statusMessage && item.status !== "scheduled" && (
           <p
-            className="mt-1 italic opacity-90"
+            className={`mt-1 italic opacity-90${scrollEnabled ? " shrink-0" : ""}`}
             style={{ fontSize: scale * roleSizes.body, ...bodyStyle }}
             data-testid={tid(`agenda-status-msg-${item.id}`)}
           >
@@ -686,14 +710,17 @@ interface RowGridProps {
   scrollItemCount?: number;
   onScrollOverflow?: (id: string, px: number) => void;
   scrollResetTick?: number;
+  // Column count for BoundedScrollGrid (landscape=2, ultrawide=3|4).
+  // UltraWideGrid reads this from the parent because the value depends on
+  // the measured container width (≥1280px → 4, else → 3).
+  numCols?: number;
 }
 
-// Multi-column layouts use CSS columns rather than a grid so sessions
-// flow DOWN each column first and then across — i.e. reading a column
-// top-to-bottom stays in chronological order (a row-major grid jumps in
-// time when read down a column). break-inside-avoid keeps each card
-// whole, and because cards size to their own content they grow to fit
-// longer titles or multi-speaker lists.
+// Multi-column non-scroll layout uses CSS columns so sessions flow DOWN each
+// column first (chronological order within a column). break-inside-avoid
+// keeps each card whole. Cards size to their own content here.
+// When descriptionAutoScroll is active, LandscapeGrid/UltraWideGrid route to
+// BoundedScrollGrid instead so card heights are grid-bounded.
 function ColumnFlow({
   pageItems,
   config,
@@ -733,8 +760,80 @@ function ColumnFlow({
   );
 }
 
+// Task #382 — bounded CSS grid for landscape/ultrawide description auto-scroll.
+//
+// CSS columns (used in the non-scroll path) don't create bounded row
+// containers: flex:1/min-h-0 inside a CSS column block can't fill a bounded
+// height, and height:allocatedH on the card is unreliable because the column
+// itself grows with content. As a result viewport.clientHeight tracks content
+// height, making overflowPx always 0 and the scroll never triggers.
+//
+// The fix: use a CSS grid with minmax(0, 1fr) rows so each row is a true
+// bounded container. The card fills it with height:100% (tracked in AgendaRow
+// when allocatedH is null). The description viewport (flex:1 min-h-0) then
+// fills the remaining space after title/meta/status, and viewport.clientHeight
+// is the final bounded value that the overflow formula reads.
+//
+// Column-major flow (grid-auto-flow: column) preserves chronological order
+// within each column, matching the original CSS columns appearance.
+function BoundedScrollGrid({
+  pageItems,
+  numCols,
+  config,
+  tz,
+  scale,
+  now,
+  highlightCurrent,
+  roleColors,
+  showCardDate,
+  onScrollOverflow,
+  scrollResetTick,
+}: RowGridProps) {
+  const cols = numCols ?? 2;
+  const numRows = Math.ceil(pageItems.length / cols);
+  return (
+    <div
+      className="flex-1 min-h-0"
+      style={{
+        display: "grid",
+        gridTemplateColumns: `repeat(${cols}, 1fr)`,
+        // Each row is bounded: minmax(0,1fr) prevents rows from growing
+        // beyond their fair share of the available height.
+        gridTemplateRows: `repeat(${numRows}, minmax(0, 1fr))`,
+        gap: SCROLL_ROW_GAP,
+        // Fill columns first so sessions read chronologically top-to-bottom
+        // within each column, consistent with the CSS columns non-scroll layout.
+        gridAutoFlow: "column",
+      }}
+    >
+      {pageItems.map((it) => (
+        // AgendaRow receives no pageH/pageItemCount here — the grid cell
+        // provides the bound via height:100% on the card (allocatedH===null
+        // path in AgendaRow). onScrollOverflow still fires so the parent
+        // dwell timer extends to cover the full scroll cycle.
+        <AgendaRow
+          key={it.id}
+          item={it}
+          config={config}
+          tz={tz}
+          scale={scale}
+          isCurrent={highlightCurrent && isCurrentlyRunning(it, now)}
+          accentColor={config.accentColor}
+          roleColors={roleColors}
+          showCardDate={showCardDate}
+          onScrollOverflow={onScrollOverflow}
+          scrollResetTick={scrollResetTick}
+        />
+      ))}
+    </div>
+  );
+}
+
 function LandscapeGrid(props: RowGridProps) {
-  return <ColumnFlow {...props} columnsClass="columns-2" />;
+  // Use bounded CSS grid when auto-scroll is active; CSS columns otherwise.
+  return props.scrollPageH != null
+    ? <BoundedScrollGrid {...props} numCols={2} />
+    : <ColumnFlow {...props} columnsClass="columns-2" />;
 }
 
 function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, roleColors, showCardDate, scrollPageH, scrollItemCount, onScrollOverflow, scrollResetTick }: RowGridProps) {
@@ -762,7 +861,10 @@ function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, ro
 }
 
 function UltraWideGrid(props: RowGridProps) {
-  return <ColumnFlow {...props} columnsClass="columns-3 xl:columns-4" />;
+  // Use bounded CSS grid when auto-scroll is active; CSS columns otherwise.
+  return props.scrollPageH != null
+    ? <BoundedScrollGrid {...props} />
+    : <ColumnFlow {...props} columnsClass="columns-3 xl:columns-4" />;
 }
 
 function TotemNowNext({
@@ -933,6 +1035,15 @@ export function AgendaDisplayWidget({
   );
   const [scrollMetrics, setScrollMetrics] = useState<Record<string, number>>({});
   const [scrollResetTick, setScrollResetTick] = useState(0);
+
+  // Task #382 — derived early so the pages memo can use it.
+  // Active when: feature flag on, Full description mode, prefers-reduced-motion off.
+  // Declared here rather than after `pages` so one-per-session pagination (below)
+  // can use it without a forward reference.
+  const descScrollActive =
+    Boolean(config.descriptionAutoScroll) &&
+    config.descriptionLines === null &&
+    !prefersReducedMotion;
 
   // Stable callback — AgendaRow reports its overflow amount after measuring.
   const handleScrollOverflow = useCallback((id: string, px: number) => {
@@ -1160,13 +1271,6 @@ export function AgendaDisplayWidget({
   const pageItemsRef = useRef<AgendaItem[]>(pageItems);
   pageItemsRef.current = pageItems;
 
-  // Task #382 — active when the feature flag is set, Full description mode
-  // is selected, and prefers-reduced-motion is not in force.
-  const descScrollActive =
-    Boolean(config.descriptionAutoScroll) &&
-    config.descriptionLines === null &&
-    !prefersReducedMotion;
-
   // Per-column card count for the scroll viewport allocation formula.
   // Portrait: equal share across all cards on the page.
   // Multi-column: approximate equal share per column.
@@ -1389,6 +1493,7 @@ export function AgendaDisplayWidget({
             scrollItemCount={scrollItemCount}
             onScrollOverflow={descScrollActive ? handleScrollOverflow : undefined}
             scrollResetTick={descScrollActive ? scrollResetTick : undefined}
+            numCols={numCols}
           />
         ) : layout === "portrait" ? (
           <PortraitCards
