@@ -12,6 +12,7 @@ import {
   ensureAgendaSnapshotsMigration,
   ensureAgendaConfigFingerprintMigration,
   ensureMicrosoftOAuthMigration,
+  ensureAgendaDescriptionLinesMigration,
 } from "./db";
 import { storage } from "./storage";
 
@@ -73,6 +74,7 @@ app.use((req, res, next) => {
   await ensureAgendaSnapshotsMigration();
   await ensureAgendaConfigFingerprintMigration();
   await ensureMicrosoftOAuthMigration();
+  await ensureAgendaDescriptionLinesMigration();
   // Pairing-code dedupe (Task #180): pre-#180 walls fanned the same
   // pairingCode to every tile in a wall, so an upgrading deployment
   // may carry duplicate pairing_code rows. The new schema-level

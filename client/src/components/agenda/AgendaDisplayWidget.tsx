@@ -297,6 +297,36 @@ function StatusBadge({
   );
 }
 
+/**
+ * Task #376 — resolve inline CSS for description line clamping.
+ *
+ * Three distinct behaviours:
+ *   undefined  → 2-line clamp (renderer default; matches pre-#376 behaviour)
+ *   number 1-10 → clamp to N lines
+ *   null        → Full (no clamp — remove every clamp property)
+ *
+ * We use inline WebkitLineClamp styles rather than dynamic Tailwind class
+ * names (e.g. computed strings like "line-clamp-N") because production
+ * Tailwind only includes classes it can statically detect; interpolated
+ * or concatenated names are purged at build time.
+ */
+function resolveDescriptionClamp(
+  lines: number | null | undefined,
+): React.CSSProperties {
+  // undefined = missing/legacy → fall back to the old two-line default
+  const n = lines === undefined ? 2 : lines;
+  if (n === null) {
+    // Full: no clamp properties at all — description wraps naturally
+    return {};
+  }
+  return {
+    display: "-webkit-box",
+    WebkitBoxOrient: "vertical",
+    WebkitLineClamp: n,
+    overflow: "hidden",
+  };
+}
+
 function isCurrentlyRunning(item: AgendaItem, now: Date): boolean {
   const start = new Date(item.startsAt).getTime();
   const end = new Date(item.endsAt).getTime();
@@ -426,7 +456,11 @@ function AgendaRow({
           </div>
         ) : null}
         {config.showDescription && item.description && (
-          <p className="mt-1 opacity-75 line-clamp-2" style={{ fontSize: scale * descMult, ...bodyStyle }}>
+          <p
+            className="mt-1 opacity-75"
+            style={{ fontSize: scale * descMult, ...bodyStyle, ...resolveDescriptionClamp(config.descriptionLines) }}
+            data-testid={tid(`agenda-description-${item.id}`)}
+          >
             {item.description}
           </p>
         )}

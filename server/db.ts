@@ -108,6 +108,7 @@ export const ensureBookingConstraints = ensureBookingMigration;
  */
 const AGENDA_SNAPSHOTS_MIGRATION_LOCK_KEY = 715129_004n;
 const AGENDA_CONFIG_FINGERPRINT_MIGRATION_LOCK_KEY = 715129_006n;
+const AGENDA_DESCRIPTION_LINES_MIGRATION_LOCK_KEY = 715129_007n;
 
 export async function ensureAgendaSnapshotsMigration(): Promise<void> {
   const client = await pool.connect();
@@ -212,6 +213,42 @@ export async function ensureAgendaConfigFingerprintMigration(): Promise<void> {
       } catch (unlockErr) {
         console.error(
           "ensureAgendaConfigFingerprintMigration: failed to release advisory lock:",
+          unlockErr,
+        );
+      }
+    }
+    client.release();
+  }
+}
+
+/**
+ * Idempotent startup migration for the description_lines column on
+ * agenda_widget_configs (Task #376). Advisory-locked so concurrent restarts
+ * (e.g. blue/green deploy) can't race. NULL = Full (no clamp);
+ * DEFAULT 2 preserves the previous hard-coded behaviour for all existing rows.
+ */
+export async function ensureAgendaDescriptionLinesMigration(): Promise<void> {
+  const client = await pool.connect();
+  let haveLock = false;
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [
+      AGENDA_DESCRIPTION_LINES_MIGRATION_LOCK_KEY.toString(),
+    ]);
+    haveLock = true;
+    await client.query(`
+      ALTER TABLE agenda_widget_configs
+        ADD COLUMN IF NOT EXISTS description_lines INTEGER DEFAULT 2
+    `);
+    console.log("[ensureAgendaDescriptionLinesMigration] agenda_widget_configs.description_lines ready");
+  } finally {
+    if (haveLock) {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [
+          AGENDA_DESCRIPTION_LINES_MIGRATION_LOCK_KEY.toString(),
+        ]);
+      } catch (unlockErr) {
+        console.error(
+          "ensureAgendaDescriptionLinesMigration: failed to release advisory lock:",
           unlockErr,
         );
       }
