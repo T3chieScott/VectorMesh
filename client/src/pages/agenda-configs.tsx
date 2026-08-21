@@ -117,6 +117,9 @@ const configFormSchema = z.object({
   rotationIntervalSeconds: z.coerce.number().int().min(3).max(3600),
   maxItemsPerPage: z.coerce.number().int().min(1).max(50),
   showDescription: z.boolean(),
+  // "full" is the string sentinel for null (no clamp); "1"–"10" for a
+  // specific line count. Kept as a string because Select values are strings.
+  descriptionLines: z.string(),
   showPresenter: z.boolean(),
   showRoom: z.boolean(),
   showStatus: z.boolean(),
@@ -159,6 +162,8 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     rotationIntervalSeconds: c?.rotationIntervalSeconds ?? 12,
     maxItemsPerPage: c?.maxItemsPerPage ?? 8,
     showDescription: c?.showDescription ?? true,
+    // null from DB = Full; undefined (new form) = "2" (default two-line clamp).
+    descriptionLines: c?.descriptionLines === null ? "full" : String(c?.descriptionLines ?? 2),
     showPresenter: c?.showPresenter ?? true,
     showRoom: c?.showRoom ?? true,
     showStatus: c?.showStatus ?? true,
@@ -206,6 +211,8 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     rotationIntervalSeconds: values.rotationIntervalSeconds,
     maxItemsPerPage: values.maxItemsPerPage,
     showDescription: values.showDescription,
+    // "full" → null (no clamp); string number → integer.
+    descriptionLines: values.descriptionLines === "full" ? null : Number(values.descriptionLines),
     showPresenter: values.showPresenter,
     showRoom: values.showRoom,
     showStatus: values.showStatus,
@@ -688,6 +695,28 @@ function ConfigEditor({
                   )} />
                 ))}
               </div>
+              {form.watch("showDescription") && (
+                <FormField control={form.control} name="descriptionLines" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Description lines</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-description-lines">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="1">1 line</SelectItem>
+                        <SelectItem value="2">2 lines</SelectItem>
+                        <SelectItem value="3">3 lines</SelectItem>
+                        <SelectItem value="4">4 lines</SelectItem>
+                        <SelectItem value="5">5 lines</SelectItem>
+                        <SelectItem value="full">Full (no limit)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </FormItem>
+                )} />
+              )}
 
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>

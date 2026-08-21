@@ -174,6 +174,8 @@ export const PUBLIC_AGENDA_CONFIG_FIELDS = [
   "showEventName",
   "showDayName",
   "showDate",
+  // Task #376 — operator-selectable description line limit. null = Full.
+  "descriptionLines",
   // Task #231 — optional typography & role-colour overrides. All
   // nullable; widget renders identically when they are null.
   "fontFamily",
@@ -1198,6 +1200,10 @@ async function buildAgendaDisplayPayload(
         // and PUBLIC_AGENDA_CONFIG_FIELDS asserts both are emitted).
         showDayName: config.showDayName ?? false,
         showDate: config.showDate ?? false,
+        // Task #376 — description line limit. Preserve null (Full/no clamp)
+        // — do NOT coerce with ?? 2 here; null is a meaningful value. The
+        // renderer falls back to 2 only for undefined (missing legacy key).
+        descriptionLines: config.descriptionLines !== undefined ? config.descriptionLines : 2,
         // Task #231 — typography & role-colour overrides (all nullable).
         // Coerce undefined → null so the keys are always present in the
         // public payload, matching PUBLIC_AGENDA_CONFIG_FIELDS exactly

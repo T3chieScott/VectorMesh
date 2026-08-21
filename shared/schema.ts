@@ -1741,6 +1741,10 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   // existing configs render identically after migration.
   showDayName: boolean("show_day_name").notNull().default(false),
   showDate: boolean("show_date").notNull().default(false),
+  // Operator-selectable description line limit. NULL = Full (no clamp);
+  // integer = clamp to N lines. DEFAULT 2 preserves the previous
+  // hard-coded two-line behaviour for all existing rows.
+  descriptionLines: integer("description_lines").default(2),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1786,6 +1790,10 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
     bodyScale: z.number().min(0.3).max(4).nullable().optional(),
     headerDateScale: z.number().min(0.3).max(4).nullable().optional(),
     headerClockScale: z.number().min(0.3).max(4).nullable().optional(),
+    // descriptionLines: integers 1–10 for a specific clamp, null for Full
+    // (no clamp). 0 and negatives are rejected; missing/undefined defaults
+    // to 2 (matching the DB DEFAULT and the renderer's own fallback).
+    descriptionLines: z.number().int().min(1).max(10).nullable().optional(),
   });
 export type InsertAgendaWidgetConfig = z.infer<typeof insertAgendaWidgetConfigSchema>;
 export type AgendaWidgetConfig = typeof agendaWidgetConfigs.$inferSelect;
