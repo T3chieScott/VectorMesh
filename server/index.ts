@@ -16,6 +16,7 @@ import {
   ensureAgendaDescriptionAutoScrollMigration,
 } from "./db";
 import { storage } from "./storage";
+import { warnIfHealthTokenUnavailable } from "./health/deepHealth";
 
 const app = express();
 const httpServer = createServer(app);
@@ -67,6 +68,10 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Emits one startup warning only when the dedicated external-monitor token
+  // is missing. The endpoint itself returns a safe structured 503 and never
+  // runs checks until an operator configures the token.
+  warnIfHealthTokenUnavailable();
   await initStorage();
   await convertBadges();
   await ensureBookingMigration();
