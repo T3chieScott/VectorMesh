@@ -88,6 +88,8 @@ import {
   extractVideoStats,
 } from "./videoHealthHeartbeat";
 import { getPathParam, getOptionalPathParam, getQueryString } from "./requestParams";
+import { mountDeepHealthRoute } from "./health/deepHealth";
+import { createHealthChecks } from "./health/checks";
 
 const playerWeatherSummaryCache = new Map<string, { summary: string; timestamp: number }>();
 const PLAYER_WEATHER_SUMMARY_TTL = 10 * 60 * 1000;
@@ -516,6 +518,14 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // External uptime monitor endpoint. Mount before setupAuth so recurring
+  // monitor requests do not touch the session store or user authentication
+  // middleware. It has its own X-Health-Token authentication.
+  mountDeepHealthRoute(app, {
+    getHealthToken: () => process.env.HEALTH_CHECK_TOKEN,
+    getChecks: () => createHealthChecks(),
+  });
+
   setupAuth(app);
 
   // Test-only auth bypass — only mounted when NODE_ENV !== "production"

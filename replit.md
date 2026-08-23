@@ -12,6 +12,15 @@ Preferred communication style: Simple, everyday language.
 
 - `docs/features.md` — detailed implementation notes for the more involved features (player audio policy, agenda spreadsheet mapper, HTML/CSS widgets, sweepstake wall loop).
 - `docs/runbook.md` — operations runbook: one-shot boot repair/backfill markers and tenant-scoping invariants, with recovery steps.
+- `HEALTH_CHECKS.md` — authenticated external-monitor health endpoint, registered dependencies, and safe monitoring guidance.
+
+## Health Check Maintenance
+
+Whenever a new external dependency or critical availability capability is
+added, add or update the corresponding deep-health registry entry and tests in
+the same change. Do not add recurring probes that perform writes or consume
+business-operation quotas. Individual public-route contracts belong in
+integration tests rather than the recurring dependency registry.
 
 ## System Architecture
 
