@@ -6,7 +6,9 @@ import test from "node:test";
 import express from "express";
 import {
   createHealthChecks,
+  HEALTH_CAPABILITY_COVERAGE,
   isMicrosoftHealthCheckEnabled,
+  runBoundedReadOnlyQuery,
   type HealthCheck,
   type HealthCheckDependencies,
 } from "../server/health/checks";
@@ -117,6 +119,16 @@ function makeRegistryDependencies(
 ): HealthCheckDependencies {
   return {
     queryDatabase: async () => {},
+    queryAuthenticationPrerequisites: async () => ({
+      usersTableReady: true,
+      usersColumnsReady: true,
+      sessionsTableReady: true,
+      sessionsColumnsReady: true,
+    }),
+    queryScreenManagementPrerequisites: async () => ({
+      screensTableReady: true,
+      screensColumnsReady: true,
+    }),
     getUploadRoot: async () => "/safe-media-root",
     stat: async () => ({ isDirectory: () => true }),
     access: async () => {},
@@ -131,6 +143,19 @@ test("deep health registry: production probes use only exact read-only database 
     queryDatabase: async (signal) => {
       calls.push({ name: "database", args: [signal] });
     },
+    queryAuthenticationPrerequisites: async (signal) => {
+      calls.push({ name: "authentication", args: [signal] });
+      return {
+        usersTableReady: true,
+        usersColumnsReady: true,
+        sessionsTableReady: true,
+        sessionsColumnsReady: true,
+      };
+    },
+    queryScreenManagementPrerequisites: async (signal) => {
+      calls.push({ name: "screen-management", args: [signal] });
+      return { screensTableReady: true, screensColumnsReady: true };
+    },
     getUploadRoot: async () => {
       calls.push({ name: "getUploadRoot", args: [] });
       return "/safe-media-root";
@@ -144,7 +169,10 @@ test("deep health registry: production probes use only exact read-only database 
     },
   });
   const checks = createHealthChecks(
-    { NODE_ENV: "production" } as NodeJS.ProcessEnv,
+    {
+      NODE_ENV: "production",
+      SESSION_SECRET: "test-session-secret",
+    } as NodeJS.ProcessEnv,
     dependencies,
   );
 
@@ -153,25 +181,215 @@ test("deep health registry: production probes use only exact read-only database 
     [
       ["database", true],
       ["file-storage", true],
+      ["authentication", true],
+      ["screen-management", true],
     ],
   );
 
   const databaseSignal = new AbortController().signal;
   const storageSignal = new AbortController().signal;
+  const authSignal = new AbortController().signal;
+  const screensSignal = new AbortController().signal;
   await checks[0]!.run({ signal: databaseSignal });
   await checks[1]!.run({ signal: storageSignal });
+  await checks[2]!.run({ signal: authSignal });
+  await checks[3]!.run({ signal: screensSignal });
 
   assert.deepEqual(
     calls.map((call) => call.name),
-    ["database", "getUploadRoot", "stat", "access"],
+    [
+      "database",
+      "getUploadRoot",
+      "stat",
+      "access",
+      "authentication",
+      "screen-management",
+    ],
   );
   assert.equal(calls[0]?.args[0], databaseSignal);
   assert.equal(calls[2]?.args[0], "/safe-media-root");
   assert.equal(calls[3]?.args[0], "/safe-media-root");
+  assert.equal(calls[4]?.args[0], authSignal);
+  assert.equal(calls[5]?.args[0], screensSignal);
   // R_OK | W_OK: checks readiness without creating, modifying, or deleting a
   // storage object. The dependency interface intentionally exposes no write,
   // provider-call, token-refresh, or notification operation.
   assert.equal(calls[3]?.args[1], 6);
+});
+
+test("deep health registry: capability checks report safe readiness without executing login or screen mutations", async () => {
+  let authenticationQueries = 0;
+  let screenQueries = 0;
+  const env = {
+    NODE_ENV: "production",
+    SESSION_SECRET: "test-session-secret",
+  } as NodeJS.ProcessEnv;
+  const checks = createHealthChecks(
+    env,
+    makeRegistryDependencies({
+      queryAuthenticationPrerequisites: async () => {
+        authenticationQueries += 1;
+        return {
+          usersTableReady: true,
+          usersColumnsReady: true,
+          sessionsTableReady: true,
+          sessionsColumnsReady: true,
+        };
+      },
+      queryScreenManagementPrerequisites: async () => {
+        screenQueries += 1;
+        return { screensTableReady: true, screensColumnsReady: true };
+      },
+    }),
+  );
+  const authentication = checks.find((check) => check.name === "authentication");
+  const screenManagement = checks.find(
+    (check) => check.name === "screen-management",
+  );
+
+  assert.ok(authentication);
+  assert.ok(screenManagement);
+  assert.equal(authentication!.group, "capability");
+  assert.equal(
+    authentication!.coverage,
+    HEALTH_CAPABILITY_COVERAGE.authentication,
+  );
+  assert.equal(screenManagement!.group, "capability");
+  assert.equal(
+    screenManagement!.coverage,
+    HEALTH_CAPABILITY_COVERAGE.screenManagement,
+  );
+  assert.deepEqual(
+    await authentication!.run({ signal: new AbortController().signal }),
+    { status: "ok" },
+  );
+  assert.deepEqual(
+    await screenManagement!.run({ signal: new AbortController().signal }),
+    { status: "ok" },
+  );
+  assert.equal(authenticationQueries, 1);
+  assert.equal(screenQueries, 1);
+});
+
+test("deep health registry: missing auth configuration and failed schemas are safely reported", async () => {
+  const missingSecretChecks = createHealthChecks(
+    { NODE_ENV: "production", SESSION_SECRET: " " } as NodeJS.ProcessEnv,
+    makeRegistryDependencies({
+      queryAuthenticationPrerequisites: async () => {
+        throw new Error("must not query when the session secret is missing");
+      },
+    }),
+  );
+  const missingSecretResult = await missingSecretChecks
+    .find((check) => check.name === "authentication")!
+    .run({ signal: new AbortController().signal });
+  assert.deepEqual(missingSecretResult, {
+    status: "fail",
+    message: "authentication unavailable",
+  });
+
+  const failedSchemaChecks = createHealthChecks(
+    {
+      NODE_ENV: "production",
+      SESSION_SECRET: "test-session-secret",
+    } as NodeJS.ProcessEnv,
+    makeRegistryDependencies({
+      queryAuthenticationPrerequisites: async () => ({
+        usersTableReady: true,
+        usersColumnsReady: false,
+        sessionsTableReady: true,
+        sessionsColumnsReady: true,
+      }),
+      queryScreenManagementPrerequisites: async () => ({
+        screensTableReady: false,
+        screensColumnsReady: false,
+      }),
+    }),
+  );
+  const authResult = await failedSchemaChecks
+    .find((check) => check.name === "authentication")!
+    .run({ signal: new AbortController().signal });
+  const screenResult = await failedSchemaChecks
+    .find((check) => check.name === "screen-management")!
+    .run({ signal: new AbortController().signal });
+  assert.deepEqual(authResult, {
+    status: "fail",
+    message: "authentication unavailable",
+  });
+  assert.deepEqual(screenResult, {
+    status: "fail",
+    message: "screen management unavailable",
+  });
+});
+
+test("deep health registry: missing login columns or a view in place of a table cannot report ready", async () => {
+  const env = {
+    NODE_ENV: "production",
+    SESSION_SECRET: "test-session-secret",
+  } as NodeJS.ProcessEnv;
+  const missingTwoFactorColumns = createHealthChecks(
+    env,
+    makeRegistryDependencies({
+      queryAuthenticationPrerequisites: async () => ({
+        usersTableReady: true,
+        usersColumnsReady: false,
+        sessionsTableReady: true,
+        sessionsColumnsReady: true,
+      }),
+    }),
+  );
+  const viewInsteadOfScreensTable = createHealthChecks(
+    env,
+    makeRegistryDependencies({
+      queryScreenManagementPrerequisites: async () => ({
+        screensTableReady: false,
+        screensColumnsReady: true,
+      }),
+    }),
+  );
+
+  assert.deepEqual(
+    await missingTwoFactorColumns
+      .find((check) => check.name === "authentication")!
+      .run({ signal: new AbortController().signal }),
+    { status: "fail", message: "authentication unavailable" },
+  );
+  assert.deepEqual(
+    await viewInsteadOfScreensTable
+      .find((check) => check.name === "screen-management")!
+      .run({ signal: new AbortController().signal }),
+    { status: "fail", message: "screen management unavailable" },
+  );
+});
+
+test("deep health registry: aborting a database query destroys its isolated client", async () => {
+  let releaseArgument: boolean | undefined;
+  let queryStarted = false;
+  let resolveQuery!: (value: { rows: unknown[] }) => void;
+  const controller = new AbortController();
+  const execution = runBoundedReadOnlyQuery(
+    async () => ({
+      query: async () => {
+        queryStarted = true;
+        return new Promise<{ rows: unknown[] }>((resolve) => {
+          resolveQuery = resolve;
+        });
+      },
+      release: (destroy) => {
+        releaseArgument = destroy;
+      },
+    }),
+    "SELECT 1",
+    controller.signal,
+    10,
+  );
+
+  await tick();
+  assert.equal(queryStarted, true);
+  controller.abort();
+  await assert.rejects(execution, { name: "AbortError" });
+  assert.equal(releaseArgument, true);
+  resolveQuery({ rows: [] });
 });
 
 test("deep health registry: optional Microsoft readiness is conditional and local-only", async () => {
@@ -228,7 +446,63 @@ test("deep health: correct token receives complete no-cache health response", as
   assert.equal(body.status, "ok");
   assert.equal(body.checks[0].name, "database");
   assert.equal(body.checks[0].status, "ok");
+  assert.equal(body.checks[0].group, "dependency");
+  assert.equal(body.checks[0].critical, true);
+  assert.deepEqual(body.dependencies.map((check: { name: string }) => check.name), [
+    "database",
+  ]);
+  assert.deepEqual(body.capabilities, []);
   assert.equal(Number.isInteger(body.durationMs), true);
+});
+
+test("deep health: capability output is grouped and documents safe coverage", async () => {
+  const response = await request(
+    makeApp({
+      checks: [
+        okCheck("database"),
+        {
+          name: "authentication",
+          critical: true,
+          group: "capability",
+          coverage: HEALTH_CAPABILITY_COVERAGE.authentication,
+          run: async () => ({ status: "ok" }),
+        },
+        {
+          name: "screen-management",
+          critical: true,
+          group: "capability",
+          coverage: HEALTH_CAPABILITY_COVERAGE.screenManagement,
+          run: async () => ({ status: "ok" }),
+        },
+      ],
+    }),
+    DEEP_HEALTH_PATH,
+    { headers: { "X-Health-Token": TOKEN } },
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(
+    body.dependencies.map((check: { name: string }) => check.name),
+    ["database"],
+  );
+  assert.deepEqual(
+    body.capabilities.map((check: { name: string; critical: boolean }) => [
+      check.name,
+      check.critical,
+    ]),
+    [
+      ["authentication", true],
+      ["screen-management", true],
+    ],
+  );
+  assert.deepEqual(
+    body.capabilities.map((check: { coverage?: string }) => check.coverage),
+    [
+      HEALTH_CAPABILITY_COVERAGE.authentication,
+      HEALTH_CAPABILITY_COVERAGE.screenManagement,
+    ],
+  );
 });
 
 test("deep health: missing and incorrect tokens return identical empty 401 responses", async () => {

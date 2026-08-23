@@ -2,9 +2,12 @@ import crypto from "node:crypto";
 import type { Express, Request, Response } from "express";
 import type {
   HealthCheck,
+  HealthCheckCoverage,
+  HealthCheckGroup,
   HealthCheckRunResult,
   HealthCheckStatus,
 } from "./checks";
+import { HEALTH_CAPABILITY_COVERAGE } from "./checks";
 
 export const DEEP_HEALTH_PATH = "/internal/health/deep";
 export const CHECK_TIMEOUT_MS = 3_000;
@@ -14,13 +17,26 @@ export interface DeepHealthCheckResult {
   name: string;
   status: HealthCheckStatus;
   durationMs: number;
+  /**
+   * Present on authenticated runtime checks. The unconfigured-token response
+   * intentionally keeps its established minimal configuration-check shape.
+   */
+  critical?: boolean;
+  group?: HealthCheckGroup;
+  coverage?: HealthCheckCoverage;
   message?: string;
 }
 
 export interface DeepHealthResult {
   status: HealthCheckStatus;
   durationMs: number;
+  /**
+   * Backwards-compatible complete flat list. Use dependencies/capabilities
+   * for grouped operator-facing reporting.
+   */
   checks: DeepHealthCheckResult[];
+  dependencies?: DeepHealthCheckResult[];
+  capabilities?: DeepHealthCheckResult[];
 }
 
 export interface DeepHealthRouteOptions {
@@ -49,8 +65,10 @@ const SAFE_MESSAGES = new Set([
   "check timed out",
   "health check timed out",
   "health check unavailable",
+  "authentication unavailable",
   "not connected",
   "not configured",
+  "screen management unavailable",
   "service unavailable",
   "storage unavailable",
 ]);
@@ -69,6 +87,28 @@ function safeMessage(message: string | undefined, fallback: string): string {
 
 function statusForFailedCheck(check: HealthCheck): HealthCheckStatus {
   return check.critical ? "fail" : "degraded";
+}
+
+const SAFE_CAPABILITY_COVERAGE = new Set<string>(
+  Object.values(HEALTH_CAPABILITY_COVERAGE),
+);
+
+function checkMetadata(
+  check: HealthCheck,
+): Pick<DeepHealthCheckResult, "critical" | "group" | "coverage"> {
+  const group = check.group ?? "dependency";
+  const coverage =
+    group === "capability" &&
+    check.coverage &&
+    SAFE_CAPABILITY_COVERAGE.has(check.coverage)
+      ? check.coverage
+      : undefined;
+
+  return {
+    critical: check.critical,
+    group,
+    ...(coverage ? { coverage } : {}),
+  };
 }
 
 function normaliseReturnedStatus(
@@ -179,6 +219,7 @@ async function runCheck(
         name: check.name,
         status: normalised.status,
         durationMs: durationMs(started),
+        ...checkMetadata(check),
         ...(normalised.message ? { message: normalised.message } : {}),
       };
     }
@@ -189,6 +230,7 @@ async function runCheck(
         name: check.name,
         status: statusForFailedCheck(check),
         durationMs: durationMs(started),
+        ...checkMetadata(check),
         message: "check failed",
       };
     }
@@ -202,6 +244,7 @@ async function runCheck(
       name: check.name,
       status: statusForFailedCheck(check),
       durationMs: durationMs(started),
+      ...checkMetadata(check),
       message,
     };
   } catch {
@@ -213,6 +256,7 @@ async function runCheck(
       name: check.name,
       status: statusForFailedCheck(check),
       durationMs: durationMs(started),
+      ...checkMetadata(check),
       message: "check failed",
     };
   } finally {
@@ -267,14 +311,24 @@ export async function runDeepHealthChecks(
         name: check.name,
         status: statusForFailedCheck(check),
         durationMs: 0,
+        ...checkMetadata(check),
         message: "check failed",
       } satisfies DeepHealthCheckResult;
     });
+
+    const dependencies = results.filter(
+      (check) => check.group === "dependency",
+    );
+    const capabilities = results.filter(
+      (check) => check.group === "capability",
+    );
 
     return {
       status: overallStatus(results),
       durationMs: durationMs(started),
       checks: results,
+      dependencies,
+      capabilities,
     };
   } finally {
     clearTimeout(handlerDeadline);

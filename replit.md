@@ -20,7 +20,9 @@ Whenever a new external dependency or critical availability capability is
 added, add or update the corresponding deep-health registry entry and tests in
 the same change. Do not add recurring probes that perform writes or consume
 business-operation quotas. Individual public-route contracts belong in
-integration tests rather than the recurring dependency registry.
+integration tests rather than the recurring dependency registry. A green
+capability result must state the safe prerequisites it checked and must not be
+described as proof that a mutating route was executed.
 
 ## System Architecture
 

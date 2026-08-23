@@ -21,3 +21,4 @@
 - [Sweepstake rotation timer](sweepstake-rotation-timer.md) — one shared timer pages within + rotates between slides; don't bail on slides.length<=1, re-arm on page-count growth, depend on primitive keys not the polled data object.
 - [Monitor widget auth](monitor-widget-auth.md) — Monitor has no deviceToken; widgets must use /api/monitor/widgets/… (cookie auth), not /api/widgets/… (requireAuth); widgetBaseUrl derived from mediaBaseUrl in ZoneRenderer.
 - [Monitor preview-time](monitor-preview-time.md) — ?at=naïve+elapsed_ms protocol; server owns TZ conversion; cache bypass; auth runs before ?at= is read.
+- [Deep health capabilities](deep-health-capability-checks.md) — report safe prerequisite readiness for mutating flows; never probe login or screen creation, and destroy timed-out DB clients.

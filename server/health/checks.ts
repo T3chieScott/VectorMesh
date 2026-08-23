@@ -4,6 +4,17 @@ import { getUploadRoot } from "../fileStorage";
 import { getMicrosoftEntraStatus } from "../microsoftOAuth";
 
 export type HealthCheckStatus = "ok" | "degraded" | "fail";
+export type HealthCheckGroup = "dependency" | "capability";
+
+export const HEALTH_CAPABILITY_COVERAGE = {
+  authentication:
+    "Checks login prerequisites only; it does not perform a login or create a session.",
+  screenManagement:
+    "Checks screen-management schema prerequisites only; it does not create, pair, update, refresh, or delete screens.",
+} as const;
+
+export type HealthCheckCoverage =
+  (typeof HEALTH_CAPABILITY_COVERAGE)[keyof typeof HEALTH_CAPABILITY_COVERAGE];
 
 export interface HealthCheckRunResult {
   status: HealthCheckStatus;
@@ -20,6 +31,10 @@ export interface HealthCheck {
   name: string;
   /** A failed critical check makes the endpoint return HTTP 503. */
   critical: boolean;
+  /** Dependencies and application capabilities are reported separately. */
+  group?: HealthCheckGroup;
+  /** A fixed, operator-safe explanation of what a capability check proves. */
+  coverage?: HealthCheckCoverage;
   /** All checks are read-only and receive cancellation from their timeout. */
   run: (context: { signal: AbortSignal }) => Promise<HealthCheckRunResult>;
 }
@@ -30,11 +45,43 @@ export interface HealthCheckDependencies {
    * awaiting a stalled database operation at its hard deadline.
    */
   queryDatabase: (signal: AbortSignal) => Promise<void>;
+  queryAuthenticationPrerequisites: (
+    signal: AbortSignal,
+  ) => Promise<AuthenticationPrerequisites>;
+  queryScreenManagementPrerequisites: (
+    signal: AbortSignal,
+  ) => Promise<ScreenManagementPrerequisites>;
   getUploadRoot: () => Promise<string>;
   stat: (path: string) => Promise<{ isDirectory: () => boolean }>;
   access: (path: string, mode: number) => Promise<void>;
   getMicrosoftEntraStatus: () => Promise<{ connected: boolean }>;
 }
+
+export interface AuthenticationPrerequisites {
+  usersTableReady: boolean;
+  usersColumnsReady: boolean;
+  sessionsTableReady: boolean;
+  sessionsColumnsReady: boolean;
+}
+
+export interface ScreenManagementPrerequisites {
+  screensTableReady: boolean;
+  screensColumnsReady: boolean;
+}
+
+interface HealthQueryResult<T> {
+  rows: T[];
+}
+
+interface HealthDatabaseClient {
+  query: (config: {
+    text: string;
+    query_timeout: number;
+  }) => Promise<HealthQueryResult<unknown>>;
+  release: (destroy?: boolean) => void;
+}
+
+const DATABASE_QUERY_TIMEOUT_MS = 2_500;
 
 const MICROSOFT_ENVIRONMENT_KEYS = [
   "MICROSOFT_TENANT_ID",
@@ -95,12 +142,167 @@ function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+/**
+ * Bound database probes beyond the HTTP-level timeout. node-postgres's
+ * query_timeout only stops the caller waiting; destroying the isolated client
+ * on any abort/error also closes its connection, so a stalled catalog query
+ * cannot linger in the shared pool and accumulate across monitor rounds.
+ */
+export async function runBoundedReadOnlyQuery<T>(
+  acquireClient: () => Promise<HealthDatabaseClient>,
+  text: string,
+  signal: AbortSignal,
+  queryTimeoutMs = DATABASE_QUERY_TIMEOUT_MS,
+): Promise<HealthQueryResult<T>> {
+  const pendingClient = acquireClient();
+  let client: HealthDatabaseClient | undefined;
+
+  try {
+    client = await abortable(pendingClient, signal);
+  } catch (error) {
+    // A pool checkout may complete after the caller has timed out. Destroy the
+    // late client as soon as it arrives so it cannot be used to run a stale
+    // health query.
+    void pendingClient.then(
+      (lateClient) => lateClient.release(true),
+      () => undefined,
+    );
+    throw error;
+  }
+
+  try {
+    const query = client.query({ text, query_timeout: queryTimeoutMs });
+    return (await abortable(query, signal)) as HealthQueryResult<T>;
+  } catch (error) {
+    client.release(true);
+    client = undefined;
+    throw error;
+  } finally {
+    client?.release();
+  }
+}
+
+function areAuthenticationPrerequisitesReady(
+  prerequisites: AuthenticationPrerequisites,
+): boolean {
+  return (
+    prerequisites.usersTableReady &&
+    prerequisites.usersColumnsReady &&
+    prerequisites.sessionsTableReady &&
+    prerequisites.sessionsColumnsReady
+  );
+}
+
+function areScreenManagementPrerequisitesReady(
+  prerequisites: ScreenManagementPrerequisites,
+): boolean {
+  return prerequisites.screensTableReady && prerequisites.screensColumnsReady;
+}
+
+async function queryHealthDatabase<T>(
+  text: string,
+  signal: AbortSignal,
+): Promise<HealthQueryResult<T>> {
+  return runBoundedReadOnlyQuery<T>(
+    async () => {
+      const client = await pool.connect();
+      return {
+        query: (config) => client.query(config as any),
+        release: (destroy) => client.release(destroy),
+      };
+    },
+    text,
+    signal,
+  );
+}
+
 const runtimeDependencies: HealthCheckDependencies = {
   queryDatabase: async (signal) => {
-    // node-postgres does not expose AbortSignal in this installed version.
-    // Race the read-only query with the handler's signal so a deadline stops
-    // this health execution from awaiting a stalled connection.
-    await abortable(pool.query("SELECT 1"), signal);
+    await queryHealthDatabase("SELECT 1", signal);
+  },
+  queryAuthenticationPrerequisites: async (signal) => {
+    const result = await queryHealthDatabase<AuthenticationPrerequisites>(
+      `
+        SELECT
+          EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_class relation
+            JOIN pg_catalog.pg_namespace namespace
+              ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = 'public'
+              AND relation.relname = 'users'
+              AND relation.relkind IN ('r', 'p')
+          ) AS "usersTableReady",
+          (
+            SELECT count(DISTINCT column_name) = 7
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'users'
+              AND column_name IN (
+                'id', 'email', 'password_hash', 'is_active',
+                'two_factor_enabled', 'two_factor_secret', 'last_login_at'
+              )
+          ) AS "usersColumnsReady",
+          EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_class relation
+            JOIN pg_catalog.pg_namespace namespace
+              ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = 'public'
+              AND relation.relname = 'sessions'
+              AND relation.relkind IN ('r', 'p')
+          ) AS "sessionsTableReady",
+          (
+            SELECT count(DISTINCT column_name) = 3
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'sessions'
+              AND column_name IN ('sid', 'sess', 'expire')
+          ) AS "sessionsColumnsReady"
+      `,
+      signal,
+    );
+    return (
+      result.rows[0] ?? {
+        usersTableReady: false,
+        usersColumnsReady: false,
+        sessionsTableReady: false,
+        sessionsColumnsReady: false,
+      }
+    );
+  },
+  queryScreenManagementPrerequisites: async (signal) => {
+    const result = await queryHealthDatabase<ScreenManagementPrerequisites>(
+      `
+        SELECT
+          EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_class relation
+            JOIN pg_catalog.pg_namespace namespace
+              ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = 'public'
+              AND relation.relname = 'screens'
+              AND relation.relkind IN ('r', 'p')
+          ) AS "screensTableReady",
+          (
+            SELECT count(DISTINCT column_name) = 6
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'screens'
+              AND column_name IN (
+                'id', 'name', 'client_id', 'pairing_code',
+                'device_token', 'is_paired'
+              )
+          ) AS "screensColumnsReady"
+      `,
+      signal,
+    );
+    return (
+      result.rows[0] ?? {
+        screensTableReady: false,
+        screensColumnsReady: false,
+      }
+    );
   },
   getUploadRoot,
   stat: (path) => fs.stat(path),
@@ -123,6 +325,7 @@ export function createHealthChecks(
     {
       name: "database",
       critical: true,
+      group: "dependency",
       run: async ({ signal }) => {
         throwIfAborted(signal);
         // Minimal, read-only PostgreSQL readiness probe. Do not touch an
@@ -135,6 +338,7 @@ export function createHealthChecks(
     {
       name: "file-storage",
       critical: true,
+      group: "dependency",
       run: async ({ signal }) => {
         throwIfAborted(signal);
         // getUploadRoot resolves the configured local storage root. stat and
@@ -149,12 +353,55 @@ export function createHealthChecks(
         return { status: "ok" };
       },
     },
+    {
+      name: "authentication",
+      critical: true,
+      group: "capability",
+      coverage: HEALTH_CAPABILITY_COVERAGE.authentication,
+      run: async ({ signal }) => {
+        throwIfAborted(signal);
+        // Do not call the login route: it regenerates/saves a session and
+        // records user activity. This validates only its safe prerequisites.
+        if (!isNonBlank(env.SESSION_SECRET)) {
+          return { status: "fail", message: "authentication unavailable" };
+        }
+        const prerequisites =
+          await dependencies.queryAuthenticationPrerequisites(
+          signal,
+        );
+        throwIfAborted(signal);
+        return areAuthenticationPrerequisitesReady(prerequisites)
+          ? { status: "ok" }
+          : { status: "fail", message: "authentication unavailable" };
+      },
+    },
+    {
+      name: "screen-management",
+      critical: true,
+      group: "capability",
+      coverage: HEALTH_CAPABILITY_COVERAGE.screenManagement,
+      run: async ({ signal }) => {
+        throwIfAborted(signal);
+        // Do not call POST /api/screens or other screen mutations. The query
+        // checks the schema that those routes require without creating data,
+        // issuing pairing codes, sending refreshes, or writing audit records.
+        const prerequisites =
+          await dependencies.queryScreenManagementPrerequisites(
+          signal,
+        );
+        throwIfAborted(signal);
+        return areScreenManagementPrerequisitesReady(prerequisites)
+          ? { status: "ok" }
+          : { status: "fail", message: "screen management unavailable" };
+      },
+    },
   ];
 
   if (isMicrosoftHealthCheckEnabled(env)) {
     checks.push({
       name: "microsoft-graph",
       critical: false,
+      group: "dependency",
       run: async ({ signal }) => {
         throwIfAborted(signal);
         // Read local Entra credential state only. Calling Graph or forcing a
