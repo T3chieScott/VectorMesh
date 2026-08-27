@@ -169,6 +169,7 @@ export const PUBLIC_AGENDA_CONFIG_FIELDS = [
   "showDescription",
   "showPresenter",
   "showRoom",
+  "showTrack",
   "showStatus",
   "showCurrentTime",
   "showEventName",
@@ -1194,6 +1195,9 @@ async function buildAgendaDisplayPayload(
         showDescription: config.showDescription,
         showPresenter: config.showPresenter,
         showRoom: config.showRoom,
+        // Task #393 — default true for pre-migration/legacy rows so the new
+        // visibility setting does not hide existing track values.
+        showTrack: config.showTrack ?? true,
         showStatus: config.showStatus,
         showCurrentTime: config.showCurrentTime,
         showEventName: config.showEventName,

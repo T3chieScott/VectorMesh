@@ -1734,6 +1734,7 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   showDescription: boolean("show_description").notNull().default(true),
   showPresenter: boolean("show_presenter").notNull().default(true),
   showRoom: boolean("show_room").notNull().default(true),
+  showTrack: boolean("show_track").notNull().default(true),
   showStatus: boolean("show_status").notNull().default(true),
   showCurrentTime: boolean("show_current_time").notNull().default(true),
   showEventName: boolean("show_event_name").notNull().default(true),
