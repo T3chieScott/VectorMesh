@@ -359,6 +359,12 @@ test("__TEST_S382__ buildAgendaDisplayPayload maps descriptionAutoScroll", () =>
   );
 });
 
+test("__TEST_S393__ public agenda payload includes showTrack", () => {
+  const src = readFileSync("server/agendaRoutes.ts", "utf-8");
+  assert.ok(src.includes('"showTrack"'), "showTrack must be in the public allowlist");
+  assert.ok(src.includes("showTrack: config.showTrack"), "showTrack must be mapped in the public payload");
+});
+
 // ---------------------------------------------------------------------------
 // 22 — Pure function (no DOM)
 // ---------------------------------------------------------------------------

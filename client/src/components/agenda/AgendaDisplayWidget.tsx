@@ -398,6 +398,9 @@ function AgendaRow({
 }) {
   const timeStyle = timeRoleStyle(config, roleColors?.time);
   const bodyStyle = roleColors?.body ? { color: roleColors.body } : undefined;
+  // Treat an omitted field as visible so legacy preview/test payloads remain
+  // backwards compatible while persisted configs use the explicit boolean.
+  const showTrack = config.showTrack !== false;
   // Per-role size multipliers (config overrides → built-in defaults). The
   // secondary elements stay proportional to their role's primary so the
   // start/end-time relationship and description sizing are preserved.
@@ -621,17 +624,17 @@ function AgendaRow({
             />
           )}
         </div>
-        {(config.showRoom && item.room) || item.track || (config.showPresenter && item.presenter) ? (
+        {(config.showRoom && item.room) || (showTrack && item.track) || (config.showPresenter && item.presenter) ? (
           <div
             className={`mt-1 flex flex-col gap-1 opacity-80${scrollEnabled ? " shrink-0" : ""}`}
             style={{ fontSize: scale * roleSizes.body, ...bodyStyle }}
           >
-            {((config.showRoom && item.room) || item.track) && (
+            {((config.showRoom && item.room) || (showTrack && item.track)) && (
               <div className="flex flex-wrap gap-3">
                 {config.showRoom && item.room && (
                   <span data-testid={tid(`agenda-room-${item.id}`)}>📍 {item.room}</span>
                 )}
-                {item.track && <span>🏷 {item.track}</span>}
+                {showTrack && item.track && <span>🏷 {item.track}</span>}
               </div>
             )}
             {config.showPresenter && item.presenter && (

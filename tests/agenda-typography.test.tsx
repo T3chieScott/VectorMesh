@@ -61,6 +61,7 @@ function buildConfig(over: Partial<AgendaWidgetConfig> = {}): AgendaWidgetConfig
     showDescription: true,
     showPresenter: true,
     showRoom: true,
+     showTrack: true,
     showStatus: true,
     showDayName: false,
     showDate: false,
@@ -164,6 +165,31 @@ test("renderer: omitted fontFamily falls back to the default Inter stack", () =>
     html.includes(`font-family:${AGENDA_DEFAULT_FONT_STACK}`),
     "expected default Inter stack in rendered style",
   );
+});
+
+test("renderer: showTrack=false hides the track while keeping the room", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(AgendaDisplayWidget, {
+      config: buildConfig({ showTrack: false }),
+      items: [buildItem({ room: "Hall A", track: "Main" })],
+      width: 1920,
+      height: 1080,
+    }),
+  );
+  assert.ok(html.includes("Hall A"), "room should remain visible");
+  assert.equal(html.includes("Main"), false, "track should be hidden");
+});
+
+test("renderer: showTrack=true keeps the track visible", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(AgendaDisplayWidget, {
+      config: buildConfig({ showTrack: true }),
+      items: [buildItem({ track: "Main" })],
+      width: 1920,
+      height: 1080,
+    }),
+  );
+  assert.ok(html.includes("Main"), "track should be visible");
 });
 
 test("renderer: known fontFamily keys emit their curated CSS stack", () => {

@@ -216,6 +216,7 @@ function makeConfig(over: Partial<AgendaWidgetConfig> & { id: string; clientId: 
     showDescription: over.showDescription ?? true,
     showPresenter: over.showPresenter ?? true,
     showRoom: over.showRoom ?? true,
+    showTrack: over.showTrack ?? true,
     showStatus: over.showStatus ?? true,
     showCurrentTime: over.showCurrentTime ?? true,
     showEventName: over.showEventName ?? true,
