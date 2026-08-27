@@ -1,0 +1,64 @@
+Do not push main or deploy yet. The feature itself is sound, but the release path still has three issues:
+- The screenshot commit is unrelated.
+- e5cf72e also contains .agents/memory/schema-migrations.md, which is an internal artefact and should be excluded.
+- The production database location remains unconfirmed. “No Replit production database” does not prove there is no production database—the hosted VectorMesh deployment may use an external DATABASE_URL.
+The managed workflow failures also need investigating before production, particularly the Microsoft cTag failure. Direct tests passing does not cancel out a reproducible workflow failure.
+Give Replit this instruction:
+Prepare a clean Show Track pull-request branch. Do not modify any database, push main, deploy, publish or restart anything.
+
+1. Create a new branch from origin/main:
+   feature/agenda-show-track
+
+2. Reapply only the application implementation from commit e5cf72e without committing it immediately.
+
+3. Exclude all internal/reference artefacts:
+   - .agents/memory/schema-migrations.md
+   - attached_assets/Screenshot_2026-08-26_at_16.25.17_1787750828095.png
+   - attached_assets/Pasted-The-audit-confirms-the-show-track-implementation-is-pro_1787829062406.txt
+   - Any .local task/state files
+   - Any other attached_assets files
+
+4. The resulting branch should contain only these eight files:
+   - client/src/components/agenda/AgendaDisplayWidget.tsx
+   - client/src/pages/agenda-configs.tsx
+   - migrations/0031_agenda_show_track.sql
+   - server/agendaRoutes.ts
+   - shared/schema.ts
+   - tests/agenda-description-auto-scroll.test.ts
+   - tests/agenda-routes-tenant-scoping.test.ts
+   - tests/agenda-typography.test.tsx
+
+5. Confirm the migration remains exactly additive and does not reference show_now_next_label:
+
+   ALTER TABLE IF EXISTS agenda_widget_configs
+     ADD COLUMN IF NOT EXISTS show_track boolean NOT NULL DEFAULT true;
+
+6. Run:
+   - npm run typecheck
+   - npm run test:unit
+   - npm run build
+   - git diff --check origin/main...HEAD
+
+7. Commit once with:
+   Implement agenda Show Track setting
+
+8. Report, but do not push:
+   - git status -sb
+   - git log --oneline origin/main..HEAD
+   - git diff --name-status origin/main...HEAD
+   - git diff --stat origin/main...HEAD
+   - Results of every verification command
+   - Confirmation that no .agents, .local or attached_assets files are committed
+
+9. Perform a read-only production database topology audit:
+   - Identify where the existing production VectorMesh application is hosted.
+   - Determine whether production uses a Replit-managed database or an external DATABASE_URL.
+   - Do not print credentials or connection strings.
+   - Confirm whether development and production use different database endpoints.
+   - Identify the established safe mechanism for applying additive SQL to the actual production database.
+   - Do not connect to or modify production.
+
+10. Investigate the managed workflow failures without changing code:
+   - Extract the exact Microsoft cTag unit-test failure.
+   - Extract the names and errors for all seven E2E failures.
+   - State whether each failure reproduces on the clean branch.
