@@ -10,3 +10,4 @@ data/uploads
 test-results/
 playwright-report/
 playwright/.cache/
+attached_assets/Pasted-*.txt
