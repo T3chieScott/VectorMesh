@@ -545,14 +545,14 @@ test("__TEST_S382__ overflow is measured as inner.scrollHeight minus viewport.cl
   );
 });
 
-test("__TEST_S382__ description viewport is CSS-bounded (flex:1 min-h-0) not state-driven height", () => {
+test("__TEST_S382__ description viewport uses intrinsic flex sizing with a CSS bound", () => {
   const src = readFileSync(
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
     "utf-8",
   );
   assert.ok(
-    src.includes(`"mt-1 flex-1 min-h-0 overflow-hidden"`),
-    "description viewport must use flex-1 min-h-0 overflow-hidden",
+    src.includes(`"mt-1 flex-auto min-h-0 overflow-hidden"`),
+    "description viewport must use flex-auto min-h-0 overflow-hidden",
   );
   assert.ok(
     !src.includes("viewportH !== null ? viewportH"),
@@ -560,28 +560,33 @@ test("__TEST_S382__ description viewport is CSS-bounded (flex:1 min-h-0) not sta
   );
 });
 
-test("__TEST_S382__ card receives explicit allocatedH (portrait) or height:100% (landscape/ultrawide)", () => {
+test("__TEST_S382__ card receives maxHeight constraints without forced full-height stretching", () => {
   const src = readFileSync(
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
     "utf-8",
   );
-  // Portrait path: explicit pixel height from JS formula
+  // Portrait path: maximum pixel height from JS formula
   assert.ok(
     src.includes("allocatedH !== null"),
-    "portrait card must receive height:allocatedH when pageH/pageItemCount are provided",
+    "portrait card must calculate allocatedH when pageH/pageItemCount are provided",
+  );
+  assert.ok(
+    src.includes("maxHeight: allocatedH"),
+    "portrait card must use allocatedH as a maximum, not an unconditional height",
   );
   // Landscape/ultrawide grid path: CSS grid cell bounds the card
   assert.ok(
-    src.includes('{ height: "100%", minHeight: 0 }'),
-    "grid-cell cards must use height:100% so the CSS grid row bounds them",
+    src.includes('{ maxHeight: "100%", minHeight: 0, alignSelf: "start" }'),
+    "grid-cell cards must use maxHeight:100% and align-self:start",
   );
+  assert.ok(!src.includes('{ height: "100%", minHeight: 0 }'), "cards must not be forced to height:100%");
   assert.ok(
     src.includes("items-stretch min-h-0"),
     "card must switch to items-stretch so body column fills the allocated height",
   );
 });
 
-test("__TEST_S382__ body column is flex-col so description viewport can use flex-grow", () => {
+test("__TEST_S382__ body column is flex-col so description viewport can shrink within its bound", () => {
   const src = readFileSync(
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
     "utf-8",
