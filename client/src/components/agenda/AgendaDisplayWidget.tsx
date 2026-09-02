@@ -18,15 +18,10 @@ import {
   splitCurrentNext,
 } from "@shared/agenda-resolver";
 
-// Task #240 — long-form weekday / date formatters used by the optional
-// "Show day name" / "Show date" header chunks. Reflects the *displayed*
-// day, which equals the day of the first resolved item when present so
-// the today_tomorrow auto-roll leaves header and body in agreement.
+// Long-form weekday / date formatters used by the live header and by
+// explicit dates shown beneath future NEXT labels.
 // When the caller doesn't pass a tz (orphan client / preview without
-// site context), fall back to UTC so header day/date stays consistent
-// with the resolver's tzCalendarDayKey() bucketing — otherwise the
-// header would show the browser's local day while the body shows the
-// UTC day, splitting the today_tomorrow auto-roll across two calendars.
+// site context), fall back to UTC so every visible date uses one calendar.
 function formatWeekday(d: Date, tz: string | null | undefined): string {
   return new Intl.DateTimeFormat(undefined, {
     weekday: "long",
@@ -34,6 +29,7 @@ function formatWeekday(d: Date, tz: string | null | undefined): string {
   }).format(d);
 }
 function formatLongDate(d: Date, tz: string | null | undefined): string {
+  if (Number.isNaN(d.getTime())) return "";
   return new Intl.DateTimeFormat(undefined, {
     day: "numeric",
     month: "long",
@@ -277,6 +273,38 @@ function formatNow(tz: string | null | undefined, now: Date): string {
   }).format(now);
 }
 
+/** Format actual elapsed session time without using displayed clock strings. */
+export function formatSessionDuration(
+  start: Date | string | null | undefined,
+  end: Date | string | null | undefined,
+): string | null {
+  if (start == null || end == null) return null;
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return null;
+  }
+
+  const totalMinutes = Math.round((endMs - startMs) / 60_000);
+  if (totalMinutes <= 0) return null;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes} min`;
+  if (minutes === 0) return `${hours} hr${hours === 1 ? "" : "s"}`;
+  return `${hours} hr${hours === 1 ? "" : "s"} ${minutes} min`;
+}
+
+function formatNextSessionDate(
+  start: Date | string | null | undefined,
+  now: Date,
+  tz: string | null | undefined,
+): string | null {
+  if (start == null || !Number.isFinite(new Date(start).getTime())) return null;
+  if (tzDayKey(start, tz) === tzDayKey(now, tz)) return null;
+  const formatted = formatLongDate(new Date(start), tz);
+  return formatted || null;
+}
+
 function StatusBadge({
   status,
   scale,
@@ -389,6 +417,31 @@ function normaliseCustomSpeakerMarker(value: string | null | undefined): string 
     : null;
 }
 
+function resolveSpeakerMarker(
+  config: AgendaWidgetConfig,
+): { glyph: string; usesAccent: boolean } | null {
+  const configuredStyle = config.speakerMarkerStyle ?? "microphone";
+  const style = AGENDA_SPEAKER_MARKER_STYLES.includes(
+    configuredStyle as (typeof AGENDA_SPEAKER_MARKER_STYLES)[number],
+  )
+    ? configuredStyle
+    : "microphone";
+  if (style === "none") return null;
+
+  const custom = normaliseCustomSpeakerMarker(config.speakerCustomMarker);
+  return {
+    glyph:
+      style === "circle"
+        ? "●"
+        : style === "square"
+          ? "■"
+          : style === "custom" && custom
+            ? custom
+            : "🎤",
+    usesAccent: style === "circle" || style === "square",
+  };
+}
+
 function SpeakerMarker({
   config,
   accentColor,
@@ -398,34 +451,17 @@ function SpeakerMarker({
   accentColor?: string;
   testId?: string;
 }) {
-  const configuredStyle = config.speakerMarkerStyle ?? "microphone";
-  const style = AGENDA_SPEAKER_MARKER_STYLES.includes(
-    configuredStyle as (typeof AGENDA_SPEAKER_MARKER_STYLES)[number],
-  )
-    ? configuredStyle
-    : "microphone";
-
-  if (style === "none") return null;
-
-  const custom = normaliseCustomSpeakerMarker(config.speakerCustomMarker);
-  const glyph =
-    style === "circle"
-      ? "●"
-      : style === "square"
-        ? "■"
-        : style === "custom" && custom
-          ? custom
-          : "🎤";
-  const usesAccent = style === "circle" || style === "square";
+  const marker = resolveSpeakerMarker(config);
+  if (!marker) return null;
 
   return (
     <span
       aria-hidden="true"
       className="mr-1 inline-block"
-      style={usesAccent ? { color: accentColor || config.accentColor } : undefined}
+      style={marker.usesAccent ? { color: accentColor || config.accentColor } : undefined}
       data-testid={testId}
     >
-      {glyph}
+      {marker.glyph}
     </span>
   );
 }
@@ -445,6 +481,7 @@ function AgendaRow({
   onScrollOverflow,
   scrollResetTick,
   nowNextLabel,
+  nowNextSessionDate,
 }: {
   item: AgendaItem;
   config: AgendaWidgetConfig;
@@ -466,9 +503,15 @@ function AgendaRow({
   onScrollOverflow?: (id: string, px: number) => void;
   scrollResetTick?: number;
   nowNextLabel?: NowNextItemLabel;
+  nowNextSessionDate?: string;
 }) {
   const timeStyle = timeRoleStyle(config, roleColors?.time);
   const bodyStyle = roleColors?.body ? { color: roleColors.body } : undefined;
+  const speakerMarker = resolveSpeakerMarker(config);
+  const sessionDuration =
+    config.showSessionDuration === true
+      ? formatSessionDuration(item.startsAt, item.endsAt)
+      : null;
   // Treat an omitted field as visible so legacy preview/test payloads remain
   // backwards compatible while persisted configs use the explicit boolean.
   const showTrack = config.showTrack !== false;
@@ -665,6 +708,15 @@ function AgendaRow({
         >
           {formatTime(item.endsAt, tz)}
         </span>
+        {sessionDuration && (
+            <span
+              className="mt-1 text-center leading-tight opacity-70"
+              style={{ fontSize: scale * roleSizes.date, ...timeStyle }}
+              data-testid={tid(`agenda-session-duration-${item.id}`)}
+            >
+              {sessionDuration}
+            </span>
+        )}
         {showCardDate && (
           <span
             className="mt-1 text-center leading-tight opacity-70"
@@ -681,13 +733,24 @@ function AgendaRow({
           shrink-0. */}
       <div className={`flex-1 min-w-0${scrollEnabled ? " flex flex-col min-h-0" : ""}`}>
         {nowNextLabel && (
-          <p
-            className={`mb-1 font-semibold uppercase tracking-widest${scrollEnabled ? " shrink-0" : ""}`}
-            style={{ fontSize: scale * 0.62, color: accentColor || config.accentColor }}
-            data-testid={tid(`agenda-now-next-label-${item.id}`)}
-          >
-            {nowNextLabel}
-          </p>
+          <div className={`${scrollEnabled ? "shrink-0 " : ""}mb-1`}>
+            <p
+              className="font-semibold uppercase tracking-widest"
+              style={{ fontSize: scale * 0.62, color: accentColor || config.accentColor }}
+              data-testid={tid(`agenda-now-next-label-${item.id}`)}
+            >
+              {nowNextLabel}
+            </p>
+            {nowNextSessionDate && (
+              <p
+                className="mt-0.5 opacity-70"
+                style={{ fontSize: scale * 0.58, color: accentColor || config.accentColor }}
+                data-testid={tid(`agenda-now-next-date-${item.id}`)}
+              >
+                {nowNextSessionDate}
+              </p>
+            )}
+          </div>
         )}
         <div className={`flex items-center gap-2 flex-wrap${scrollEnabled ? " shrink-0" : ""}`}>
           <h3
@@ -719,14 +782,26 @@ function AgendaRow({
               </div>
             )}
             {config.showPresenter && item.presenter && (
-              <span className="whitespace-pre-line" data-testid={tid(`agenda-presenter-${item.id}`)}>
-                <SpeakerMarker
-                  config={config}
-                  accentColor={accentColor}
-                  testId={tid(`agenda-speaker-marker-${item.id}`)}
-                />
-                {item.presenter}
-              </span>
+              <div
+                className="flex items-start"
+                data-testid={tid(`agenda-presenter-${item.id}`)}
+              >
+                {speakerMarker && (
+                  <span
+                    className="flex-none"
+                    style={{ width: scale * 1.35 }}
+                  >
+                    <SpeakerMarker
+                      config={config}
+                      accentColor={accentColor}
+                      testId={tid(`agenda-speaker-marker-${item.id}`)}
+                    />
+                  </span>
+                )}
+                <span className="min-w-0 whitespace-pre-line">
+                  {item.presenter}
+                </span>
+              </div>
             )}
           </div>
         ) : null}
@@ -863,6 +938,7 @@ function ColumnFlow({
             onScrollOverflow={onScrollOverflow}
             scrollResetTick={scrollResetTick}
             nowNextLabel={resolveNowNextItemLabel(config, it, now)}
+            nowNextSessionDate={formatNextSessionDate(it.startsAt, now, tz) ?? undefined}
           />
         </div>
       ))}
@@ -936,6 +1012,7 @@ function BoundedScrollGrid({
           onScrollOverflow={onScrollOverflow}
           scrollResetTick={scrollResetTick}
           nowNextLabel={resolveNowNextItemLabel(config, it, now)}
+          nowNextSessionDate={formatNextSessionDate(it.startsAt, now, tz) ?? undefined}
         />
       ))}
     </div>
@@ -968,6 +1045,7 @@ function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, ro
           onScrollOverflow={onScrollOverflow}
           scrollResetTick={scrollResetTick}
           nowNextLabel={resolveNowNextItemLabel(config, it, now)}
+          nowNextSessionDate={formatNextSessionDate(it.startsAt, now, tz) ?? undefined}
         />
       ))}
     </div>
@@ -1001,6 +1079,9 @@ function TotemNowNext({
   const { current, upcoming } = splitCurrentNext(items, now);
   const cur = current[0];
   const next = upcoming.slice(0, 4);
+  const nextDate = next[0]
+    ? formatNextSessionDate(next[0].startsAt, now, tz)
+    : null;
   const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
   const bodyStyle = roleColors.body ? { color: roleColors.body } : undefined;
   return (
@@ -1027,6 +1108,15 @@ function TotemNowNext({
         >
           Next
         </h2>
+        {nextDate && (
+          <p
+            className="-mt-1 mb-2 opacity-70"
+            style={{ fontSize: scale * 0.65, ...titleStyle }}
+            data-testid="agenda-now-next-date-totem"
+          >
+            {nextDate}
+          </p>
+        )}
         <div className="flex flex-col gap-2">
           {next.length === 0 && (
             <p className="opacity-60" style={{ fontSize: scale, ...bodyStyle }}>
@@ -1062,6 +1152,17 @@ function RoomDoor({
   const { current, upcoming } = splitCurrentNext(items, now);
   const cur = current[0];
   const next = upcoming[0];
+  const currentDuration =
+    config.showSessionDuration === true && cur
+      ? formatSessionDuration(cur.startsAt, cur.endsAt)
+      : null;
+  const nextDuration =
+    config.showSessionDuration === true && next
+      ? formatSessionDuration(next.startsAt, next.endsAt)
+      : null;
+  const nextDate = next
+    ? formatNextSessionDate(next.startsAt, now, tz)
+    : null;
   const roomName = cur?.room || next?.room || config.roomFilter?.[0] || "Room";
   const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
   const bodyStyle = roleColors.body ? { color: roleColors.body } : undefined;
@@ -1086,6 +1187,15 @@ function RoomDoor({
             <p className="font-mono opacity-80 mt-4" style={{ fontSize: scale * 1.6 * timeFactor, ...timeStyle }}>
               {showCardDate ? `${formatShortDate(cur.startsAt, tz)} · ` : ""}{formatTime(cur.startsAt, tz)} – {formatTime(cur.endsAt, tz)}
             </p>
+            {currentDuration && (
+              <p
+                className="mt-1 opacity-70"
+                style={{ fontSize: scale * 0.75 * timeFactor, ...timeStyle }}
+                data-testid={`agenda-session-duration-${cur.id}`}
+              >
+                {currentDuration}
+              </p>
+            )}
             <h1 className="font-bold mt-3 leading-tight" style={{ fontSize: scale * 3 * titleFactor, ...titleStyle }}>
               {cur.title}
             </h1>
@@ -1114,9 +1224,27 @@ function RoomDoor({
           <p className="opacity-60 uppercase tracking-widest" style={{ fontSize: scale * 0.8 * titleFactor, ...titleStyle }}>
             Up next
           </p>
+          {nextDate && (
+            <p
+              className="mt-1 opacity-70"
+              style={{ fontSize: scale * 0.65 * titleFactor, ...titleStyle }}
+              data-testid={`agenda-now-next-date-${next.id}`}
+            >
+              {nextDate}
+            </p>
+          )}
           <p className="font-mono opacity-80 mt-2" style={{ fontSize: scale * 1.1 * timeFactor, ...timeStyle }}>
             {showCardDate ? `${formatShortDate(next.startsAt, tz)} · ` : ""}{formatTime(next.startsAt, tz)}
           </p>
+          {nextDuration && (
+            <p
+              className="mt-1 opacity-70"
+              style={{ fontSize: scale * 0.65 * timeFactor, ...timeStyle }}
+              data-testid={`agenda-session-duration-${next.id}`}
+            >
+              {nextDuration}
+            </p>
+          )}
           <p className="font-semibold mt-1" style={{ fontSize: scale * 1.4 * titleFactor, ...bodyStyle }}>
             {next.title}
           </p>
@@ -1536,12 +1664,10 @@ export function AgendaDisplayWidget({
         </div>
         {(config.showCurrentTime || config.showDayName || config.showDate) && (
           (() => {
-            // Task #240 — the displayed day equals the day of the first
-            // resolved item (so today_tomorrow auto-roll shows tomorrow's
-            // weekday/date alongside tomorrow's sessions). Falls back to
-            // "now" when the list is empty.
-            const headerDay =
-              items.length > 0 ? new Date(items[0].startsAt) : now;
+            // Task #395 — weekday, date, and clock are all derived from the
+            // same live instant in the configured display timezone. Session
+            // dates are shown beside future NEXT content instead.
+            const headerDay = now;
             return (
               <div
                 className="flex flex-col items-end opacity-80"
@@ -1673,7 +1799,8 @@ export function AgendaDisplayWidget({
                 roleColors={roleColors}
                 showCardDate={multiDay}
                 suppressTestId
-              nowNextLabel={resolveNowNextItemLabel(config, it, now)}
+                nowNextLabel={resolveNowNextItemLabel(config, it, now)}
+                nowNextSessionDate={formatNextSessionDate(it.startsAt, now, timezone) ?? undefined}
               />
             </div>
           ))}

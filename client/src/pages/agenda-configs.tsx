@@ -142,6 +142,7 @@ const configFormSchema = z.object({
   showRoom: z.boolean(),
   showTrack: z.boolean(),
   showStatus: z.boolean(),
+  showSessionDuration: z.boolean(),
   showCurrentTime: z.boolean(),
   showEventName: z.boolean(),
   showDayName: z.boolean(),
@@ -198,6 +199,7 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     showRoom: c?.showRoom ?? true,
     showTrack: c?.showTrack ?? true,
     showStatus: c?.showStatus ?? true,
+    showSessionDuration: c?.showSessionDuration ?? false,
     showCurrentTime: c?.showCurrentTime ?? true,
     showEventName: c?.showEventName ?? true,
     showDayName: c?.showDayName ?? false,
@@ -259,6 +261,7 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     showRoom: values.showRoom,
     showTrack: values.showTrack,
     showStatus: values.showStatus,
+    showSessionDuration: values.showSessionDuration,
     showCurrentTime: values.showCurrentTime,
     showEventName: values.showEventName,
     showDayName: values.showDayName,
@@ -731,6 +734,7 @@ function ConfigEditor({
                   ["showPresenter", "Presenter"],
                   ["showDescription", "Description"],
                   ["showStatus", "Status"],
+                  ["showSessionDuration", "Session duration"],
                 ] as const).map(([k, label]) => (
                   <FormField key={k} control={form.control} name={k} render={({ field }) => (
                     <FormItem className="flex items-center justify-between rounded-md border px-3 py-2">

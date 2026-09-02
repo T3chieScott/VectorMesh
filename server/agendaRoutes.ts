@@ -185,6 +185,7 @@ export const PUBLIC_AGENDA_CONFIG_FIELDS = [
   "speakerCustomMarker",
   "descriptionTextAlign",
   "showNowNextLabel",
+  "showSessionDuration",
   // Task #231 — optional typography & role-colour overrides. All
   // nullable; widget renders identically when they are null.
   "fontFamily",
@@ -1226,6 +1227,7 @@ async function buildAgendaDisplayPayload(
         speakerCustomMarker: config.speakerCustomMarker ?? null,
         descriptionTextAlign: config.descriptionTextAlign ?? "left",
         showNowNextLabel: config.showNowNextLabel ?? false,
+        showSessionDuration: config.showSessionDuration ?? false,
         // Task #231 — typography & role-colour overrides (all nullable).
         // Coerce undefined → null so the keys are always present in the
         // public payload, matching PUBLIC_AGENDA_CONFIG_FIELDS exactly

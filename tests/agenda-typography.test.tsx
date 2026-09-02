@@ -360,7 +360,7 @@ test("renderer: agenda-day-date is omitted when both showDayName and showDate ar
   assert.equal(attrOn(html, "agenda-day-date").length, 0, "header day/date block should be absent by default");
 });
 
-test("renderer: showDayName renders the weekday derived from the first item's startsAt in the given tz", () => {
+test("renderer: showDayName renders the weekday derived from the live clock in the given tz", () => {
   // 2026-06-15 09:00 UTC = Monday. In London (BST, UTC+1) it's still Monday.
   const html = renderToStaticMarkup(
     React.createElement(AgendaDisplayWidget, {
@@ -369,6 +369,7 @@ test("renderer: showDayName renders the weekday derived from the first item's st
       width: 1920,
       height: 1080,
       timezone: "Europe/London",
+      now: new Date("2026-06-15T09:00:00Z"),
     }),
   );
   assert.ok(attrOn(html, "agenda-day-name").length > 0, "day-name chunk should render");
@@ -385,6 +386,7 @@ test("renderer: showDate renders a long-form date in the given tz", () => {
       width: 1920,
       height: 1080,
       timezone: "Europe/London",
+      now: new Date("2026-06-15T09:00:00Z"),
     }),
   );
   assert.ok(attrOn(html, "agenda-date").length > 0, "date chunk should render");
