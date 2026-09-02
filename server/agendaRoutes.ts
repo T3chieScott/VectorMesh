@@ -179,6 +179,12 @@ export const PUBLIC_AGENDA_CONFIG_FIELDS = [
   "descriptionLines",
   // Task #382 — auto-scroll overflowing descriptions (Full mode only).
   "descriptionAutoScroll",
+  // Task #394 — additive agenda content styling and card-layout labels.
+  "showDescriptionDivider",
+  "speakerMarkerStyle",
+  "speakerCustomMarker",
+  "descriptionTextAlign",
+  "showNowNextLabel",
   // Task #231 — optional typography & role-colour overrides. All
   // nullable; widget renders identically when they are null.
   "fontFamily",
@@ -1213,6 +1219,13 @@ async function buildAgendaDisplayPayload(
         // Task #382 — always present; pre-migration rows and missing values
         // both default to false so existing displays are unchanged.
         descriptionAutoScroll: config.descriptionAutoScroll ?? false,
+        // Task #394 — explicit legacy defaults keep old displays byte-for-byte
+        // equivalent apart from the new additive public keys.
+        showDescriptionDivider: config.showDescriptionDivider ?? false,
+        speakerMarkerStyle: config.speakerMarkerStyle ?? "microphone",
+        speakerCustomMarker: config.speakerCustomMarker ?? null,
+        descriptionTextAlign: config.descriptionTextAlign ?? "left",
+        showNowNextLabel: config.showNowNextLabel ?? false,
         // Task #231 — typography & role-colour overrides (all nullable).
         // Coerce undefined → null so the keys are always present in the
         // public payload, matching PUBLIC_AGENDA_CONFIG_FIELDS exactly

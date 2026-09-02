@@ -26,6 +26,10 @@ import {
   AGENDA_DAY_FILTERS,
   AGENDA_DAY_FILTER_LABELS,
   AGENDA_LAYOUT_MODES,
+  AGENDA_SPEAKER_MARKER_STYLES,
+  AGENDA_DESCRIPTION_TEXT_ALIGNS,
+  AGENDA_CUSTOM_SPEAKER_MARKER_MAX_CODEPOINTS,
+  isAgendaNowNextLabelApplicable,
   AGENDA_FONT_SCALES,
   AGENDA_DENSITIES,
   AGENDA_THEMES,
@@ -122,7 +126,19 @@ const configFormSchema = z.object({
   descriptionLines: z.string(),
   // Task #382 — auto-scroll; only active when descriptionLines === "full".
   descriptionAutoScroll: z.boolean(),
+  showDescriptionDivider: z.boolean(),
+  descriptionTextAlign: z.enum(AGENDA_DESCRIPTION_TEXT_ALIGNS),
   showPresenter: z.boolean(),
+  speakerMarkerStyle: z.enum(AGENDA_SPEAKER_MARKER_STYLES),
+  speakerCustomMarker: z
+    .string()
+    .trim()
+    .refine(
+      (value) =>
+        Array.from(value).length <=
+        AGENDA_CUSTOM_SPEAKER_MARKER_MAX_CODEPOINTS,
+      `Use ${AGENDA_CUSTOM_SPEAKER_MARKER_MAX_CODEPOINTS} characters or fewer`,
+    ),
   showRoom: z.boolean(),
   showTrack: z.boolean(),
   showStatus: z.boolean(),
@@ -130,6 +146,7 @@ const configFormSchema = z.object({
   showEventName: z.boolean(),
   showDayName: z.boolean(),
   showDate: z.boolean(),
+  showNowNextLabel: z.boolean(),
 });
 type ConfigFormValues = z.infer<typeof configFormSchema>;
 
@@ -169,7 +186,15 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     descriptionLines: c?.descriptionLines === null ? "full" : String(c?.descriptionLines ?? 2),
     // Task #382 — default false; only meaningful when descriptionLines = "full".
     descriptionAutoScroll: c?.descriptionAutoScroll ?? false,
+    showDescriptionDivider: c?.showDescriptionDivider ?? false,
+    descriptionTextAlign:
+      (c?.descriptionTextAlign as ConfigFormValues["descriptionTextAlign"]) ??
+      "left",
     showPresenter: c?.showPresenter ?? true,
+    speakerMarkerStyle:
+      (c?.speakerMarkerStyle as ConfigFormValues["speakerMarkerStyle"]) ??
+      "microphone",
+    speakerCustomMarker: c?.speakerCustomMarker ?? "",
     showRoom: c?.showRoom ?? true,
     showTrack: c?.showTrack ?? true,
     showStatus: c?.showStatus ?? true,
@@ -177,6 +202,7 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     showEventName: c?.showEventName ?? true,
     showDayName: c?.showDayName ?? false,
     showDate: c?.showDate ?? false,
+    showNowNextLabel: c?.showNowNextLabel ?? false,
   };
 }
 
@@ -222,7 +248,14 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     // Task #382 — only persist true when descriptionLines is Full; clear it
     // if the operator switches away from Full so there are no phantom flags.
     descriptionAutoScroll: values.descriptionLines === "full" ? values.descriptionAutoScroll : false,
+    showDescriptionDivider: values.showDescriptionDivider,
+    descriptionTextAlign: values.descriptionTextAlign,
     showPresenter: values.showPresenter,
+    speakerMarkerStyle: values.speakerMarkerStyle,
+    speakerCustomMarker:
+      values.speakerMarkerStyle === "custom"
+        ? values.speakerCustomMarker.trim() || null
+        : null,
     showRoom: values.showRoom,
     showTrack: values.showTrack,
     showStatus: values.showStatus,
@@ -230,6 +263,7 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     showEventName: values.showEventName,
     showDayName: values.showDayName,
     showDate: values.showDate,
+    showNowNextLabel: values.showNowNextLabel,
   };
 }
 
@@ -706,27 +740,126 @@ function ConfigEditor({
                   )} />
                 ))}
               </div>
-              {form.watch("showDescription") && (
-                <FormField control={form.control} name="descriptionLines" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Description lines</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger data-testid="select-description-lines">
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="1">1 line</SelectItem>
-                        <SelectItem value="2">2 lines</SelectItem>
-                        <SelectItem value="3">3 lines</SelectItem>
-                        <SelectItem value="4">4 lines</SelectItem>
-                        <SelectItem value="5">5 lines</SelectItem>
-                        <SelectItem value="full">Full (no limit)</SelectItem>
-                      </SelectContent>
-                    </Select>
+              {isAgendaNowNextLabelApplicable(
+                watched.displayMode,
+                watched.layoutMode,
+              ) && (
+                <FormField control={form.control} name="showNowNextLabel" render={({ field }) => (
+                  <FormItem className="flex items-center justify-between rounded-md border px-3 py-2">
+                    <div className="space-y-0.5">
+                      <FormLabel className="m-0">Show NOW/NEXT labels</FormLabel>
+                      <p className="text-xs text-muted-foreground">
+                        Labels the current and upcoming cards in Now / next mode.
+                      </p>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        data-testid="switch-show-now-next-label"
+                      />
+                    </FormControl>
                   </FormItem>
                 )} />
+              )}
+              {watched.showPresenter && (
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField control={form.control} name="speakerMarkerStyle" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Speaker marker</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-speaker-marker-style">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="microphone">Microphone</SelectItem>
+                          <SelectItem value="circle">Circle bullet</SelectItem>
+                          <SelectItem value="square">Square bullet</SelectItem>
+                          <SelectItem value="custom">Custom symbol</SelectItem>
+                          <SelectItem value="none">None</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FormItem>
+                  )} />
+                  {watched.speakerMarkerStyle === "custom" && (
+                    <FormField control={form.control} name="speakerCustomMarker" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Custom speaker symbol</FormLabel>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            maxLength={16}
+                            placeholder="✦"
+                            data-testid="input-speaker-custom-marker"
+                          />
+                        </FormControl>
+                        <p className="text-[10px] text-muted-foreground">
+                          Up to {AGENDA_CUSTOM_SPEAKER_MARKER_MAX_CODEPOINTS} text characters or emoji.
+                        </p>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  )}
+                </div>
+              )}
+              {form.watch("showDescription") && (
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField control={form.control} name="descriptionLines" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Description lines</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-description-lines">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="1">1 line</SelectItem>
+                          <SelectItem value="2">2 lines</SelectItem>
+                          <SelectItem value="3">3 lines</SelectItem>
+                          <SelectItem value="4">4 lines</SelectItem>
+                          <SelectItem value="5">5 lines</SelectItem>
+                          <SelectItem value="full">Full (no limit)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="descriptionTextAlign" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Description alignment</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-description-text-align">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="left">Left aligned</SelectItem>
+                          <SelectItem value="justify">Justified</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="showDescriptionDivider" render={({ field }) => (
+                    <FormItem className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
+                      <div className="space-y-0.5">
+                        <FormLabel className="m-0">Description divider</FormLabel>
+                        <p className="text-xs text-muted-foreground">
+                          Uses the display accent colour above each description.
+                        </p>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                          data-testid="switch-show-description-divider"
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )} />
+                </div>
               )}
               {/* Task #382 — auto-scroll, only when description is Full */}
               {form.watch("showDescription") && form.watch("descriptionLines") === "full" && (

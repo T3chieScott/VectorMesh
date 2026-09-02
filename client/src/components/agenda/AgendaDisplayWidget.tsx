@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   AgendaItem,
   AgendaWidgetConfig,
   AgendaStatus,
   AgendaDisplayMode,
   AgendaLayoutMode,
+} from "@shared/schema";
+import {
+  AGENDA_CUSTOM_SPEAKER_MARKER_MAX_CODEPOINTS,
+  AGENDA_SPEAKER_MARKER_STYLES,
 } from "@shared/schema";
 import { resolveFontStack } from "@shared/fonts";
 import {
@@ -361,6 +365,71 @@ function isCurrentlyRunning(item: AgendaItem, now: Date): boolean {
   return start <= t && t < end && item.status !== "cancelled";
 }
 
+type NowNextItemLabel = "NOW" | "NEXT";
+
+function resolveNowNextItemLabel(
+  config: AgendaWidgetConfig,
+  item: AgendaItem,
+  now: Date,
+): NowNextItemLabel | undefined {
+  if (
+    config.displayMode !== "now_next" ||
+    config.showNowNextLabel !== true
+  ) {
+    return undefined;
+  }
+  return isCurrentlyRunning(item, now) ? "NOW" : "NEXT";
+}
+
+function normaliseCustomSpeakerMarker(value: string | null | undefined): string | null {
+  const marker = value?.trim() ?? "";
+  const count = Array.from(marker).length;
+  return count > 0 && count <= AGENDA_CUSTOM_SPEAKER_MARKER_MAX_CODEPOINTS
+    ? marker
+    : null;
+}
+
+function SpeakerMarker({
+  config,
+  accentColor,
+  testId,
+}: {
+  config: AgendaWidgetConfig;
+  accentColor?: string;
+  testId?: string;
+}) {
+  const configuredStyle = config.speakerMarkerStyle ?? "microphone";
+  const style = AGENDA_SPEAKER_MARKER_STYLES.includes(
+    configuredStyle as (typeof AGENDA_SPEAKER_MARKER_STYLES)[number],
+  )
+    ? configuredStyle
+    : "microphone";
+
+  if (style === "none") return null;
+
+  const custom = normaliseCustomSpeakerMarker(config.speakerCustomMarker);
+  const glyph =
+    style === "circle"
+      ? "●"
+      : style === "square"
+        ? "■"
+        : style === "custom" && custom
+          ? custom
+          : "🎤";
+  const usesAccent = style === "circle" || style === "square";
+
+  return (
+    <span
+      aria-hidden="true"
+      className="mr-1 inline-block"
+      style={usesAccent ? { color: accentColor || config.accentColor } : undefined}
+      data-testid={testId}
+    >
+      {glyph}
+    </span>
+  );
+}
+
 function AgendaRow({
   item,
   config,
@@ -375,6 +444,7 @@ function AgendaRow({
   pageItemCount,
   onScrollOverflow,
   scrollResetTick,
+  nowNextLabel,
 }: {
   item: AgendaItem;
   config: AgendaWidgetConfig;
@@ -395,6 +465,7 @@ function AgendaRow({
   pageItemCount?: number;
   onScrollOverflow?: (id: string, px: number) => void;
   scrollResetTick?: number;
+  nowNextLabel?: NowNextItemLabel;
 }) {
   const timeStyle = timeRoleStyle(config, roleColors?.time);
   const bodyStyle = roleColors?.body ? { color: roleColors.body } : undefined;
@@ -609,6 +680,15 @@ function AgendaRow({
           the card bound requires it to shrink. Title/meta/status stay
           shrink-0. */}
       <div className={`flex-1 min-w-0${scrollEnabled ? " flex flex-col min-h-0" : ""}`}>
+        {nowNextLabel && (
+          <p
+            className={`mb-1 font-semibold uppercase tracking-widest${scrollEnabled ? " shrink-0" : ""}`}
+            style={{ fontSize: scale * 0.62, color: accentColor || config.accentColor }}
+            data-testid={tid(`agenda-now-next-label-${item.id}`)}
+          >
+            {nowNextLabel}
+          </p>
+        )}
         <div className={`flex items-center gap-2 flex-wrap${scrollEnabled ? " shrink-0" : ""}`}>
           <h3
             className="font-semibold leading-tight break-words"
@@ -639,50 +719,74 @@ function AgendaRow({
               </div>
             )}
             {config.showPresenter && item.presenter && (
-              <span className="whitespace-pre-line" data-testid={tid(`agenda-presenter-${item.id}`)}>🎤 {item.presenter}</span>
+              <span className="whitespace-pre-line" data-testid={tid(`agenda-presenter-${item.id}`)}>
+                <SpeakerMarker
+                  config={config}
+                  accentColor={accentColor}
+                  testId={tid(`agenda-speaker-marker-${item.id}`)}
+                />
+                {item.presenter}
+              </span>
             )}
           </div>
         ) : null}
         {config.showDescription && item.description && (
-          scrollEnabled ? (
-            // Task #382 — description viewport: flex-auto uses the natural
-            // description height, then shrinks within the card's maximum after
-            // title/meta/status (which are shrink-0). min-h-0 lets the flex
-            // child honour a smaller allocation;
-            // overflow:hidden clips text that extends beyond the viewport.
-            // The inner <p> retains its natural height (scrollHeight) so we
-            // can measure true overflow independently of clipping.
-            <div
-              ref={descViewportRef}
-              className="mt-1 flex-auto min-h-0 overflow-hidden"
-            >
+          <>
+            {config.showDescriptionDivider === true && (
+              <div
+                aria-hidden="true"
+                className={`mt-2 mb-1 h-px w-full opacity-70${scrollEnabled ? " shrink-0" : ""}`}
+                style={{ backgroundColor: accentColor || config.accentColor }}
+                data-testid={tid(`agenda-description-divider-${item.id}`)}
+              />
+            )}
+            {scrollEnabled ? (
+              // Task #382 — description viewport: flex-auto uses the natural
+              // description height, then shrinks within the card's maximum after
+              // title/meta/status (which are shrink-0). min-h-0 lets the flex
+              // child honour a smaller allocation;
+              // overflow:hidden clips text that extends beyond the viewport.
+              // The inner <p> retains its natural height (scrollHeight) so we
+              // can measure true overflow independently of clipping.
+              <div
+                ref={descViewportRef}
+                className="mt-1 flex-auto min-h-0 overflow-hidden"
+                data-testid={tid(`agenda-description-viewport-${item.id}`)}
+              >
+                <p
+                  ref={descInnerRef}
+                  className="opacity-75"
+                  style={{
+                    fontSize: scale * descMult,
+                    ...bodyStyle,
+                    textAlign: config.descriptionTextAlign === "justify" ? "justify" : "left",
+                    transform: `translateY(-${translateY}px)`,
+                    transition:
+                      transitionMs > 0
+                        ? `transform ${transitionMs}ms linear`
+                        : "none",
+                    willChange: translateY > 0 ? "transform" : "auto",
+                  }}
+                  data-testid={tid(`agenda-description-${item.id}`)}
+                >
+                  {item.description}
+                </p>
+              </div>
+            ) : (
               <p
-                ref={descInnerRef}
-                className="opacity-75"
+                className="mt-1 opacity-75"
                 style={{
                   fontSize: scale * descMult,
                   ...bodyStyle,
-                  transform: `translateY(-${translateY}px)`,
-                  transition:
-                    transitionMs > 0
-                      ? `transform ${transitionMs}ms linear`
-                      : "none",
-                  willChange: translateY > 0 ? "transform" : "auto",
+                  textAlign: config.descriptionTextAlign === "justify" ? "justify" : "left",
+                  ...resolveDescriptionClamp(config.descriptionLines),
                 }}
                 data-testid={tid(`agenda-description-${item.id}`)}
               >
                 {item.description}
               </p>
-            </div>
-          ) : (
-            <p
-              className="mt-1 opacity-75"
-              style={{ fontSize: scale * descMult, ...bodyStyle, ...resolveDescriptionClamp(config.descriptionLines) }}
-              data-testid={tid(`agenda-description-${item.id}`)}
-            >
-              {item.description}
-            </p>
-          )
+            )}
+          </>
         )}
         {item.statusMessage && item.status !== "scheduled" && (
           <p
@@ -758,6 +862,7 @@ function ColumnFlow({
             pageItemCount={scrollItemCount}
             onScrollOverflow={onScrollOverflow}
             scrollResetTick={scrollResetTick}
+            nowNextLabel={resolveNowNextItemLabel(config, it, now)}
           />
         </div>
       ))}
@@ -830,6 +935,7 @@ function BoundedScrollGrid({
           showCardDate={showCardDate}
           onScrollOverflow={onScrollOverflow}
           scrollResetTick={scrollResetTick}
+          nowNextLabel={resolveNowNextItemLabel(config, it, now)}
         />
       ))}
     </div>
@@ -861,6 +967,7 @@ function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, ro
           pageItemCount={scrollItemCount}
           onScrollOverflow={onScrollOverflow}
           scrollResetTick={scrollResetTick}
+          nowNextLabel={resolveNowNextItemLabel(config, it, now)}
         />
       ))}
     </div>
@@ -1566,6 +1673,7 @@ export function AgendaDisplayWidget({
                 roleColors={roleColors}
                 showCardDate={multiDay}
                 suppressTestId
+              nowNextLabel={resolveNowNextItemLabel(config, it, now)}
               />
             </div>
           ))}

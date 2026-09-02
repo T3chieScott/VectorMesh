@@ -1633,6 +1633,33 @@ export const AGENDA_LAYOUT_MODES = [
 ] as const;
 export type AgendaLayoutMode = (typeof AGENDA_LAYOUT_MODES)[number];
 
+export const AGENDA_SPEAKER_MARKER_STYLES = [
+  "microphone",
+  "circle",
+  "square",
+  "custom",
+  "none",
+] as const;
+export type AgendaSpeakerMarkerStyle =
+  (typeof AGENDA_SPEAKER_MARKER_STYLES)[number];
+
+export const AGENDA_DESCRIPTION_TEXT_ALIGNS = ["left", "justify"] as const;
+export type AgendaDescriptionTextAlign =
+  (typeof AGENDA_DESCRIPTION_TEXT_ALIGNS)[number];
+
+export const AGENDA_CUSTOM_SPEAKER_MARKER_MAX_CODEPOINTS = 4;
+
+export function isAgendaNowNextLabelApplicable(
+  displayMode: string,
+  layoutMode: string,
+): boolean {
+  return (
+    displayMode === "now_next" &&
+    layoutMode !== "totem" &&
+    layoutMode !== "room_door"
+  );
+}
+
 export const AGENDA_FONT_SCALES = ["small", "normal", "large", "xlarge"] as const;
 export type AgendaFontScale = (typeof AGENDA_FONT_SCALES)[number];
 
@@ -1733,6 +1760,10 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   eventName: text("event_name"),
   showDescription: boolean("show_description").notNull().default(true),
   showPresenter: boolean("show_presenter").notNull().default(true),
+  // Task #394 — marker shown before presenter text. Microphone preserves the
+  // legacy renderer; custom markers are short plain-text glyphs only.
+  speakerMarkerStyle: text("speaker_marker_style").notNull().default("microphone"),
+  speakerCustomMarker: text("speaker_custom_marker"),
   showRoom: boolean("show_room").notNull().default(true),
   showTrack: boolean("show_track").notNull().default(true),
   showStatus: boolean("show_status").notNull().default(true),
@@ -1750,6 +1781,13 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   // that overflow their available card space scroll automatically.
   // FALSE default preserves existing rendering for all existing rows.
   descriptionAutoScroll: boolean("description_auto_scroll").notNull().default(false),
+  // Task #394 — optional accent divider and paragraph alignment. Defaults
+  // preserve the legacy no-divider, left-aligned description rendering.
+  showDescriptionDivider: boolean("show_description_divider").notNull().default(false),
+  descriptionTextAlign: text("description_text_align").notNull().default("left"),
+  // Task #394 — card-layout NOW/NEXT labels are opt-in. Totem and room-door
+  // layouts retain their purpose-built headings instead.
+  showNowNextLabel: boolean("show_now_next_label").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1802,6 +1840,21 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
     // Task #382 — enables auto-scroll for Full (no-clamp) descriptions.
     // false is the default; missing/undefined preserves the DB DEFAULT FALSE.
     descriptionAutoScroll: z.boolean().optional(),
+    showDescriptionDivider: z.boolean().default(false),
+    speakerMarkerStyle: z.enum(AGENDA_SPEAKER_MARKER_STYLES).default("microphone"),
+    speakerCustomMarker: z
+      .string()
+      .trim()
+      .refine(
+        (value) =>
+          Array.from(value).length <=
+          AGENDA_CUSTOM_SPEAKER_MARKER_MAX_CODEPOINTS,
+        `Custom speaker marker must be ${AGENDA_CUSTOM_SPEAKER_MARKER_MAX_CODEPOINTS} characters or fewer`,
+      )
+      .nullable()
+      .optional(),
+    descriptionTextAlign: z.enum(AGENDA_DESCRIPTION_TEXT_ALIGNS).default("left"),
+    showNowNextLabel: z.boolean().default(false),
   });
 export type InsertAgendaWidgetConfig = z.infer<typeof insertAgendaWidgetConfigSchema>;
 export type AgendaWidgetConfig = typeof agendaWidgetConfigs.$inferSelect;
