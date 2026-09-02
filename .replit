@@ -72,7 +72,3 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npm run test:unit"
-
-[postMerge]
-path = "scripts/post-merge.sh"
-timeoutMs = 180000
