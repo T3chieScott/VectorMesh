@@ -453,12 +453,13 @@ function AgendaRow({
   const [translateY, setTranslateY] = useState(0);
   const [transitionMs, setTransitionMs] = useState(0);
 
-  // Portrait: explicit pixel height = equal share of the page, accounting
-  // for inter-card row gaps. Passes as an inline style so the body flex
-  // column has a concrete height to fill.
+  // Portrait: equal share of the page, accounting for inter-card row gaps.
+  // This is a maximum height, not an unconditional height: fitting cards stay
+  // at their natural content height while oversized cards are bounded.
   // Landscape/ultrawide: the parent BoundedScrollGrid places each card in a
-  // CSS grid cell sized to minmax(0, 1fr). The card uses height:100% to fill
-  // the cell; no allocatedH is needed from JS. null signals "use CSS".
+  // CSS grid cell sized to minmax(0, 1fr). maxHeight:100% gives the card the
+  // same upper bound while alignSelf:start prevents fitting cards stretching
+  // to the full grid track. null signals "use the grid cell as the bound".
   const allocatedH =
     scrollEnabled && pageH != null && pageItemCount != null
       ? Math.max(0, (pageH - (pageItemCount - 1) * SCROLL_ROW_GAP) / pageItemCount)
@@ -555,21 +556,21 @@ function AgendaRow({
 
   return (
     <div
-      // Task #382 — when scrollEnabled the card is sized so the flex body
-      // column has a concrete height and the description viewport (flex:1
-      // min-h-0) expands into the remaining space.
+      // Task #382 — when scrollEnabled the card is bounded only when its
+      // natural content is taller than the available space. The flex body
+      // column then lets the description viewport shrink to the remaining
+      // space and report genuine overflow.
       //
-      // Portrait: explicit pixel height = allocatedH (equal share of pageH).
-      // Landscape/ultrawide: the CSS grid cell is bounded by minmax(0,1fr);
-      //   height:100% fills the cell. minHeight:0 lets flex honour the bound
-      //   even when description text is taller.
+      // Portrait: maxHeight = allocatedH (equal share of pageH).
+      // Landscape/ultrawide: maxHeight:100% plus alignSelf:start lets a
+      // fitting card remain intrinsic while the grid cell bounds overflow.
       className={`flex gap-4 rounded-lg px-4 py-3${scrollEnabled ? " items-stretch min-h-0" : " items-start"}`}
       style={{
         ...cardStyle,
         ...(scrollEnabled
           ? (allocatedH !== null
-              ? { height: allocatedH, minHeight: 0 }   // portrait
-              : { height: "100%", minHeight: 0 })       // landscape/ultrawide (CSS grid cell)
+              ? { maxHeight: allocatedH, minHeight: 0 }   // portrait
+              : { maxHeight: "100%", minHeight: 0, alignSelf: "start" }) // grid cell
           : {}),
       }}
       data-testid={tid(`agenda-row-${item.id}`)}
@@ -604,9 +605,9 @@ function AgendaRow({
         )}
       </div>
       {/* Task #382 — body column becomes flex-col when scrollEnabled so the
-          description viewport (flex:1 below) fills whatever vertical space
-          remains after the title, meta and status rows. shrink-0 on the
-          static rows prevents them from being squeezed by the viewport. */}
+          description viewport (flex-auto below) uses its natural height until
+          the card bound requires it to shrink. Title/meta/status stay
+          shrink-0. */}
       <div className={`flex-1 min-w-0${scrollEnabled ? " flex flex-col min-h-0" : ""}`}>
         <div className={`flex items-center gap-2 flex-wrap${scrollEnabled ? " shrink-0" : ""}`}>
           <h3
@@ -644,15 +645,16 @@ function AgendaRow({
         ) : null}
         {config.showDescription && item.description && (
           scrollEnabled ? (
-            // Task #382 — description viewport: flex:1 fills all remaining
-            // body-column height after title/meta/status (which are shrink-0).
-            // min-h-0 lets the flex child honour a smaller allocation;
+            // Task #382 — description viewport: flex-auto uses the natural
+            // description height, then shrinks within the card's maximum after
+            // title/meta/status (which are shrink-0). min-h-0 lets the flex
+            // child honour a smaller allocation;
             // overflow:hidden clips text that extends beyond the viewport.
             // The inner <p> retains its natural height (scrollHeight) so we
             // can measure true overflow independently of clipping.
             <div
               ref={descViewportRef}
-              className="mt-1 flex-1 min-h-0 overflow-hidden"
+              className="mt-1 flex-auto min-h-0 overflow-hidden"
             >
               <p
                 ref={descInnerRef}
@@ -772,10 +774,11 @@ function ColumnFlow({
 // height, making overflowPx always 0 and the scroll never triggers.
 //
 // The fix: use a CSS grid with minmax(0, 1fr) rows so each row is a true
-// bounded container. The card fills it with height:100% (tracked in AgendaRow
-// when allocatedH is null). The description viewport (flex:1 min-h-0) then
-// fills the remaining space after title/meta/status, and viewport.clientHeight
-// is the final bounded value that the overflow formula reads.
+// bounded container. AgendaRow uses maxHeight:100% and alignSelf:start so a
+// fitting card remains intrinsic while an oversized card is bounded. The
+// description viewport (flex-auto min-h-0) then uses the remaining space
+// after title/meta/status, and viewport.clientHeight is the final bounded value
+// that the overflow formula reads.
 //
 // Column-major flow (grid-auto-flow: column) preserves chronological order
 // within each column, matching the original CSS columns appearance.
@@ -801,7 +804,8 @@ function BoundedScrollGrid({
         display: "grid",
         gridTemplateColumns: `repeat(${cols}, 1fr)`,
         // Each row is bounded: minmax(0,1fr) prevents rows from growing
-        // beyond their fair share of the available height.
+        // beyond their fair share of the available height. Cards opt into
+        // maxHeight:100% without being stretched to fill a fitting row.
         gridTemplateRows: `repeat(${numRows}, minmax(0, 1fr))`,
         gap: SCROLL_ROW_GAP,
         // Fill columns first so sessions read chronologically top-to-bottom
@@ -811,9 +815,9 @@ function BoundedScrollGrid({
     >
       {pageItems.map((it) => (
         // AgendaRow receives no pageH/pageItemCount here — the grid cell
-        // provides the bound via height:100% on the card (allocatedH===null
-        // path in AgendaRow). onScrollOverflow still fires so the parent
-        // dwell timer extends to cover the full scroll cycle.
+        // provides the bound via maxHeight:100% on the card
+        // (allocatedH===null path in AgendaRow). onScrollOverflow still fires
+        // so the parent dwell timer extends to cover the full scroll cycle.
         <AgendaRow
           key={it.id}
           item={it}

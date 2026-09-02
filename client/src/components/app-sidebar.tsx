@@ -50,6 +50,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/use-auth";
 import { useSiteContext } from "@/hooks/use-site-context";
+import { isAgendaNavItemActive } from "@/lib/agenda-nav";
 
 const mainNavItems = [
   {
@@ -293,7 +294,11 @@ export function AppSidebar() {
             <SidebarMenuItem key={item.title}>
               <SidebarMenuButton
                 asChild
-                isActive={isActive(item.url)}
+                isActive={
+                  label === "Agenda"
+                    ? isAgendaNavItemActive(location, item.url)
+                    : isActive(item.url)
+                }
                 className="gap-3"
               >
                 <Link href={item.url} data-testid={`nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
