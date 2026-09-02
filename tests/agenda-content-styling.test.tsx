@@ -187,6 +187,58 @@ test("Task #394 divider remains outside the scrolling description viewport", () 
   assert.ok(divider >= 0 && viewport > divider);
 });
 
+test("Task #396 scrolling divider is the viewport boundary and its breathing room moves with content", () => {
+  const html = render({
+    showDescriptionDivider: true,
+    descriptionLines: null,
+    descriptionAutoScroll: true,
+  });
+  const dividerTag = html.match(
+    /<div[^>]*class="[^"]*mb-0[^"]*"[^>]*data-testid="agenda-description-divider-item-1"[^>]*>/,
+  );
+  const viewportTag = html.match(
+    /<div[^>]*class="([^"]*)"[^>]*data-testid="agenda-description-viewport-item-1"[^>]*>/,
+  );
+  const descriptionTag = html.match(
+    /<p[^>]*style="([^"]*)"[^>]*data-testid="agenda-description-item-1"[^>]*>/,
+  );
+
+  assert.ok(dividerTag, "scrolling divider should have no margin below it");
+  assert.ok(viewportTag, "scrolling viewport should render");
+  assert.equal(viewportTag[1].split(/\s+/).includes("mt-1"), false);
+  assert.match(descriptionTag?.[1] ?? "", /padding-top:0\.5rem/);
+});
+
+test("Task #396 divider-off and fixed-line description spacing remain unchanged", () => {
+  const scrollingWithoutDivider = render({
+    showDescriptionDivider: false,
+    descriptionLines: null,
+    descriptionAutoScroll: true,
+  });
+  assert.match(
+    scrollingWithoutDivider,
+    /class="[^"]*mt-1[^"]*"[^>]*data-testid="agenda-description-viewport-item-1"/,
+  );
+  assert.doesNotMatch(
+    scrollingWithoutDivider,
+    /padding-top:0\.5rem[^"]*"[^>]*data-testid="agenda-description-item-1"/,
+  );
+
+  const fixed = render({
+    showDescriptionDivider: true,
+    descriptionLines: 2,
+    descriptionAutoScroll: false,
+  });
+  assert.match(
+    fixed,
+    /class="[^"]*mb-1[^"]*"[^>]*data-testid="agenda-description-divider-item-1"/,
+  );
+  assert.match(
+    fixed,
+    /class="mt-1 opacity-75"[^>]*data-testid="agenda-description-item-1"/,
+  );
+});
+
 test("Task #394 omitted speaker marker keeps the legacy microphone", () => {
   const cfg = config();
   delete (cfg as Partial<AgendaWidgetConfig>).speakerMarkerStyle;

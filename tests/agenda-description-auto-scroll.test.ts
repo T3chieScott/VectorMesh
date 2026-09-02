@@ -36,6 +36,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { insertAgendaWidgetConfigSchema } from "../shared/schema";
+import {
+  getDescriptionScrollIndicator,
+  isDescriptionAutoScrollAnimationActive,
+  isDescriptionAutoScrollMode,
+} from "../client/src/components/agenda/AgendaDisplayWidget";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -74,6 +79,93 @@ function computeEffectiveDwellMs(
   const scrollDuration = descScrollDurationMs(maxOverflow);
   return Math.max(configuredMs, TOP_PAUSE_MS + scrollDuration + BOTTOM_PAUSE_MS);
 }
+
+// ---------------------------------------------------------------------------
+// Task #396 — passive indicator geometry
+// ---------------------------------------------------------------------------
+
+test("Task #396 indicator is absent for fitting, zero, or invalid measurements", () => {
+  assert.equal(getDescriptionScrollIndicator(100, 100, 0, 0), null);
+  assert.equal(getDescriptionScrollIndicator(0, 200, 100, 0), null);
+  assert.equal(getDescriptionScrollIndicator(100, Number.NaN, 100, 0), null);
+  assert.equal(getDescriptionScrollIndicator(100, 200, Number.POSITIVE_INFINITY, 0), null);
+});
+
+test("Task #396 thumb size and position are proportional at top, middle, and bottom", () => {
+  const top = getDescriptionScrollIndicator(100, 400, 300, 0);
+  const middle = getDescriptionScrollIndicator(100, 400, 300, 150);
+  const bottom = getDescriptionScrollIndicator(100, 400, 300, 300);
+
+  assert.deepEqual(top, {
+    trackHeight: 100,
+    thumbHeight: 25,
+    thumbOffset: 0,
+  });
+  assert.deepEqual(middle, {
+    trackHeight: 100,
+    thumbHeight: 25,
+    thumbOffset: 37.5,
+  });
+  assert.deepEqual(bottom, {
+    trackHeight: 100,
+    thumbHeight: 25,
+    thumbOffset: 75,
+  });
+});
+
+test("Task #396 thumb enforces its minimum size and clamps translation", () => {
+  const beforeTop = getDescriptionScrollIndicator(100, 10_000, 9_900, -50);
+  const afterBottom = getDescriptionScrollIndicator(100, 10_000, 9_900, 99_000);
+
+  assert.equal(beforeTop?.thumbHeight, 12);
+  assert.equal(beforeTop?.thumbOffset, 0);
+  assert.equal(afterBottom?.thumbHeight, 12);
+  assert.equal(afterBottom?.thumbOffset, 88);
+});
+
+test("Task #396 reduced motion does not disable the bounded auto-scroll layout", () => {
+  assert.equal(isDescriptionAutoScrollMode(true, null), true);
+  assert.equal(isDescriptionAutoScrollMode(false, null), false);
+  assert.equal(isDescriptionAutoScrollMode(true, 2), false);
+});
+
+test("Task #396 reduced motion preserves configured multi-page rotation timing", () => {
+  const animationActive = isDescriptionAutoScrollAnimationActive(
+    true,
+    null,
+    true,
+  );
+  assert.equal(animationActive, false);
+  assert.equal(
+    computeEffectiveDwellMs(
+      5_000,
+      {
+        "item-1": 1_000,
+        "item-2": 2_000,
+      },
+      ["item-1", "item-2"],
+      animationActive,
+    ),
+    5_000,
+  );
+});
+
+test("Task #396 indicator remains display-only and shares the text transition", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  const indicatorStart = src.indexOf("agenda-description-scroll-track-");
+  const indicatorEnd = src.indexOf("<p", indicatorStart);
+  const indicatorSource = src.slice(indicatorStart, indicatorEnd);
+
+  assert.ok(indicatorStart >= 0 && indicatorEnd > indicatorStart);
+  assert.match(indicatorSource, /aria-hidden="true"/);
+  assert.match(indicatorSource, /pointerEvents: "none"/);
+  assert.match(indicatorSource, /transform \$\{transitionMs\}ms linear/);
+  assert.doesNotMatch(indicatorSource, /role=["']scrollbar["']/);
+  assert.doesNotMatch(indicatorSource, /tabIndex|onClick|onKey|overflow:\s*["'](?:auto|scroll)/);
+});
 
 // ---------------------------------------------------------------------------
 // 1–3 — Exported constants
@@ -413,15 +505,8 @@ test("__TEST_S382__ AgendaRow guards scrollEnabled on !suppressTestId", () => {
 // ---------------------------------------------------------------------------
 
 test("__TEST_S382__ scrollEnabled requires descriptionLines === null", () => {
-  const src = readFileSync(
-    "client/src/components/agenda/AgendaDisplayWidget.tsx",
-    "utf-8",
-  );
-  // The scrollEnabled check must include a descriptionLines === null test
-  assert.ok(
-    src.includes("config.descriptionLines === null") && src.includes("scrollEnabled"),
-    "scrollEnabled should require config.descriptionLines === null",
-  );
+  assert.equal(isDescriptionAutoScrollMode(true, null), true);
+  assert.equal(isDescriptionAutoScrollMode(true, 2), false);
 });
 
 // ---------------------------------------------------------------------------

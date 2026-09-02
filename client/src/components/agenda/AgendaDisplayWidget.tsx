@@ -384,6 +384,82 @@ export function descScrollDurationMs(overflowPx: number): number {
   return Math.ceil((overflowPx / SCROLL_PX_PER_SEC) * 1_000);
 }
 
+export function isDescriptionAutoScrollMode(
+  descriptionAutoScroll: boolean | null | undefined,
+  descriptionLines: number | null | undefined,
+): boolean {
+  return Boolean(descriptionAutoScroll) && descriptionLines === null;
+}
+
+export function isDescriptionAutoScrollAnimationActive(
+  descriptionAutoScroll: boolean | null | undefined,
+  descriptionLines: number | null | undefined,
+  prefersReducedMotion: boolean,
+): boolean {
+  return (
+    isDescriptionAutoScrollMode(descriptionAutoScroll, descriptionLines) &&
+    !prefersReducedMotion
+  );
+}
+
+export interface DescriptionScrollIndicatorMetrics {
+  trackHeight: number;
+  thumbHeight: number;
+  thumbOffset: number;
+}
+
+/**
+ * Task #396.
+ * Calculate the passive scroll-position indicator from the same measurements
+ * that drive the description transform. Returning null for invalid/fitting
+ * content keeps the indicator out of all non-overflow paths.
+ */
+export function getDescriptionScrollIndicator(
+  viewportHeight: number,
+  contentHeight: number,
+  overflowPx: number,
+  translateY: number,
+): DescriptionScrollIndicatorMetrics | null {
+  if (
+    !Number.isFinite(viewportHeight) ||
+    !Number.isFinite(contentHeight) ||
+    !Number.isFinite(overflowPx) ||
+    !Number.isFinite(translateY) ||
+    viewportHeight <= 0 ||
+    contentHeight <= 0 ||
+    overflowPx <= 0
+  ) {
+    return null;
+  }
+
+  const trackHeight = viewportHeight;
+  // Tolerate fractional or briefly inconsistent layout measurements while
+  // preserving the measured content/overflow relationship.
+  const effectiveContentHeight = Math.max(
+    trackHeight,
+    contentHeight,
+    trackHeight + overflowPx,
+  );
+  if (effectiveContentHeight <= trackHeight) return null;
+
+  const thumbHeight = Math.min(
+    trackHeight,
+    Math.max(12, (trackHeight * trackHeight) / effectiveContentHeight),
+  );
+  const maxThumbOffset = Math.max(0, trackHeight - thumbHeight);
+  const maxTranslate = Math.max(0, effectiveContentHeight - trackHeight);
+  const progress =
+    maxTranslate > 0
+      ? Math.min(1, Math.max(0, translateY / maxTranslate))
+      : 0;
+
+  return {
+    trackHeight,
+    thumbHeight,
+    thumbOffset: maxThumbOffset * progress,
+  };
+}
+
 // -------------------------------------------------------------------------
 
 function isCurrentlyRunning(item: AgendaItem, now: Date): boolean {
@@ -480,6 +556,7 @@ function AgendaRow({
   pageItemCount,
   onScrollOverflow,
   scrollResetTick,
+  prefersReducedMotion = false,
   nowNextLabel,
   nowNextSessionDate,
 }: {
@@ -502,6 +579,7 @@ function AgendaRow({
   pageItemCount?: number;
   onScrollOverflow?: (id: string, px: number) => void;
   scrollResetTick?: number;
+  prefersReducedMotion?: boolean;
   nowNextLabel?: NowNextItemLabel;
   nowNextSessionDate?: string;
 }) {
@@ -549,8 +627,10 @@ function AgendaRow({
   // (suppressTestId identifies measurer twins; they must NOT animate).
   const scrollEnabled =
     !suppressTestId &&
-    Boolean(config.descriptionAutoScroll) &&
-    config.descriptionLines === null &&
+    isDescriptionAutoScrollMode(
+      config.descriptionAutoScroll,
+      config.descriptionLines,
+    ) &&
     Boolean(item.description);
 
   // Task #382 — DOM refs for the description scroll viewport and inner text.
@@ -562,6 +642,8 @@ function AgendaRow({
   const descInnerRef = useRef<HTMLParagraphElement | null>(null);
 
   const [overflowPx, setOverflowPx] = useState(0);
+  const [descriptionViewportHeight, setDescriptionViewportHeight] = useState(0);
+  const [descriptionContentHeight, setDescriptionContentHeight] = useState(0);
 
   // CSS transform state for the scrolling animation.
   const [translateY, setTranslateY] = useState(0);
@@ -590,7 +672,15 @@ function AgendaRow({
     // has settled (clientHeight > 0). Both values are read from separate
     // elements so neither is affected by overflow:hidden on an ancestor.
     if (!viewport || !inner || viewport.clientHeight <= 0) return;
+    const viewportHeight = viewport.clientHeight;
+    const contentHeight = inner.scrollHeight;
     const oPx = Math.max(0, inner.scrollHeight - viewport.clientHeight);
+    setDescriptionViewportHeight((prev) =>
+      prev === viewportHeight ? prev : viewportHeight,
+    );
+    setDescriptionContentHeight((prev) =>
+      prev === contentHeight ? prev : contentHeight,
+    );
     setOverflowPx((prev) => (prev === oPx ? prev : oPx));
     onScrollOverflow?.(item.id, oPx);
   };
@@ -604,6 +694,8 @@ function AgendaRow({
   useLayoutEffect(() => {
     if (!scrollEnabled) {
       setOverflowPx(0);
+      setDescriptionViewportHeight(0);
+      setDescriptionContentHeight(0);
       return;
     }
     doMeasureRef.current();
@@ -639,9 +731,12 @@ function AgendaRow({
     // reduced-motion preference takes effect immediately without a
     // re-render cycle.
     if (
-      typeof window !== "undefined" &&
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      (
+        typeof window !== "undefined" &&
+        typeof window.matchMedia === "function" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ) ||
+      prefersReducedMotion
     ) {
       return clear;
     }
@@ -665,8 +760,27 @@ function AgendaRow({
     timers.push(t1);
 
     return clear;
-  }, [overflowPx, scrollEnabled, scrollResetTick]);
+  }, [
+    descriptionContentHeight,
+    descriptionViewportHeight,
+    overflowPx,
+    prefersReducedMotion,
+    scrollEnabled,
+    scrollResetTick,
+  ]);
   // ---- End Task #382 ---------------------------------------------------
+
+  // Task #396 — the divider-enabled viewport starts directly beneath the
+  // stationary divider. Its former external 0.5rem gap is padding on the
+  // transformed paragraph, so the breathing room scrolls away with the text.
+  const descriptionScrollIndicator = getDescriptionScrollIndicator(
+    descriptionViewportHeight,
+    descriptionContentHeight,
+    overflowPx,
+    translateY,
+  );
+  const descriptionDividerEnabled = config.showDescriptionDivider === true;
+  const descriptionAccent = accentColor || config.accentColor || "currentColor";
 
   return (
     <div
@@ -807,11 +921,11 @@ function AgendaRow({
         ) : null}
         {config.showDescription && item.description && (
           <>
-            {config.showDescriptionDivider === true && (
+            {descriptionDividerEnabled && (
               <div
                 aria-hidden="true"
-                className={`mt-2 mb-1 h-px w-full opacity-70${scrollEnabled ? " shrink-0" : ""}`}
-                style={{ backgroundColor: accentColor || config.accentColor }}
+                className={`mt-2 ${scrollEnabled ? "mb-0" : "mb-1"} h-px w-full opacity-70${scrollEnabled ? " shrink-0" : ""}`}
+                style={{ backgroundColor: descriptionAccent }}
                 data-testid={tid(`agenda-description-divider-${item.id}`)}
               />
             )}
@@ -825,9 +939,47 @@ function AgendaRow({
               // can measure true overflow independently of clipping.
               <div
                 ref={descViewportRef}
-                className="mt-1 flex-auto min-h-0 overflow-hidden"
+                className={
+                  descriptionDividerEnabled
+                    ? "flex-auto min-h-0 overflow-hidden"
+                    : "mt-1 flex-auto min-h-0 overflow-hidden"
+                }
+                style={{ position: "relative" }}
                 data-testid={tid(`agenda-description-viewport-${item.id}`)}
               >
+                {descriptionScrollIndicator && (
+                  <div
+                    aria-hidden="true"
+                    data-testid={tid(`agenda-description-scroll-track-${item.id}`)}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      right: 2,
+                      bottom: 0,
+                      width: 2,
+                      borderRadius: 9999,
+                      backgroundColor: `color-mix(in srgb, ${descriptionAccent} 20%, transparent)`,
+                      pointerEvents: "none",
+                    }}
+                  >
+                    <div
+                      aria-hidden="true"
+                      data-testid={tid(`agenda-description-scroll-thumb-${item.id}`)}
+                      style={{
+                        height: descriptionScrollIndicator.thumbHeight,
+                        transform: `translateY(${descriptionScrollIndicator.thumbOffset}px)`,
+                        borderRadius: 9999,
+                        backgroundColor: descriptionAccent,
+                        opacity: 0.9,
+                        transition:
+                          transitionMs > 0
+                            ? `transform ${transitionMs}ms linear`
+                            : "none",
+                        pointerEvents: "none",
+                      }}
+                    />
+                  </div>
+                )}
                 <p
                   ref={descInnerRef}
                   className="opacity-75"
@@ -835,6 +987,7 @@ function AgendaRow({
                     fontSize: scale * descMult,
                     ...bodyStyle,
                     textAlign: config.descriptionTextAlign === "justify" ? "justify" : "left",
+                    ...(descriptionDividerEnabled ? { paddingTop: "0.5rem" } : {}),
                     transform: `translateY(-${translateY}px)`,
                     transition:
                       transitionMs > 0
@@ -894,6 +1047,7 @@ interface RowGridProps {
   scrollItemCount?: number;
   onScrollOverflow?: (id: string, px: number) => void;
   scrollResetTick?: number;
+  prefersReducedMotion?: boolean;
   // Column count for BoundedScrollGrid (landscape=2, ultrawide=3|4).
   // UltraWideGrid reads this from the parent because the value depends on
   // the measured container width (≥1280px → 4, else → 3).
@@ -918,6 +1072,7 @@ function ColumnFlow({
   scrollItemCount,
   onScrollOverflow,
   scrollResetTick,
+  prefersReducedMotion,
   columnsClass,
 }: RowGridProps & { columnsClass: string }) {
   return (
@@ -937,6 +1092,7 @@ function ColumnFlow({
             pageItemCount={scrollItemCount}
             onScrollOverflow={onScrollOverflow}
             scrollResetTick={scrollResetTick}
+            prefersReducedMotion={prefersReducedMotion}
             nowNextLabel={resolveNowNextItemLabel(config, it, now)}
             nowNextSessionDate={formatNextSessionDate(it.startsAt, now, tz) ?? undefined}
           />
@@ -975,6 +1131,7 @@ function BoundedScrollGrid({
   showCardDate,
   onScrollOverflow,
   scrollResetTick,
+  prefersReducedMotion,
 }: RowGridProps) {
   const cols = numCols ?? 2;
   const numRows = Math.ceil(pageItems.length / cols);
@@ -1011,6 +1168,7 @@ function BoundedScrollGrid({
           showCardDate={showCardDate}
           onScrollOverflow={onScrollOverflow}
           scrollResetTick={scrollResetTick}
+          prefersReducedMotion={prefersReducedMotion}
           nowNextLabel={resolveNowNextItemLabel(config, it, now)}
           nowNextSessionDate={formatNextSessionDate(it.startsAt, now, tz) ?? undefined}
         />
@@ -1026,7 +1184,7 @@ function LandscapeGrid(props: RowGridProps) {
     : <ColumnFlow {...props} columnsClass="columns-2" />;
 }
 
-function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, roleColors, showCardDate, scrollPageH, scrollItemCount, onScrollOverflow, scrollResetTick }: RowGridProps) {
+function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, roleColors, showCardDate, scrollPageH, scrollItemCount, onScrollOverflow, scrollResetTick, prefersReducedMotion }: RowGridProps) {
   return (
     <div className="flex-1 flex flex-col gap-3 overflow-hidden">
       {pageItems.map((it) => (
@@ -1044,6 +1202,7 @@ function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, ro
           pageItemCount={scrollItemCount}
           onScrollOverflow={onScrollOverflow}
           scrollResetTick={scrollResetTick}
+          prefersReducedMotion={prefersReducedMotion}
           nowNextLabel={resolveNowNextItemLabel(config, it, now)}
           nowNextSessionDate={formatNextSessionDate(it.startsAt, now, tz) ?? undefined}
         />
@@ -1279,13 +1438,21 @@ export function AgendaDisplayWidget({
   const [scrollResetTick, setScrollResetTick] = useState(0);
 
   // Task #382 — derived early so the pages memo can use it.
-  // Active when: feature flag on, Full description mode, prefers-reduced-motion off.
+  // Active when the Full-description auto-scroll layout is configured.
+  // Reduced motion keeps this bounded measurement/clipping path active but
+  // suppresses its transform animation inside AgendaRow.
   // Declared here rather than after `pages` so one-per-session pagination (below)
   // can use it without a forward reference.
   const descScrollActive =
-    Boolean(config.descriptionAutoScroll) &&
-    config.descriptionLines === null &&
-    !prefersReducedMotion;
+    isDescriptionAutoScrollMode(
+      config.descriptionAutoScroll,
+      config.descriptionLines,
+    );
+  const descScrollAnimationActive = isDescriptionAutoScrollAnimationActive(
+    config.descriptionAutoScroll,
+    config.descriptionLines,
+    prefersReducedMotion,
+  );
 
   // Stable callback — AgendaRow reports its overflow amount after measuring.
   const handleScrollOverflow = useCallback((id: string, px: number) => {
@@ -1547,7 +1714,7 @@ export function AgendaDisplayWidget({
     // When auto-scroll is active, extend dwell to cover the full scroll
     // cycle so the page never advances while a description is still moving.
     let effectiveMs = configuredMs;
-    if (descScrollActive && currentItems.length > 0) {
+    if (descScrollAnimationActive && currentItems.length > 0) {
       const maxOverflow = Math.max(
         0,
         ...currentItems.map((it) => scrollMetrics[it.id] ?? 0),
@@ -1564,7 +1731,7 @@ export function AgendaDisplayWidget({
     if (pages.length <= 1) {
       // Single-page: loop scroll animations via the reset tick after the
       // effective dwell. No timer when auto-scroll is off (legacy no-op).
-      if (!descScrollActive) return;
+      if (!descScrollAnimationActive) return;
       const id = setTimeout(
         () => setScrollResetTick((t) => t + 1),
         effectiveMs,
@@ -1579,7 +1746,7 @@ export function AgendaDisplayWidget({
     );
     return () => clearTimeout(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageIndex, scrollResetTick, pages.length, config.rotationIntervalSeconds, descScrollActive, scrollMetrics]);
+  }, [pageIndex, scrollResetTick, pages.length, config.rotationIntervalSeconds, descScrollAnimationActive, scrollMetrics]);
 
   // In now_next mode every layout (not only totem/room_door) gets a
   // strong "live now" highlight on the currently-running row(s).
@@ -1733,6 +1900,7 @@ export function AgendaDisplayWidget({
             scrollItemCount={scrollItemCount}
             onScrollOverflow={descScrollActive ? handleScrollOverflow : undefined}
             scrollResetTick={descScrollActive ? scrollResetTick : undefined}
+            prefersReducedMotion={prefersReducedMotion}
             numCols={numCols}
           />
         ) : layout === "portrait" ? (
@@ -1749,6 +1917,7 @@ export function AgendaDisplayWidget({
             scrollItemCount={scrollItemCount}
             onScrollOverflow={descScrollActive ? handleScrollOverflow : undefined}
             scrollResetTick={descScrollActive ? scrollResetTick : undefined}
+            prefersReducedMotion={prefersReducedMotion}
           />
         ) : layout === "totem" ? (
           <TotemNowNext items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} showCardDate={multiDay} />
@@ -1768,6 +1937,7 @@ export function AgendaDisplayWidget({
             scrollItemCount={scrollItemCount}
             onScrollOverflow={descScrollActive ? handleScrollOverflow : undefined}
             scrollResetTick={descScrollActive ? scrollResetTick : undefined}
+            prefersReducedMotion={prefersReducedMotion}
           />
         )}
       </div>
