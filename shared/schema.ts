@@ -1767,6 +1767,9 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   showRoom: boolean("show_room").notNull().default(true),
   showTrack: boolean("show_track").notNull().default(true),
   showStatus: boolean("show_status").notNull().default(true),
+  // Task #395 — optional calculated duration in each session time rail.
+  // FALSE preserves the existing start/end-only rendering.
+  showSessionDuration: boolean("show_session_duration").notNull().default(false),
   showCurrentTime: boolean("show_current_time").notNull().default(true),
   showEventName: boolean("show_event_name").notNull().default(true),
   // Task #240 — optional day-name / date header chunks. Default off so
@@ -1855,6 +1858,7 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
       .optional(),
     descriptionTextAlign: z.enum(AGENDA_DESCRIPTION_TEXT_ALIGNS).default("left"),
     showNowNextLabel: z.boolean().default(false),
+    showSessionDuration: z.boolean().default(false),
   });
 export type InsertAgendaWidgetConfig = z.infer<typeof insertAgendaWidgetConfigSchema>;
 export type AgendaWidgetConfig = typeof agendaWidgetConfigs.$inferSelect;
