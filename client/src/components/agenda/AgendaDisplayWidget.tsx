@@ -277,6 +277,7 @@ function formatNow(tz: string | null | undefined, now: Date): string {
 export function formatSessionDuration(
   start: Date | string | null | undefined,
   end: Date | string | null | undefined,
+  prefix?: string | null,
 ): string | null {
   if (start == null || end == null) return null;
   const startMs = new Date(start).getTime();
@@ -289,9 +290,14 @@ export function formatSessionDuration(
   if (totalMinutes <= 0) return null;
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
-  if (hours === 0) return `${minutes} min`;
-  if (minutes === 0) return `${hours} hr${hours === 1 ? "" : "s"}`;
-  return `${hours} hr${hours === 1 ? "" : "s"} ${minutes} min`;
+  const duration =
+    hours === 0
+      ? `${minutes} min`
+      : minutes === 0
+        ? `${hours} hr${hours === 1 ? "" : "s"}`
+        : `${hours} hr${hours === 1 ? "" : "s"} ${minutes} min`;
+  const cleanPrefix = prefix?.trim() ?? "";
+  return cleanPrefix ? `${cleanPrefix} ${duration}` : duration;
 }
 
 function formatNextSessionDate(
@@ -367,6 +373,10 @@ export const TOP_PAUSE_MS = 3_000;
 export const BOTTOM_PAUSE_MS = 3_000;
 /** Scroll speed (pixels per second). */
 export const SCROLL_PX_PER_SEC = 28;
+/** Stable text-to-indicator gutter in active Full-description scroll mode. */
+export const DESCRIPTION_SCROLL_GUTTER_PX = 8;
+/** Passive rail colour; the moving thumb continues to use the display accent. */
+export const DESCRIPTION_SCROLL_TRACK_COLOR = "rgba(0, 0, 0, 0.24)";
 /**
  * Row gap (px) matching the CSS gap-3 used by PortraitCards so the
  * per-card height allocation formula in AgendaRow is accurate.
@@ -588,8 +598,13 @@ function AgendaRow({
   const speakerMarker = resolveSpeakerMarker(config);
   const sessionDuration =
     config.showSessionDuration === true
-      ? formatSessionDuration(item.startsAt, item.endsAt)
+      ? formatSessionDuration(
+          item.startsAt,
+          item.endsAt,
+          config.sessionDurationPrefix,
+        )
       : null;
+  const showSessionEndTime = config.showSessionEndTime !== false;
   // Treat an omitted field as visible so legacy preview/test payloads remain
   // backwards compatible while persisted configs use the explicit boolean.
   const showTrack = config.showTrack !== false;
@@ -815,13 +830,15 @@ function AgendaRow({
         >
           {formatTime(item.startsAt, tz)}
         </span>
-        <span
-          className="font-mono opacity-60"
-          style={{ fontSize: scale * endTimeMult, ...timeStyle }}
-          data-testid={tid(`agenda-time-end-${item.id}`)}
-        >
-          {formatTime(item.endsAt, tz)}
-        </span>
+        {showSessionEndTime && (
+          <span
+            className="font-mono opacity-60"
+            style={{ fontSize: scale * endTimeMult, ...timeStyle }}
+            data-testid={tid(`agenda-time-end-${item.id}`)}
+          >
+            {formatTime(item.endsAt, tz)}
+          </span>
+        )}
         {sessionDuration && (
             <span
               className="mt-1 text-center leading-tight opacity-70"
@@ -937,14 +954,18 @@ function AgendaRow({
               // overflow:hidden clips text that extends beyond the viewport.
               // The inner <p> retains its natural height (scrollHeight) so we
               // can measure true overflow independently of clipping.
-              <div
+               <div
                 ref={descViewportRef}
                 className={
                   descriptionDividerEnabled
                     ? "flex-auto min-h-0 overflow-hidden"
                     : "mt-1 flex-auto min-h-0 overflow-hidden"
                 }
-                style={{ position: "relative" }}
+                 // The right gutter is part of the text layout before any
+                 // indicator is rendered, so appearance/disappearance of the
+                 // indicator cannot change wrapping or trigger a measurement
+                 // loop. It also keeps the track inside this viewport.
+                 style={{ position: "relative" }}
                 data-testid={tid(`agenda-description-viewport-${item.id}`)}
               >
                 {descriptionScrollIndicator && (
@@ -954,11 +975,11 @@ function AgendaRow({
                     style={{
                       position: "absolute",
                       top: 0,
-                      right: 2,
+                       right: 0,
                       bottom: 0,
                       width: 2,
                       borderRadius: 9999,
-                      backgroundColor: `color-mix(in srgb, ${descriptionAccent} 20%, transparent)`,
+                       backgroundColor: DESCRIPTION_SCROLL_TRACK_COLOR,
                       pointerEvents: "none",
                     }}
                   >
@@ -987,6 +1008,7 @@ function AgendaRow({
                     fontSize: scale * descMult,
                     ...bodyStyle,
                     textAlign: config.descriptionTextAlign === "justify" ? "justify" : "left",
+                    paddingRight: DESCRIPTION_SCROLL_GUTTER_PX,
                     ...(descriptionDividerEnabled ? { paddingTop: "0.5rem" } : {}),
                     transform: `translateY(-${translateY}px)`,
                     transition:
@@ -1313,15 +1335,24 @@ function RoomDoor({
   const next = upcoming[0];
   const currentDuration =
     config.showSessionDuration === true && cur
-      ? formatSessionDuration(cur.startsAt, cur.endsAt)
+      ? formatSessionDuration(
+          cur.startsAt,
+          cur.endsAt,
+          config.sessionDurationPrefix,
+        )
       : null;
   const nextDuration =
     config.showSessionDuration === true && next
-      ? formatSessionDuration(next.startsAt, next.endsAt)
+      ? formatSessionDuration(
+          next.startsAt,
+          next.endsAt,
+          config.sessionDurationPrefix,
+        )
       : null;
   const nextDate = next
     ? formatNextSessionDate(next.startsAt, now, tz)
     : null;
+  const showSessionEndTime = config.showSessionEndTime !== false;
   const roomName = cur?.room || next?.room || config.roomFilter?.[0] || "Room";
   const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
   const bodyStyle = roleColors.body ? { color: roleColors.body } : undefined;
@@ -1344,7 +1375,8 @@ function RoomDoor({
         {cur ? (
           <>
             <p className="font-mono opacity-80 mt-4" style={{ fontSize: scale * 1.6 * timeFactor, ...timeStyle }}>
-              {showCardDate ? `${formatShortDate(cur.startsAt, tz)} · ` : ""}{formatTime(cur.startsAt, tz)} – {formatTime(cur.endsAt, tz)}
+              {showCardDate ? `${formatShortDate(cur.startsAt, tz)} · ` : ""}{formatTime(cur.startsAt, tz)}
+              {showSessionEndTime ? ` – ${formatTime(cur.endsAt, tz)}` : ""}
             </p>
             {currentDuration && (
               <p

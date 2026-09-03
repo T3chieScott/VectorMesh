@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { AgendaDisplayWidget } from "./AgendaDisplayWidget";
 import { CustomFontFaces } from "@/lib/fontFace";
 import type { AgendaItem, AgendaWidgetConfig } from "@shared/schema";
