@@ -19,7 +19,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Pencil, Plus, Trash2, ExternalLink, Copy, CopyPlus, SlidersHorizontal, ChevronsUpDown } from "lucide-react";
+import { Pencil, Plus, Trash2, ExternalLink, Copy, ClipboardPaste, CopyPlus, SlidersHorizontal, ChevronsUpDown } from "lucide-react";
 import {
   AGENDA_DISPLAY_MODES,
   AGENDA_DISPLAY_MODE_LABELS,
@@ -39,6 +39,11 @@ import {
 } from "@shared/schema";
 import { resolveAgendaItems } from "@shared/agenda-resolver";
 import { FontFamilySelect } from "@/components/font-family-select";
+import {
+  buildAgendaSettingsClipboardPayload,
+  mergeAgendaSettingsClipboardValues,
+  parseAgendaSettingsClipboardPayload,
+} from "@shared/agenda-settings-clipboard";
 
 // Real-world conference signage form factors. Totem is the narrow
 // 9:32 floor kiosk you see at hotel lobbies; room door is the small
@@ -143,6 +148,8 @@ const configFormSchema = z.object({
   showTrack: z.boolean(),
   showStatus: z.boolean(),
   showSessionDuration: z.boolean(),
+  showSessionEndTime: z.boolean(),
+  sessionDurationPrefix: z.string().max(24, "Use 24 characters or fewer"),
   showCurrentTime: z.boolean(),
   showEventName: z.boolean(),
   showDayName: z.boolean(),
@@ -200,6 +207,8 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     showTrack: c?.showTrack ?? true,
     showStatus: c?.showStatus ?? true,
     showSessionDuration: c?.showSessionDuration ?? false,
+    showSessionEndTime: c?.showSessionEndTime ?? true,
+    sessionDurationPrefix: c?.sessionDurationPrefix ?? "",
     showCurrentTime: c?.showCurrentTime ?? true,
     showEventName: c?.showEventName ?? true,
     showDayName: c?.showDayName ?? false,
@@ -262,6 +271,8 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     showTrack: values.showTrack,
     showStatus: values.showStatus,
     showSessionDuration: values.showSessionDuration,
+    showSessionEndTime: values.showSessionEndTime,
+    sessionDurationPrefix: values.sessionDurationPrefix.trim(),
     showCurrentTime: values.showCurrentTime,
     showEventName: values.showEventName,
     showDayName: values.showDayName,
@@ -369,6 +380,50 @@ function ConfigEditor({
     navigator.clipboard.writeText(testUrl).then(() => toast({ title: "Test URL copied" }));
   };
 
+  const copySettings = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard access is unavailable.");
+      }
+      const payload = buildAgendaSettingsClipboardPayload(
+        watched as unknown as Record<string, unknown>,
+      );
+      await navigator.clipboard.writeText(JSON.stringify(payload));
+      toast({ title: "Agenda settings copied" });
+    } catch (e) {
+      toast({
+        title: "Could not copy settings",
+        description: String(e instanceof Error ? e.message : e),
+        variant: "destructive",
+      });
+    }
+  };
+
+  const pasteSettings = async () => {
+    try {
+      if (!navigator.clipboard?.readText) {
+        throw new Error("Clipboard access is unavailable.");
+      }
+      const raw = await navigator.clipboard.readText();
+      const settings = parseAgendaSettingsClipboardPayload(raw);
+      // Merge only validated, allowlisted presentation settings. In
+      // particular, clipboard content can never replace name or accentColor.
+      form.reset(
+        mergeAgendaSettingsClipboardValues(
+          form.getValues() as unknown as Record<string, unknown>,
+          settings,
+        ) as ConfigFormValues,
+      );
+      toast({ title: "Agenda settings pasted" });
+    } catch (e) {
+      toast({
+        title: "Could not paste settings",
+        description: String(e instanceof Error ? e.message : e),
+        variant: "destructive",
+      });
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
@@ -378,6 +433,17 @@ function ConfigEditor({
         <div className="grid lg:grid-cols-2 gap-6">
           <Form {...form}>
             <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2">
+                <p className="mr-auto text-xs text-muted-foreground">
+                  Reuse presentation settings between Agenda Displays.
+                </p>
+                <Button type="button" variant="outline" size="sm" onClick={copySettings} data-testid="button-copy-settings">
+                  <Copy className="mr-1 h-3.5 w-3.5" /> Copy settings
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={pasteSettings} data-testid="button-paste-settings">
+                  <ClipboardPaste className="mr-1 h-3.5 w-3.5" /> Paste settings
+                </Button>
+              </div>
               <FormField control={form.control} name="name" render={({ field }) => (
                 <FormItem><FormLabel>Display name</FormLabel><FormControl><Input {...field} data-testid="input-config-name" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -885,6 +951,31 @@ function ConfigEditor({
                   </FormItem>
                 )} />
               )}
+              <div className="grid grid-cols-2 gap-3">
+                <FormField control={form.control} name="showSessionEndTime" render={({ field }) => (
+                  <FormItem className="flex items-center justify-between rounded-md border px-3 py-2">
+                    <FormLabel className="m-0">Show session end time</FormLabel>
+                    <FormControl>
+                      <Switch checked={field.value} onCheckedChange={field.onChange} data-testid="switch-show-session-end-time" />
+                    </FormControl>
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="sessionDurationPrefix" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Duration prefix</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        placeholder="Dur."
+                        maxLength={24}
+                        disabled={!form.watch("showSessionDuration")}
+                        data-testid="input-session-duration-prefix"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              </div>
 
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
