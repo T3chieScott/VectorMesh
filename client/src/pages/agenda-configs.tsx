@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -14,12 +14,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Pencil, Plus, Trash2, ExternalLink, Copy, ClipboardPaste, CopyPlus, SlidersHorizontal, ChevronsUpDown } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Pencil, Plus, Trash2, ExternalLink, Copy, ClipboardPaste, CopyPlus, SlidersHorizontal, ChevronsUpDown, Folder, FolderInput, FolderPlus, MoreHorizontal, Search, X } from "lucide-react";
 import {
   AGENDA_DISPLAY_MODES,
   AGENDA_DISPLAY_MODE_LABELS,
@@ -35,6 +36,7 @@ import {
   AGENDA_THEMES,
   AGENDA_STATUSES,
   type AgendaItem,
+   type AgendaFolder,
   type AgendaWidgetConfig,
 } from "@shared/schema";
 import { resolveAgendaItems } from "@shared/agenda-resolver";
@@ -285,6 +287,7 @@ function ConfigEditor({
   open,
   onOpenChange,
   initial,
+  initialFolderId,
   clientId,
   clientTimezone,
   items,
@@ -292,6 +295,7 @@ function ConfigEditor({
   open: boolean;
   onOpenChange: (o: boolean) => void;
   initial?: AgendaWidgetConfig;
+  initialFolderId?: string | null;
   clientId: string;
   clientTimezone: string | null;
   items: AgendaItem[];
@@ -349,7 +353,9 @@ function ConfigEditor({
     mutationFn: async (values: ConfigFormValues) => {
       const payload = toApiPayload(values, clientId);
       if (initial) return apiRequest("PATCH", `/api/agenda/configs/${initial.id}`, payload);
-      return apiRequest("POST", `/api/agenda/configs`, payload);
+      // Folder membership is organizational metadata, deliberately separate
+      // from ConfigFormValues and the settings clipboard contract.
+      return apiRequest("POST", `/api/agenda/configs`, { ...payload, folderId: initialFolderId ?? null });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/agenda/configs"] });
@@ -1096,11 +1102,48 @@ export default function AgendaConfigsPage() {
   const { toast } = useToast();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<AgendaWidgetConfig | null>(null);
+  const [search, setSearch] = useState("");
+  const [selectedFolderId, setSelectedFolderId] = useState("all");
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [folderDialogMode, setFolderDialogMode] = useState<"create" | "rename">("create");
+  const [folderName, setFolderName] = useState("");
+  const [folderBeingEdited, setFolderBeingEdited] = useState<AgendaFolder | null>(null);
+  const [folderPendingDelete, setFolderPendingDelete] = useState<AgendaFolder | null>(null);
 
   const configsQuery = useSiteFilteredQuery<AgendaWidgetConfig[]>("/api/agenda/configs");
   const { data: configs = [], isLoading } = useQuery(configsQuery);
+  const foldersQuery = useSiteFilteredQuery<AgendaFolder[]>("/api/agenda-folders");
+  const { data: folders = [] } = useQuery(foldersQuery);
   const itemsQuery = useSiteFilteredQuery<AgendaItem[]>("/api/agenda");
   const { data: items = [] } = useQuery(itemsQuery);
+
+  const selectedFolderStillExists =
+    selectedFolderId === "all" ||
+    selectedFolderId === "unfiled" ||
+    folders.some((folder) => folder.id === selectedFolderId);
+  const effectiveFolderId = selectedFolderStillExists ? selectedFolderId : "all";
+  useEffect(() => {
+    if (!selectedFolderStillExists) setSelectedFolderId("all");
+  }, [selectedFolderStillExists, selectedClientId]);
+
+  const sortedFolders = useMemo(
+    () => [...folders].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+    [folders],
+  );
+  const sortedConfigs = useMemo(
+    () => [...configs].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+    [configs],
+  );
+  const visibleConfigs = useMemo(() => {
+    const needle = search.trim().toLocaleLowerCase();
+    return sortedConfigs.filter((config) => {
+      const inFolder = effectiveFolderId === "all"
+        || (effectiveFolderId === "unfiled" ? !config.folderId : config.folderId === effectiveFolderId);
+      return inFolder && (!needle || config.name.toLocaleLowerCase().includes(needle));
+    });
+  }, [effectiveFolderId, search, sortedConfigs]);
+  const unfiledCount = configs.filter((config) => !config.folderId).length;
+  const folderCount = (folderId: string) => configs.filter((config) => config.folderId === folderId).length;
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiRequest("DELETE", `/api/agenda/configs/${id}`),
@@ -1131,6 +1174,54 @@ export default function AgendaConfigsPage() {
       toast({ title: "Could not duplicate display", variant: "destructive" });
     },
   });
+
+  const createFolderMutation = useMutation({
+    mutationFn: (name: string) => apiRequest("POST", "/api/agenda-folders", { name, clientId: selectedClientId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agenda-folders"] });
+      toast({ title: "Folder created" });
+    },
+    onError: () => toast({ title: "Failed to create folder", variant: "destructive" }),
+  });
+  const renameFolderMutation = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => apiRequest("PATCH", `/api/agenda-folders/${id}`, { name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agenda-folders"] });
+      toast({ title: "Folder renamed" });
+    },
+    onError: () => toast({ title: "Failed to rename folder", variant: "destructive" }),
+  });
+  const deleteFolderMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/agenda-folders/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agenda-folders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agenda/configs"] });
+      toast({ title: "Folder deleted", description: "Its displays moved to Unfiled." });
+      setFolderPendingDelete(null);
+    },
+    onError: () => toast({ title: "Failed to delete folder", variant: "destructive" }),
+  });
+  const moveConfigMutation = useMutation({
+    mutationFn: ({ id, folderId }: { id: string; folderId: string | null }) =>
+      apiRequest("PATCH", `/api/agenda/configs/${id}`, { folderId }),
+    onSuccess: (_data, { folderId }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agenda/configs"] });
+      const name = folderId ? folders.find((folder) => folder.id === folderId)?.name : null;
+      toast({ title: name ? `Moved to "${name}"` : "Moved to Unfiled" });
+    },
+    onError: () => toast({ title: "Failed to move display", variant: "destructive" }),
+  });
+
+  const openCreateFolder = () => {
+    setFolderDialogMode("create"); setFolderName(""); setFolderBeingEdited(null); setFolderDialogOpen(true);
+  };
+  const submitFolderDialog = () => {
+    const name = folderName.trim();
+    if (!name) return;
+    if (folderDialogMode === "create") createFolderMutation.mutate(name);
+    else if (folderBeingEdited) renameFolderMutation.mutate({ id: folderBeingEdited.id, name });
+    setFolderDialogOpen(false);
+  };
 
   const copyUrl = (id: string) => {
     const url = `${window.location.origin}/display/agenda/${id}`;
@@ -1165,28 +1256,48 @@ export default function AgendaConfigsPage() {
         </Button>
       </div>
 
+      <div className="flex flex-col lg:flex-row gap-6 min-w-0">
+        <aside className="w-full lg:w-56 lg:shrink-0 space-y-1" aria-label="Agenda display folders" data-testid="agenda-folder-sidebar">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-muted-foreground">Folders</span>
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={openCreateFolder} title="New folder" aria-label="New agenda folder" data-testid="button-create-agenda-folder">
+              <FolderPlus className="h-4 w-4" />
+            </Button>
+          </div>
+          <button type="button" onClick={() => setSelectedFolderId("all")} aria-pressed={effectiveFolderId === "all"} className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm hover-elevate ${effectiveFolderId === "all" ? "bg-accent text-accent-foreground ring-1 ring-ring" : ""}`} data-testid="button-agenda-folder-all">
+            <span className="flex items-center gap-2"><Folder className="h-4 w-4" />All displays</span><span className="text-xs text-muted-foreground">{configs.length}</span>
+          </button>
+          <button type="button" onClick={() => setSelectedFolderId("unfiled")} aria-pressed={effectiveFolderId === "unfiled"} className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm hover-elevate ${effectiveFolderId === "unfiled" ? "bg-accent text-accent-foreground ring-1 ring-ring" : ""}`} data-testid="button-agenda-folder-unfiled">
+            <span className="flex items-center gap-2"><FolderInput className="h-4 w-4" />Unfiled</span><span className="text-xs text-muted-foreground">{unfiledCount}</span>
+          </button>
+          {sortedFolders.map((folder) => (
+            <div key={folder.id} className={`group flex items-center rounded-md pl-2 pr-1 py-1.5 text-sm hover-elevate ${effectiveFolderId === folder.id ? "bg-accent text-accent-foreground ring-1 ring-ring" : ""}`} data-testid={`agenda-folder-item-${folder.id}`}>
+              <button type="button" onClick={() => setSelectedFolderId(folder.id)} aria-pressed={effectiveFolderId === folder.id} className="flex flex-1 min-w-0 items-center gap-2 text-left" data-testid={`button-agenda-folder-${folder.id}`}><Folder className="h-4 w-4 shrink-0" /><span className="truncate">{folder.name}</span></button>
+              <span className="text-xs text-muted-foreground mr-1">{folderCount(folder.id)}</span>
+              <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-6 w-6" aria-label={`Actions for ${folder.name}`} data-testid={`button-agenda-folder-menu-${folder.id}`}><MoreHorizontal className="h-3.5 w-3.5" /></Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => { setFolderDialogMode("rename"); setFolderName(folder.name); setFolderBeingEdited(folder); setFolderDialogOpen(true); }} data-testid={`button-rename-agenda-folder-${folder.id}`}><Pencil className="mr-2 h-4 w-4" />Rename</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setFolderPendingDelete(folder)} data-testid={`button-delete-agenda-folder-${folder.id}`}><Trash2 className="mr-2 h-4 w-4" />Delete</DropdownMenuItem></DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ))}
+        </aside>
+        <div className="flex-1 min-w-0">
+          <div className="relative mb-4 max-w-md"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search displays..." className="pl-9" aria-label="Search agenda displays" data-testid="input-agenda-display-search" /></div>
       {isLoading ? (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-40" />)}
-        </div>
-      ) : configs.length === 0 ? (
-        <Card className="py-12">
-          <CardContent className="flex flex-col items-center text-center">
-            <SlidersHorizontal className="h-12 w-12 text-muted-foreground/50 mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No displays configured</h3>
-            <p className="text-sm text-muted-foreground max-w-sm mb-4">
-              Create a display config and copy its URL into a screen's browser or HTML widget.
-            </p>
-            <Button onClick={() => setCreating(true)}><Plus className="h-4 w-4 mr-2" />New display</Button>
-          </CardContent>
-        </Card>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-40" />)}</div>
+      ) : visibleConfigs.length === 0 ? (
+        <Card className="py-12"><CardContent className="flex flex-col items-center text-center">
+          <SlidersHorizontal className="h-12 w-12 text-muted-foreground/50 mb-4" />
+          <h3 className="text-lg font-semibold mb-2">{configs.length === 0 ? "No displays configured" : search ? "No displays match your search" : effectiveFolderId === "unfiled" ? "No unfiled displays" : "This folder is empty"}</h3>
+          <p className="text-sm text-muted-foreground max-w-sm mb-4">{configs.length === 0 ? "Create a display config and copy its URL into a screen's browser or HTML widget." : "Try a different folder or search term, or create a new display."}</p>
+          {configs.length === 0 && <Button onClick={() => setCreating(true)}><Plus className="h-4 w-4 mr-2" />New display</Button>}
+        </CardContent></Card>
       ) : (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {configs.map((c) => (
+        <div className="grid lg:grid-cols-2 xl:grid-cols-3 gap-4">
+          {visibleConfigs.map((c) => (
             <Card key={c.id} className="hover-elevate" data-testid={`config-card-${c.id}`}>
               <CardHeader>
                 <div className="flex items-start justify-between gap-2">
-                  <CardTitle className="text-base">{c.name}</CardTitle>
+                  <CardTitle className="min-w-0 flex-1 truncate text-base" title={c.name}>{c.name}</CardTitle>
                   <span
                     className="inline-block w-3 h-3 rounded-full border"
                     style={{ background: c.accentColor }}
@@ -1209,7 +1320,7 @@ export default function AgendaConfigsPage() {
                   )}
                   <p>Refresh {c.refreshIntervalSeconds}s · rotate {c.rotationIntervalSeconds}s</p>
                 </div>
-                <div className="flex gap-1">
+                <div className="flex flex-wrap gap-1">
                   <Button variant="outline" size="sm" onClick={() => copyUrl(c.id)} data-testid={`button-copy-${c.id}`}>
                     <Copy className="h-3.5 w-3.5 mr-1" /> URL
                   </Button>
@@ -1231,6 +1342,14 @@ export default function AgendaConfigsPage() {
                   >
                     <CopyPlus className="h-4 w-4" />
                   </Button>
+                   <DropdownMenu>
+                     <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" title="Move to folder" aria-label={`Move ${c.name} to folder`} data-testid={`button-move-config-${c.id}`}><FolderInput className="h-4 w-4" /></Button></DropdownMenuTrigger>
+                     <DropdownMenuContent align="end">
+                       <DropdownMenuItem onSelect={() => moveConfigMutation.mutate({ id: c.id, folderId: null })} data-testid={`button-move-config-unfiled-${c.id}`}><X className="mr-2 h-4 w-4" />Unfiled</DropdownMenuItem>
+                       {sortedFolders.length > 0 && <DropdownMenuSeparator />}
+                       {sortedFolders.map((folder) => <DropdownMenuItem key={folder.id} disabled={c.folderId === folder.id} onSelect={() => moveConfigMutation.mutate({ id: c.id, folderId: folder.id })} data-testid={`button-move-config-${c.id}-${folder.id}`}><Folder className="mr-2 h-4 w-4" />{folder.name}</DropdownMenuItem>)}
+                     </DropdownMenuContent>
+                   </DropdownMenu>
                   <Button variant="ghost" size="icon" onClick={() => deleteMutation.mutate(c.id)} data-testid={`button-delete-config-${c.id}`}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -1240,9 +1359,11 @@ export default function AgendaConfigsPage() {
           ))}
         </div>
       )}
+        </div>
+      </div>
 
       {creating && (
-        <ConfigEditor open={creating} onOpenChange={setCreating} clientId={selectedClientId} clientTimezone={selectedClient?.timezone ?? null} items={items} />
+        <ConfigEditor open={creating} onOpenChange={setCreating} initialFolderId={effectiveFolderId !== "all" && effectiveFolderId !== "unfiled" ? effectiveFolderId : null} clientId={selectedClientId} clientTimezone={selectedClient?.timezone ?? null} items={items} />
       )}
       {editing && (
         <ConfigEditor
@@ -1254,6 +1375,19 @@ export default function AgendaConfigsPage() {
           items={items}
         />
       )}
+      <Dialog open={folderDialogOpen} onOpenChange={setFolderDialogOpen}>
+        <DialogContent className="max-w-sm"><DialogHeader><DialogTitle>{folderDialogMode === "create" ? "New folder" : "Rename folder"}</DialogTitle></DialogHeader>
+          <DialogDescription>{folderDialogMode === "create" ? "Create a folder to organize this site's agenda displays." : "Change the folder name. Displays in it will remain unchanged."}</DialogDescription>
+          <Input value={folderName} onChange={(event) => setFolderName(event.target.value)} placeholder="Folder name" autoFocus onKeyDown={(event) => { if (event.key === "Enter") submitFolderDialog(); }} aria-label="Folder name" data-testid="input-agenda-folder-name" />
+          <DialogFooter><Button variant="outline" onClick={() => setFolderDialogOpen(false)}>Cancel</Button><Button onClick={submitFolderDialog} disabled={!folderName.trim()}>{folderDialogMode === "create" ? "Create folder" : "Save changes"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!folderPendingDelete} onOpenChange={(open) => { if (!open) setFolderPendingDelete(null); }}>
+        <DialogContent className="max-w-sm"><DialogHeader><DialogTitle>Delete folder?</DialogTitle></DialogHeader>
+          <DialogDescription>Displays in "{folderPendingDelete?.name}" will be moved to Unfiled. The displays themselves will not be deleted.</DialogDescription>
+          <DialogFooter><Button variant="outline" onClick={() => setFolderPendingDelete(null)}>Cancel</Button><Button variant="destructive" onClick={() => folderPendingDelete && deleteFolderMutation.mutate(folderPendingDelete.id)} disabled={deleteFolderMutation.isPending} data-testid="button-confirm-delete-agenda-folder">Delete folder</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

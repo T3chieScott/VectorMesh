@@ -82,10 +82,13 @@ import {
   systemSettings,
   type SystemSetting,
   agendaItems,
+  agendaFolders,
   agendaWidgetConfigs,
   agendaSyncConfigs,
   agendaItemSnapshots,
   type AgendaItem,
+  type AgendaFolder,
+  type InsertAgendaFolder,
   type InsertAgendaItem,
   type AgendaWidgetConfig,
   type InsertAgendaWidgetConfig,
@@ -232,6 +235,11 @@ export interface IStorage {
   updateAgendaItem(id: string, data: Partial<InsertAgendaItem>): Promise<AgendaItem | undefined>;
   deleteAgendaItem(id: string): Promise<boolean>;
   deleteAgendaItemsForClient(clientId: string): Promise<number>;
+  getAgendaFolders(clientId?: string): Promise<AgendaFolder[]>;
+  getAgendaFolder(id: string): Promise<AgendaFolder | undefined>;
+  createAgendaFolder(data: InsertAgendaFolder): Promise<AgendaFolder>;
+  updateAgendaFolder(id: string, data: Partial<InsertAgendaFolder>): Promise<AgendaFolder | undefined>;
+  deleteAgendaFolder(id: string): Promise<boolean>;
   getAgendaWidgetConfigs(clientId?: string): Promise<AgendaWidgetConfig[]>;
   getAgendaWidgetConfig(id: string): Promise<AgendaWidgetConfig | undefined>;
   createAgendaWidgetConfig(data: InsertAgendaWidgetConfig): Promise<AgendaWidgetConfig>;
@@ -3355,6 +3363,34 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Agenda Widget Configs (Task #208)
+  // Agenda Folders (Task #398)
+  async getAgendaFolders(clientId?: string): Promise<AgendaFolder[]> {
+    const query = db.select().from(agendaFolders);
+    return clientId
+      ? query.where(eq(agendaFolders.clientId, clientId)).orderBy(asc(agendaFolders.name))
+      : query.orderBy(asc(agendaFolders.name));
+  }
+
+  async getAgendaFolder(id: string): Promise<AgendaFolder | undefined> {
+    const [folder] = await db.select().from(agendaFolders).where(eq(agendaFolders.id, id));
+    return folder;
+  }
+
+  async createAgendaFolder(data: InsertAgendaFolder): Promise<AgendaFolder> {
+    const [folder] = await db.insert(agendaFolders).values(data).returning();
+    return folder;
+  }
+
+  async updateAgendaFolder(id: string, data: Partial<InsertAgendaFolder>): Promise<AgendaFolder | undefined> {
+    const [folder] = await db.update(agendaFolders).set(data).where(eq(agendaFolders.id, id)).returning();
+    return folder;
+  }
+
+  async deleteAgendaFolder(id: string): Promise<boolean> {
+    const result = await db.delete(agendaFolders).where(eq(agendaFolders.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
   async getAgendaWidgetConfigs(clientId?: string): Promise<AgendaWidgetConfig[]> {
     if (clientId) {
       return db

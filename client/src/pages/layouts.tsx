@@ -1250,8 +1250,6 @@ function SweepstakeConfigPickerSection({
   );
 }
 
-// Task #317 — persisted collapse state for the Scenes sidebar folders.
-const CLOSED_SCENE_FOLDERS_STORAGE_KEY = "vectormesh_scenes_closed_folders";
 // Persisted collapse state for folder sections inside media pickers
 // (photo montage, media zone). Keys are media-folder ids plus
 // "__uncategorised__".
@@ -9754,7 +9752,14 @@ function LayoutCard({ layout, events }: { layout: LayoutTemplate; events: Event[
   );
 }
 
-function CreateLayoutDialog({ events }: { events: Event[] }) {
+function CreateLayoutDialog({
+  events,
+  defaultFolder,
+}: {
+  events: Event[];
+  /** The currently selected folder, if it belongs to the selected scene site. */
+  defaultFolder?: LayoutFolder | null;
+}) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
   const { selectedClientId, clients } = useSiteContext();
@@ -9782,6 +9787,12 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
         zones: defaultZones,
         customWidth: data.aspectRatio === "custom" ? data.customWidth : null,
         customHeight: data.aspectRatio === "custom" ? data.customHeight : null,
+        // Do not manufacture a cross-site reference if the operator changes
+        // the site in the create form after opening it from a folder.
+        folderId:
+          defaultFolder && data.clientId === defaultFolder.clientId
+            ? defaultFolder.id
+            : null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
@@ -9795,7 +9806,22 @@ function CreateLayoutDialog({ events }: { events: Event[] }) {
   });
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (nextOpen) {
+          form.reset({
+            name: "",
+            clientId: defaultFolder?.clientId || selectedClientId || "",
+            eventId: "",
+            aspectRatio: "16:9",
+            customWidth: undefined,
+            customHeight: undefined,
+          });
+        }
+      }}
+    >
       <DialogTrigger asChild>
         <Button data-testid="button-create-layout">
           <Plus className="mr-2 h-4 w-4" />
@@ -10197,7 +10223,7 @@ function LayoutListItem({
                       data-testid={`button-move-scene-folder-none-${layout.id}`}
                     >
                       <X className="mr-2 h-4 w-4" />
-                      Uncategorised
+                      Unfiled
                     </DropdownMenuItem>
                     {folders.length > 0 && <DropdownMenuSeparator />}
                     {folders.length === 0 ? (
@@ -11122,25 +11148,9 @@ export default function LayoutsPage() {
     ...layoutFoldersQuery,
   });
 
-  // Task #311 — scene folders + name search
+  // Task #398 — scene folders use the existing layout_folders model.
   const [sceneSearch, setSceneSearch] = useState("");
-  const [closedFolderKeys, setClosedFolderKeys] = useState<Set<string>>(() => {
-    // Task #317: remember which scene folders the operator collapsed
-    // across reloads. Folder keys are folder ids (site-scoped), so one
-    // shared key is safe across sites.
-    try {
-      const raw = localStorage.getItem(CLOSED_SCENE_FOLDERS_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          return new Set(parsed.filter((k): k is string => typeof k === "string"));
-        }
-      }
-    } catch {
-      // Corrupt/blocked storage — fall back to everything open.
-    }
-    return new Set<string>();
-  });
+  const [selectedFolderId, setSelectedFolderId] = useState<"all" | "unfiled" | string>("all");
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [folderDialogMode, setFolderDialogMode] = useState<"create" | "rename">("create");
   const [folderDialogName, setFolderDialogName] = useState("");
@@ -11202,10 +11212,11 @@ export default function LayoutsPage() {
 
   const deleteFolderMutation = useMutation({
     mutationFn: (id: string) => apiRequest("DELETE", `/api/layout-folders/${id}`),
-    onSuccess: () => {
+    onSuccess: (_data, deletedFolderId) => {
       queryClient.invalidateQueries({ queryKey: ["/api/layout-folders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/layouts"] });
-      toast({ title: "Folder deleted", description: "Its scenes moved to Uncategorised." });
+      if (selectedFolderId === deletedFolderId) setSelectedFolderId("unfiled");
+      toast({ title: "Folder deleted", description: "Its scenes moved to Unfiled; scenes were not deleted." });
     },
     onError: () => {
       toast({ title: "Failed to delete folder", variant: "destructive" });
@@ -11324,67 +11335,35 @@ export default function LayoutsPage() {
     setFolderDialogOpen(false);
   };
 
-  const toggleFolderSection = (key: string) => {
-    setClosedFolderKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      try {
-        localStorage.setItem(
-          CLOSED_SCENE_FOLDERS_STORAGE_KEY,
-          JSON.stringify(Array.from(next)),
-        );
-      } catch {
-        // Storage unavailable — collapse state just won't persist.
-      }
-      return next;
-    });
-  };
-
   const sceneSearchLower = sceneSearch.trim().toLowerCase();
-  const filteredLayouts = sceneSearchLower
-    ? layouts.filter((l) => l.name.toLowerCase().includes(sceneSearchLower))
-    : layouts;
-
-  // Group scenes into per-folder sections plus Uncategorised. Folders with
-  // no matching scenes are hidden while searching but shown (empty) otherwise
-  // so a freshly created folder is visible.
-  const sceneSections = useMemo(() => {
-    const known = new Set(sceneFolders.map((f) => f.id));
-    const sections: Array<{
-      key: string;
-      name: string;
-      folder: LayoutFolder | null;
-      layouts: LayoutTemplate[];
-    }> = [];
-    for (const folder of sceneFolders) {
-      const inFolder = filteredLayouts.filter((l) => l.folderId === folder.id);
-      if (inFolder.length > 0 || !sceneSearchLower) {
-        sections.push({ key: folder.id, name: folder.name, folder, layouts: inFolder });
+  const sortedSceneFolders = useMemo(
+    () => [...sceneFolders].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+    [sceneFolders],
+  );
+  const knownFolderIds = useMemo(() => new Set(sceneFolders.map((folder) => folder.id)), [sceneFolders]);
+  const effectiveFolderId =
+    selectedFolderId !== "all" &&
+    selectedFolderId !== "unfiled" &&
+    !knownFolderIds.has(selectedFolderId)
+      ? "all"
+      : selectedFolderId;
+  const activeFolder = typeof effectiveFolderId === "string" &&
+    effectiveFolderId !== "all" && effectiveFolderId !== "unfiled"
+    ? sceneFolders.find((folder) => folder.id === effectiveFolderId) ?? null
+    : null;
+  const unfiledCount = layouts.filter((layout) => !layout.folderId || !knownFolderIds.has(layout.folderId)).length;
+  const visibleLayouts = useMemo(() => {
+    const inActiveFolder = layouts.filter((layout) => {
+      if (effectiveFolderId === "all") return true;
+      if (effectiveFolderId === "unfiled") {
+        return !layout.folderId || !knownFolderIds.has(layout.folderId);
       }
-    }
-    const uncategorised = filteredLayouts.filter(
-      (l) => !l.folderId || !known.has(l.folderId),
-    );
-    if (sceneFolders.length === 0) {
-      // No folders at all — keep the original flat list (no section header).
-      return uncategorised.length > 0 || !sceneSearchLower
-        ? [{ key: "__flat__", name: "", folder: null, layouts: uncategorised }]
-        : [];
-    }
-    if (uncategorised.length > 0 || !sceneSearchLower) {
-      sections.push({
-        key: "__uncategorised__",
-        name: "Uncategorised",
-        folder: null,
-        layouts: uncategorised,
-      });
-    }
-    return sections.filter((s) => s.layouts.length > 0 || !sceneSearchLower);
-  }, [sceneFolders, filteredLayouts, sceneSearchLower]);
+      return layout.folderId === effectiveFolderId;
+    });
+    return inActiveFolder
+      .filter((layout) => !sceneSearchLower || layout.name.toLowerCase().includes(sceneSearchLower))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  }, [layouts, effectiveFolderId, knownFolderIds, sceneSearchLower]);
 
   const previewScreenId = useVariablePreviewScreenId();
   const previewScreensQuery = useSiteFilteredQuery<{ id: string; name: string }[]>("/api/screens");
@@ -11504,13 +11483,17 @@ export default function LayoutsPage() {
   }
 
   return (
-    <div className="-m-6 flex overflow-hidden" style={{ height: 'calc(100vh - 3.5rem)' }} data-testid="layouts-page">
+    <div
+      className="-m-6 flex flex-col overflow-y-auto lg:flex-row lg:overflow-hidden"
+      style={{ height: 'calc(100vh - 3.5rem)' }}
+      data-testid="layouts-page"
+    >
       {(!selectedLayout || showLayoutList) && (
-        <div className="w-80 min-w-80 flex-shrink-0 border-r flex flex-col overflow-hidden bg-background">
+        <div className="w-full min-w-0 shrink-0 border-b flex flex-col overflow-hidden bg-background lg:w-80 lg:min-w-80 lg:border-b-0 lg:border-r">
           <div className="p-4 border-b space-y-3">
             <div className="flex items-center justify-between gap-2">
               <h1 className="font-semibold" data-testid="text-layouts-title">Scenes</h1>
-              <CreateLayoutDialog events={events} />
+              <CreateLayoutDialog events={events} defaultFolder={activeFolder} />
             </div>
             <div>
               <Label className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 block">
@@ -11595,7 +11578,7 @@ export default function LayoutsPage() {
                         data-testid="button-bulk-move-scenes-none"
                       >
                         <X className="mr-2 h-4 w-4" />
-                        Uncategorised
+                        Unfiled
                       </DropdownMenuItem>
                       {clientIds.size > 1 ? (
                         <DropdownMenuItem disabled>
@@ -11657,104 +11640,70 @@ export default function LayoutsPage() {
               );
             })()}
           </div>
-          <ScrollArea className="flex-1">
-            <div className="p-2 space-y-1">
-              {sceneSections.map((section) => {
-                const isOpen =
-                  sceneSearch.trim().length > 0 || !closedFolderKeys.has(section.key);
-                return (
-                  <div key={section.key}>
-                    {section.key !== "__flat__" && (
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => toggleFolderSection(section.key)}
-                        className="flex flex-1 min-w-0 items-center gap-1.5 rounded px-1 py-1 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-                        data-testid={`button-scene-folder-${section.key}`}
-                      >
-                        {isOpen ? (
-                          <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                        ) : (
-                          <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-                        )}
-                        <Folder className="h-3.5 w-3.5 shrink-0" />
-                        <span className="truncate">{section.name}</span>
-                        <span className="ml-auto shrink-0 text-[10px] tabular-nums">
-                          {section.layouts.length}
-                        </span>
-                      </button>
-                      {section.folder && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 shrink-0"
-                              data-testid={`button-scene-folder-menu-${section.folder.id}`}
-                            >
-                              <MoreHorizontal className="h-3.5 w-3.5" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onSelect={() => openRenameFolder(section.folder!)}
-                              data-testid={`button-rename-scene-folder-${section.folder.id}`}
-                            >
-                              <Pencil className="mr-2 h-4 w-4" />
-                              Rename
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
-                              onSelect={() => setFolderPendingDelete(section.folder!)}
-                              data-testid={`button-delete-scene-folder-${section.folder.id}`}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </div>
-                    )}
-                    {isOpen && (
-                      <div className="space-y-1 mt-1 mb-2">
-                        {section.layouts.map((layout) => (
-                          <LayoutListItem
-                            key={layout.id}
-                            layout={layout}
-                            folders={sceneFolders.filter(
-                              (f) => layout.clientId && f.clientId === layout.clientId,
-                            )}
-                            onMoveToFolder={(folderId) =>
-                              moveLayoutToFolderMutation.mutate({ layoutId: layout.id, folderId })
-                            }
-                            checked={checkedSceneIds.has(layout.id)}
-                            onToggleChecked={() => toggleCheckedScene(layout.id)}
-                            isSelected={layout.id === selectedLayoutId}
-                            onSelect={() => {
-                              setSelectedLayoutId(layout.id);
-                            }}
-                            previewScreenId={previewScreenId}
-                            previewCtx={previewCtx}
-                            previewScreenName={previewScreenName}
-                            previewStatus={previewStatus}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {sceneSections.length === 0 && (
+          <div className="flex h-[18rem] min-h-0 flex-1 lg:h-auto">
+            <aside className="w-32 shrink-0 border-r p-2 space-y-1 overflow-y-auto" aria-label="Scene folders">
+              <button type="button" onClick={() => setSelectedFolderId("all")}
+                className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs hover-elevate ${effectiveFolderId === "all" ? "bg-accent text-accent-foreground" : ""}`}
+                aria-current={effectiveFolderId === "all" ? "page" : undefined} data-testid="button-scene-folder-all">
+                <span className="flex items-center gap-1.5"><Folder className="h-3.5 w-3.5" />All</span>
+                <span className="tabular-nums text-muted-foreground">{layouts.length}</span>
+              </button>
+              <button type="button" onClick={() => setSelectedFolderId("unfiled")}
+                className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs hover-elevate ${effectiveFolderId === "unfiled" ? "bg-accent text-accent-foreground" : ""}`}
+                aria-current={effectiveFolderId === "unfiled" ? "page" : undefined} data-testid="button-scene-folder-unfiled">
+                <span className="flex items-center gap-1.5"><FolderInput className="h-3.5 w-3.5" />Unfiled</span>
+                <span className="tabular-nums text-muted-foreground">{unfiledCount}</span>
+              </button>
+              {sortedSceneFolders.length > 0 && <DropdownMenuSeparator />}
+              {sortedSceneFolders.map((folder) => (
+                <div key={folder.id} className={`group flex items-center rounded-md pr-1 ${effectiveFolderId === folder.id ? "bg-accent text-accent-foreground" : "hover-elevate"}`} data-testid={`scene-folder-item-${folder.id}`}>
+                  <button type="button" onClick={() => setSelectedFolderId(folder.id)}
+                    className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-xs"
+                    aria-current={effectiveFolderId === folder.id ? "page" : undefined}
+                    data-testid={`button-scene-folder-${folder.id}`}>
+                    <Folder className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{folder.name}</span>
+                    <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">{layouts.filter((layout) => layout.folderId === folder.id).length}</span>
+                  </button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" aria-label={`Actions for ${folder.name}`} data-testid={`button-scene-folder-menu-${folder.id}`}>
+                        <MoreHorizontal className="h-3.5 w-3.5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onSelect={() => openRenameFolder(folder)} data-testid={`button-rename-scene-folder-${folder.id}`}><Pencil className="mr-2 h-4 w-4" />Rename</DropdownMenuItem>
+                      <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setFolderPendingDelete(folder)} data-testid={`button-delete-scene-folder-${folder.id}`}><Trash2 className="mr-2 h-4 w-4" />Delete</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              ))}
+            </aside>
+            <ScrollArea className="flex-1 min-w-0">
+              <div className="p-2 space-y-1">
+              {visibleLayouts.map((layout) => (
+                <LayoutListItem key={layout.id} layout={layout}
+                  folders={sceneFolders.filter((folder) => layout.clientId && folder.clientId === layout.clientId)}
+                  onMoveToFolder={(folderId) => moveLayoutToFolderMutation.mutate({ layoutId: layout.id, folderId })}
+                  checked={checkedSceneIds.has(layout.id)} onToggleChecked={() => toggleCheckedScene(layout.id)}
+                  isSelected={layout.id === selectedLayoutId} onSelect={() => setSelectedLayoutId(layout.id)}
+                  previewScreenId={previewScreenId} previewCtx={previewCtx} previewScreenName={previewScreenName} previewStatus={previewStatus}
+                />
+              ))}
+              {visibleLayouts.length === 0 && (
                 <p
                   className="text-xs text-muted-foreground text-center py-6"
                   data-testid="text-no-scenes-match"
                 >
-                  No scenes match "{sceneSearch}"
+                  {sceneSearchLower
+                    ? `No scenes match "${sceneSearch}"`
+                    : effectiveFolderId === "all"
+                      ? "No scenes yet"
+                      : "No scenes in this folder"}
                 </p>
               )}
-            </div>
-          </ScrollArea>
+              </div>
+            </ScrollArea>
+          </div>
           <Dialog open={folderDialogOpen} onOpenChange={setFolderDialogOpen}>
             <DialogContent className="max-w-sm">
               <DialogHeader>
@@ -11831,8 +11780,8 @@ export default function LayoutsPage() {
               <AlertDialogHeader>
                 <AlertDialogTitle>Delete "{folderPendingDelete?.name}"?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  The folder will be removed. Scenes inside it are not deleted —
-                  they move back to Uncategorised.
+                  The folder will be removed. Scenes inside it are not deleted;
+                  their folder reference is cleared and they move to Unfiled.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -11853,8 +11802,8 @@ export default function LayoutsPage() {
       )}
 
       {selectedLayout ? (
-        <div className="flex-1 flex min-w-0 overflow-hidden h-full">
-          <div className="w-[26rem] min-w-[20rem] shrink border-r overflow-hidden flex flex-col h-full">
+        <div className="flex min-w-0 flex-1 flex-col overflow-visible lg:h-full lg:flex-row lg:overflow-hidden">
+          <div className="flex w-full min-w-0 shrink-0 flex-col overflow-visible border-b lg:h-full lg:w-[26rem] lg:min-w-[20rem] lg:border-b-0 lg:border-r lg:overflow-hidden">
             <LayoutEditorPanel 
               layout={selectedLayout} 
               events={events}
@@ -11879,7 +11828,7 @@ export default function LayoutsPage() {
               onSelectedZoneIdsChange={setSelectedZoneIds}
             />
           </div>
-          <div className="flex-1 min-w-0 overflow-hidden h-full">
+          <div className="min-w-0 flex-1 overflow-visible lg:h-full lg:overflow-hidden">
             <LivePreviewPanel 
               layout={selectedLayout} 
               zones={draftZones}

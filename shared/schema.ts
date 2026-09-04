@@ -1712,6 +1712,9 @@ const HEX_COLOUR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  // Task #398: flat, site-owned organisation bucket. Deleting a folder
+  // returns its displays to Unfiled rather than deleting the displays.
+  folderId: varchar("folder_id").references(() => agendaFolders.id, { onDelete: "set null" }),
   name: text("name").notNull(),
   displayMode: text("display_mode").notNull().default("full"),
   layoutMode: text("layout_mode").notNull().default("auto"),
@@ -1796,16 +1799,45 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   showNowNextLabel: boolean("show_now_next_label").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  index("agenda_widget_configs_folder_id_idx").on(table.folderId),
+]);
 
 export const agendaWidgetConfigsRelations = relations(agendaWidgetConfigs, ({ one }) => ({
   client: one(clients, { fields: [agendaWidgetConfigs.clientId], references: [clients.id] }),
+  folder: one(agendaFolders, { fields: [agendaWidgetConfigs.folderId], references: [agendaFolders.id] }),
 }));
+
+// ============ AGENDA FOLDERS ============
+// Flat, per-site folders for agenda display configurations.
+export const agendaFolders = pgTable("agenda_folders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("agenda_folders_client_name_idx").on(table.clientId, table.name),
+]);
+
+export const agendaFoldersRelations = relations(agendaFolders, ({ one, many }) => ({
+  client: one(clients, { fields: [agendaFolders.clientId], references: [clients.id] }),
+  configs: many(agendaWidgetConfigs),
+}));
+
+export const insertAgendaFolderSchema = createInsertSchema(agendaFolders)
+  .omit({ id: true, createdAt: true })
+  .extend({
+    // Matches the Library/Scene route naming contract.
+    name: z.string().trim().min(1, "Name is required").max(200),
+  });
+export type InsertAgendaFolder = z.infer<typeof insertAgendaFolderSchema>;
+export type AgendaFolder = typeof agendaFolders.$inferSelect;
 
 export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetConfigs)
   .omit({ id: true, createdAt: true, updatedAt: true })
   .extend({
     name: z.string().min(1, "Name is required"),
+    folderId: z.string().nullable().optional(),
     displayMode: z.enum(AGENDA_DISPLAY_MODES).default("full"),
     layoutMode: z.enum(AGENDA_LAYOUT_MODES).default("auto"),
     fontScale: z.enum(AGENDA_FONT_SCALES).default("normal"),
@@ -1866,7 +1898,12 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
     sessionDurationPrefix: z.string().trim().max(24).default(""),
   });
 export type InsertAgendaWidgetConfig = z.infer<typeof insertAgendaWidgetConfigSchema>;
-export type AgendaWidgetConfig = typeof agendaWidgetConfigs.$inferSelect;
+// Keep this optional at the application boundary while additive migrations
+// roll out: pre-Task #398 fixtures and callers do not yet carry folderId.
+// Database rows always return `string | null` once 0035 is applied.
+export type AgendaWidgetConfig = Omit<typeof agendaWidgetConfigs.$inferSelect, "folderId"> & {
+  folderId?: string | null;
+};
 
 // ============ WORLD FOOTBALL SWEEPSTAKE WALL (Task #286) ============
 // A self-contained signage widget that randomly assigns staff to

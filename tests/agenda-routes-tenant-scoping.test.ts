@@ -12,14 +12,20 @@ import {
 import { AGENDA_CSV_HEADER } from "../shared/agenda-csv";
 import type {
   AgendaItem,
+  AgendaFolder,
   AgendaSyncConfig,
   AgendaWidgetConfig,
   Client,
   InsertAgendaItem,
+  InsertAgendaFolder,
   InsertAgendaSyncConfig,
   InsertAgendaWidgetConfig,
 } from "../shared/schema";
 import { resolveAgendaItems } from "../shared/agenda-resolver";
+import {
+  AGENDA_SETTINGS_CLIPBOARD_KEYS,
+  parseAgendaSettingsClipboardPayload,
+} from "../shared/agenda-settings-clipboard";
 
 // Task #211 — integration coverage for the agenda HTTP routes.
 //
@@ -37,21 +43,25 @@ function makeFakeStorage(initial: {
   items?: AgendaItem[];
   configs?: AgendaWidgetConfig[];
   syncConfigs?: AgendaSyncConfig[];
+  agendaFolders?: AgendaFolder[];
   clients?: Client[];
 }): AgendaRoutesStorage & {
   items: AgendaItem[];
   configs: AgendaWidgetConfig[];
   syncConfigs: AgendaSyncConfig[];
+  agendaFolders: AgendaFolder[];
 } {
   const items: AgendaItem[] = [...(initial.items ?? [])];
   const configs: AgendaWidgetConfig[] = [...(initial.configs ?? [])];
   const syncConfigs: AgendaSyncConfig[] = [...(initial.syncConfigs ?? [])];
+  const agendaFolders: AgendaFolder[] = [...(initial.agendaFolders ?? [])];
   const clients: Client[] = [...(initial.clients ?? [])];
 
   return {
     items,
     configs,
     syncConfigs,
+    agendaFolders,
     async getAgendaItems(clientId) {
       return clientId ? items.filter((i) => i.clientId === clientId) : items.slice();
     },
@@ -105,6 +115,38 @@ function makeFakeStorage(initial: {
         }
       }
       return removed;
+    },
+    async getAgendaFolders(clientId) {
+      return clientId ? agendaFolders.filter((folder) => folder.clientId === clientId) : agendaFolders.slice();
+    },
+    async getAgendaFolder(id) {
+      return agendaFolders.find((folder) => folder.id === id);
+    },
+    async createAgendaFolder(data: InsertAgendaFolder) {
+      const folder = {
+        id: `agenda-folder-${agendaFolders.length + 1}`,
+        clientId: data.clientId,
+        name: data.name,
+        createdAt: new Date(),
+      };
+      agendaFolders.push(folder);
+      return folder;
+    },
+    async updateAgendaFolder(id, data) {
+      const index = agendaFolders.findIndex((folder) => folder.id === id);
+      if (index === -1) return undefined;
+      agendaFolders[index] = { ...agendaFolders[index], ...(data as Partial<AgendaFolder>) };
+      return agendaFolders[index];
+    },
+    async deleteAgendaFolder(id) {
+      const index = agendaFolders.findIndex((folder) => folder.id === id);
+      if (index === -1) return false;
+      agendaFolders.splice(index, 1);
+      // Simulate FK ON DELETE SET NULL for route-level behaviour.
+      for (let i = 0; i < configs.length; i++) {
+        if (configs[i].folderId === id) configs[i] = { ...configs[i], folderId: null };
+      }
+      return true;
     },
     async getAgendaSyncConfigs(clientId) {
       return clientId
@@ -197,6 +239,7 @@ function makeConfig(over: Partial<AgendaWidgetConfig> & { id: string; clientId: 
   return {
     id: over.id,
     clientId: over.clientId,
+    folderId: over.folderId ?? null,
     name: over.name ?? "Display",
     displayMode: (over.displayMode ?? "full") as AgendaWidgetConfig["displayMode"],
     layoutMode: (over.layoutMode ?? "auto") as AgendaWidgetConfig["layoutMode"],
@@ -222,6 +265,15 @@ function makeConfig(over: Partial<AgendaWidgetConfig> & { id: string; clientId: 
     showEventName: over.showEventName ?? true,
     createdAt: over.createdAt ?? new Date("2026-05-01T00:00:00Z"),
     updatedAt: over.updatedAt ?? new Date("2026-05-01T00:00:00Z"),
+  };
+}
+
+function makeAgendaFolder(over: Partial<AgendaFolder> & { id: string; clientId: string }): AgendaFolder {
+  return {
+    id: over.id,
+    clientId: over.clientId,
+    name: over.name ?? `Folder ${over.id}`,
+    createdAt: over.createdAt ?? new Date("2026-05-01T00:00:00Z"),
   };
 }
 
@@ -399,6 +451,180 @@ test("PATCH /api/agenda/configs/:id — site A user cannot reassign config to si
   }
 });
 
+// ============ Task #398 — AGENDA FOLDERS ============
+
+test("agenda folders — unauthenticated CRUD is rejected", async () => {
+  const storage = makeFakeStorage({ agendaFolders: [makeAgendaFolder({ id: "fa", clientId: "siteA" })] });
+  const srv = await startTestServer({ storage, user: null });
+  try {
+    for (const [method, path, body] of [
+      ["GET", "/api/agenda-folders", undefined],
+      ["POST", "/api/agenda-folders", { clientId: "siteA", name: "New" }],
+      ["PATCH", "/api/agenda-folders/fa", { name: "New" }],
+      ["DELETE", "/api/agenda-folders/fa", undefined],
+    ] as const) {
+      const response = await fetch(`${srv.base}${path}`, {
+        method,
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      assert.equal(response.status, 401, `${method} ${path} must require authentication`);
+    }
+  } finally {
+    await srv.close();
+  }
+});
+
+test("agenda folders — list/create validates names and respects site access", async () => {
+  const storage = makeFakeStorage({
+    agendaFolders: [
+      makeAgendaFolder({ id: "fa", clientId: "siteA" }),
+      makeAgendaFolder({ id: "fb", clientId: "siteB" }),
+    ],
+  });
+  const srv = await startTestServer({ storage, user: { role: "site_user", allowedClientIds: ["siteA"] } });
+  try {
+    const list = await (await fetch(`${srv.base}/api/agenda-folders`)).json() as Array<{ id: string }>;
+    assert.deepEqual(list.map((folder) => folder.id), ["fa"]);
+    assert.equal((await fetch(`${srv.base}/api/agenda-folders?clientId=siteB`)).status, 403);
+
+    const created = await fetch(`${srv.base}/api/agenda-folders`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteA", name: "  Trimmed  " }),
+    });
+    assert.equal(created.status, 201);
+    assert.equal(storage.agendaFolders.at(-1)?.name, "Trimmed");
+    for (const name of ["   ", "x".repeat(201)]) {
+      const bad = await fetch(`${srv.base}/api/agenda-folders`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId: "siteA", name }),
+      });
+      assert.equal(bad.status, 400);
+    }
+    const denied = await fetch(`${srv.base}/api/agenda-folders`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteB", name: "Nope" }),
+    });
+    assert.equal(denied.status, 403);
+  } finally {
+    await srv.close();
+  }
+
+  const admin = await startTestServer({ storage, user: { role: "admin", allowedClientIds: null } });
+  try {
+    const list = await (await fetch(`${admin.base}/api/agenda-folders`)).json() as Array<{ id: string }>;
+    assert.deepEqual(list.map((folder) => folder.id).sort(), ["fa", "fb", "agenda-folder-3"].sort());
+  } finally {
+    await admin.close();
+  }
+});
+
+test("agenda folders — rename/delete protect tenancy and deletion safely unfiles displays", async () => {
+  const original = makeConfig({ id: "cfgA", clientId: "siteA", name: "Keep me", folderId: "fa", eventName: "Event" });
+  const storage = makeFakeStorage({
+    configs: [original],
+    agendaFolders: [makeAgendaFolder({ id: "fa", clientId: "siteA" }), makeAgendaFolder({ id: "fb", clientId: "siteB" })],
+  });
+  const srv = await startTestServer({ storage, user: { role: "site_user", allowedClientIds: ["siteA"] } });
+  try {
+    const renamed = await fetch(`${srv.base}/api/agenda-folders/fa`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "  Renamed  ", clientId: "siteB" }),
+    });
+    assert.equal(renamed.status, 200);
+    assert.equal(storage.agendaFolders.find((folder) => folder.id === "fa")?.name, "Renamed");
+    assert.equal(storage.agendaFolders.find((folder) => folder.id === "fa")?.clientId, "siteA");
+    assert.equal((await fetch(`${srv.base}/api/agenda-folders/fb`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Hijack" }),
+    })).status, 403);
+    assert.equal((await fetch(`${srv.base}/api/agenda-folders/missing`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "No" }),
+    })).status, 404);
+    assert.equal((await fetch(`${srv.base}/api/agenda-folders/fb`, { method: "DELETE" })).status, 403);
+    assert.equal((await fetch(`${srv.base}/api/agenda-folders/missing`, { method: "DELETE" })).status, 404);
+
+    const deleted = await fetch(`${srv.base}/api/agenda-folders/fa`, { method: "DELETE" });
+    assert.equal(deleted.status, 204);
+    assert.equal(storage.configs.length, 1, "folder deletion must not delete its display");
+    assert.equal(storage.configs[0].id, original.id);
+    assert.equal(storage.configs[0].name, "Keep me");
+    assert.equal(storage.configs[0].eventName, "Event");
+    assert.equal(storage.configs[0].folderId, null, "FK deletion behavior returns display to Unfiled");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("agenda config folder assignment — same-site only, supports unfiled and safe site moves", async () => {
+  const storage = makeFakeStorage({
+    configs: [makeConfig({ id: "cfgA", clientId: "siteA", folderId: "fa", name: "Original" })],
+    agendaFolders: [makeAgendaFolder({ id: "fa", clientId: "siteA" }), makeAgendaFolder({ id: "fb", clientId: "siteB" })],
+  });
+  const srv = await startTestServer({ storage, user: { role: "admin", allowedClientIds: null } });
+  try {
+    const post = await fetch(`${srv.base}/api/agenda/configs`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteA", name: "Assigned", folderId: "fa" }),
+    });
+    assert.equal(post.status, 201);
+    assert.equal((await post.json() as { folderId: string | null }).folderId, "fa");
+    for (const folderId of ["missing", "fb"]) {
+      const bad = await fetch(`${srv.base}/api/agenda/configs`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId: "siteA", name: "Bad", folderId }),
+      });
+      assert.equal(bad.status, 400);
+    }
+    for (const folderId of ["missing", "fb"]) {
+      const bad = await fetch(`${srv.base}/api/agenda/configs/cfgA`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folderId }),
+      });
+      assert.equal(bad.status, 400);
+      assert.equal(storage.configs[0].folderId, "fa");
+    }
+    assert.equal((await fetch(`${srv.base}/api/agenda/configs/cfgA`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folderId: null }),
+    })).status, 200);
+    assert.equal(storage.configs[0].folderId, null);
+    assert.equal((await fetch(`${srv.base}/api/agenda/configs/cfgA`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folderId: "fa" }),
+    })).status, 200);
+    assert.equal(storage.configs[0].folderId, "fa", "same-site PATCH assignment is accepted");
+
+    // Both identifiers are validated against the target client, not the old one.
+    assert.equal((await fetch(`${srv.base}/api/agenda/configs/cfgA`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "siteB", folderId: "fb" }),
+    })).status, 200);
+    assert.equal(storage.configs[0].clientId, "siteB");
+    assert.equal(storage.configs[0].folderId, "fb");
+
+    // Moving back without an explicit folder cannot retain the old site's folder;
+    // retrying the same request remains safe and leaves the config Unfiled.
+    assert.equal((await fetch(`${srv.base}/api/agenda/configs/cfgA`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId: "siteA" }),
+    })).status, 200);
+    assert.equal(storage.configs[0].folderId, null);
+    assert.equal((await fetch(`${srv.base}/api/agenda/configs/cfgA`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId: "siteA" }),
+    })).status, 200);
+    assert.equal(storage.configs[0].folderId, null);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("agenda folderId remains absent from public display and Task #397 clipboard contracts", async () => {
+  assert.equal(AGENDA_SETTINGS_CLIPBOARD_KEYS.includes("folderId" as never), false);
+  assert.throws(
+    () => parseAgendaSettingsClipboardPayload(JSON.stringify({
+      type: "vectormesh-agenda-display-settings", version: 1, settings: { folderId: "fa" },
+    })),
+    /folderId/,
+  );
+  assert.equal(PUBLIC_AGENDA_CONFIG_FIELDS.includes("folderId" as never), false);
+});
+
 test("DELETE /api/agenda/configs/:id — site A user cannot delete a site B config", async () => {
   const cfgB = makeConfig({ id: "cfgB", clientId: "siteB" });
   const storage = makeFakeStorage({ configs: [cfgB] });
@@ -482,6 +708,7 @@ test("GET /api/agenda/display/:configId — public payload never leaks internal 
     id: "cfgPub",
     clientId: "siteA",
     name: "Public",
+    folderId: "admin-only-folder",
     timeWindowMinutes: 60, // an internal/admin-only filter — must NOT leak
   });
   const fixedNow = new Date("2026-06-01T10:30:00Z");
@@ -529,7 +756,7 @@ test("GET /api/agenda/display/:configId — public payload never leaks internal 
     );
 
     // Spot-check that the obviously-sensitive fields are absent.
-    for (const banned of ["clientId", "createdAt", "updatedAt", "timeWindowMinutes"]) {
+    for (const banned of ["clientId", "createdAt", "updatedAt", "timeWindowMinutes", "folderId"]) {
       assert.equal(
         (body.config as any)[banned],
         undefined,
