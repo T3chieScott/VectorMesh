@@ -11529,13 +11529,14 @@ export default function LayoutsPage() {
               </div>
               <Button
                 variant="outline"
-                size="icon"
-                className="h-8 w-8 shrink-0"
+                size="sm"
+                className="h-8 shrink-0 gap-1.5"
                 onClick={openCreateFolder}
-                title="New folder"
+                aria-label="Create a new scene folder"
                 data-testid="button-create-scene-folder"
               >
                 <FolderPlus className="h-4 w-4" />
+                <span className="hidden sm:inline">New folder</span>
               </Button>
             </div>
             {checkedSceneIds.size > 0 && (() => {
@@ -11640,29 +11641,41 @@ export default function LayoutsPage() {
               );
             })()}
           </div>
-          <div className="flex h-[18rem] min-h-0 flex-1 lg:h-auto">
-            <aside className="w-32 shrink-0 border-r p-2 space-y-1 overflow-y-auto" aria-label="Scene folders">
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div
+              className="flex min-h-12 shrink-0 items-center gap-1.5 overflow-x-auto border-b bg-muted/20 px-3 py-2"
+              role="group"
+              aria-label="Scene folder selector"
+              data-testid="scene-folder-selector"
+            >
+              <span className="mr-1 shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Folder
+              </span>
               <button type="button" onClick={() => setSelectedFolderId("all")}
-                className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs hover-elevate ${effectiveFolderId === "all" ? "bg-accent text-accent-foreground" : ""}`}
-                aria-current={effectiveFolderId === "all" ? "page" : undefined} data-testid="button-scene-folder-all">
-                <span className="flex items-center gap-1.5"><Folder className="h-3.5 w-3.5" />All</span>
+                className={`flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs hover-elevate ${effectiveFolderId === "all" ? "border-primary/40 bg-primary/10 text-foreground" : "border-transparent bg-background"}`}
+                aria-current={effectiveFolderId === "all" ? "page" : undefined}
+                aria-label={`All scenes, ${layouts.length} scenes`}
+                data-testid="button-scene-folder-all">
+                <Folder className="h-3.5 w-3.5" /><span>All scenes</span>
                 <span className="tabular-nums text-muted-foreground">{layouts.length}</span>
               </button>
               <button type="button" onClick={() => setSelectedFolderId("unfiled")}
-                className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs hover-elevate ${effectiveFolderId === "unfiled" ? "bg-accent text-accent-foreground" : ""}`}
-                aria-current={effectiveFolderId === "unfiled" ? "page" : undefined} data-testid="button-scene-folder-unfiled">
-                <span className="flex items-center gap-1.5"><FolderInput className="h-3.5 w-3.5" />Unfiled</span>
+                className={`flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs hover-elevate ${effectiveFolderId === "unfiled" ? "border-primary/40 bg-primary/10 text-foreground" : "border-transparent bg-background"}`}
+                aria-current={effectiveFolderId === "unfiled" ? "page" : undefined}
+                aria-label={`Unfiled scenes, ${unfiledCount} scenes`}
+                data-testid="button-scene-folder-unfiled">
+                <FolderInput className="h-3.5 w-3.5" /><span>Unfiled</span>
                 <span className="tabular-nums text-muted-foreground">{unfiledCount}</span>
               </button>
-              {sortedSceneFolders.length > 0 && <DropdownMenuSeparator />}
               {sortedSceneFolders.map((folder) => (
-                <div key={folder.id} className={`group flex items-center rounded-md pr-1 ${effectiveFolderId === folder.id ? "bg-accent text-accent-foreground" : "hover-elevate"}`} data-testid={`scene-folder-item-${folder.id}`}>
+                <div key={folder.id} className={`flex h-7 shrink-0 items-center rounded-md border pl-2 pr-0.5 ${effectiveFolderId === folder.id ? "border-primary/40 bg-primary/10" : "border-transparent bg-background hover-elevate"}`} data-testid={`scene-folder-item-${folder.id}`}>
                   <button type="button" onClick={() => setSelectedFolderId(folder.id)}
-                    className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-xs"
+                    className="flex min-w-0 items-center gap-1.5 text-left text-xs"
                     aria-current={effectiveFolderId === folder.id ? "page" : undefined}
+                    aria-label={`${folder.name}, ${layouts.filter((layout) => layout.folderId === folder.id).length} scenes`}
                     data-testid={`button-scene-folder-${folder.id}`}>
                     <Folder className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{folder.name}</span>
-                    <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">{layouts.filter((layout) => layout.folderId === folder.id).length}</span>
+                    <span className="text-[10px] tabular-nums text-muted-foreground">{layouts.filter((layout) => layout.folderId === folder.id).length}</span>
                   </button>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -11677,7 +11690,7 @@ export default function LayoutsPage() {
                   </DropdownMenu>
                 </div>
               ))}
-            </aside>
+            </div>
             <ScrollArea className="flex-1 min-w-0">
               <div className="p-2 space-y-1">
               {visibleLayouts.map((layout) => (

@@ -679,16 +679,16 @@ test("__TEST_S382__ body column is flex-col so description viewport can shrink w
 // Landscape/ultrawide — BoundedScrollGrid (CSS grid) replaces CSS columns
 // ---------------------------------------------------------------------------
 
-test("__TEST_S399__ BoundedScrollGrid uses intrinsic-minimum flexible rows", () => {
+test("__TEST_S400__ BoundedScrollGrid isolates Full and Now/Next row tracks", () => {
   const src = readFileSync(
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
     "utf-8",
   );
-  assert.ok(
-    src.includes("minmax(auto, 1fr)"),
-    "BoundedScrollGrid must preserve the card's automatic minimum",
+  assert.match(
+    src,
+    /const rowTrack = nowNextMode\s*\?\s*"minmax\(0, 1fr\)"\s*:\s*"max-content"/,
   );
-  assert.ok(!src.includes("minmax(0, 1fr)"), "zero-minimum tracks must not regress");
+  assert.ok(!src.includes("minmax(auto, 1fr)"), "obsolete shared row track must not return");
   assert.ok(
     src.includes("gridAutoFlow"),
     "BoundedScrollGrid must set gridAutoFlow to preserve column-major order",
@@ -697,6 +697,17 @@ test("__TEST_S399__ BoundedScrollGrid uses intrinsic-minimum flexible rows", () 
     src.includes(`"column"`),
     "gridAutoFlow must be 'column' so sessions read chronologically top-to-bottom within each column",
   );
+});
+
+test("__TEST_S400__ Now/Next uses a full-height stretched card body without a JS viewport cap", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  assert.match(src, /nowNextMode && scrollEnabled \? "items-stretch" : "items-start"/);
+  assert.match(src, /nowNextMode && scrollEnabled \? " h-full self-stretch" : ""/);
+  assert.match(src, /if \(!nowNextMode && cardRef\.current && allocatedH != null\)/);
+  assert.doesNotMatch(src, /Historical contract retained|compatibility string/);
 });
 
 test("__TEST_S382__ LandscapeGrid routes to BoundedScrollGrid when scrollPageH is set", () => {
@@ -851,12 +862,16 @@ test("__TEST_S399__ portrait Full auto-scroll uses the bounded grid", () => {
   );
 });
 
-test("__TEST_S399__ fixed card content remains a grid-row minimum", () => {
+test("__TEST_S400__ Full rows are content-sized while Now/Next owns slot filling", () => {
   const src = readFileSync(
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
     "utf-8",
   );
-  assert.match(src, /minmax\(auto, 1fr\)/);
+  assert.match(
+    src,
+    /const rowTrack = nowNextMode\s*\?\s*"minmax\(0, 1fr\)"\s*:\s*"max-content"/,
+  );
+  assert.doesNotMatch(src, /minmax\(auto, 1fr\)/);
   assert.match(src, /pageH=\{scrollPageH\}/);
   assert.match(src, /pageItemCount=\{numRows\}/);
   assert.match(src, /flex-auto min-h-0 overflow-hidden/);

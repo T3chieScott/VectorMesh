@@ -625,8 +625,12 @@ function AgendaRow({
   const roleSizes = resolveAgendaRoleSizes(config);
   const endTimeMult = roleSizes.time * (0.75 / AGENDA_ROLE_SIZE_DEFAULTS.time);
   const descMult = roleSizes.body * (0.8 / AGENDA_ROLE_SIZE_DEFAULTS.body);
+  // Full Agenda and Now/Next deliberately have different sizing contracts.
+  // Full cards are content-sized; Now/Next cards occupy their allocated slot
+  // and let CSS flexbox, rather than a JS cap, give the description its share.
+  const nowNextMode = config.displayMode === "now_next";
   const allocatedH =
-    pageH != null && pageItemCount != null
+    !nowNextMode && pageH != null && pageItemCount != null
       ? Math.max(0, (pageH - (pageItemCount - 1) * SCROLL_ROW_GAP) / pageItemCount)
       : null;
   const descriptionMinViewportPx =
@@ -695,7 +699,7 @@ function AgendaRow({
     // has settled (clientHeight > 0). Both values are read from separate
     // elements so neither is affected by overflow:hidden on an ancestor.
     if (!viewport || !inner || viewport.clientHeight <= 0) return;
-    if (cardRef.current && allocatedH != null) {
+    if (!nowNextMode && cardRef.current && allocatedH != null) {
       const fixedCardHeight = Math.max(
         0,
         cardRef.current.offsetHeight - viewport.clientHeight,
@@ -733,11 +737,15 @@ function AgendaRow({
       setDescriptionViewportMaxHeight(null);
       return;
     }
+    if (nowNextMode) {
+      setDescriptionViewportMaxHeight((prev) => (prev === null ? prev : null));
+    }
     doMeasureRef.current();
   // onScrollOverflow intentionally omitted — captured via doMeasureRef.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     scrollEnabled,
+    nowNextMode,
     allocatedH,
     descriptionMinViewportPx,
     item.id,
@@ -839,9 +847,15 @@ function AgendaRow({
       // may shrink. The card itself stays intrinsic; the finite budget is
       // applied to the description viewport after fixed content is measured.
       ref={cardRef}
-      className="flex items-start gap-4 rounded-lg px-4 py-3"
+      className={`flex ${nowNextMode && scrollEnabled ? "items-stretch" : "items-start"} gap-4 rounded-lg px-4 py-3`}
       style={{
         ...cardStyle,
+        // Now/Next is a slot-filling surface. Do not use the Full Agenda
+        // intrinsic-height contract here: the body must receive the CSS
+        // remaining space in the allocated row.
+        ...(nowNextMode && scrollEnabled
+          ? { height: "100%", alignSelf: "stretch", minHeight: 0 }
+          : {}),
       }}
       data-testid={tid(`agenda-row-${item.id}`)}
       data-current={isCurrent ? "true" : undefined}
@@ -889,7 +903,11 @@ function AgendaRow({
           description viewport (flex-auto below) uses its natural height until
           the card bound requires it to shrink. Title/meta/status stay
           shrink-0. */}
-      <div className={`flex-1 min-w-0${scrollEnabled ? " flex flex-col min-h-0" : ""}`}>
+      <div
+        className={`flex-1 min-w-0${
+          scrollEnabled ? " flex flex-col min-h-0" : ""
+        }${nowNextMode && scrollEnabled ? " h-full self-stretch" : ""}`}
+      >
         {nowNextLabel && (
           <div className={`${scrollEnabled ? "shrink-0 " : ""}mb-1`}>
             <p
@@ -1194,16 +1212,20 @@ function BoundedScrollGrid({
 }: RowGridProps) {
   const cols = numCols ?? 2;
   const numRows = Math.ceil(pageItems.length / cols);
+  const nowNextMode = config.displayMode === "now_next";
+  const rowTrack = nowNextMode
+    ? "minmax(0, 1fr)"
+    : "max-content";
   return (
     <div
       className="flex-1 min-h-0"
       style={{
         display: "grid",
         gridTemplateColumns: `repeat(${cols}, 1fr)`,
-        // Each row remains flexible, but its automatic minimum is retained.
-        // The description viewport receives the finite budget, so a long
-        // description cannot expand the track before it starts scrolling.
-        gridTemplateRows: `repeat(${numRows}, minmax(auto, 1fr))`,
+        // Full rows are max-content and therefore never absorb leftover
+        // height. Now/Next rows use the zero-minimum flexible track so the
+        // card fills its slot and CSS flexbox owns the remaining viewport.
+        gridTemplateRows: `repeat(${numRows}, ${rowTrack})`,
         gap: SCROLL_ROW_GAP,
         // Fill columns first so sessions read chronologically top-to-bottom
         // within each column, consistent with the CSS columns non-scroll layout.
@@ -1223,6 +1245,9 @@ function BoundedScrollGrid({
           accentColor={config.accentColor}
           roleColors={roleColors}
           showCardDate={showCardDate}
+          // Keep the page geometry available to Full Agenda. AgendaRow
+          // intentionally ignores it in Now/Next mode, preventing a
+          // circular viewport cap while preserving the shared row contract.
           pageH={scrollPageH}
           pageItemCount={numRows}
           onScrollOverflow={onScrollOverflow}
