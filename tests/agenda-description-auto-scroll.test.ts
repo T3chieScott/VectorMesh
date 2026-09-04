@@ -40,6 +40,7 @@ import {
   getDescriptionScrollIndicator,
   isDescriptionAutoScrollAnimationActive,
   isDescriptionAutoScrollMode,
+  resolveDescriptionViewportMaxHeight,
 } from "../client/src/components/agenda/AgendaDisplayWidget";
 
 // ---------------------------------------------------------------------------
@@ -645,29 +646,17 @@ test("__TEST_S382__ description viewport uses intrinsic flex sizing with a CSS b
   );
 });
 
-test("__TEST_S382__ card receives maxHeight constraints without forced full-height stretching", () => {
+test("__TEST_S399__ card stays intrinsic while the description receives the finite budget", () => {
   const src = readFileSync(
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
     "utf-8",
   );
-  // Portrait path: maximum pixel height from JS formula
+  assert.ok(!src.includes('maxHeight: "100%"'), "the outer card must not have a circular max-height");
+  assert.ok(src.includes("cardRef.current.offsetHeight - viewport.clientHeight"));
+  assert.ok(src.includes("resolveDescriptionViewportMaxHeight"));
   assert.ok(
-    src.includes("allocatedH !== null"),
-    "portrait card must calculate allocatedH when pageH/pageItemCount are provided",
-  );
-  assert.ok(
-    src.includes("maxHeight: allocatedH"),
-    "portrait card must use allocatedH as a maximum, not an unconditional height",
-  );
-  // Landscape/ultrawide grid path: CSS grid cell bounds the card
-  assert.ok(
-    src.includes('{ maxHeight: "100%", minHeight: 0, alignSelf: "start" }'),
-    "grid-cell cards must use maxHeight:100% and align-self:start",
-  );
-  assert.ok(!src.includes('{ height: "100%", minHeight: 0 }'), "cards must not be forced to height:100%");
-  assert.ok(
-    src.includes("items-stretch min-h-0"),
-    "card must switch to items-stretch so body column fills the allocated height",
+    src.includes("maxHeight: descriptionViewportMaxHeight"),
+    "only the description viewport receives the finite max-height",
   );
 });
 
@@ -690,17 +679,16 @@ test("__TEST_S382__ body column is flex-col so description viewport can shrink w
 // Landscape/ultrawide — BoundedScrollGrid (CSS grid) replaces CSS columns
 // ---------------------------------------------------------------------------
 
-test("__TEST_S382__ BoundedScrollGrid uses CSS grid with minmax(0,1fr) rows (bounded row heights)", () => {
+test("__TEST_S399__ BoundedScrollGrid uses intrinsic-minimum flexible rows", () => {
   const src = readFileSync(
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
     "utf-8",
   );
-  // minmax(0,1fr) is the key: each row is bounded to its equal share of the
-  // container height, preventing the column from growing with content.
   assert.ok(
-    src.includes("minmax(0, 1fr)"),
-    "BoundedScrollGrid must use minmax(0, 1fr) for bounded row heights",
+    src.includes("minmax(auto, 1fr)"),
+    "BoundedScrollGrid must preserve the card's automatic minimum",
   );
+  assert.ok(!src.includes("minmax(0, 1fr)"), "zero-minimum tracks must not regress");
   assert.ok(
     src.includes("gridAutoFlow"),
     "BoundedScrollGrid must set gridAutoFlow to preserve column-major order",
@@ -748,21 +736,14 @@ test("__TEST_S382__ UltraWideGrid routes to BoundedScrollGrid when scrollPageH i
   );
 });
 
-test("__TEST_S382__ BoundedScrollGrid does NOT pass pageH or pageItemCount to AgendaRow", () => {
+test("__TEST_S399__ BoundedScrollGrid owns bounded sizing instead of page-height allocation", () => {
   const src = readFileSync(
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
     "utf-8",
   );
-  // The BoundedScrollGrid comment must state cards use height:100% (CSS grid).
   assert.ok(
-    src.includes("no pageH/pageItemCount") || src.includes("No pageH/pageItemCount") ||
-    src.includes("AgendaRow receives no pageH/pageItemCount"),
-    "BoundedScrollGrid comment must document that pageH/pageItemCount are omitted",
-  );
-  // The comment explaining the allocatedH===null path must be present.
-  assert.ok(
-    src.includes("allocatedH===null") || src.includes("allocatedH === null"),
-    "source must document the allocatedH===null path for CSS grid cards",
+    src.includes("pageH={scrollPageH}") && src.includes("pageItemCount={numRows}"),
+    "each bounded AgendaRow must receive the finite page budget and row count",
   );
 });
 
@@ -854,95 +835,39 @@ test("__TEST_S382__ room_door layout is unaffected by BoundedScrollGrid", () => 
 });
 
 // ---------------------------------------------------------------------------
-// Portrait — still uses explicit allocatedH (unchanged)
+// Portrait — Full auto-scroll reuses the intrinsic bounded grid.
 // ---------------------------------------------------------------------------
 
-test("__TEST_S382__ portrait passes pageH and pageItemCount to AgendaRow for allocatedH", () => {
+test("__TEST_S399__ portrait Full auto-scroll uses the bounded grid", () => {
   const src = readFileSync(
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
     "utf-8",
   );
-  // PortraitCards passes scrollPageH as pageH and scrollItemCount as pageItemCount.
   assert.ok(
-    src.includes("pageH={scrollPageH}"),
-    "PortraitCards must pass scrollPageH as pageH to AgendaRow",
-  );
-  assert.ok(
-    src.includes("pageItemCount={scrollItemCount}"),
-    "PortraitCards must pass scrollItemCount as pageItemCount to AgendaRow",
+    src.includes("function PortraitCards") &&
+      src.includes("if (scrollPageH != null)") &&
+      src.includes("numCols={1}"),
+    "PortraitCards must route Full auto-scroll through one-column BoundedScrollGrid",
   );
 });
 
-test("__TEST_S382__ portrait allocatedH formula: (pageH - (N-1)*gap) / N", () => {
-  const ROW_GAP = 12;
-  const cases = [
-    { pageH: 1080, N: 1, expected: 1080 },
-    { pageH: 1080, N: 2, expected: (1080 - 12) / 2 },
-    { pageH: 1080, N: 3, expected: (1080 - 24) / 3 },
-    { pageH: 600,  N: 4, expected: (600 - 36) / 4 },
-  ];
-  for (const { pageH, N, expected } of cases) {
-    const allocatedH = (pageH - (N - 1) * ROW_GAP) / N;
-    assert.equal(allocatedH, expected, `allocatedH(pageH=${pageH}, N=${N}) should be ${expected}`);
-    assert.equal(N * allocatedH + (N - 1) * ROW_GAP, pageH, "N cards + gaps must exactly fill pageH");
-  }
+test("__TEST_S399__ fixed card content remains a grid-row minimum", () => {
+  const src = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf-8",
+  );
+  assert.match(src, /minmax\(auto, 1fr\)/);
+  assert.match(src, /pageH=\{scrollPageH\}/);
+  assert.match(src, /pageItemCount=\{numRows\}/);
+  assert.match(src, /flex-auto min-h-0 overflow-hidden/);
 });
 
-// ---------------------------------------------------------------------------
-// Grid row height — CSS grid provides the same bounded row height as portrait's
-// explicit allocatedH formula (verified by math equivalence, not by JS)
-// ---------------------------------------------------------------------------
-
-test("__TEST_S382__ grid minmax(0,1fr) rows give each card the same fraction as allocatedH", () => {
-  // CSS grid with grid-template-rows: repeat(N, minmax(0,1fr)) distributes
-  // the container height equally across rows with gap subtracted.
-  // This is mathematically identical to the portrait formula.
-  const GAP = 12;
-
-  function cssGridRowH(containerH: number, numRows: number): number {
-    // CSS grid: totalH = N * rowH + (N-1) * gap → rowH = (totalH - (N-1)*gap) / N
-    return (containerH - (numRows - 1) * GAP) / numRows;
-  }
-  function portraitAllocH(pageH: number, N: number): number {
-    return (pageH - (N - 1) * GAP) / N;
-  }
-
-  const cases = [
-    { containerH: 800, numRows: 2 },
-    { containerH: 1080, numRows: 3 },
-    { containerH: 600, numRows: 4 },
-  ];
-  for (const { containerH, numRows } of cases) {
-    assert.equal(
-      cssGridRowH(containerH, numRows),
-      portraitAllocH(containerH, numRows),
-      `Grid row height and portrait allocatedH must be identical for H=${containerH} N=${numRows}`,
-    );
-  }
-});
-
-test("__TEST_S382__ unequal heights: both sessions fit on one page yet tall session overflows its equal share", () => {
-  // session A: 500px natural (nonDescH=50, descNatH=450)
-  // session B: 100px natural (nonDescH=80, descNatH=20)
-  // pageH=800; combined=612 < 800 → packer keeps both on page 1
-  const pageH = 800;
-  const pageItemCount = 2;
-  const ROW_GAP = 12;
-  const allocatedH = (pageH - (pageItemCount - 1) * ROW_GAP) / pageItemCount; // 394
-
-  const sessionA_cardH = 500;
-  const sessionB_cardH = 100;
-  assert.ok(sessionA_cardH + sessionB_cardH + ROW_GAP <= pageH, "pre-condition: both fit on one page");
-
-  // Session A overflows its equal share
-  const cardPadding = 24; // py-3 top+bottom
-  const viewportClientH_A = allocatedH - cardPadding - 50; // 320
-  const oPx_A = Math.max(0, 450 - viewportClientH_A);
-  assert.ok(oPx_A > 0, `session A must overflow (oPx=${oPx_A})`);
-
-  // Session B fits
-  const viewportClientH_B = allocatedH - cardPadding - 80; // 290
-  assert.equal(Math.max(0, 20 - viewportClientH_B), 0, "session B must not overflow");
+test("__TEST_S399__ finite viewport budget leaves a visible line and produces long-description overflow", () => {
+  assert.equal(resolveDescriptionViewportMaxHeight(300, 220, 18), 80);
+  assert.equal(resolveDescriptionViewportMaxHeight(300, 340, 18), 18);
+  const longDescriptionHeight = 240;
+  const viewportHeight = resolveDescriptionViewportMaxHeight(300, 220, 18);
+  assert.ok(longDescriptionHeight - viewportHeight > 0);
 });
 
 test("__TEST_S382__ no forced one-session-per-page — pagination is unchanged", () => {

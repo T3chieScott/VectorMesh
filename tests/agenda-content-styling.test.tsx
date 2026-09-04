@@ -235,7 +235,7 @@ test("Task #396 divider-off and fixed-line description spacing remain unchanged"
   );
   assert.match(
     fixed,
-    /class="mt-1 opacity-75"[^>]*data-testid="agenda-description-item-1"/,
+    /class="mt-1 opacity-75 break-words"[^>]*data-testid="agenda-description-item-1"/,
   );
 });
 
@@ -430,8 +430,12 @@ test("Task #394 recent agenda safeguards remain present", () => {
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
     "utf8",
   );
-  assert.ok(renderer.includes("maxHeight: allocatedH"));
-  assert.ok(renderer.includes('{ maxHeight: "100%", minHeight: 0, alignSelf: "start" }'));
+  assert.ok(renderer.includes('gridTemplateRows: `repeat(${numRows}, minmax(auto, 1fr))`'));
+  assert.equal(renderer.includes('maxHeight: "100%"'), false);
+  assert.ok(renderer.includes("cardRef.current.offsetHeight - viewport.clientHeight"));
+  assert.ok(renderer.includes("maxHeight: descriptionViewportMaxHeight"));
+  assert.ok(renderer.includes("pageItemCount={numRows}"));
+  assert.ok(renderer.includes("flex-auto min-h-0 overflow-hidden"));
   assert.ok(renderer.includes("new ResizeObserver"));
   assert.ok(renderer.includes("inner.scrollHeight - viewport.clientHeight"));
   assert.ok(renderer.includes("TOP_PAUSE_MS + scrollDuration + BOTTOM_PAUSE_MS"));
