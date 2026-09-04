@@ -2,17 +2,20 @@ import type { Express, Request, Response, NextFunction, RequestHandler } from "e
 import { z } from "zod";
 import {
   insertAgendaItemSchema,
+  insertAgendaFolderSchema,
   insertAgendaWidgetConfigSchema,
   insertAgendaSyncConfigSchema,
   AGENDA_MAPPED_SOURCE_TYPES,
   AGENDA_MAPPABLE_FIELDS,
   AGENDA_REQUIRED_MAPPABLE_FIELDS,
   type AgendaItem,
+  type AgendaFolder,
   type AgendaWidgetConfig,
   type AgendaSyncConfig,
   type Client,
   type CustomFont,
   type InsertAgendaItem,
+  type InsertAgendaFolder,
   type InsertAgendaWidgetConfig,
   type InsertAgendaSyncConfig,
 } from "@shared/schema";
@@ -73,6 +76,11 @@ export interface AgendaRoutesStorage {
   ): Promise<AgendaItem | undefined>;
   deleteAgendaItem(id: string): Promise<boolean>;
   deleteAgendaItemsForClient(clientId: string): Promise<number>;
+  getAgendaFolders(clientId?: string): Promise<AgendaFolder[]>;
+  getAgendaFolder(id: string): Promise<AgendaFolder | undefined>;
+  createAgendaFolder(data: InsertAgendaFolder): Promise<AgendaFolder>;
+  updateAgendaFolder(id: string, data: Partial<InsertAgendaFolder>): Promise<AgendaFolder | undefined>;
+  deleteAgendaFolder(id: string): Promise<boolean>;
   // Task #210 — sync configs and the helper used by the merge engine.
   getAgendaSyncConfigs(clientId?: string): Promise<AgendaSyncConfig[]>;
   getAgendaSyncConfig(id: string): Promise<AgendaSyncConfig | undefined>;
@@ -1027,14 +1035,85 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
           return res.status(403).json({ error: "Access denied to requested site" });
         }
         const configs = await storage.getAgendaWidgetConfigs(clientIdParam);
-        return res.json(configs);
+        return res.json(configs.map((config) => ({ ...config, folderId: config.folderId ?? null })));
       }
       const all = await storage.getAgendaWidgetConfigs();
       const filtered = allowed ? all.filter((c) => allowed.includes(c.clientId)) : all;
-      res.json(filtered);
+      res.json(filtered.map((config) => ({ ...config, folderId: config.folderId ?? null })));
     } catch (error) {
       console.error("Error fetching agenda configs:", error);
       res.status(500).json({ error: "Failed to fetch agenda configs" });
+    }
+  });
+
+  // Task #398: folders are flat and always owned by a single site.  Do not
+  // expose them from the public display route (only admin config APIs use it).
+  app.get("/api/agenda-folders", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const clientId = getQueryString(req, "clientId", res);
+      if (clientId === null) return;
+      if (clientId) {
+        if (!auth.canAccessClient(req, clientId)) {
+          return res.status(403).json({ error: "Access denied to requested site" });
+        }
+        return res.json(await storage.getAgendaFolders(clientId));
+      }
+      const allowed = auth.getAllowedClientIds(req);
+      const folders = await storage.getAgendaFolders();
+      return res.json(allowed ? folders.filter((folder) => allowed.includes(folder.clientId)) : folders);
+    } catch (error) {
+      console.error("Error fetching agenda folders:", error);
+      return res.status(500).json({ error: "Failed to fetch agenda folders" });
+    }
+  });
+
+  app.post("/api/agenda-folders", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const data = insertAgendaFolderSchema.parse(req.body);
+      if (!auth.canAccessClient(req, data.clientId)) {
+        return res.status(403).json({ error: "Access denied to requested site" });
+      }
+      const folder = await storage.createAgendaFolder(data);
+      audit(req, "create", "agenda_folder", folder.id, { name: folder.name, clientId: folder.clientId });
+      return res.status(201).json(folder);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      console.error("Error creating agenda folder:", error);
+      return res.status(500).json({ error: "Failed to create agenda folder" });
+    }
+  });
+
+  app.patch("/api/agenda-folders/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const id = getPathParam(req, "id");
+      const existing = await storage.getAgendaFolder(id);
+      if (!existing) return res.status(404).json({ error: "Folder not found" });
+      if (!auth.canAccessClient(req, existing.clientId)) return res.status(403).json({ error: "Access denied" });
+      // A folder cannot be moved by a rename request.
+      const data = insertAgendaFolderSchema.partial().omit({ clientId: true }).parse(req.body);
+      const folder = await storage.updateAgendaFolder(id, data);
+      if (!folder) return res.status(404).json({ error: "Folder not found" });
+      audit(req, "update", "agenda_folder", id, { name: folder.name });
+      return res.json(folder);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      console.error("Error updating agenda folder:", error);
+      return res.status(500).json({ error: "Failed to update agenda folder" });
+    }
+  });
+
+  app.delete("/api/agenda-folders/:id", requireAuth, loadUserContext, async (req, res) => {
+    try {
+      const id = getPathParam(req, "id");
+      const existing = await storage.getAgendaFolder(id);
+      if (!existing) return res.status(404).json({ error: "Folder not found" });
+      if (!auth.canAccessClient(req, existing.clientId)) return res.status(403).json({ error: "Access denied" });
+      if (!await storage.deleteAgendaFolder(id)) return res.status(404).json({ error: "Folder not found" });
+      audit(req, "delete", "agenda_folder", id);
+      return res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting agenda folder:", error);
+      return res.status(500).json({ error: "Failed to delete agenda folder" });
     }
   });
 
@@ -1044,9 +1123,15 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       if (!auth.canAccessClient(req, data.clientId)) {
         return res.status(403).json({ error: "Access denied to requested site" });
       }
+      if (data.folderId) {
+        const folder = await storage.getAgendaFolder(data.folderId);
+        if (!folder || folder.clientId !== data.clientId) {
+          return res.status(400).json({ error: "Folder does not belong to the specified site" });
+        }
+      }
       const config = await storage.createAgendaWidgetConfig(data);
       audit(req, "create", "agenda_widget_config", config.id, { name: config.name });
-      res.status(201).json(config);
+      res.status(201).json({ ...config, folderId: config.folderId ?? null });
     } catch (error) {
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
       console.error("Error creating agenda config:", error);
@@ -1066,13 +1151,23 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       if (data.clientId && data.clientId !== existing.clientId && !auth.canAccessClient(req, data.clientId)) {
         return res.status(403).json({ error: "Access denied to target site" });
       }
+      const effectiveClientId = data.clientId ?? existing.clientId;
+      if (data.folderId) {
+        const folder = await storage.getAgendaFolder(data.folderId);
+        if (!folder || folder.clientId !== effectiveClientId) {
+          return res.status(400).json({ error: "Folder does not belong to the config's site" });
+        }
+      } else if (data.folderId === undefined && data.clientId && data.clientId !== existing.clientId && existing.folderId) {
+        // A folder never crosses a site boundary with its config.
+        (data as Partial<typeof data> & { folderId: string | null }).folderId = null;
+      }
       const config = await storage.updateAgendaWidgetConfig(id, data);
       await invalidateAgendaDisplayCache(existing.clientId, id);
       if (data.clientId && data.clientId !== existing.clientId) {
         await invalidateAgendaDisplayCache(data.clientId, id);
       }
       audit(req, "update", "agenda_widget_config", id, { name: config?.name });
-      res.json(config);
+      res.json(config ? { ...config, folderId: config.folderId ?? null } : config);
     } catch (error) {
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
       console.error("Error updating agenda config:", error);

@@ -4,8 +4,8 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { sql, like, eq, inArray } from "drizzle-orm";
 import { layoutTemplates, layoutFolders, users, clients } from "../../shared/schema";
 
-// Task #313: committed Playwright E2E test for the Scenes sidebar
-// folder grouping + name search (Task #311 feature).
+// Task #398: committed Playwright E2E test for the Scenes folder sidebar,
+// backed by the existing layout_folders model.
 //
 // Flow covered:
 //   1. Create a folder via the sidebar "New folder" button.
@@ -54,7 +54,7 @@ async function loginAsTestUser(page: Page, email: string) {
   expect(res.status(), `test-login failed: ${await res.text()}`).toBe(200);
 }
 
-test.describe("Task #313: Scenes sidebar folders + search", () => {
+test.describe("Task #398: Scenes folder sidebar + search", () => {
   let adminEmail = "";
   let clientId = "";
   let sceneAId = "";
@@ -151,39 +151,36 @@ test.describe("Task #313: Scenes sidebar folders + search", () => {
       .where(eq(layoutTemplates.id, sceneAId));
     expect(movedRow[0].folderId, "scene A must carry the folderId").toBe(folderId);
 
-    // Folder header count shows 1; scene A still visible (folder open by default).
+    // Folder count is accurate; selecting a flat folder filters the list and
+    // visibly marks that folder as current.
     await expect(page.getByTestId(`button-scene-folder-${folderId}`)).toContainText("1");
-    await expect(page.getByTestId(`layout-list-item-${sceneAId}`)).toBeVisible();
-
-    // 3) Collapse the folder — scene A hides, scene B (Uncategorised) stays.
     await page.getByTestId(`button-scene-folder-${folderId}`).click();
-    await expect(page.getByTestId(`layout-list-item-${sceneAId}`)).toBeHidden();
-    await expect(page.getByTestId(`layout-list-item-${sceneBId}`)).toBeVisible();
+    await expect(page.getByTestId(`layout-list-item-${sceneAId}`)).toBeVisible();
+    await expect(page.getByTestId(`layout-list-item-${sceneBId}`)).toBeHidden();
+    await expect(page.getByTestId(`button-scene-folder-${folderId}`)).toHaveAttribute("aria-current", "page");
 
-    // 4) Search by scene A's name — the collapsed folder is forced open
-    //    and scene A shows; scene B (no match) hides, and so does its
-    //    now-empty Uncategorised section.
+    // 3) Search stays within the selected folder; no matches has an empty state.
     await page.getByTestId("input-scene-search").fill("AlphaScene");
     await expect(page.getByTestId(`layout-list-item-${sceneAId}`)).toBeVisible();
     await expect(page.getByTestId(`layout-list-item-${sceneBId}`)).toBeHidden();
-    await expect(page.getByText("Uncategorised")).toBeHidden();
-
-    // A search with no matches shows the empty state.
     await page.getByTestId("input-scene-search").fill(`${PREFIX}${RUN}_nomatch`);
     await expect(page.getByTestId("text-no-scenes-match")).toBeVisible();
 
-    // Clear the search — sections return; the folder stays collapsed from
-    // step 3, so re-open it for the rest of the flow.
+    // 4) Unfiled has the remaining scene and all scenes is available.
     await page.getByTestId("input-scene-search").fill("");
+    await page.getByTestId("button-scene-folder-unfiled").click();
     await expect(page.getByTestId(`layout-list-item-${sceneBId}`)).toBeVisible();
-    await page.getByTestId(`button-scene-folder-${folderId}`).click();
+    await expect(page.getByTestId(`layout-list-item-${sceneAId}`)).toBeHidden();
+    await page.getByTestId("button-scene-folder-all").click();
     await expect(page.getByTestId(`layout-list-item-${sceneAId}`)).toBeVisible();
+    await expect(page.getByTestId(`layout-list-item-${sceneBId}`)).toBeVisible();
 
     // 5) Rename the folder via its "..." menu.
     await page.getByTestId(`button-scene-folder-menu-${folderId}`).click();
     await page.getByTestId(`button-rename-scene-folder-${folderId}`).click();
     await page.getByTestId("input-scene-folder-name").fill(renamedFolderName);
     await page.getByTestId("button-save-scene-folder").click();
+    await expect(page.getByText("Folder renamed", { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId(`button-scene-folder-${folderId}`)).toContainText(
       renamedFolderName,
       { timeout: 10_000 },
@@ -192,7 +189,10 @@ test.describe("Task #313: Scenes sidebar folders + search", () => {
     // 6) Delete the folder — scene A must survive and return to Uncategorised.
     await page.getByTestId(`button-scene-folder-menu-${folderId}`).click();
     await page.getByTestId(`button-delete-scene-folder-${folderId}`).click();
+    await expect(page.getByText(/Scenes inside it are not deleted/)).toBeVisible();
     await page.getByTestId("button-confirm-delete-scene-folder").click();
+    // Wait for the successful DELETE toast before checking persistence.
+    await expect(page.getByText("Folder deleted", { exact: true })).toBeVisible({ timeout: 10_000 });
 
     await expect(page.getByTestId(`button-scene-folder-${folderId}`)).toHaveCount(0, {
       timeout: 10_000,
