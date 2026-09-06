@@ -18,6 +18,7 @@ import { PlayerClockProvider, usePlayerClock } from "@/lib/playerClock";
 import { persistOffset } from "@/lib/playerTimeSync";
 import { useScreenWakeLock } from "@/hooks/use-screen-wake-lock";
 import { getVideoStats } from "@/hooks/use-video-keep-alive";
+import { useAgendaSceneCompletion } from "@/hooks/use-agenda-scene-completion";
 
 const TOKEN_KEY = "signage_device_token";
 const SCREEN_KEY = "signage_screen_id";
@@ -306,7 +307,6 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const [weatherTimezone, setWeatherTimezone] = useState<string | undefined>(undefined);
   const [authError, setAuthError] = useState(false);
   const [layoutRotationIndex, setLayoutRotationIndex] = useState(0);
-  const layoutRotationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentHashRef = useRef<string>("");
   // Audit gap #2: last ETag returned by /content. Sent back as
   // If-None-Match so the server can answer 304 (unchanged) and skip
@@ -953,24 +953,6 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     return [];
   }, [layout, isFallbackPlaylist, isFallbackAgenda, content?.zoneSources, content?.playlistItems]);
 
-  useEffect(() => {
-    if (!isLayoutRotation || layoutRotationItems.length <= 1) return;
-    if (layoutRotationTimerRef.current) clearTimeout(layoutRotationTimerRef.current);
-    const currentItem = layoutRotationItems[layoutRotationIndex % layoutRotationItems.length];
-    let durationSec = currentItem?.duration || 0;
-    if (!durationSec && currentItem?.mediaAssetId) {
-      const asset = content?.media?.find((m: MediaAsset) => m.id === currentItem.mediaAssetId);
-      if (asset?.duration) durationSec = asset.duration;
-    }
-    if (!durationSec) durationSec = 30;
-    layoutRotationTimerRef.current = setTimeout(() => {
-      setLayoutRotationIndex(prev => (prev + 1) % layoutRotationItems.length);
-    }, durationSec * 1000);
-    return () => {
-      if (layoutRotationTimerRef.current) clearTimeout(layoutRotationTimerRef.current);
-    };
-  }, [isLayoutRotation, layoutRotationIndex, layoutRotationItems, content?.media]);
-
   const zones = useMemo(() => {
     if (isLayoutRotation) return rawZones;
     if (!content?.zoneSources || content.zoneSources.length === 0) return rawZones;
@@ -991,6 +973,19 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       return { ...zone, mediaPlayerItems };
     });
   }, [rawZones, isLayoutRotation, content?.zoneSources, content?.playlistItems]);
+
+  const agendaCompletionBindings = useAgendaSceneCompletion({
+    enabled: isLayoutRotation && layoutRotationItems.length > 1,
+    playerInstanceId: screenId,
+    sceneIdValue: activeLayoutItem?.layoutTemplateId || activeLayoutItem?.id || "layout",
+    activationKey: layoutRotationIndex,
+    item: activeLayoutItem,
+    media: content?.media || [],
+    zones,
+    onAdvance: () => setLayoutRotationIndex((previous) => (
+      layoutRotationItems.length > 1 ? (previous + 1) % layoutRotationItems.length : previous
+    )),
+  });
 
   useEffect(() => {
     const weatherZone = zones.find(z => z.type === "weather" && z.weatherLat && z.weatherLng);
@@ -1610,6 +1605,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       screenTimezone={content.screen?.timezone ?? undefined}
       weatherTimezone={weatherTimezone}
       agendaTestAt={agendaTestAt}
+      agendaCompletionBindings={agendaCompletionBindings}
       playerContext={{
         screenName: content.playerVars?.screenName ?? content.screen?.name,
         roomName: content.playerVars?.roomName ?? content.screen?.location,

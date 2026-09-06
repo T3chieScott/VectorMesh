@@ -36,6 +36,8 @@ import {
 } from "lucide-react";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem, AgendaWidgetConfig } from "@shared/schema";
 import { ZoneRenderer, zoneTypeIcons, getAspectRatioDimensions, getZoneFingerprint, type PlayerVariableContext } from "@/components/zone-renderer";
+import { useAgendaSceneCompletion } from "@/hooks/use-agenda-scene-completion";
+import type { AgendaZoneBinding } from "@/lib/agenda-scene-completion";
 
 interface SimulatorState {
   isPlaying: boolean;
@@ -60,6 +62,7 @@ function PlayerDisplay({
   useStableKeys = false,
   playerContext,
   agendaTestAt,
+  agendaCompletionBindings,
 }: {
   screen: Screen | null;
   profile: DisplayProfile | null;
@@ -74,6 +77,7 @@ function PlayerDisplay({
   useStableKeys?: boolean;
   playerContext?: PlayerVariableContext;
   agendaTestAt?: string;
+  agendaCompletionBindings?: ReadonlyMap<string, AgendaZoneBinding>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0.5);
@@ -244,6 +248,7 @@ function PlayerDisplay({
                         fillContainer={true}
                         playerContext={playerContext}
                         agendaTestAt={agendaTestAt}
+                        agendaCompletionBinding={agendaCompletionBindings?.get(zone.id)}
                       />
                     </div>
                   </div>
@@ -290,6 +295,7 @@ function PlayerDisplay({
                 fillContainer={true}
                 playerContext={playerContext}
                 agendaTestAt={agendaTestAt}
+                agendaCompletionBinding={agendaCompletionBindings?.get(zone.id)}
               />
             </div>
           </div>
@@ -529,20 +535,6 @@ export default function SimulatorPage() {
     setPreviewRotationIndex(0);
   }, [previewPlaylistId]);
 
-  useEffect(() => {
-    if (!isPlaylistPreview || !previewHasLayoutItems || previewSortedItems.length <= 1 || !state.isPlaying) return;
-    const currentItem = previewSortedItems[previewRotationIndex % previewSortedItems.length];
-    let durationSec = currentItem?.duration || 30;
-    if (!currentItem?.duration && currentItem?.mediaAssetId) {
-      const asset = media.find(m => m.id === currentItem.mediaAssetId);
-      if (asset?.duration) durationSec = asset.duration;
-    }
-    const timer = setTimeout(() => {
-      setPreviewRotationIndex(prev => (prev + 1) % previewSortedItems.length);
-    }, durationSec * 1000);
-    return () => clearTimeout(timer);
-  }, [isPlaylistPreview, previewHasLayoutItems, previewSortedItems, previewRotationIndex, state.isPlaying, media]);
-
   const currentPreviewItem = previewHasLayoutItems
     ? previewSortedItems[previewRotationIndex % previewSortedItems.length] || null
     : null;
@@ -626,6 +618,22 @@ export default function SimulatorPage() {
       ),
     } as LayoutTemplate;
   }, [selectedLayout, zoneAgendaAssignments]);
+
+  const previewActiveZones = currentPreviewIsLayout
+    ? ((currentPreviewLayout?.zones as LayoutZone[]) || [])
+    : previewSyntheticZone ? [previewSyntheticZone] : [];
+  const agendaCompletionBindings = useAgendaSceneCompletion({
+    enabled: isPlaylistPreview && previewHasLayoutItems && previewSortedItems.length > 1 && state.isPlaying,
+    playerInstanceId: `simulator:${previewPlaylistId || "preview"}`,
+    sceneIdValue: currentPreviewItem?.layoutTemplateId || currentPreviewItem?.id || "layout",
+    activationKey: previewRotationIndex,
+    item: currentPreviewItem,
+    media,
+    zones: previewActiveZones,
+    onAdvance: () => setPreviewRotationIndex((previous) => (
+      previewSortedItems.length > 1 ? (previous + 1) % previewSortedItems.length : previous
+    )),
+  });
 
   const layoutSourceLabel = isAutoMode && resolvedContent
     ? resolvedContent.layoutSource === "live_override" ? "Live Override"
@@ -1232,6 +1240,7 @@ export default function SimulatorPage() {
                   useStableKeys={isPlaylistPreview && previewHasLayoutItems}
                   playerContext={isPlaylistPreview ? undefined : (resolvedContent?.playerVars ?? undefined)}
                   agendaTestAt={agendaTestAt}
+                  agendaCompletionBindings={agendaCompletionBindings}
                 />
               )}
             </CardContent>

@@ -14,7 +14,12 @@ import {
   type AgendaItem,
   type AgendaWidgetConfig,
 } from "../shared/schema";
-import { AgendaDisplayWidget } from "../client/src/components/agenda/AgendaDisplayWidget";
+import {
+  AgendaDisplayWidget,
+  BOTTOM_PAUSE_MS,
+  resolveAgendaPresentationDwellMs,
+  TOP_PAUSE_MS,
+} from "../client/src/components/agenda/AgendaDisplayWidget";
 
 const NOW = new Date("2026-09-02T12:00:00Z");
 
@@ -444,7 +449,21 @@ test("Task #394 recent agenda safeguards remain present", () => {
   assert.ok(renderer.includes("flex-auto min-h-0 overflow-hidden"));
   assert.ok(renderer.includes("new ResizeObserver"));
   assert.ok(renderer.includes("inner.scrollHeight - viewport.clientHeight"));
-  assert.ok(renderer.includes("TOP_PAUSE_MS + scrollDuration + BOTTOM_PAUSE_MS"));
+  // Rotation semantics are intentionally exercised through the exported
+  // helper, rather than coupling this safeguard to an implementation string.
+  assert.equal(
+    resolveAgendaPresentationDwellMs(12_000, ["page-a"], {}, true),
+    12_000,
+  );
+  assert.equal(
+    resolveAgendaPresentationDwellMs(3_000, ["page-a"], { "page-a": 56 }, true),
+    TOP_PAUSE_MS + 2_000 + BOTTOM_PAUSE_MS,
+  );
+  // Only IDs on the active page contribute to that page's timer.
+  assert.equal(
+    resolveAgendaPresentationDwellMs(5_000, ["page-b"], { "page-a": 560 }, true),
+    5_000,
+  );
 });
 
 test("Task #394 room remains visible when Track is disabled", () => {

@@ -35,6 +35,7 @@
 import type { LayoutZone, MediaAsset } from "@shared/schema";
 import { ZoneRenderer } from "@/components/zone-renderer";
 import type { PlayerVariableContext } from "@/components/zone-renderer";
+import type { AgendaZoneBinding } from "@/lib/agenda-scene-completion";
 
 // ── Canvas geometry ───────────────────────────────────────────────────────────
 
@@ -91,6 +92,8 @@ export interface ScreenRenderSurfaceProps {
   weatherTimezone?: string;
   /** Fixed "now" override for agenda widget integration testing (ISO 8601 string). */
   agendaTestAt?: string;
+  /** Per-zone lifecycle bindings for completion-aware playlist layouts. */
+  agendaCompletionBindings?: ReadonlyMap<string, AgendaZoneBinding>;
   /**
    * Pre-computed player / template variables (screenName, roomName, …,
    * getNowMs).  Identical shape to what PlayerContent and MonitorContentInner
@@ -134,6 +137,7 @@ export function ScreenRenderSurface({
   screenTimezone,
   weatherTimezone,
   agendaTestAt,
+  agendaCompletionBindings,
   playerContext,
   canvasGeometry,
   liveBanner,
@@ -207,6 +211,7 @@ export function ScreenRenderSurface({
                 mediaBaseUrl={mediaBaseUrl}
                 deviceToken={deviceToken}
                 agendaTestAt={agendaTestAt}
+                agendaCompletionBinding={agendaCompletionBindings?.get(zone.id)}
                 playerContext={playerContext}
               />
             </div>

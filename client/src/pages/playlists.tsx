@@ -88,7 +88,11 @@ function formatDuration(seconds: number): string {
   return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `${s}s`;
 }
 
-function ItemEditorDialog({
+export function layoutHasAgendaZone(layout?: LayoutTemplate): boolean {
+  return Array.isArray(layout?.zones) && layout.zones.some((zone) => zone?.type === "agenda");
+}
+
+export function ItemEditorDialog({
   playlistId,
   item,
   mediaAssets,
@@ -135,6 +139,10 @@ function ItemEditorDialog({
   const selectedAssetId = form.watch("mediaAssetId");
   const selectedAsset = mediaAssets.find(a => a.id === selectedAssetId);
   const isVideo = selectedAsset?.mediaType === "video";
+  const selectedLayoutId = form.watch("layoutTemplateId");
+  const isAgendaLayout = itemType === "layout" && layoutHasAgendaZone(
+    layouts.find((layout) => layout.id === selectedLayoutId),
+  );
 
   const saveMutation = useMutation({
     mutationFn: (data: ItemFormValues) => {
@@ -278,7 +286,11 @@ function ItemEditorDialog({
                   <FormLabel>
                     Duration (seconds)
                     {itemType === "media" && isVideo ? " — optional" : ""}
-                    {itemType === "layout" ? " — how long to show this scene" : ""}
+                    {itemType === "layout"
+                      ? isAgendaLayout
+                        ? " — minimum display time"
+                        : " — how long to show this scene"
+                      : ""}
                   </FormLabel>
                   <FormControl>
                     <div className="flex gap-2">
@@ -320,9 +332,11 @@ function ItemEditorDialog({
                   {itemType === "media" && isVideo && !field.value && (
                     <p className="text-xs text-muted-foreground">Leave empty to play the full video</p>
                   )}
-                  {itemType === "layout" && (
+                  {itemType === "layout" && isAgendaLayout ? (
+                    <p className="text-xs text-muted-foreground">Agenda-aware · waits for one complete cycle</p>
+                  ) : itemType === "layout" ? (
                     <p className="text-xs text-muted-foreground">How many seconds to display this scene before rotating to the next item</p>
-                  )}
+                  ) : null}
                   <FormMessage />
                 </FormItem>
               )}
@@ -351,7 +365,7 @@ function ItemEditorDialog({
   );
 }
 
-function SortablePlaylistItem({
+export function SortablePlaylistItem({
   item,
   mediaAsset,
   layoutTemplate,
@@ -366,6 +380,7 @@ function SortablePlaylistItem({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
   const isLayout = !!item.layoutTemplateId;
+  const isAgendaLayout = isLayout && layoutHasAgendaZone(layoutTemplate);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -404,6 +419,9 @@ function SortablePlaylistItem({
           ) : mediaAsset?.mediaType ? (
             <span className="text-[10px] text-muted-foreground capitalize">{mediaAsset.mediaType}</span>
           ) : null}
+          {isAgendaLayout && (
+            <span className="text-[10px] text-muted-foreground">Agenda-aware · waits for one complete cycle</span>
+          )}
           {displayDuration && (
             <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
               · <Clock className="h-2.5 w-2.5" />
