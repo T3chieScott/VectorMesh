@@ -17,6 +17,7 @@ import {
   packAgendaPages,
   splitCurrentNext,
 } from "@shared/agenda-resolver";
+import type { AgendaZoneBinding } from "@/lib/agenda-scene-completion";
 
 // Long-form weekday / date formatters used by the live header and by
 // explicit dates shown beneath future NEXT labels.
@@ -135,6 +136,8 @@ export interface AgendaDisplayWidgetProps {
   height?: number;
   timezone?: string | null;
   now?: Date;
+  /** Present a finite, activation-scoped cycle when rendered by a playlist. */
+  completionBinding?: AgendaZoneBinding;
 }
 
 const STATUS_LABELS: Record<AgendaStatus, string> = {
@@ -392,6 +395,33 @@ const SCROLL_ROW_GAP = 12;
 export function descScrollDurationMs(overflowPx: number): number {
   if (overflowPx <= 0) return 0;
   return Math.ceil((overflowPx / SCROLL_PX_PER_SEC) * 1_000);
+}
+
+/** The readable dwell for a page/state, shared by controlled completion plans. */
+export function resolveAgendaPresentationDwellMs(
+  configuredMs: number,
+  itemIds: readonly string[],
+  scrollMetrics: Record<string, number>,
+  scrollAnimationActive: boolean,
+): number {
+  if (!scrollAnimationActive || itemIds.length === 0) return configuredMs;
+  const overflow = Math.max(0, ...itemIds.map((id) => scrollMetrics[id] ?? 0));
+  return overflow > 0
+    ? Math.max(configuredMs, TOP_PAUSE_MS + descScrollDurationMs(overflow) + BOTTOM_PAUSE_MS)
+    : configuredMs;
+}
+
+/** Freeze the actual Now/Next sequence at activation time. */
+export function buildControlledNowNextPages(items: AgendaItem[], now: Date): AgendaItem[][] {
+  const { current, upcoming } = splitCurrentNext(items, now);
+  const sequence = current[0] ? [current[0], ...(upcoming[0] ? [upcoming[0]] : [])]
+    : upcoming[0] ? [upcoming[0]] : [];
+  return sequence.length ? sequence.map((item) => [item]) : [[]];
+}
+
+/** Returns the next finite controlled page, or null once the cycle is done. */
+export function nextControlledPageIndex(pageIndex: number, pageCount: number): number | null {
+  return pageIndex + 1 < pageCount ? pageIndex + 1 : null;
 }
 
 export function resolveDescriptionViewportMaxHeight(
@@ -1536,6 +1566,7 @@ export function AgendaDisplayWidget({
   height,
   timezone,
   now: nowProp,
+  completionBinding,
 }: AgendaDisplayWidgetProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [measured, setMeasured] = useState({ w: width ?? 1920, h: height ?? 1080 });
@@ -1550,6 +1581,18 @@ export function AgendaDisplayWidget({
   );
   const [scrollMetrics, setScrollMetrics] = useState<Record<string, number>>({});
   const [scrollResetTick, setScrollResetTick] = useState(0);
+  const bindingRef = useRef(completionBinding);
+  bindingRef.current = completionBinding;
+  const controlledActivationId = completionBinding?.activationId;
+  const activationNowRef = useRef<{ id?: string; now: Date }>({ id: controlledActivationId, now: nowProp ?? new Date() });
+  if (controlledActivationId && activationNowRef.current.id !== controlledActivationId) {
+    activationNowRef.current = { id: controlledActivationId, now: nowProp ?? new Date() };
+  }
+  const planNow = controlledActivationId ? activationNowRef.current.now : now;
+  const [controlledPages, setControlledPages] = useState<AgendaItem[][] | null>(null);
+  const controlledPlanActivationRef = useRef<string | undefined>(undefined);
+  const completedActivationRef = useRef<string | undefined>(undefined);
+  const controlledPageDwellRef = useRef<Record<number, number>>({});
 
   // Task #382 — derived early so the pages memo can use it.
   // Active when the Full-description auto-scroll layout is configured.
@@ -1596,9 +1639,15 @@ export function AgendaDisplayWidget({
       setNow(nowProp);
       return;
     }
+    // The activation-time instant is part of a controlled Now/Next plan.
+    // Do not let the wall clock relabel frozen NOW as NEXT mid-cycle.
+    if (controlledActivationId) {
+      setNow(nowProp ?? new Date());
+      return;
+    }
     const id = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(id);
-  }, [nowProp]);
+  }, [nowProp, controlledActivationId]);
 
   // Task #382 — update the reduced-motion preference when OS setting changes.
   useEffect(() => {
@@ -1770,19 +1819,57 @@ export function AgendaDisplayWidget({
     [autoPages, items, fallbackPageSize],
   );
 
-  // Reset page index and scroll state whenever the item set or page layout
-  // changes (e.g. real-time agenda updates while the screen is showing).
+  // A controlled scene has one presentation plan, not a live view of polling
+  // data or later font/ResizeObserver repacks. Card layouts wait for the real
+  // measured pack so every frozen page is visited exactly once.
+  const planUsable = !cardLayout || autoPages !== null;
   useEffect(() => {
+    if (!controlledActivationId || !planUsable) return;
+    if (controlledPlanActivationRef.current === controlledActivationId) return;
+    const plan = config.displayMode === "now_next"
+      ? buildControlledNowNextPages(items, planNow)
+      : (pages.length ? pages : [[]]);
+    controlledPlanActivationRef.current = controlledActivationId;
+    completedActivationRef.current = undefined;
+    controlledPageDwellRef.current = {};
+    setControlledPages(plan);
     setPageIndex(0);
     setScrollMetrics({});
     setScrollResetTick(0);
-  }, [items.length, pages.length]);
+    const configuredMs = Math.max(3, config.rotationIntervalSeconds) * 1_000;
+    bindingRef.current?.ready(plan.length * configuredMs);
+  }, [controlledActivationId, planUsable, config.displayMode, config.rotationIntervalSeconds, items, planNow, pages]);
+
+  // Do not retain a plan while switching out of playlist control.
+  useEffect(() => {
+    if (!controlledActivationId) {
+      controlledPlanActivationRef.current = undefined;
+      setControlledPages(null);
+    }
+  }, [controlledActivationId]);
+
+  const hasCurrentControlledPlan =
+    Boolean(controlledActivationId) &&
+    controlledPlanActivationRef.current === controlledActivationId;
+  const presentationPages = controlledActivationId
+    ? (hasCurrentControlledPlan ? controlledPages : null)
+    : pages;
+
+  // Reset page index and scroll state whenever the item set or page layout
+  // changes (e.g. real-time agenda updates while the screen is showing).
+  useEffect(() => {
+    if (controlledActivationId) return;
+    setPageIndex(0);
+    setScrollMetrics({});
+    setScrollResetTick(0);
+  }, [items.length, pages.length, controlledActivationId]);
 
   // safePageIndex / pageItems must be declared before the rotation effect so
   // the effect closure can capture them for the effectiveDwellMs computation.
   const safePageIndex =
-    pages.length > 0 ? Math.min(pageIndex, pages.length - 1) : 0;
-  const pageItems = pages[safePageIndex] ?? [];
+    presentationPages && presentationPages.length > 0
+      ? Math.min(pageIndex, presentationPages.length - 1) : 0;
+  const pageItems = presentationPages?.[safePageIndex] ?? [];
 
   // Keep a ref so the dwell effect can read the latest pageItems without
   // listing the array itself as a dep. AgendaConfigZoneWidget polls every
@@ -1797,8 +1884,9 @@ export function AgendaDisplayWidget({
   // Reset scroll metrics on each page advance so cards re-report fresh
   // overflow measurements for the incoming page.
   useEffect(() => {
+    if (controlledActivationId) return;
     setScrollMetrics({});
-  }, [pageIndex]);
+  }, [pageIndex, controlledActivationId]);
 
   // Page-rotation timer: replaced from setInterval to setTimeout so each
   // page can carry a variable effective dwell time. Effect re-arms on each
@@ -1812,24 +1900,43 @@ export function AgendaDisplayWidget({
   // scrollMetrics update, pages.length change) is already captured by its
   // own dep.
   useEffect(() => {
+    // Nothing may start until the measured, frozen controlled plan is ready.
+    if (controlledActivationId && (!controlledPages || !hasCurrentControlledPlan)) return;
     const configuredMs = Math.max(3, config.rotationIntervalSeconds) * 1_000;
     const currentItems = pageItemsRef.current;
 
     // When auto-scroll is active, extend dwell to cover the full scroll
     // cycle so the page never advances while a description is still moving.
-    let effectiveMs = configuredMs;
-    if (descScrollAnimationActive && currentItems.length > 0) {
-      const maxOverflow = Math.max(
-        0,
-        ...currentItems.map((it) => scrollMetrics[it.id] ?? 0),
+    const effectiveMs = resolveAgendaPresentationDwellMs(
+      configuredMs, currentItems.map((it) => it.id), scrollMetrics, descScrollAnimationActive,
+    );
+
+    if (controlledActivationId && controlledPages) {
+      // Keep a per-page high-water mark for the entire activation. A page's
+      // measured overflow may arrive after its timer was first armed, and its
+      // metric must not disappear when moving to the next page: the announced
+      // total can only grow.
+      const measuredDwell = resolveAgendaPresentationDwellMs(
+        configuredMs, currentItems.map((it) => it.id), scrollMetrics, descScrollAnimationActive,
       );
-      if (maxOverflow > 0) {
-        const scrollDuration = descScrollDurationMs(maxOverflow);
-        effectiveMs = Math.max(
-          configuredMs,
-          TOP_PAUSE_MS + scrollDuration + BOTTOM_PAUSE_MS,
-        );
-      }
+      controlledPageDwellRef.current[safePageIndex] = Math.max(
+        controlledPageDwellRef.current[safePageIndex] ?? configuredMs,
+        measuredDwell,
+      );
+      const expectedMs = controlledPages.reduce((total, _page, index) =>
+        total + Math.max(configuredMs, controlledPageDwellRef.current[index] ?? configuredMs), 0);
+      bindingRef.current?.register(expectedMs);
+      const id = setTimeout(() => {
+        if (bindingRef.current?.activationId !== controlledActivationId) return;
+        const nextIndex = nextControlledPageIndex(safePageIndex, controlledPages.length);
+        if (nextIndex !== null) {
+          setPageIndex(nextIndex);
+        } else if (completedActivationRef.current !== controlledActivationId) {
+          completedActivationRef.current = controlledActivationId;
+          bindingRef.current?.complete();
+        }
+      }, effectiveMs);
+      return () => clearTimeout(id);
     }
 
     if (pages.length <= 1) {
@@ -1850,7 +1957,7 @@ export function AgendaDisplayWidget({
     );
     return () => clearTimeout(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageIndex, scrollResetTick, pages.length, config.rotationIntervalSeconds, descScrollAnimationActive, scrollMetrics]);
+  }, [pageIndex, scrollResetTick, pages.length, config.rotationIntervalSeconds, descScrollAnimationActive, scrollMetrics, controlledActivationId, controlledPages, hasCurrentControlledPlan, safePageIndex]);
 
   // In now_next mode every layout (not only totem/room_door) gets a
   // strong "live now" highlight on the currently-running row(s).
@@ -1889,6 +1996,7 @@ export function AgendaDisplayWidget({
     : {};
 
   const roleColors = resolveRoleColors(config);
+  const presentationNow = controlledActivationId ? planNow : now;
   const roleSizes = resolveAgendaRoleSizes(config);
   const fontStack = resolveFontStackForConfig(config);
   const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
@@ -1938,7 +2046,7 @@ export function AgendaDisplayWidget({
             // Task #395 — weekday, date, and clock are all derived from the
             // same live instant in the configured display timezone. Session
             // dates are shown beside future NEXT content instead.
-            const headerDay = now;
+            const headerDay = presentationNow;
             return (
               <div
                 className="flex flex-col items-end opacity-80"
@@ -1972,7 +2080,7 @@ export function AgendaDisplayWidget({
                     style={{ fontSize: scale * roleSizes.headerClock, ...timeStyle }}
                     data-testid="agenda-clock"
                   >
-                    {formatNow(timezone, now)}
+                    {formatNow(timezone, presentationNow)}
                   </p>
                 )}
               </div>
@@ -1996,7 +2104,7 @@ export function AgendaDisplayWidget({
             config={config}
             tz={timezone}
             scale={scale}
-            now={now}
+            now={presentationNow}
             highlightCurrent={highlightCurrent}
             roleColors={roleColors}
             showCardDate={multiDay}
@@ -2012,7 +2120,7 @@ export function AgendaDisplayWidget({
             config={config}
             tz={timezone}
             scale={scale}
-            now={now}
+            now={presentationNow}
             highlightCurrent={highlightCurrent}
             roleColors={roleColors}
             showCardDate={multiDay}
@@ -2022,16 +2130,16 @@ export function AgendaDisplayWidget({
             prefersReducedMotion={prefersReducedMotion}
           />
         ) : layout === "totem" ? (
-          <TotemNowNext items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} showCardDate={multiDay} />
+          <TotemNowNext items={controlledActivationId ? pageItems : items} config={config} tz={timezone} scale={scale} now={presentationNow} roleColors={roleColors} showCardDate={multiDay} />
         ) : layout === "room_door" ? (
-          <RoomDoor items={items} config={config} tz={timezone} scale={scale} now={now} roleColors={roleColors} showCardDate={multiDay} />
+          <RoomDoor items={controlledActivationId ? pageItems : items} config={config} tz={timezone} scale={scale} now={presentationNow} roleColors={roleColors} showCardDate={multiDay} />
         ) : (
           <LandscapeGrid
             pageItems={pageItems}
             config={config}
             tz={timezone}
             scale={scale}
-            now={now}
+            now={presentationNow}
             highlightCurrent={highlightCurrent}
             roleColors={roleColors}
             showCardDate={multiDay}
@@ -2070,8 +2178,8 @@ export function AgendaDisplayWidget({
                 roleColors={roleColors}
                 showCardDate={multiDay}
                 suppressTestId
-                nowNextLabel={resolveNowNextItemLabel(config, it, now)}
-                nowNextSessionDate={formatNextSessionDate(it.startsAt, now, timezone) ?? undefined}
+                nowNextLabel={resolveNowNextItemLabel(config, it, presentationNow)}
+                nowNextSessionDate={formatNextSessionDate(it.startsAt, presentationNow, timezone) ?? undefined}
               />
             </div>
           ))}

@@ -23,6 +23,7 @@ import * as React from "react";
 import { render, waitFor, cleanup } from "@testing-library/react";
 import { AgendaConfigZoneWidget } from "../client/src/components/agenda/AgendaConfigZoneWidget";
 import type { AgendaItem, AgendaWidgetConfig } from "../shared/schema";
+import type { AgendaZoneBinding } from "../client/src/lib/agenda-scene-completion";
 
 const CONFIG_ID = "cfg-279";
 
@@ -227,5 +228,50 @@ test("garbage atIso falls back to live (no ?at= param, no frozen now)", async ()
   } finally {
     cleanup();
     fetchStub.restore();
+  }
+});
+
+test("a new controlled activation cannot render or ready a previous payload before its fetch", async () => {
+  const original = (globalThis as any).fetch;
+  let calls = 0;
+  const config = buildConfig({ displayMode: "now_next", layoutMode: "totem" });
+  (globalThis as any).fetch = () => {
+    calls += 1;
+    if (calls > 1) return new Promise<Response>(() => {});
+    return Promise.resolve({
+      ok: true, status: 200,
+      json: async () => ({
+        config,
+        items: [buildItem({
+          startsAt: new Date("2031-07-04T09:00:00Z"),
+          endsAt: new Date("2031-07-04T10:00:00Z"),
+        })],
+        client: { id: "c1", name: "Acme", timezone: "UTC" },
+        serverTime: 0,
+      }),
+    } as Response);
+  };
+  const readyA: number[] = [];
+  const readyB: number[] = [];
+  const binding = (activationId: string, ready: number[]): AgendaZoneBinding => ({
+    playerId: "p" as any, sceneId: "s" as any, zoneId: "z" as any, activationId: activationId as any,
+    register: () => true, ready: (duration) => { ready.push(duration ?? 0); return true; },
+    complete: () => true, fail: () => true, unregister: () => true,
+  });
+  const first = binding("activation-a", readyA);
+  const second = binding("activation-b", readyB);
+  const rendered = render(React.createElement(AgendaConfigZoneWidget, {
+    configId: CONFIG_ID, atIso: "2031-07-04T09:15:00.000Z", completionBinding: first,
+  }));
+  try {
+    await waitFor(() => assert.equal(readyA.length, 1));
+    rendered.rerender(React.createElement(AgendaConfigZoneWidget, {
+      configId: CONFIG_ID, atIso: "2031-07-04T09:15:00.000Z", completionBinding: second,
+    }));
+    assert.ok(rendered.container.querySelector('[data-testid="agenda-zone-loading"]'));
+    assert.equal(readyB.length, 0);
+  } finally {
+    cleanup();
+    (globalThis as any).fetch = original;
   }
 });

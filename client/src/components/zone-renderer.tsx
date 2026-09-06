@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { AgendaConfigZoneWidget } from "./agenda/AgendaConfigZoneWidget";
+import type { AgendaZoneBinding } from "@/lib/agenda-scene-completion";
 import { SweepstakeConfigZoneWidget } from "./sweepstake/SweepstakeConfigZoneWidget";
 import { buildZoneBaseStyle } from "./zone-base-style";
 export { buildZoneBaseStyle } from "./zone-base-style";
@@ -5618,6 +5619,7 @@ export interface ZoneRendererProps {
   // agenda zones so an operator can preview as if "now" were a chosen
   // moment. Other zone types ignore it.
   agendaTestAt?: string;
+  agendaCompletionBinding?: AgendaZoneBinding;
 }
 
 export function ZoneRenderer({
@@ -5635,6 +5637,7 @@ export function ZoneRenderer({
   deviceToken,
   playerContext,
   agendaTestAt,
+  agendaCompletionBinding,
 }: ZoneRendererProps) {
   const ZoneIcon = zoneTypeIcons[zone.type] || Layers;
   // Re-render every 30s so {{date}}/{{time}}/{{day}} stay current without reload
@@ -6017,7 +6020,7 @@ export function ZoneRenderer({
         );
       case "agenda":
         return (
-          <AgendaConfigZoneWidget configId={zone.agendaConfigId || ""} atIso={agendaTestAt} />
+          <AgendaConfigZoneWidget configId={zone.agendaConfigId || ""} atIso={agendaTestAt} completionBinding={agendaCompletionBinding} />
         );
       case "sweepstake":
         return (
