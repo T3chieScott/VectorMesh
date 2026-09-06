@@ -104,6 +104,45 @@ test("resolveAgendaItems filters by track", () => {
   assert.deepEqual(got.map((i) => i.id), ["a"]);
 });
 
+test("resolveAgendaItems matches trimmed, case-folded room, track, and custom status filters", () => {
+  const items = [
+    item({
+      id: "match",
+      room: "  Main Hall ",
+      track: " KeyNote ",
+      status: "  Doors Open  ",
+      startsAt: NOW,
+      endsAt: new Date(NOW.getTime() + 3600_000),
+    }),
+    item({
+      id: "missing-track",
+      room: "Main Hall",
+      track: null,
+      status: "doors open",
+      startsAt: NOW,
+      endsAt: new Date(NOW.getTime() + 3600_000),
+    }),
+    item({
+      id: "different-status",
+      room: "Main Hall",
+      track: "Keynote",
+      status: "Closed",
+      startsAt: NOW,
+      endsAt: new Date(NOW.getTime() + 3600_000),
+    }),
+  ];
+  const got = resolveAgendaItems({
+    items,
+    config: cfg({
+      roomFilter: [" main hall "],
+      trackFilter: ["KEYNOTE"],
+      statusFilter: [" doors open "],
+    }),
+    now: NOW,
+  });
+  assert.deepEqual(got.map((i) => i.id), ["match"]);
+});
+
 test("resolveAgendaItems alert mode keeps only delayed/cancelled/moved", () => {
   const items = [
     item({ id: "ok", status: "scheduled", startsAt: NOW, endsAt: new Date(NOW.getTime() + 3600_000) }),
@@ -112,6 +151,41 @@ test("resolveAgendaItems alert mode keeps only delayed/cancelled/moved", () => {
   ];
   const got = resolveAgendaItems({ items, config: cfg({ displayMode: "alert" }), now: NOW });
   assert.deepEqual(got.map((i) => i.id).sort(), ["cancelled", "delayed"]);
+});
+
+test("resolver treats built-in statuses case-insensitively for alerts, current state, grouping, and dedupe precedence", () => {
+  const items = [
+    item({ id: "alert", status: " DELAYED ", startsAt: NOW, endsAt: new Date(NOW.getTime() + 3600_000) }),
+    item({ id: "not-alert", status: "Scheduled", startsAt: NOW, endsAt: new Date(NOW.getTime() + 3600_000) }),
+  ];
+  assert.deepEqual(
+    resolveAgendaItems({ items, config: cfg({ displayMode: "alert" }), now: NOW }).map((i) => i.id),
+    ["alert"],
+  );
+  const { current } = splitCurrentNext([
+    item({ id: "cancelled", status: " CANCELLED ", startsAt: new Date("2026-06-01T11:30:00Z"), endsAt: new Date("2026-06-01T12:30:00Z") }),
+  ], NOW);
+  assert.deepEqual(current, []);
+
+  const next = resolveAgendaItems({
+    items: [
+      item({ id: "a", room: " Main Hall ", startsAt: new Date("2026-06-01T13:00:00Z"), endsAt: new Date("2026-06-01T14:00:00Z") }),
+      item({ id: "b", room: "main hall", startsAt: new Date("2026-06-01T13:30:00Z"), endsAt: new Date("2026-06-01T14:30:00Z") }),
+    ],
+    config: cfg({ displayMode: "now_next" }),
+    now: NOW,
+  });
+  assert.deepEqual(next.map((i) => i.id), ["a"]);
+
+  const merged = resolveAgendaItems({
+    items: [
+      item({ id: "custom", title: "Panel", room: "A", status: "Doors Open", startsAt: NOW, endsAt: new Date(NOW.getTime() + 3600_000) }),
+      item({ id: "live", title: "Panel", room: "A", status: "IN_PROGRESS", startsAt: NOW, endsAt: new Date(NOW.getTime() + 3600_000) }),
+    ],
+    config: cfg(),
+    now: NOW,
+  });
+  assert.equal(merged[0].status, "IN_PROGRESS");
 });
 
 test("resolveAgendaItems now_next mode keeps current + one upcoming per room", () => {

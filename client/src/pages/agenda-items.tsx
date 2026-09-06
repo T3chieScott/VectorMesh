@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -33,6 +33,12 @@ import {
 } from "@shared/schema";
 import { serializeAgendaCsv, AGENDA_CSV_HEADER, buildAgendaCsvSample } from "@shared/agenda-csv";
 import { formatReadableAgendaDate } from "@shared/spreadsheet-mapping";
+import {
+  AGENDA_FILTER_VALUE_MAX_LENGTH,
+  agendaFilterValueKey,
+  deriveAgendaFilterOptions,
+  normalizeAgendaStatus,
+} from "@shared/agenda-filter-values";
 
 const itemFormSchema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -42,10 +48,14 @@ const itemFormSchema = z.object({
   presenter: z.string().optional(),
   startsAt: z.string().min(1, "Start time is required"),
   endsAt: z.string().min(1, "End time is required"),
-  status: z.enum(AGENDA_STATUSES),
+  status: z.string().trim().min(1, "Status is required").max(AGENDA_FILTER_VALUE_MAX_LENGTH, `Status must be ${AGENDA_FILTER_VALUE_MAX_LENGTH} characters or fewer`),
   statusMessage: z.string().optional(),
 });
 type ItemFormValues = z.infer<typeof itemFormSchema>;
+const isBuiltInAgendaStatus = (status: string) =>
+  (AGENDA_STATUSES as readonly string[]).includes(
+    normalizeAgendaStatus(status, AGENDA_STATUSES) ?? "",
+  );
 
 function toLocalInput(d: Date | string): string {
   const date = typeof d === "string" ? new Date(d) : d;
@@ -77,7 +87,7 @@ function ItemDialog({
           presenter: initial.presenter ?? "",
           startsAt: toLocalInput(initial.startsAt),
           endsAt: toLocalInput(initial.endsAt),
-          status: initial.status as any,
+          status: normalizeAgendaStatus(initial.status, AGENDA_STATUSES) ?? initial.status,
           statusMessage: initial.statusMessage ?? "",
         }
       : {
@@ -124,6 +134,9 @@ function ItemDialog({
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>{initial ? "Edit Agenda Item" : "Add Agenda Item"}</DialogTitle>
+          <DialogDescription>
+            Set the session details shown on Agenda displays.
+          </DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
@@ -155,12 +168,23 @@ function ItemDialog({
             <div className="grid grid-cols-2 gap-3">
               <FormField control={form.control} name="status" render={({ field }) => (
                 <FormItem><FormLabel>Status</FormLabel>
-                  <Select value={field.value} onValueChange={field.onChange}>
+                  <Select
+                    value={isBuiltInAgendaStatus(field.value) ? field.value : "__custom__"}
+                    onValueChange={(value) => field.onChange(value === "__custom__" ? "" : value)}
+                  >
                     <FormControl><SelectTrigger data-testid="select-agenda-status"><SelectValue /></SelectTrigger></FormControl>
                     <SelectContent>
                       {AGENDA_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                      <SelectItem value="__custom__">Custom status…</SelectItem>
                     </SelectContent>
                   </Select>
+                  {!isBuiltInAgendaStatus(field.value) && <Input
+                    value={field.value}
+                    onChange={(event) => field.onChange(event.target.value)}
+                    placeholder="Or enter a custom status"
+                    maxLength={AGENDA_FILTER_VALUE_MAX_LENGTH}
+                    data-testid="input-agenda-custom-status"
+                  />}
                   <FormMessage />
                 </FormItem>
               )} />
@@ -1840,22 +1864,19 @@ export default function AgendaItemsPage() {
     },
   });
 
-  // Unique facets for the filter dropdowns.
-  const rooms = useMemo(
-    () => Array.from(new Set(items.map((i) => i.room).filter(Boolean))) as string[],
-    [items],
-  );
-  const tracks = useMemo(
-    () => Array.from(new Set(items.map((i) => i.track).filter(Boolean))) as string[],
-    [items],
-  );
+  // Facets are derived only from persisted site items.  Keeping a selected
+  // value in the options lets a refresh remove it from the data without
+  // unexpectedly clearing the operator's filter.
+  const rooms = useMemo(() => deriveAgendaFilterOptions(items.map((item) => item.room), roomFilter === "__all__" ? [] : [roomFilter]), [items, roomFilter]);
+  const tracks = useMemo(() => deriveAgendaFilterOptions(items.map((item) => item.track), trackFilter === "__all__" ? [] : [trackFilter]), [items, trackFilter]);
+  const statuses = useMemo(() => deriveAgendaFilterOptions(items.map((item) => item.status), statusFilter === "__all__" ? [] : [statusFilter]), [items, statusFilter]);
 
   // Filtered + sorted view used both for rendering AND for export.
   const filtered = useMemo(() => {
     return items.filter((it) => {
-      if (roomFilter !== "__all__" && it.room !== roomFilter) return false;
-      if (trackFilter !== "__all__" && it.track !== trackFilter) return false;
-      if (statusFilter !== "__all__" && it.status !== statusFilter) return false;
+      if (roomFilter !== "__all__" && agendaFilterValueKey(it.room ?? "") !== agendaFilterValueKey(roomFilter)) return false;
+      if (trackFilter !== "__all__" && agendaFilterValueKey(it.track ?? "") !== agendaFilterValueKey(trackFilter)) return false;
+      if (statusFilter !== "__all__" && agendaFilterValueKey(it.status) !== agendaFilterValueKey(statusFilter)) return false;
       if (dateFilter) {
         const d = new Date(it.startsAt);
         const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -1961,7 +1982,7 @@ export default function AgendaItemsPage() {
               <SelectTrigger className="w-[160px]" data-testid="filter-status"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all__">All statuses</SelectItem>
-                {AGENDA_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                {statuses.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

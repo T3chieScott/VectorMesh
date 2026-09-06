@@ -11,6 +11,10 @@ import {
   AGENDA_THEMES,
   AGENDA_CUSTOM_SPEAKER_MARKER_MAX_CODEPOINTS,
 } from "./schema";
+import {
+  agendaFilterValuesSchema,
+  createAgendaStatusFilterSchema,
+} from "./agenda-filter-values";
 
 export const AGENDA_SETTINGS_CLIPBOARD_TYPE =
   "vectormesh-agenda-display-settings";
@@ -81,6 +85,13 @@ const optionalColor = z
   .or(z.literal(""))
   .optional();
 
+// Version 1 initially copied room/track filters as comma-separated text.
+// Accept that shape on paste while emitting the current bounded array shape.
+const agendaClipboardFacetFilterSchema = z.preprocess(
+  (value) => typeof value === "string" ? value.split(",").map((part) => part.trim()).filter(Boolean) : value,
+  agendaFilterValuesSchema,
+);
+
 const agendaClipboardSettingsSchema = z
   .object({
     displayMode: z.enum(AGENDA_DISPLAY_MODES).optional(),
@@ -101,9 +112,9 @@ const agendaClipboardSettingsSchema = z
     headerClockScale: z.number().min(0.3).max(4).optional(),
     eventName: optionalString,
     backgroundUrl: optionalString,
-    roomFilter: optionalString,
-    trackFilter: optionalString,
-    statusFilter: z.array(z.enum(AGENDA_STATUSES)).optional(),
+    roomFilter: agendaClipboardFacetFilterSchema.optional(),
+    trackFilter: agendaClipboardFacetFilterSchema.optional(),
+    statusFilter: createAgendaStatusFilterSchema(AGENDA_STATUSES).optional(),
     dayFilter: z.enum(AGENDA_DAY_FILTERS).optional(),
     dayFilterDate: optionalString,
     timeWindowMinutes: optionalString,

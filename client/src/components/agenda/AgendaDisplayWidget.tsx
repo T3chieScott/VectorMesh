@@ -9,7 +9,9 @@ import type {
 import {
   AGENDA_CUSTOM_SPEAKER_MARKER_MAX_CODEPOINTS,
   AGENDA_SPEAKER_MARKER_STYLES,
+  AGENDA_STATUSES,
 } from "@shared/schema";
+import { normalizeAgendaStatus } from "@shared/agenda-filter-values";
 import { resolveFontStack } from "@shared/fonts";
 import {
   pickAgendaLayout,
@@ -314,12 +316,34 @@ function formatNextSessionDate(
   return formatted || null;
 }
 
+function resolveDisplayStatus(status: unknown): {
+  builtIn: AgendaStatus | null;
+  label: string;
+} {
+  const normalized = normalizeAgendaStatus(status, AGENDA_STATUSES);
+  const builtIn = normalized && AGENDA_STATUSES.includes(
+    normalized as AgendaStatus,
+  )
+    ? normalized as AgendaStatus
+    : null;
+  return {
+    builtIn,
+    // A malformed persisted value should not take the renderer down. Custom
+    // values retain their supplied readable spelling after trimming.
+    label: normalized ?? "Status",
+  };
+}
+
+function hasDisplayStatus(status: unknown, expected: AgendaStatus): boolean {
+  return resolveDisplayStatus(status).builtIn === expected;
+}
+
 function StatusBadge({
   status,
   scale,
   override,
 }: {
-  status: AgendaStatus;
+  status: unknown;
   scale: number;
   override?: string;
 }) {
@@ -327,13 +351,17 @@ function StatusBadge({
   // background tint stays so "live now" still reads green-ish etc.
   const style: React.CSSProperties = { fontSize: scale * 0.6 };
   if (override) style.color = override;
+  const resolved = resolveDisplayStatus(status);
+  const color = resolved.builtIn
+    ? STATUS_COLOR[resolved.builtIn]
+    : "bg-slate-500/15 border-slate-400/40";
   return (
     <span
-      className={`inline-flex items-center rounded-md border px-2 py-0.5 font-semibold uppercase tracking-wide ${STATUS_COLOR[status]}`}
+      className={`inline-flex items-center rounded-md border px-2 py-0.5 font-semibold tracking-wide ${resolved.builtIn ? "uppercase" : ""} ${color}`}
       style={style}
-      data-testid={`agenda-status-${status}`}
+      data-testid={`agenda-status-${resolved.builtIn ?? "custom"}`}
     >
-      {STATUS_LABELS[status]}
+      {resolved.builtIn ? STATUS_LABELS[resolved.builtIn] : resolved.label}
     </span>
   );
 }
@@ -517,7 +545,11 @@ function isCurrentlyRunning(item: AgendaItem, now: Date): boolean {
   const start = new Date(item.startsAt).getTime();
   const end = new Date(item.endsAt).getTime();
   const t = now.getTime();
-  return start <= t && t < end && item.status !== "cancelled";
+  return start <= t && t < end && !hasDisplayStatus(item.status, "cancelled");
+}
+
+function shouldShowStatusMessage(status: unknown): boolean {
+  return !hasDisplayStatus(status, "scheduled");
 }
 
 type NowNextItemLabel = "NOW" | "NEXT";
@@ -972,7 +1004,7 @@ function AgendaRow({
           </h3>
           {config.showStatus && (
             <StatusBadge
-              status={item.status as AgendaStatus}
+              status={item.status}
               scale={scale}
               override={roleColors?.status}
             />
@@ -1125,7 +1157,7 @@ function AgendaRow({
             )}
           </>
         )}
-        {item.statusMessage && item.status !== "scheduled" && (
+        {item.statusMessage && shouldShowStatusMessage(item.status) && (
           <p
             className={`mt-1 italic opacity-90${scrollEnabled ? " shrink-0" : ""}`}
             style={{
@@ -1508,9 +1540,9 @@ function RoomDoor({
               </p>
             )}
             <div className="mt-4 inline-block">
-              <StatusBadge status={cur.status as AgendaStatus} scale={scale * 1.4} override={roleColors.status} />
+              <StatusBadge status={cur.status} scale={scale * 1.4} override={roleColors.status} />
             </div>
-            {cur.statusMessage && (
+            {cur.statusMessage && shouldShowStatusMessage(cur.status) && (
               <p className="mt-3 italic opacity-80" style={{ fontSize: scale * bodyFactor, ...bodyStyle }}>
                 {cur.statusMessage}
               </p>

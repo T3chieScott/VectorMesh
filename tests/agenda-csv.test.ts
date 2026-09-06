@@ -87,14 +87,24 @@ test("parseAgendaCsv flags endsAt <= startsAt", () => {
   assert.match(out[0].error || "", /endsAt/);
 });
 
-test("parseAgendaCsv falls back to scheduled for unknown status", () => {
+test("parseAgendaCsv retains a trimmed custom status", () => {
   const csv = [
     AGENDA_CSV_HEADER,
-    `Talk,,Main Hall,,,2026-06-01T10:00:00Z,2026-06-01T11:00:00Z,bogus,`,
+    `Talk,,Main Hall,,,2026-06-01T10:00:00Z,2026-06-01T11:00:00Z,  Awaiting sponsor  ,`,
   ].join("\n");
   const out = parseAgendaCsv(csv);
   assert.equal(out[0].status, "ok");
-  assert.equal(out[0].item?.status, "scheduled");
+  assert.equal(out[0].item?.status, "Awaiting sponsor");
+});
+
+test("parseAgendaCsv rejects an over-limit status", () => {
+  const csv = [
+    AGENDA_CSV_HEADER,
+    `Talk,,Main Hall,,,2026-06-01T10:00:00Z,2026-06-01T11:00:00Z,${"x".repeat(101)},`,
+  ].join("\n");
+  const out = parseAgendaCsv(csv);
+  assert.equal(out[0].status, "error");
+  assert.match(out[0].error ?? "", /100 characters/i);
 });
 
 test("serializeAgendaCsv produces a header + escaped rows", () => {
