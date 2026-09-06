@@ -4,8 +4,10 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { sql, like, eq, inArray } from "drizzle-orm";
 import { layoutTemplates, layoutFolders, users, clients } from "../../shared/schema";
 
-// Task #398: committed Playwright E2E test for the Scenes folder sidebar,
-// backed by the existing layout_folders model.
+// Task #400: committed Playwright E2E test for the compact Scenes folder
+// selector, backed by the existing layout_folders model. Folder state and
+// mutations remain covered end-to-end; the library no longer reserves a
+// permanent side column for folders.
 //
 // Flow covered:
 //   1. Create a folder via the sidebar "New folder" button.
@@ -54,7 +56,7 @@ async function loginAsTestUser(page: Page, email: string) {
   expect(res.status(), `test-login failed: ${await res.text()}`).toBe(200);
 }
 
-test.describe("Task #398: Scenes folder sidebar + search", () => {
+test.describe("Task #400: Scenes folder selector + search", () => {
   let adminEmail = "";
   let clientId = "";
   let sceneAId = "";
@@ -108,6 +110,13 @@ test.describe("Task #398: Scenes folder sidebar + search", () => {
 
     await page.goto("/layouts");
     await expect(page.getByTestId("text-layouts-title")).toBeVisible();
+    await expect(page.getByTestId("scene-folder-selector")).toBeVisible();
+    await expect(page.locator('aside[aria-label="Scene folders"]')).toHaveCount(0);
+    await expect(page.getByTestId("button-scene-folder-all")).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("button-scene-folder-all")).toHaveAttribute(
+      "aria-label",
+      /All scenes, \d+ scenes/,
+    );
     await expect(page.getByTestId(`layout-list-item-${sceneAId}`)).toBeVisible();
     await expect(page.getByTestId(`layout-list-item-${sceneBId}`)).toBeVisible();
 

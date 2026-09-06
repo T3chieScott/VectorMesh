@@ -430,7 +430,13 @@ test("Task #394 recent agenda safeguards remain present", () => {
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
     "utf8",
   );
-  assert.ok(renderer.includes('gridTemplateRows: `repeat(${numRows}, minmax(auto, 1fr))`'));
+  assert.match(
+    renderer,
+    /const rowTrack = nowNextMode\s*\?\s*"minmax\(0, 1fr\)"\s*:\s*"max-content"/,
+  );
+  assert.ok(renderer.includes('className={`flex ${nowNextMode && scrollEnabled ? "items-stretch" : "items-start"}'));
+  assert.ok(renderer.includes('nowNextMode && scrollEnabled ? " h-full self-stretch" : ""'));
+  assert.equal(renderer.includes("minmax(auto, 1fr)"), false);
   assert.equal(renderer.includes('maxHeight: "100%"'), false);
   assert.ok(renderer.includes("cardRef.current.offsetHeight - viewport.clientHeight"));
   assert.ok(renderer.includes("maxHeight: descriptionViewportMaxHeight"));

@@ -170,11 +170,12 @@ test("Task #399 applies emergency wrapping to title, presenter, description, and
   assert.match(source, /overflowWrap: "anywhere"/);
 });
 
-test("Task #399 bounded rows retain an intrinsic minimum while remaining flexible", () => {
+test("Task #400 Full rows are max-content and Now/Next rows are flexible", () => {
   assert.match(
     source,
-    /gridTemplateRows:\s*`repeat\(\$\{numRows\}, minmax\(auto, 1fr\)\)`/,
+    /const rowTrack = nowNextMode\s*\?\s*"minmax\(0, 1fr\)"\s*:\s*"max-content"/,
   );
+  assert.doesNotMatch(source, /minmax\(auto, 1fr\)/);
   assert.doesNotMatch(source, /maxHeight: "100%"/);
   assert.match(source, /cardRef\.current\.offsetHeight - viewport\.clientHeight/);
   assert.match(source, /flex-auto min-h-0 overflow-hidden/);
@@ -199,4 +200,19 @@ test("Task #399 leaves compact cards and Now/Next rendering on their established
   assert.match(source, /nowNextLabel\?: NowNextItemLabel/);
   assert.match(source, /data-testid=\{tid\(`agenda-now-next-label-\$\{item\.id\}`\)\}/);
   assert.match(source, /columnsClass="columns-2"/);
+});
+
+test("Task #400 keeps Full intrinsic rows and gives Now/Next the complete slot", () => {
+  assert.match(
+    source,
+    /const rowTrack = nowNextMode\s*\?\s*"minmax\(0, 1fr\)"\s*:\s*"max-content"/,
+  );
+  assert.match(source, /nowNextMode && scrollEnabled \? "items-stretch" : "items-start"/);
+  assert.match(source, /nowNextMode && scrollEnabled \? " h-full self-stretch" : ""/);
+  assert.match(source, /if \(!nowNextMode && cardRef\.current && allocatedH != null\)/);
+  assert.match(
+    source,
+    /if \(nowNextMode\) \{\s*setDescriptionViewportMaxHeight\(\(prev\) => \(prev === null \? prev : null\)\);/,
+  );
+  assert.doesNotMatch(source, /minmax\(auto, 1fr\)/);
 });
