@@ -142,7 +142,10 @@ const configFormSchema = z.object({
   showEventName: z.boolean(),
   showDayName: z.boolean(),
   showDate: z.boolean(),
+  showAgendaDayHeading: z.boolean(),
   showNowNextLabel: z.boolean(),
+  overrideNowNextColor: z.boolean(),
+  nowNextColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Must be hex like #ffffff").or(z.literal("")),
 });
 type ConfigFormValues = z.infer<typeof configFormSchema>;
 
@@ -203,7 +206,10 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     showEventName: c?.showEventName ?? true,
     showDayName: c?.showDayName ?? false,
     showDate: c?.showDate ?? false,
+    showAgendaDayHeading: c?.showAgendaDayHeading ?? false,
     showNowNextLabel: c?.showNowNextLabel ?? false,
+    overrideNowNextColor: c?.overrideNowNextColor ?? false,
+    nowNextColor: c?.nowNextColor ?? "",
   };
 }
 
@@ -269,7 +275,10 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     showEventName: values.showEventName,
     showDayName: values.showDayName,
     showDate: values.showDate,
+    showAgendaDayHeading: values.showAgendaDayHeading,
     showNowNextLabel: values.showNowNextLabel,
+    overrideNowNextColor: values.overrideNowNextColor,
+    nowNextColor: values.overrideNowNextColor && values.nowNextColor ? values.nowNextColor : null,
   };
 }
 
@@ -737,6 +746,7 @@ function ConfigEditor({
                   ["showCurrentTime", "Current time"],
                   ["showDayName", "Day name"],
                   ["showDate", "Date"],
+                  ["showAgendaDayHeading", "Show agenda day heading"],
                   ["showRoom", "Room"],
                   ["showTrack", "Track"],
                   ["showPresenter", "Presenter"],
@@ -792,6 +802,38 @@ function ConfigEditor({
                         data-testid="switch-show-now-next-label"
                       />
                     </FormControl>
+                  </FormItem>
+                )} />
+              )}
+              <FormField control={form.control} name="overrideNowNextColor" render={({ field }) => (
+                <FormItem className="flex items-center justify-between rounded-md border px-3 py-2">
+                  <FormLabel className="m-0">Override Now/Next colour</FormLabel>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                      data-testid="switch-override-now-next-color"
+                    />
+                  </FormControl>
+                </FormItem>
+              )} />
+              {watched.overrideNowNextColor && (
+                <FormField control={form.control} name="nowNextColor" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Now/Next colour</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="color"
+                        value={field.value || "#000000"}
+                        onChange={field.onChange}
+                        className="h-9"
+                        data-testid="input-now-next-color"
+                      />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">
+                      You are responsible for ensuring sufficient colour contrast.
+                    </p>
+                    <FormMessage />
                   </FormItem>
                 )} />
               )}

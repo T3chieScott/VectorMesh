@@ -262,6 +262,7 @@ export async function ensureAgendaDescriptionLinesMigration(): Promise<void> {
 
 const AGENDA_DESCRIPTION_AUTO_SCROLL_MIGRATION_LOCK_KEY = 715129_008n;
 const AGENDA_SESSION_COUNT_PRESENTER_LINES_MIGRATION_LOCK_KEY = 715129_009n;
+const AGENDA_DAY_HEADING_NOW_NEXT_COLOUR_MIGRATION_LOCK_KEY = 715129_010n;
 
 /** Idempotent startup counterpart to migration 0036. */
 export async function ensureAgendaSessionCountPresenterLinesMigration(): Promise<void> {
@@ -299,6 +300,41 @@ export async function ensureAgendaSessionCountPresenterLinesMigration(): Promise
       } catch (unlockErr) {
         console.error(
           "ensureAgendaSessionCountPresenterLinesMigration: failed to release advisory lock:",
+          unlockErr,
+        );
+      }
+    }
+    client.release();
+  }
+}
+
+/** Idempotent startup counterpart to migration 0037 (Task #404). */
+export async function ensureAgendaDayHeadingNowNextColourMigration(): Promise<void> {
+  const client = await pool.connect();
+  let haveLock = false;
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [
+      AGENDA_DAY_HEADING_NOW_NEXT_COLOUR_MIGRATION_LOCK_KEY.toString(),
+    ]);
+    haveLock = true;
+    await client.query(`
+      ALTER TABLE agenda_widget_configs
+        ADD COLUMN IF NOT EXISTS show_agenda_day_heading BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE agenda_widget_configs
+        ADD COLUMN IF NOT EXISTS override_now_next_color BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE agenda_widget_configs
+        ADD COLUMN IF NOT EXISTS now_next_color TEXT;
+    `);
+    console.log("[ensureAgendaDayHeadingNowNextColourMigration] agenda display columns ready");
+  } finally {
+    if (haveLock) {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [
+          AGENDA_DAY_HEADING_NOW_NEXT_COLOUR_MIGRATION_LOCK_KEY.toString(),
+        ]);
+      } catch (unlockErr) {
+        console.error(
+          "ensureAgendaDayHeadingNowNextColourMigration: failed to release advisory lock:",
           unlockErr,
         );
       }

@@ -71,7 +71,10 @@ export const AGENDA_SETTINGS_CLIPBOARD_KEYS = [
   "showEventName",
   "showDayName",
   "showDate",
+  "showAgendaDayHeading",
   "showNowNextLabel",
+  "overrideNowNextColor",
+  "nowNextColor",
 ] as const;
 
 export type AgendaSettingsClipboardKey =
@@ -86,6 +89,24 @@ const optionalColor = z
   .regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})$/, "must be a hex colour")
   .or(z.literal(""))
   .optional();
+
+// Task #404 was added while clipboard payloads remained version 1. Some
+// callers construct a complete version-1 settings object with `""` for every
+// unknown/new field. Treat an empty legacy placeholder as absent (so paste
+// retains the destination value), while rejecting every non-empty malformed
+// value just like the established clipboard contract does.
+const optionalTask404Boolean = z.preprocess(
+  (value) => value === "" ? undefined : value,
+  z.boolean().optional(),
+);
+const optionalTask404Color = z.preprocess(
+  (value) => value === "" ? undefined : value,
+  z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/, "must be a six-digit hex colour")
+    .nullable()
+    .optional(),
+);
 
 // Version 1 initially copied room/track filters as comma-separated text.
 // Accept that shape on paste while emitting the current bounded array shape.
@@ -152,7 +173,10 @@ const agendaClipboardSettingsSchema = z
     showEventName: z.boolean().optional(),
     showDayName: z.boolean().optional(),
     showDate: z.boolean().optional(),
+    showAgendaDayHeading: optionalTask404Boolean,
     showNowNextLabel: z.boolean().optional(),
+    overrideNowNextColor: optionalTask404Boolean,
+    nowNextColor: optionalTask404Color,
   })
   .strict();
 
@@ -208,7 +232,12 @@ export function parseAgendaSettingsClipboardPayload(
     const path = issue?.path.join(".") || "settings";
     throw new Error(`Invalid Agenda setting ${path}: ${issue?.message ?? "value"}.`);
   }
-  return result.data as AgendaSettingsClipboardSettings;
+  // Omit legacy empty Task #404 placeholders after parsing. Keeping an
+  // `undefined` own property would make merge treat it as a requested update
+  // and erase a destination's setting.
+  return Object.fromEntries(
+    Object.entries(result.data).filter(([, value]) => value !== undefined),
+  ) as AgendaSettingsClipboardSettings;
 }
 
 export function mergeAgendaSettingsClipboardValues<

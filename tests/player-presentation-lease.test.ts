@@ -17,6 +17,20 @@ const report = (processId: string, sequence: number, sceneGeneration = 1, proces
   agenda: [{ zoneId: "agenda", stage: "full", page: 1, cycle: 2 }],
 });
 
+test("omitted, null, and partial heartbeat presentation reports never erase a fresh lease", () => {
+  const screen = "lease-omission";
+  const a = report("process", 1);
+  const now = Date.now();
+  assert.equal(acceptPlayerPresentationReport(screen, a, now), true);
+  assert.equal(readFreshPresentationState(screen, undefined)?.sceneId, "scene-1");
+  assert.equal(acceptPlayerPresentationReport(screen, null, now + 100), false);
+  assert.equal(acceptPlayerPresentationReport(screen, { processId: "process" }, now + 200), false);
+  assert.equal(readFreshPresentationState(screen, undefined)?.sceneId, "scene-1");
+  const c = report("process", 2, 2);
+  assert.equal(acceptPlayerPresentationReport(screen, c, now + 300), true);
+  assert.equal(readFreshPresentationState(screen, undefined)?.sceneId, "scene-2");
+});
+
 test("higher process generation supersedes immediately and delayed lower generations never reclaim", () => {
   const screen = "lease-order";
   assert.equal(acceptPlayerPresentationReport(screen, report("old", 1), 1_000), true);

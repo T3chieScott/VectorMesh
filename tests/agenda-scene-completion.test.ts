@@ -5,6 +5,7 @@ import {
   playerId, sceneId, zoneId,
 } from "../client/src/lib/agenda-scene-completion";
 import {
+  pruneAgendaPreparedRecords,
   resolveAgendaActivationInputs,
   resolveSceneDurationMs,
 } from "../client/src/hooks/use-agenda-scene-completion";
@@ -173,4 +174,48 @@ test("Agenda minimum starts after delayed readiness, while a missing zone safety
   timer.tick(29_999);
   assert.deepEqual(advanced, ["activation"]);
   timer.tick(1); assert.deepEqual(advanced, ["activation", "missing"]);
+});
+
+test("A active → B pending → C pending retains only A and C, so later B is fresh", () => {
+  let serial = 0;
+  const allocate = (key: string) => ({ key, activationId: `${key}:${++serial}` });
+  const records = new Map<string, ReturnType<typeof allocate>>();
+  const activeA = allocate("A");
+  const firstB = allocate("B");
+  records.set("A", activeA);
+  records.set("B", firstB);
+  pruneAgendaPreparedRecords(records, "A", "B");
+  assert.deepEqual([...records.keys()], ["A", "B"]);
+
+  records.set("C", allocate("C"));
+  pruneAgendaPreparedRecords(records, "A", "C");
+  assert.deepEqual([...records.keys()], ["A", "C"]);
+  pruneAgendaPreparedRecords(records, "C", "C");
+  assert.deepEqual([...records.keys()], ["C"]);
+
+  const laterB = allocate("B");
+  records.set("B", laterB);
+  pruneAgendaPreparedRecords(records, "C", "B");
+  assert.notEqual(laterB.activationId, firstB.activationId);
+  assert.deepEqual([...records.keys()], ["C", "B"]);
+});
+
+test("rapid prepared candidates stay bounded and abandoned binding signals are inert", () => {
+  const records = new Map<string, string>([["A", "active-a"]]);
+  for (const key of ["B", "C", "D", "E"]) {
+    records.set(key, `prepared-${key}`);
+    pruneAgendaPreparedRecords(records, "A", key);
+    assert.ok(records.size <= 2);
+    assert.ok(records.has("A"));
+    assert.ok(records.has(key));
+  }
+
+  const { coordinator, advanced } = setup();
+  coordinator.begin(agenda([z1]));
+  const abandonedB = activationId("abandoned-b");
+  assert.equal(coordinator.registerZone(abandonedB, z1), false);
+  assert.equal(coordinator.markZoneReady(abandonedB, z1), false);
+  assert.equal(coordinator.completeZone(abandonedB, z1), false);
+  assert.deepEqual(advanced, []);
+  assert.equal(coordinator.snapshot()?.activation.activationId, a);
 });

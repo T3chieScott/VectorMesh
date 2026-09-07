@@ -114,6 +114,38 @@ function render(
   );
 }
 
+test("Task #404 public Specific Date empty response renders no agenda shell", () => {
+  // This is the exact widget payload shape used by /display/agenda/:id after
+  // its tenant-scoped resolver returns no match (not a helper-only test).
+  const html = render(
+    {
+      dayFilter: "specific_date",
+      dayFilterDate: "2026-09-09",
+      showCurrentTime: true,
+      showDate: true,
+    },
+    [],
+  );
+  assert.equal(html, "");
+});
+
+test("Task #404 day heading and header date share the resolver-selected day", () => {
+  const html = render(
+    {
+      dayFilter: "tomorrow",
+      showAgendaDayHeading: true,
+      showDate: true,
+      showDayName: true,
+    },
+    [item({
+      startsAt: new Date("2026-09-03T10:00:00Z"),
+      endsAt: new Date("2026-09-03T11:00:00Z"),
+    })],
+  );
+  assert.match(html, /Tomorrow’s Agenda/);
+  assert.match(html, /September 3, 2026/);
+});
+
 test("Task #394 schema preserves all legacy styling defaults", () => {
   const parsed = insertAgendaWidgetConfigSchema.parse({
     clientId: "client-1",
@@ -357,7 +389,7 @@ test("Task #394 NOW/NEXT control applicability excludes unrelated and purpose-bu
   assert.equal(isAgendaNowNextLabelApplicable("now_next", "room_door"), false);
 });
 
-test("Task #394 enabled NOW/NEXT labels identify current and upcoming cards", () => {
+test("Task #404 NOW and NEXT labels are separate semantic pages", () => {
   const html = render(
     {
       displayMode: "now_next",
@@ -374,7 +406,12 @@ test("Task #394 enabled NOW/NEXT labels identify current and upcoming cards", ()
     ],
   );
   assert.match(html, /data-testid="agenda-now-next-label-current"[^>]*>NOW</);
-  assert.match(html, /data-testid="agenda-now-next-label-upcoming"[^>]*>NEXT</);
+  assert.equal(html.includes("agenda-now-next-label-upcoming"), false);
+  const nextHtml = render(
+    { displayMode: "now_next", showNowNextLabel: true },
+    [item({ id: "upcoming", startsAt: new Date("2026-09-02T13:00:00Z"), endsAt: new Date("2026-09-02T14:00:00Z") })],
+  );
+  assert.match(nextHtml, /data-testid="agenda-now-next-label-upcoming"[^>]*>NEXT</);
 });
 
 test("Task #394 disabled NOW/NEXT labels preserve the existing card output", () => {

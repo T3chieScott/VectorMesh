@@ -885,7 +885,7 @@ test("__TEST_S399__ finite viewport budget leaves a visible line and produces lo
   assert.ok(longDescriptionHeight - viewportHeight > 0);
 });
 
-test("__TEST_S382__ no forced one-session-per-page — pagination is unchanged", () => {
+test("__TEST_S382__ no forced one-session-per-page — description scrolling does not alter pagination", () => {
   const src = readFileSync(
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
     "utf-8",
@@ -894,9 +894,23 @@ test("__TEST_S382__ no forced one-session-per-page — pagination is unchanged",
     !src.includes("items.map((it) => [it])"),
     "one-session-per-page override must not exist",
   );
+  const paginationSection = src.slice(
+    src.indexOf("const autoPages = useMemo"),
+    src.indexOf("const followedState ="),
+  );
+  assert.match(
+    paginationSection,
+    /autoPages \?\? \(groupFullPagesByDay\s*\?\s*paginateAgendaItemsByLocalDay\(items, fallbackPageSize, timezone\)\s*:\s*paginate\(items, fallbackPageSize\)\)/s,
+    "standard pagination remains intact; only the Full Agenda day-heading branch may group local days",
+  );
+  assert.match(
+    src,
+    /const groupFullPagesByDay\s*=\s*config\.displayMode === "full" && config\.showAgendaDayHeading === true/,
+    "local-day grouping is limited to Full Agenda headings",
+  );
   assert.ok(
-    src.includes("autoPages ?? paginate(items, fallbackPageSize)"),
-    "pages must come from autoPages or the standard paginate() function",
+    !paginationSection.includes("descriptionAutoScroll"),
+    "description auto-scroll must not choose a pagination strategy",
   );
 });
 
