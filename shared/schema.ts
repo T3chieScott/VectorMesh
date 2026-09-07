@@ -2,6 +2,11 @@ import { sql, relations } from "drizzle-orm";
 import { pgTable, text, varchar, integer, real, boolean, timestamp, jsonb, pgEnum, uniqueIndex, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import {
+  agendaFilterValuesSchema,
+  createAgendaStatusFilterSchema,
+  createAgendaStatusSchema,
+} from "./agenda-filter-values";
 
 // Re-export auth models
 export * from "./models/auth";
@@ -1272,7 +1277,9 @@ export const insertAgendaItemSchema = createInsertSchema(agendaItems)
     title: z.string().min(1, "Title is required"),
     startsAt: z.coerce.date(),
     endsAt: z.coerce.date(),
-    status: z.enum(AGENDA_STATUSES).default("scheduled"),
+    // Built-ins remain the semantic registry, but upstreams and operators can
+    // retain a bounded custom status. Known values are canonicalized by case.
+    status: createAgendaStatusSchema(AGENDA_STATUSES).default("scheduled"),
   });
 export type InsertAgendaItem = z.infer<typeof insertAgendaItemSchema>;
 export type AgendaItem = typeof agendaItems.$inferSelect;
@@ -1847,9 +1854,9 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
     rotationIntervalSeconds: z.number().int().min(3).max(3600).default(12),
     maxItemsPerPage: z.number().int().min(1).max(50).default(8),
     timeWindowMinutes: z.number().int().min(1).max(60 * 24).nullable().optional(),
-    roomFilter: z.array(z.string()).default([]),
-    trackFilter: z.array(z.string()).default([]),
-    statusFilter: z.array(z.enum(AGENDA_STATUSES)).default([]),
+    roomFilter: agendaFilterValuesSchema.default([]),
+    trackFilter: agendaFilterValuesSchema.default([]),
+    statusFilter: createAgendaStatusFilterSchema(AGENDA_STATUSES).default([]),
     dayFilter: z.enum(AGENDA_DAY_FILTERS).default("all"),
     dayFilterDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be a date like 2026-09-12").nullable().optional(),
     accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#0ea5e9"),

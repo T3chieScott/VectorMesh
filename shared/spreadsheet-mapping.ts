@@ -19,6 +19,7 @@ import {
   type InsertAgendaItem,
 } from "./schema";
 import { splitCsvLine } from "./agenda-csv";
+import { agendaCustomStatusSchema, normalizeAgendaStatus } from "./agenda-filter-values";
 import {
   getTzOffsetMinutes,
   isValidTimezone,
@@ -244,19 +245,17 @@ const STATUS_ALIAS_MAP = new Map<string, AgendaStatus>(
   STATUS_ALIAS_ENTRIES.map(([k, v]) => [statusKey(k), v]),
 );
 
-// Map an arbitrary upstream status string to a VectorMesh status.
-// Unknown / blank values default to "scheduled".
-export function normalizeStatus(raw: Cell): AgendaStatus {
+// Map aliases to their canonical built-in values. Unknown non-empty values are
+// retained as custom statuses; blank values default to scheduled.
+export function normalizeStatus(raw: Cell): string {
   if (raw == null) return "scheduled";
   const k = statusKey(cellToString(raw));
   if (!k) return "scheduled";
   const aliased = STATUS_ALIAS_MAP.get(k);
   if (aliased) return aliased;
   const asEnum = k.replace(/ /g, "_");
-  if ((AGENDA_STATUSES as readonly string[]).includes(asEnum)) {
-    return asEnum as AgendaStatus;
-  }
-  return "scheduled";
+  if ((AGENDA_STATUSES as readonly string[]).includes(asEnum)) return asEnum;
+  return normalizeAgendaStatus(cellToString(raw), AGENDA_STATUSES) ?? "scheduled";
 }
 
 // ============ Date / time parsing ============
@@ -791,6 +790,15 @@ export function applyMapping(
         ? `${fullName}, ${company}`
         : fullName
       : company || null;
+    const statusResult = agendaCustomStatusSchema.safeParse(normalizeStatus(get("status")));
+    if (!statusResult.success) {
+      results.push({
+        rowNumber: r,
+        status: "error",
+        error: `Invalid status: ${statusResult.error.issues[0]?.message ?? "must be valid"}`,
+      });
+      continue;
+    }
     const item: MappedAgendaItem = {
       title,
       description: cellToString(get("description")).trim() || null,
@@ -799,7 +807,7 @@ export function applyMapping(
       presenter,
       startsAt,
       endsAt,
-      status: normalizeStatus(get("status")),
+      status: statusResult.data,
       statusMessage: cellToString(get("statusMessage")).trim() || null,
     };
     const externalIdValue = extIdx >= 0 ? cellToString(row[extIdx]).trim() : "";

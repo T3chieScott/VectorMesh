@@ -46,6 +46,7 @@ import {
   mergeAgendaSettingsClipboardValues,
   parseAgendaSettingsClipboardPayload,
 } from "@shared/agenda-settings-clipboard";
+import { agendaFilterValuesSchema, createAgendaStatusFilterSchema, deriveAgendaFilterOptions } from "@shared/agenda-filter-values";
 
 // Real-world conference signage form factors. Totem is the narrow
 // 9:32 floor kiosk you see at hotel lobbies; room door is the small
@@ -58,32 +59,15 @@ const PREVIEW_PRESETS = [
   { label: "Room door", subtitle: "1280×720", w: 1280, h: 720 },
 ] as const;
 
-// Sample data shown in the live preview when the site has no real
-// agenda items yet. Lets operators see the layout before importing.
+// Sample data remains preview-only for new sites. Filter choices always use
+// the persisted `items` query below, never this illustrative content.
 function buildSampleAgendaItems(clientId: string): AgendaItem[] {
   const base = new Date();
   base.setMinutes(0, 0, 0);
   const mk = (offsetMin: number, durationMin: number, partial: Partial<AgendaItem>): AgendaItem => {
     const startsAt = new Date(base.getTime() + offsetMin * 60_000);
     const endsAt = new Date(startsAt.getTime() + durationMin * 60_000);
-    return {
-      id: `sample-${offsetMin}`,
-      clientId,
-      title: "Sample session",
-      description: null,
-      room: null,
-      track: null,
-      presenter: null,
-      startsAt,
-      endsAt,
-      status: "scheduled",
-      statusMessage: null,
-      sortOrder: 0,
-      externalId: null,
-      createdAt: base,
-      updatedAt: base,
-      ...partial,
-    } as AgendaItem;
+    return { id: `sample-${offsetMin}`, clientId, title: "Sample session", description: null, room: null, track: null, presenter: null, startsAt, endsAt, status: "scheduled", statusMessage: null, sortOrder: 0, externalId: null, createdAt: base, updatedAt: base, ...partial } as AgendaItem;
   };
   return [
     mk(-30, 60, { title: "Opening Keynote", room: "Main Hall", presenter: "Jane Doe", track: "Keynote", status: "in_progress", statusMessage: "Live now" }),
@@ -118,9 +102,9 @@ const configFormSchema = z.object({
   headerClockScale: z.coerce.number().min(0.3).max(4),
   eventName: z.string().optional(),
   backgroundUrl: z.string().optional(),
-  roomFilter: z.string().optional(),
-  trackFilter: z.string().optional(),
-  statusFilter: z.array(z.string()).default([]),
+  roomFilter: agendaFilterValuesSchema.default([]),
+  trackFilter: agendaFilterValuesSchema.default([]),
+  statusFilter: createAgendaStatusFilterSchema(AGENDA_STATUSES).default([]),
   dayFilter: z.enum(AGENDA_DAY_FILTERS),
   dayFilterDate: z.string().optional(),
   timeWindowMinutes: z.string().optional(),
@@ -182,8 +166,8 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     headerClockScale: c?.headerClockScale ?? AGENDA_ROLE_SIZE_DEFAULTS.headerClock,
     eventName: c?.eventName ?? "",
     backgroundUrl: c?.backgroundUrl ?? "",
-    roomFilter: (c?.roomFilter ?? []).join(", "),
-    trackFilter: (c?.trackFilter ?? []).join(", "),
+    roomFilter: c?.roomFilter ?? [],
+    trackFilter: c?.trackFilter ?? [],
     statusFilter: c?.statusFilter ?? [],
     dayFilter: (c?.dayFilter as ConfigFormValues["dayFilter"]) ?? "all",
     dayFilterDate: c?.dayFilterDate ?? "",
@@ -242,8 +226,8 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     headerClockScale: values.headerClockScale,
     eventName: values.eventName || null,
     backgroundUrl: values.backgroundUrl || null,
-    roomFilter: values.roomFilter ? values.roomFilter.split(",").map((s) => s.trim()).filter(Boolean) : [],
-    trackFilter: values.trackFilter ? values.trackFilter.split(",").map((s) => s.trim()).filter(Boolean) : [],
+    roomFilter: values.roomFilter,
+    trackFilter: values.trackFilter,
     statusFilter: values.statusFilter,
     dayFilter: values.dayFilter,
     // Only persist a date when the specific-date option is chosen.
@@ -281,6 +265,75 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     showDate: values.showDate,
     showNowNextLabel: values.showNowNextLabel,
   };
+}
+
+function AgendaFilterMultiSelect({
+  label,
+  value,
+  persistedValues,
+  onChange,
+  testId,
+  optionTestIdPrefix,
+}: {
+  label: string;
+  value: string[];
+  persistedValues: readonly unknown[];
+  onChange: (values: string[]) => void;
+  testId: string;
+  optionTestIdPrefix: string;
+}) {
+  const options = deriveAgendaFilterOptions(persistedValues, value);
+  const selectedKeys = new Set(value.map((item) => item.trim().toLocaleLowerCase("en-US")));
+  const toggle = (option: string) => {
+    const key = option.trim().toLocaleLowerCase("en-US");
+    onChange(selectedKeys.has(key)
+      ? value.filter((item) => item.trim().toLocaleLowerCase("en-US") !== key)
+      : [...value, option]);
+  };
+  return (
+    <FormItem>
+      <FormLabel>{label}</FormLabel>
+      {options.length === 0 ? (
+        <p className="text-xs text-muted-foreground" data-testid={`${testId}-empty`}>No values available.</p>
+      ) : (
+        <Popover modal>
+          <PopoverTrigger asChild>
+            <Button type="button" variant="outline" className="w-full justify-between font-normal" data-testid={testId}>
+              <span className="truncate">{value.length ? `${value.length} selected` : `All ${label.toLocaleLowerCase()}`}</span>
+              <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+            <div className="max-h-60 overflow-auto p-1">
+              {options.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  role="checkbox"
+                  aria-checked={selectedKeys.has(option.trim().toLocaleLowerCase("en-US"))}
+                  onClick={() => toggle(option)}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                  data-testid={`option-${optionTestIdPrefix}-${option}`}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-primary text-[11px] leading-none"
+                  >
+                    {selectedKeys.has(option.trim().toLocaleLowerCase("en-US")) ? "✓" : ""}
+                  </span>
+                  <span className="truncate">{option}</span>
+                </button>
+              ))}
+            </div>
+            {value.length > 0 && <div className="border-t p-1">
+              <Button type="button" variant="ghost" size="sm" className="w-full" onClick={() => onChange([])} data-testid={`button-clear-${optionTestIdPrefix}-filter`}>Clear all</Button>
+            </div>}
+          </PopoverContent>
+        </Popover>
+      )}
+      <FormMessage />
+    </FormItem>
+  );
 }
 
 function ConfigEditor({
@@ -325,28 +378,9 @@ function ConfigEditor({
     };
   }, [watched, clientId, initial]);
 
-  // Fall back to seeded sample items so the preview is never empty
-  // while operators are still wiring up their first event.
-  const effectiveItems = useMemo(
-    () => (items.length === 0 ? buildSampleAgendaItems(clientId) : items),
-    [items, clientId],
-  );
-  const usingSampleData = items.length === 0;
-
-  // Unique room names from the imported agenda items, used to populate
-  // the "Filter by rooms" dropdown so operators pick from real data
-  // instead of typing room names by hand.
-  const uniqueRooms = useMemo(
-    () =>
-      Array.from(new Set(items.map((i) => (i.room ?? "").trim()).filter(Boolean))).sort(
-        (a, b) => a.localeCompare(b),
-      ),
-    [items],
-  );
-
   const previewItems = useMemo(
-    () => resolveAgendaItems({ items: effectiveItems, config: previewConfig, now: testNow ?? new Date(), tz: clientTimezone }),
-    [effectiveItems, previewConfig, clientTimezone, testNow],
+    () => resolveAgendaItems({ items: items.length ? items : buildSampleAgendaItems(clientId), config: previewConfig, now: testNow ?? new Date(), tz: clientTimezone }),
+    [items, clientId, previewConfig, clientTimezone, testNow],
   );
 
   const mutation = useMutation({
@@ -435,6 +469,9 @@ function ConfigEditor({
       <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{initial ? "Edit Widget Config" : "New Widget Config"}</DialogTitle>
+          <DialogDescription>
+            Choose which agenda sessions to show and how they should appear.
+          </DialogDescription>
         </DialogHeader>
         <div className="grid lg:grid-cols-2 gap-6">
           <Form {...form}>
@@ -664,122 +701,15 @@ function ConfigEditor({
               <FormField control={form.control} name="backgroundUrl" render={({ field }) => (
                 <FormItem><FormLabel>Background image URL</FormLabel><FormControl><Input placeholder="https://…" {...field} /></FormControl></FormItem>
               )} />
-              <FormField control={form.control} name="roomFilter" render={({ field }) => {
-                const selected = (field.value || "")
-                  .split(",")
-                  .map((s) => s.trim())
-                  .filter(Boolean);
-                const selectedSet = new Set(selected);
-                // Show every imported room plus any already-selected rooms
-                // that no longer appear in the data, so saved filters stay
-                // visible and removable.
-                const options = Array.from(new Set([...uniqueRooms, ...selected])).sort((a, b) =>
-                  a.localeCompare(b),
-                );
-                const toggle = (room: string) => {
-                  const next = new Set(selectedSet);
-                  if (next.has(room)) next.delete(room);
-                  else next.add(room);
-                  field.onChange(Array.from(next).join(", "));
-                };
-                return (
-                  <FormItem>
-                    <FormLabel>Filter by rooms</FormLabel>
-                    {options.length === 0 ? (
-                      <>
-                        <FormControl>
-                          <Input placeholder="Main Hall, Room A" {...field} data-testid="input-room-filter" />
-                        </FormControl>
-                        <p className="text-[10px] text-muted-foreground">
-                          Import agenda items to pick rooms from a list.
-                        </p>
-                      </>
-                    ) : (
-                      <Popover modal>
-                        <PopoverTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="w-full justify-between font-normal"
-                            data-testid="button-room-filter"
-                          >
-                            <span className="truncate">
-                              {selected.length === 0
-                                ? "All rooms"
-                                : `${selected.length} room${selected.length > 1 ? "s" : ""} selected`}
-                            </span>
-                            <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-                          <div className="max-h-60 overflow-auto p-1">
-                            {options.map((room) => (
-                              <div
-                                key={room}
-                                role="button"
-                                tabIndex={0}
-                                onClick={() => toggle(room)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter" || e.key === " ") {
-                                    e.preventDefault();
-                                    toggle(room);
-                                  }
-                                }}
-                                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent"
-                                data-testid={`option-room-${room}`}
-                              >
-                                <Checkbox checked={selectedSet.has(room)} className="pointer-events-none" />
-                                <span className="truncate">{room}</span>
-                              </div>
-                            ))}
-                          </div>
-                          {selected.length > 0 && (
-                            <div className="border-t p-1">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="w-full"
-                                onClick={() => field.onChange("")}
-                                data-testid="button-clear-room-filter"
-                              >
-                                Clear all
-                              </Button>
-                            </div>
-                          )}
-                        </PopoverContent>
-                      </Popover>
-                    )}
-                    <FormMessage />
-                  </FormItem>
-                );
-              }} />
-              <FormField control={form.control} name="trackFilter" render={({ field }) => (
-                <FormItem><FormLabel>Filter by tracks</FormLabel><FormControl><Input placeholder="Keynote, Workshop" {...field} /></FormControl></FormItem>
+              <FormField control={form.control} name="roomFilter" render={({ field }) => (
+                <AgendaFilterMultiSelect label="Filter by rooms" value={field.value} persistedValues={items.map((item) => item.room)} onChange={field.onChange} testId="button-room-filter" optionTestIdPrefix="room" />
               )} />
-              <div>
-                <Label>Status filter</Label>
-                <div className="flex flex-wrap gap-3 mt-1">
-                  {AGENDA_STATUSES.map((s) => {
-                    const checked = watched.statusFilter.includes(s);
-                    return (
-                      <label key={s} className="flex items-center gap-1 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(e) => {
-                            const cur = new Set(watched.statusFilter);
-                            if (e.target.checked) cur.add(s); else cur.delete(s);
-                            form.setValue("statusFilter", Array.from(cur) as ConfigFormValues["statusFilter"]);
-                          }}
-                          data-testid={`checkbox-status-${s}`}
-                        />
-                        {s}
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
+              <FormField control={form.control} name="trackFilter" render={({ field }) => (
+                <AgendaFilterMultiSelect label="Filter by tracks" value={field.value} persistedValues={items.map((item) => item.track)} onChange={field.onChange} testId="button-track-filter" optionTestIdPrefix="track" />
+              )} />
+              <FormField control={form.control} name="statusFilter" render={({ field }) => (
+                <AgendaFilterMultiSelect label="Status filter" value={field.value} persistedValues={items.map((item) => item.status)} onChange={field.onChange} testId="button-status-filter" optionTestIdPrefix="status" />
+              )} />
               <div className="grid grid-cols-3 gap-3">
                 <FormField control={form.control} name="timeWindowMinutes" render={({ field }) => (
                   <FormItem><FormLabel>Window (min)</FormLabel><FormControl><Input type="number" placeholder="∞" {...field} /></FormControl></FormItem>
@@ -1087,8 +1017,7 @@ function ConfigEditor({
               </div>
             </div>
             <p className="text-xs text-muted-foreground">
-              {previewItems.length} item(s) match the current filters
-              {usingSampleData && " (showing sample data — add real items to see your event)"}.
+              {previewItems.length} item(s) match the current filters.
             </p>
           </div>
         </div>

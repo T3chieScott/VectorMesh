@@ -95,7 +95,7 @@ test("normalizeStatus maps aliases and defaults to scheduled", () => {
   assert.equal(normalizeStatus("room change"), "moved");
   assert.equal(normalizeStatus(""), "scheduled");
   assert.equal(normalizeStatus(null), "scheduled");
-  assert.equal(normalizeStatus("something unknown"), "scheduled");
+  assert.equal(normalizeStatus(" something unknown "), "something unknown");
 });
 
 test("normalizeStatus accepts canonical enum values", () => {

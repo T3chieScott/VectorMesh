@@ -5,10 +5,11 @@
 //   title,description,room,track,presenter,startsAt,endsAt,status,statusMessage
 //
 // startsAt / endsAt: ISO 8601 (e.g. "2026-06-01T09:30:00Z" or with
-// a numeric offset). Status defaults to "scheduled" when blank or
-// unrecognised. Strings are tolerant of surrounding whitespace.
+// a numeric offset). Status defaults to "scheduled" when blank; custom
+// non-empty statuses are retained. Strings are tolerant of surrounding whitespace.
 
-import { AGENDA_STATUSES, type AgendaStatus, type InsertAgendaItem } from "./schema";
+import { AGENDA_STATUSES, type InsertAgendaItem } from "./schema";
+import { agendaCustomStatusSchema, normalizeAgendaStatus } from "./agenda-filter-values";
 
 export interface AgendaCsvRowResult {
   index: number;
@@ -118,10 +119,18 @@ export function parseAgendaCsv(text: string): AgendaCsvRowResult[] {
       });
       continue;
     }
-    const statusLower = (statusRaw || "scheduled").toLowerCase();
-    const status: AgendaStatus = (AGENDA_STATUSES as readonly string[]).includes(statusLower)
-      ? (statusLower as AgendaStatus)
-      : "scheduled";
+    const statusCandidate = normalizeAgendaStatus(statusRaw, AGENDA_STATUSES) ?? "scheduled";
+    const statusResult = agendaCustomStatusSchema.safeParse(statusCandidate);
+    if (!statusResult.success) {
+      results.push({
+        index: i - startIdx,
+        status: "error",
+        error: `Invalid status: ${statusResult.error.issues[0]?.message ?? "must be valid"}`,
+        raw: cols,
+      });
+      continue;
+    }
+    const status = statusResult.data;
 
     results.push({
       index: i - startIdx,

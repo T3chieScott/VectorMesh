@@ -385,6 +385,49 @@ test("Task #394 disabled NOW/NEXT labels preserve the existing card output", () 
   assert.equal(html.includes("agenda-now-next-label-item-1"), false);
 });
 
+test("Task #402 renders every built-in status with its canonical label and styling despite input case", () => {
+  const cases = [
+    ["SCHEDULED", "Scheduled", "bg-slate-500/20"],
+    ["In_Progress", "Live now", "bg-emerald-500/25"],
+    [" delayed ", "Delayed", "bg-amber-500/25"],
+    ["CANCELLED", "Cancelled", "bg-rose-600/25"],
+    ["Moved", "Moved", "bg-indigo-500/25"],
+  ] as const;
+  for (const [status, label, color] of cases) {
+    const html = render({}, [item({ status: status as AgendaItem["status"] })]);
+    assert.match(html, new RegExp(`<span[^>]*${color}[^>]*data-testid="agenda-status-${status.trim().toLowerCase()}"`));
+    assert.ok(html.includes(`>${label}</span>`), `${status} should retain its built-in label`);
+  }
+});
+
+test("Task #402 displays trimmed custom statuses neutrally and safely in controlled presentation", () => {
+  const custom = item({ status: "  Doors open  " as AgendaItem["status"] });
+  const regularHtml = render({}, [custom]);
+  assert.match(regularHtml, /<span[^>]*bg-slate-500\/15[^>]*data-testid="agenda-status-custom"/);
+  assert.ok(regularHtml.includes(">Doors open</span>"));
+
+  const html = renderToStaticMarkup(
+    React.createElement(AgendaDisplayWidget, {
+      config: config({ displayMode: "now_next", showNowNextLabel: true }),
+      items: [custom],
+      width: 1920,
+      height: 1080,
+      now: NOW,
+      completionBinding: {
+        activationId: "controlled-custom-status",
+        complete: () => {},
+      } as any,
+    }),
+  );
+  assert.ok(html.includes('data-testid="agenda-display-root"'));
+
+  const cancelled = render(
+    { displayMode: "now_next", showNowNextLabel: true },
+    [item({ status: "CANCELLED" as AgendaItem["status"] })],
+  );
+  assert.match(cancelled, /data-testid="agenda-now-next-label-item-1"[^>]*>NEXT</);
+});
+
 test("Task #394 purpose-built totem layout does not receive duplicate card labels", () => {
   const html = render({
     displayMode: "now_next",

@@ -8,6 +8,12 @@ import type {
   AgendaWidgetConfig,
   AgendaLayoutMode,
 } from "./schema";
+import { AGENDA_STATUSES } from "./schema";
+import {
+  agendaFilterValueKey,
+  normalizeAgendaFilterValue,
+  normalizeAgendaStatus,
+} from "./agenda-filter-values";
 import { getWallPartsInTz } from "./timezone-utils";
 
 export interface AgendaResolveInput {
@@ -85,6 +91,17 @@ const SESSION_STATUS_PRIORITY: Record<string, number> = {
   scheduled: 1,
 };
 
+function agendaStatusKey(status: unknown): string | null {
+  const normalized = normalizeAgendaStatus(status, AGENDA_STATUSES);
+  return normalized && AGENDA_STATUSES.includes(normalized as (typeof AGENDA_STATUSES)[number])
+    ? normalized
+    : null;
+}
+
+function hasAgendaStatus(status: unknown, expected: string): boolean {
+  return agendaStatusKey(status) === expected;
+}
+
 /** Identity for "the same session" used by dedupeAgendaSessions. */
 function agendaSessionKey(it: AgendaItem): string {
   const start = new Date(it.startsAt).getTime();
@@ -146,8 +163,11 @@ export function dedupeAgendaSessions(items: AgendaItem[]): AgendaItem[] {
     // Base row carries the most urgent status; ties keep the first.
     let base = group[0];
     for (const it of group) {
-      const p = SESSION_STATUS_PRIORITY[it.status as string] ?? 0;
-      const bp = SESSION_STATUS_PRIORITY[base.status as string] ?? 0;
+        // Compare canonical built-ins, but retain the chosen source row
+        // unchanged: custom statuses (including their readable spelling) are
+        // payload data, not values for this resolver to coerce.
+        const p = SESSION_STATUS_PRIORITY[agendaStatusKey(it.status) ?? ""] ?? 0;
+        const bp = SESSION_STATUS_PRIORITY[agendaStatusKey(base.status) ?? ""] ?? 0;
       if (p > bp) base = it;
     }
 
@@ -194,9 +214,16 @@ export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
   const trailingMs =
     config.displayMode === "alert" ? 2 * 60 * 60 * 1000 : 15 * 60 * 1000;
 
-  const rooms = (config.roomFilter || []).map((r) => r.toLowerCase());
-  const tracks = (config.trackFilter || []).map((t) => t.toLowerCase());
-  const statuses = config.statusFilter || [];
+  const filterKeys = (values: readonly unknown[]) =>
+    new Set(
+      values.flatMap((value) => {
+        const normalized = normalizeAgendaFilterValue(value);
+        return normalized ? [agendaFilterValueKey(normalized)] : [];
+      }),
+    );
+  const rooms = filterKeys(config.roomFilter || []);
+  const tracks = filterKeys(config.trackFilter || []);
+  const statuses = filterKeys(config.statusFilter || []);
 
   const windowMs =
     typeof config.timeWindowMinutes === "number" && config.timeWindowMinutes > 0
@@ -211,21 +238,24 @@ export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
     // Drop fully-past items beyond the trailing window.
     if (endMs < nowMs - trailingMs) return false;
 
-    if (rooms.length > 0) {
-      if (!it.room || !rooms.includes(it.room.toLowerCase())) return false;
+    if (rooms.size > 0) {
+      const room = normalizeAgendaFilterValue(it.room);
+      if (!room || !rooms.has(agendaFilterValueKey(room))) return false;
     }
-    if (tracks.length > 0) {
-      if (!it.track || !tracks.includes(it.track.toLowerCase())) return false;
+    if (tracks.size > 0) {
+      const track = normalizeAgendaFilterValue(it.track);
+      if (!track || !tracks.has(agendaFilterValueKey(track))) return false;
     }
-    if (statuses.length > 0) {
-      if (!statuses.includes(it.status as any)) return false;
+    if (statuses.size > 0) {
+      const status = normalizeAgendaFilterValue(it.status);
+      if (!status || !statuses.has(agendaFilterValueKey(status))) return false;
     }
 
     if (config.displayMode === "alert") {
       if (
-        it.status !== "delayed" &&
-        it.status !== "cancelled" &&
-        it.status !== "moved"
+        !hasAgendaStatus(it.status, "delayed") &&
+        !hasAgendaStatus(it.status, "cancelled") &&
+        !hasAgendaStatus(it.status, "moved")
       ) {
         return false;
       }
@@ -317,7 +347,8 @@ export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
     const { current, upcoming } = splitCurrentNext(filtered, now);
     const nextByRoom = new Map<string, AgendaItem>();
     for (const it of upcoming) {
-      const key = (it.room || "__no_room__").toLowerCase();
+      const room = normalizeAgendaFilterValue(it.room);
+      const key = room ? agendaFilterValueKey(room) : "__no_room__";
       if (!nextByRoom.has(key)) nextByRoom.set(key, it);
     }
     const merged = [...current, ...Array.from(nextByRoom.values())];
@@ -347,7 +378,7 @@ export function splitCurrentNext(
   for (const it of items) {
     const startMs = new Date(it.startsAt).getTime();
     const endMs = new Date(it.endsAt).getTime();
-    if (startMs <= nowMs && endMs > nowMs && it.status !== "cancelled") {
+    if (startMs <= nowMs && endMs > nowMs && !hasAgendaStatus(it.status, "cancelled")) {
       current.push(it);
     } else if (startMs > nowMs) {
       upcoming.push(it);
