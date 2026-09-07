@@ -84,11 +84,10 @@ function buildItem(over: Partial<AgendaItem> = {}): AgendaItem {
 }
 
 // formatNow mirror — the widget renders the resolved `now` into the
-// agenda-clock <p> via this exact Intl shape (weekday + HH:MM in the
+// agenda-clock <p> via this exact Intl shape (time only in the
 // site timezone). We reuse it to read the frozen instant back out.
 function formatNow(tz: string, d: Date): string {
   return new Intl.DateTimeFormat(undefined, {
-    weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,

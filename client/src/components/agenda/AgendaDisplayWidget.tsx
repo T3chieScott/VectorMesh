@@ -140,6 +140,27 @@ export interface AgendaDisplayWidgetProps {
   now?: Date;
   /** Present a finite, activation-scoped cycle when rendered by a playlist. */
   completionBinding?: AgendaZoneBinding;
+  /** Passive position report for multiview followers; it never controls playback. */
+  onPresentationState?: (state: AgendaPresentationState) => void;
+  /** Read-only position supplied by a monitor following another surface. */
+  followedPresentationState?: AgendaPresentationState | null;
+}
+
+export interface AgendaPresentationState {
+  stage: string;
+  page: number;
+  cycle: number;
+}
+
+export function sanitizeAgendaPresentationState(
+  state: AgendaPresentationState | null | undefined,
+  pageCount: number,
+): AgendaPresentationState | null {
+  if (!state || !Number.isInteger(state.page) || !Number.isInteger(state.cycle) ||
+    state.page < 0 || state.cycle < 0 || state.page >= pageCount || !state.stage.trim()) {
+    return null;
+  }
+  return state;
 }
 
 const STATUS_LABELS: Record<AgendaStatus, string> = {
@@ -270,7 +291,6 @@ function formatTime(iso: Date | string, tz: string | null | undefined): string {
 
 function formatNow(tz: string | null | undefined, now: Date): string {
   return new Intl.DateTimeFormat(undefined, {
-    weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
@@ -425,6 +445,13 @@ export function descScrollDurationMs(overflowPx: number): number {
   return Math.ceil((overflowPx / SCROLL_PX_PER_SEC) * 1_000);
 }
 
+/** Validate legacy/public presenter viewport values at the rendering boundary. */
+export function resolvePresenterVisibleLines(value: number | null | undefined): number {
+  return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 20
+    ? value as number
+    : 4;
+}
+
 /** The readable dwell for a page/state, shared by controlled completion plans. */
 export function resolveAgendaPresentationDwellMs(
   configuredMs: number,
@@ -433,7 +460,15 @@ export function resolveAgendaPresentationDwellMs(
   scrollAnimationActive: boolean,
 ): number {
   if (!scrollAnimationActive || itemIds.length === 0) return configuredMs;
-  const overflow = Math.max(0, ...itemIds.map((id) => scrollMetrics[id] ?? 0));
+  // Descriptions and presenters are independent viewports for the same card.
+  // Use namespaced metric keys and aggregate their concurrent reveal time by
+  // the maximum, never whichever observer happened to report last.
+  const overflow = Math.max(0, ...itemIds.map((id) => Math.max(
+    ...Object.entries(scrollMetrics)
+      .filter(([key]) => key === id || key.endsWith(`:${id}`))
+      .map(([, value]) => value ?? 0),
+    0,
+  )));
   return overflow > 0
     ? Math.max(configuredMs, TOP_PAUSE_MS + descScrollDurationMs(overflow) + BOTTOM_PAUSE_MS)
     : configuredMs;
@@ -625,6 +660,179 @@ function SpeakerMarker({
   );
 }
 
+/** Finite, line-based presenter reveal used on every card surface. */
+export function measurePresenterOverflow(
+  viewport: HTMLElement,
+  content: HTMLElement,
+): number {
+  const viewportHeight = viewport.clientHeight;
+  if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return 0;
+
+  // Geometry returned by DOMRect/Range is transformed. Convert its height
+  // back to layout pixels, using the viewport as the local scale reference.
+  // Heights (rather than top offsets) deliberately ignore the reveal's
+  // translateY transform.
+  const viewportRect = viewport.getBoundingClientRect();
+  const scaleY =
+    viewportRect.height > 0 ? viewportRect.height / viewportHeight : 1;
+  const toLayoutHeight = (height: number) =>
+    Number.isFinite(height) && height > 0 ? height / scaleY : 0;
+
+  let rangeHeight = 0;
+  try {
+    const range = content.ownerDocument.createRange();
+    range.selectNodeContents(content);
+    const rects = Array.from(range.getClientRects?.() ?? []);
+    if (rects.length > 0) {
+      const top = Math.min(...rects.map((rect) => rect.top));
+      const bottom = Math.max(...rects.map((rect) => rect.bottom));
+      rangeHeight = toLayoutHeight(bottom - top);
+    }
+    rangeHeight = Math.max(
+      rangeHeight,
+      toLayoutHeight(range.getBoundingClientRect().height),
+    );
+    range.detach?.();
+  } catch {
+    // Range geometry is unavailable in some non-browser renderers. The
+    // element measurements below remain valid fallbacks.
+  }
+
+  const naturalHeight = Math.max(
+    content.scrollHeight,
+    content.offsetHeight,
+    toLayoutHeight(content.getBoundingClientRect().height),
+    rangeHeight,
+  );
+  const overflow = naturalHeight - viewportHeight;
+  return overflow > 1 ? overflow : 0;
+}
+
+function PresenterViewport({
+  id, text, lines, fontSize, accentColor, onOverflow, resetTick, reducedMotion, suppressTestId,
+}: {
+  id: string; text: string; lines: number; fontSize: number;
+  accentColor?: string;
+  onOverflow?: (id: string, px: number) => void; resetTick?: number; reducedMotion: boolean; suppressTestId?: boolean;
+}) {
+  const viewportRef = useRef<HTMLSpanElement>(null);
+  const contentRef = useRef<HTMLSpanElement>(null);
+  const [overflow, setOverflow] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [transitionMs, setTransitionMs] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [contentHeight, setContentHeight] = useState(0);
+  const lastReportedOverflowRef = useRef<number | undefined>(undefined);
+  const lineHeight = 1.25;
+  useLayoutEffect(() => {
+    const measure = () => {
+      const viewport = viewportRef.current;
+      const content = contentRef.current;
+      if (!viewport || !content) return;
+       const next = measurePresenterOverflow(viewport, content);
+       const nextViewportHeight = viewport.clientHeight;
+       const nextContentHeight = nextViewportHeight + next;
+      setOverflow((previous) => Math.abs(previous - next) < 1 ? previous : next);
+       setViewportHeight((previous) =>
+         Math.abs(previous - nextViewportHeight) < 1 ? previous : nextViewportHeight,
+       );
+       setContentHeight((previous) =>
+         Math.abs(previous - nextContentHeight) < 1 ? previous : nextContentHeight,
+       );
+       if (
+         lastReportedOverflowRef.current === undefined ||
+         Math.abs(lastReportedOverflowRef.current - next) >= 1
+       ) {
+         lastReportedOverflowRef.current = next;
+         onOverflow?.(`presenter:${id}`, next);
+       }
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
+    observer?.observe(viewportRef.current!);
+    observer?.observe(contentRef.current!);
+    const fonts =
+      typeof document === "undefined"
+        ? undefined
+        : (document.fonts as FontFaceSet | undefined);
+    fonts?.ready.then(measure).catch(() => {});
+    fonts?.addEventListener?.("loadingdone", measure);
+    return () => {
+      observer?.disconnect();
+      fonts?.removeEventListener?.("loadingdone", measure);
+    };
+  }, [id, lines, fontSize, text, onOverflow, resetTick]);
+  useEffect(() => {
+    const timers: number[] = [];
+    setOffset(0);
+    setTransitionMs(0);
+    if (!overflow || reducedMotion) {
+      if (reducedMotion && overflow) setOffset(overflow);
+      return () => timers.forEach(clearTimeout);
+    }
+    const duration = descScrollDurationMs(overflow);
+    const start = window.setTimeout(() => {
+      setTransitionMs(duration);
+      setOffset(overflow);
+      const finish = window.setTimeout(() => setTransitionMs(0), duration);
+      timers.push(finish);
+    }, TOP_PAUSE_MS);
+    timers.push(start);
+    return () => timers.forEach(window.clearTimeout);
+  }, [overflow, resetTick, reducedMotion]);
+  const indicator = getDescriptionScrollIndicator(
+    viewportHeight,
+    contentHeight,
+    overflow,
+    offset,
+  );
+  return (
+    <span
+      ref={viewportRef}
+      className="block flex-1 min-w-0 relative"
+      style={{ display: "block", flex: "1 1 0%", minWidth: 0, lineHeight, maxHeight: `${lines * lineHeight}em`, overflow: "hidden" }}
+      data-testid={suppressTestId ? undefined : `agenda-presenter-viewport-${id}`}
+    >
+      <span
+        ref={contentRef}
+        className="block whitespace-pre-line"
+        style={{
+          display: "block",
+          width: "100%",
+          boxSizing: "border-box",
+          overflowWrap: "anywhere",
+          paddingRight: overflow ? DESCRIPTION_SCROLL_GUTTER_PX : 0,
+          transform: `translateY(-${offset}px)`,
+          transition: transitionMs > 0 ? `transform ${transitionMs}ms linear` : "none",
+          willChange: offset > 0 ? "transform" : "auto",
+        }}
+      >{text}</span>
+      {indicator && (
+        <span
+          aria-hidden="true"
+          data-testid={`agenda-presenter-scroll-rail-${id}`}
+          className="absolute right-0 top-0 bottom-0 rounded-full"
+          style={{ width: 2, backgroundColor: DESCRIPTION_SCROLL_TRACK_COLOR, pointerEvents: "none" }}
+        >
+          <span
+            aria-hidden="true"
+            data-testid={`agenda-presenter-scroll-thumb-${id}`}
+            className="block rounded-full"
+            style={{
+              height: indicator.thumbHeight,
+              transform: `translateY(${indicator.thumbOffset}px)`,
+              backgroundColor: accentColor || "#22c55e",
+              opacity: 0.9,
+              transition: transitionMs > 0 ? `transform ${transitionMs}ms linear` : "none",
+              pointerEvents: "none",
+            }}
+          />
+        </span>
+      )}
+    </span>
+  );
+}
+
 function AgendaRow({
   item,
   config,
@@ -681,6 +889,7 @@ function AgendaRow({
   // Treat an omitted field as visible so legacy preview/test payloads remain
   // backwards compatible while persisted configs use the explicit boolean.
   const showTrack = config.showTrack !== false;
+  const presenterVisibleLines = resolvePresenterVisibleLines(config.presenterVisibleLines);
   // Per-role size multipliers (config overrides → built-in defaults). The
   // secondary elements stay proportional to their role's primary so the
   // start/end-time relationship and description sizing are preserved.
@@ -785,7 +994,7 @@ function AgendaRow({
       prev === contentHeight ? prev : contentHeight,
     );
     setOverflowPx((prev) => (prev === oPx ? prev : oPx));
-    onScrollOverflow?.(item.id, oPx);
+    onScrollOverflow?.(`description:${item.id}`, oPx);
   };
 
   // ---- Viewport height measurement (before paint) ----------------------
@@ -1041,9 +1250,17 @@ function AgendaRow({
                     />
                   </span>
                 )}
-                <span className="min-w-0 whitespace-pre-line">
-                  {item.presenter}
-                </span>
+                <PresenterViewport
+                  id={item.id}
+                  text={item.presenter}
+                  lines={presenterVisibleLines}
+                  fontSize={scale * roleSizes.body}
+                  accentColor={accentColor || config.accentColor}
+                  onOverflow={onScrollOverflow}
+                  resetTick={scrollResetTick}
+                  reducedMotion={prefersReducedMotion}
+                  suppressTestId={suppressTestId}
+                />
               </div>
             )}
           </div>
@@ -1392,6 +1609,10 @@ function TotemNowNext({
   now,
   roleColors,
   showCardDate,
+  onScrollOverflow,
+  scrollResetTick,
+  prefersReducedMotion = false,
+  followedStage,
 }: {
   items: AgendaItem[];
   config: AgendaWidgetConfig;
@@ -1400,10 +1621,16 @@ function TotemNowNext({
   now: Date;
   roleColors: RoleColors;
   showCardDate?: boolean;
+  onScrollOverflow?: (id: string, px: number) => void;
+  scrollResetTick?: number;
+  prefersReducedMotion?: boolean;
+  followedStage?: string;
 }) {
   const { current, upcoming } = splitCurrentNext(items, now);
-  const cur = current[0];
-  const next = upcoming.slice(0, 4);
+  // Follower pages are already the exact selected Now/Next card. Do not
+  // re-resolve the full live list or a monitor can show a different stage.
+  const cur = followedStage === "now" ? items[0] : current[0];
+  const next = followedStage === "next" ? items.slice(0, 4) : upcoming.slice(0, 4);
   const nextDate = next[0]
     ? formatNextSessionDate(next[0].startsAt, now, tz)
     : null;
@@ -1419,7 +1646,7 @@ function TotemNowNext({
           Now
         </h2>
         {cur ? (
-          <AgendaRow item={cur} config={config} tz={tz} scale={scale * 1.3} roleColors={roleColors} showCardDate={showCardDate} />
+          <AgendaRow item={cur} config={config} tz={tz} scale={scale * 1.3} roleColors={roleColors} showCardDate={showCardDate} onScrollOverflow={onScrollOverflow} scrollResetTick={scrollResetTick} prefersReducedMotion={prefersReducedMotion} />
         ) : (
           <p className="opacity-60" style={{ fontSize: scale, ...bodyStyle }}>
             No session in progress.
@@ -1449,7 +1676,7 @@ function TotemNowNext({
             </p>
           )}
           {next.map((it) => (
-            <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} roleColors={roleColors} showCardDate={showCardDate} />
+            <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} roleColors={roleColors} showCardDate={showCardDate} onScrollOverflow={onScrollOverflow} scrollResetTick={scrollResetTick} prefersReducedMotion={prefersReducedMotion} />
           ))}
         </div>
       </section>
@@ -1465,6 +1692,10 @@ function RoomDoor({
   now,
   roleColors,
   showCardDate,
+  onScrollOverflow,
+  scrollResetTick,
+  prefersReducedMotion = false,
+  followedStage,
 }: {
   items: AgendaItem[];
   config: AgendaWidgetConfig;
@@ -1473,10 +1704,14 @@ function RoomDoor({
   now: Date;
   roleColors: RoleColors;
   showCardDate?: boolean;
+  onScrollOverflow?: (id: string, px: number) => void;
+  scrollResetTick?: number;
+  prefersReducedMotion?: boolean;
+  followedStage?: string;
 }) {
   const { current, upcoming } = splitCurrentNext(items, now);
-  const cur = current[0];
-  const next = upcoming[0];
+  const cur = followedStage === "now" ? items[0] : current[0];
+  const next = followedStage === "next" ? items[0] : upcoming[0];
   const currentDuration =
     config.showSessionDuration === true && cur
       ? formatSessionDuration(
@@ -1534,10 +1769,10 @@ function RoomDoor({
             <h1 className="font-bold mt-3 leading-tight" style={{ fontSize: scale * 3 * titleFactor, ...titleStyle }}>
               {cur.title}
             </h1>
-            {cur.presenter && (
-              <p className="mt-3 opacity-80 whitespace-pre-line" style={{ fontSize: scale * 1.3 * bodyFactor, ...bodyStyle }}>
-                {cur.presenter}
-              </p>
+            {config.showPresenter && cur.presenter && (
+              <div className="mt-3 opacity-80" style={{ fontSize: scale * 1.3 * bodyFactor, ...bodyStyle }}>
+                <PresenterViewport id={cur.id} text={cur.presenter} lines={resolvePresenterVisibleLines(config.presenterVisibleLines)} fontSize={scale * 1.3 * bodyFactor} accentColor={config.accentColor} onOverflow={onScrollOverflow} resetTick={scrollResetTick} reducedMotion={prefersReducedMotion} />
+              </div>
             )}
             <div className="mt-4 inline-block">
               <StatusBadge status={cur.status} scale={scale * 1.4} override={roleColors.status} />
@@ -1599,11 +1834,14 @@ export function AgendaDisplayWidget({
   timezone,
   now: nowProp,
   completionBinding,
+  onPresentationState,
+  followedPresentationState,
 }: AgendaDisplayWidgetProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [measured, setMeasured] = useState({ w: width ?? 1920, h: height ?? 1080 });
   const [now, setNow] = useState(() => nowProp ?? new Date());
   const [pageIndex, setPageIndex] = useState(0);
+  const [presentationCycle, setPresentationCycle] = useState(0);
 
   // Task #382 — reduced-motion preference, scroll metrics, and reset tick.
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(() =>
@@ -1642,6 +1880,12 @@ export function AgendaDisplayWidget({
     config.descriptionLines,
     prefersReducedMotion,
   );
+  // Presenter lines use the same finite reveal contract as Full descriptions.
+  // Fitting text reports zero overflow, so this never adds a dwell in natural
+  // layouts.
+  const presenterScrollActive = config.showPresenter === true;
+  const presentationScrollActive = descScrollActive || presenterScrollActive;
+  const presentationScrollAnimationActive = presentationScrollActive && !prefersReducedMotion;
 
   // Stable callback — AgendaRow reports its overflow amount after measuring.
   const handleScrollOverflow = useCallback((id: string, px: number) => {
@@ -1850,6 +2094,10 @@ export function AgendaDisplayWidget({
     () => autoPages ?? paginate(items, fallbackPageSize),
     [autoPages, items, fallbackPageSize],
   );
+  const followedState = sanitizeAgendaPresentationState(
+    followedPresentationState,
+    pages.length || 1,
+  );
 
   // A controlled scene has one presentation plan, not a live view of polling
   // data or later font/ResizeObserver repacks. Card layouts wait for the real
@@ -1898,10 +2146,24 @@ export function AgendaDisplayWidget({
 
   // safePageIndex / pageItems must be declared before the rotation effect so
   // the effect closure can capture them for the effectiveDwellMs computation.
-  const safePageIndex =
+  const localSafePageIndex =
     presentationPages && presentationPages.length > 0
       ? Math.min(pageIndex, presentationPages.length - 1) : 0;
+  const safePageIndex = followedState
+    ? Math.min(followedState.page, Math.max(0, (presentationPages?.length ?? 1) - 1))
+    : localSafePageIndex;
   const pageItems = presentationPages?.[safePageIndex] ?? [];
+  const presentationStage = followedState?.stage ??
+    (config.displayMode === "now_next" ? (safePageIndex === 0 ? "now" : "next") : "page");
+  const presentationStateRef = useRef(onPresentationState);
+  presentationStateRef.current = onPresentationState;
+  useEffect(() => {
+    presentationStateRef.current?.({
+      stage: presentationStage,
+      page: safePageIndex,
+      cycle: followedState?.cycle ?? presentationCycle,
+    });
+  }, [presentationStage, safePageIndex, presentationCycle, followedState?.cycle]);
 
   // Keep a ref so the dwell effect can read the latest pageItems without
   // listing the array itself as a dep. AgendaConfigZoneWidget polls every
@@ -1933,6 +2195,7 @@ export function AgendaDisplayWidget({
   // own dep.
   useEffect(() => {
     // Nothing may start until the measured, frozen controlled plan is ready.
+    if (followedState) return;
     if (controlledActivationId && (!controlledPages || !hasCurrentControlledPlan)) return;
     const configuredMs = Math.max(3, config.rotationIntervalSeconds) * 1_000;
     const currentItems = pageItemsRef.current;
@@ -1940,7 +2203,7 @@ export function AgendaDisplayWidget({
     // When auto-scroll is active, extend dwell to cover the full scroll
     // cycle so the page never advances while a description is still moving.
     const effectiveMs = resolveAgendaPresentationDwellMs(
-      configuredMs, currentItems.map((it) => it.id), scrollMetrics, descScrollAnimationActive,
+       configuredMs, currentItems.map((it) => it.id), scrollMetrics, presentationScrollAnimationActive,
     );
 
     if (controlledActivationId && controlledPages) {
@@ -1949,7 +2212,7 @@ export function AgendaDisplayWidget({
       // metric must not disappear when moving to the next page: the announced
       // total can only grow.
       const measuredDwell = resolveAgendaPresentationDwellMs(
-        configuredMs, currentItems.map((it) => it.id), scrollMetrics, descScrollAnimationActive,
+         configuredMs, currentItems.map((it) => it.id), scrollMetrics, presentationScrollAnimationActive,
       );
       controlledPageDwellRef.current[safePageIndex] = Math.max(
         controlledPageDwellRef.current[safePageIndex] ?? configuredMs,
@@ -1974,7 +2237,7 @@ export function AgendaDisplayWidget({
     if (pages.length <= 1) {
       // Single-page: loop scroll animations via the reset tick after the
       // effective dwell. No timer when auto-scroll is off (legacy no-op).
-      if (!descScrollAnimationActive) return;
+       if (!presentationScrollAnimationActive) return;
       const id = setTimeout(
         () => setScrollResetTick((t) => t + 1),
         effectiveMs,
@@ -1984,12 +2247,16 @@ export function AgendaDisplayWidget({
 
     // Multi-page: advance to the next page after the effective dwell.
     const id = setTimeout(
-      () => setPageIndex((i) => (i + 1) % pages.length),
+      () => setPageIndex((i) => {
+        const next = (i + 1) % pages.length;
+        if (next === 0) setPresentationCycle((cycle) => cycle + 1);
+        return next;
+      }),
       effectiveMs,
     );
     return () => clearTimeout(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageIndex, scrollResetTick, pages.length, config.rotationIntervalSeconds, descScrollAnimationActive, scrollMetrics, controlledActivationId, controlledPages, hasCurrentControlledPlan, safePageIndex]);
+   }, [pageIndex, scrollResetTick, pages.length, config.rotationIntervalSeconds, presentationScrollAnimationActive, scrollMetrics, controlledActivationId, controlledPages, hasCurrentControlledPlan, safePageIndex, followedState]);
 
   // In now_next mode every layout (not only totem/room_door) gets a
   // strong "live now" highlight on the currently-running row(s).
@@ -2034,6 +2301,12 @@ export function AgendaDisplayWidget({
   const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
   const timeStyle = timeRoleStyle(config, roleColors.time);
   const bodyStyle = roleColors.body ? { color: roleColors.body } : undefined;
+  const showHeaderTitle = Boolean(
+    config.showEventName && (config.eventName || config.name),
+  );
+  const showHeaderCount = config.showSessionCount !== false;
+  const showHeaderMeta = Boolean(config.showCurrentTime || config.showDate);
+  const showHeader = showHeaderTitle || showHeaderCount || showHeaderMeta;
 
   return (
     <div
@@ -2056,9 +2329,11 @@ export function AgendaDisplayWidget({
       />
 
       {/* Header */}
-      <header className="flex items-center justify-between" style={{ paddingBottom: gap / 2 }}>
-        <div className="flex flex-col">
-          {config.showEventName && (config.eventName || config.name) && (
+      {showHeader && (
+        <header className="flex items-center justify-between" style={{ paddingBottom: gap / 2 }}>
+          {(showHeaderTitle || showHeaderCount) && (
+            <div className="flex flex-col" data-testid="agenda-header-primary">
+              {showHeaderTitle && (
             <h1
               className="font-bold leading-none"
               style={{ fontSize: scale * 1.5, ...titleStyle }}
@@ -2066,14 +2341,17 @@ export function AgendaDisplayWidget({
             >
               {config.eventName || config.name}
             </h1>
+              )}
+              {showHeaderCount && (
+            <p className="opacity-60 mt-1" style={{ fontSize: scale * 0.8, ...bodyStyle }} data-testid="agenda-session-count">
+              {layout === "room_door" || layout === "totem"
+                ? "Agenda"
+                : `${items.length} session${items.length === 1 ? "" : "s"}${pages.length > 1 ? ` · page ${safePageIndex + 1}/${pages.length}` : ""}`}
+            </p>
+              )}
+            </div>
           )}
-          <p className="opacity-60 mt-1" style={{ fontSize: scale * 0.8, ...bodyStyle }}>
-            {layout === "room_door" || layout === "totem"
-              ? "Agenda"
-              : `${items.length} session${items.length === 1 ? "" : "s"}${pages.length > 1 ? ` · page ${pageIndex + 1}/${pages.length}` : ""}`}
-          </p>
-        </div>
-        {(config.showCurrentTime || config.showDayName || config.showDate) && (
+          {showHeaderMeta && (
           (() => {
             // Task #395 — weekday, date, and clock are all derived from the
             // same live instant in the configured display timezone. Session
@@ -2085,7 +2363,7 @@ export function AgendaDisplayWidget({
                 style={{ ...timeStyle }}
                 data-testid="agenda-header-meta"
               >
-                {(config.showDayName || config.showDate) && (
+                {config.showDate && (
                   <p
                     className="leading-tight"
                     style={{ fontSize: scale * roleSizes.headerDate }}
@@ -2096,7 +2374,7 @@ export function AgendaDisplayWidget({
                         {formatWeekday(headerDay, timezone)}
                       </span>
                     )}
-                    {config.showDayName && config.showDate && (
+                    {config.showDayName && (
                       <span className="opacity-50 mx-2">·</span>
                     )}
                     {config.showDate && (
@@ -2118,8 +2396,9 @@ export function AgendaDisplayWidget({
               </div>
             );
           })()
-        )}
-      </header>
+          )}
+        </header>
+      )}
 
       {/* Body */}
       <div
@@ -2141,8 +2420,8 @@ export function AgendaDisplayWidget({
             roleColors={roleColors}
             showCardDate={multiDay}
             scrollPageH={descScrollActive ? contentBox.h : undefined}
-            onScrollOverflow={descScrollActive ? handleScrollOverflow : undefined}
-            scrollResetTick={descScrollActive ? scrollResetTick : undefined}
+            onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined}
+            scrollResetTick={presentationScrollActive ? scrollResetTick : undefined}
             prefersReducedMotion={prefersReducedMotion}
             numCols={numCols}
           />
@@ -2157,14 +2436,14 @@ export function AgendaDisplayWidget({
             roleColors={roleColors}
             showCardDate={multiDay}
             scrollPageH={descScrollActive ? contentBox.h : undefined}
-            onScrollOverflow={descScrollActive ? handleScrollOverflow : undefined}
-            scrollResetTick={descScrollActive ? scrollResetTick : undefined}
+            onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined}
+            scrollResetTick={presentationScrollActive ? scrollResetTick : undefined}
             prefersReducedMotion={prefersReducedMotion}
           />
         ) : layout === "totem" ? (
-          <TotemNowNext items={controlledActivationId ? pageItems : items} config={config} tz={timezone} scale={scale} now={presentationNow} roleColors={roleColors} showCardDate={multiDay} />
+          <TotemNowNext items={controlledActivationId || followedState ? pageItems : items} config={config} tz={timezone} scale={scale} now={presentationNow} roleColors={roleColors} showCardDate={multiDay} onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined} scrollResetTick={scrollResetTick} prefersReducedMotion={prefersReducedMotion} followedStage={followedState?.stage} />
         ) : layout === "room_door" ? (
-          <RoomDoor items={controlledActivationId ? pageItems : items} config={config} tz={timezone} scale={scale} now={presentationNow} roleColors={roleColors} showCardDate={multiDay} />
+          <RoomDoor items={controlledActivationId || followedState ? pageItems : items} config={config} tz={timezone} scale={scale} now={presentationNow} roleColors={roleColors} showCardDate={multiDay} onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined} scrollResetTick={scrollResetTick} prefersReducedMotion={prefersReducedMotion} followedStage={followedState?.stage} />
         ) : (
           <LandscapeGrid
             pageItems={pageItems}
@@ -2176,8 +2455,8 @@ export function AgendaDisplayWidget({
             roleColors={roleColors}
             showCardDate={multiDay}
             scrollPageH={descScrollActive ? contentBox.h : undefined}
-            onScrollOverflow={descScrollActive ? handleScrollOverflow : undefined}
-            scrollResetTick={descScrollActive ? scrollResetTick : undefined}
+            onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined}
+            scrollResetTick={presentationScrollActive ? scrollResetTick : undefined}
             prefersReducedMotion={prefersReducedMotion}
           />
         )}

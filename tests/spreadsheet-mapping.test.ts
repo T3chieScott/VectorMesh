@@ -87,8 +87,8 @@ test("suggestColumnMapping does not reuse the same header twice", () => {
 
 // ============ Status normalization ============
 
-test("normalizeStatus maps aliases and defaults to scheduled", () => {
-  assert.equal(normalizeStatus("Confirmed"), "scheduled");
+test("normalizeStatus maps semantic aliases while retaining confirmed and defaults", () => {
+  assert.equal(normalizeStatus("Confirmed"), "Confirmed");
   assert.equal(normalizeStatus("LIVE"), "in_progress");
   assert.equal(normalizeStatus("running late"), "delayed");
   assert.equal(normalizeStatus("Canceled"), "cancelled");
@@ -198,8 +198,21 @@ test("applyMapping produces ok rows for valid data", () => {
   assert.equal(out[0].status, "ok");
   assert.equal(out[0].item!.title, "Keynote");
   assert.equal(out[0].item!.room, "Hall A");
-  assert.equal(out[0].item!.status, "scheduled");
+  assert.equal(out[0].item!.status, "confirmed");
   assert.equal(out[0].externalId, "row-0");
+});
+
+test("mapped statuses retain custom values, canonicalize built-ins, and default only blanks", () => {
+  assert.equal(normalizeStatus("  confirmed  "), "confirmed");
+  assert.equal(normalizeStatus("Not a session"), "Not a session");
+  assert.equal(normalizeStatus("  CANCElled "), "cancelled");
+  assert.equal(normalizeStatus("  "), "scheduled");
+  // An unmapped status column is indistinguishable from a missing value.
+  const withoutStatus = applyMapping(
+    [["Keynote", "2026-06-02 09:00", "2026-06-02 10:00", "Hall A"]],
+    { headers: HEADERS.slice(0, 4), mapping: { title: "Title", startsAt: "Start", endsAt: "End", room: "Room" }, timezone: TZ },
+  );
+  assert.equal(withoutStatus[0].item!.status, "scheduled");
 });
 
 test("applyMapping composes presenter from first name, last name and company", () => {

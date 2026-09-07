@@ -174,6 +174,7 @@ const playerSrc       = readFileSync(join(root, "client/src/pages/player.tsx"), 
 const monitorSrc      = readFileSync(join(root, "client/src/pages/monitor.tsx"), "utf8");
 const zoneRendererSrc = readFileSync(join(root, "client/src/components/zone-renderer.tsx"), "utf8");
 const surfaceSrc      = readFileSync(join(root, "client/src/components/screen-render-surface.tsx"), "utf8");
+const presentationSrc = readFileSync(join(root, "client/src/lib/contentPresentation.ts"), "utf8");
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Test groups
@@ -821,19 +822,19 @@ describe("Static analysis — source code consistency", () => {
     );
   });
 
-  test("player.tsx zones useMemo returns rawZones unchanged during layout rotation", () => {
-    // Static confirmation that the zone injection bypass is present.
-    // The exact pattern is: if (isLayoutRotation) return rawZones;
+  test("player uses shared contentPresentation raw-zone rotation short-circuit", () => {
     assert.ok(
-      playerSrc.includes("if (isLayoutRotation) return rawZones;"),
-      "player.tsx zones useMemo must short-circuit during layout rotation",
+      playerSrc.includes("buildContentPresentation") &&
+        presentationSrc.includes("const zones = isLayoutRotation ? rawZones"),
+      "Player must use the canonical helper whose rotation path preserves raw zones",
     );
   });
 
-  test("monitor.tsx zones useMemo returns rawZones unchanged during layout rotation", () => {
+  test("monitor uses shared contentPresentation raw-zone rotation short-circuit", () => {
     assert.ok(
-      monitorSrc.includes("if (isLayoutRotation) return rawZones;"),
-      "monitor.tsx zones useMemo must short-circuit during layout rotation",
+      monitorSrc.includes("buildContentPresentation") &&
+        presentationSrc.includes("const zones = isLayoutRotation ? rawZones"),
+      "Monitor must use the canonical helper whose rotation path preserves raw zones",
     );
   });
 });

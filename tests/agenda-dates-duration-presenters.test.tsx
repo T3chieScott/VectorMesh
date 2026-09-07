@@ -223,7 +223,9 @@ test("Task #395 presenter marker has a fixed column and does not split names", (
     html,
     /data-testid="agenda-presenter-session"[^>]*><span class="flex-none" style="width:[^"]+">/,
   );
-  assert.match(html, /<span class="min-w-0 whitespace-pre-line">Ada Lovelace, Grace Hopper<\/span>/);
+  assert.match(html, /agenda-presenter-viewport-session/);
+  assert.match(html, /max-height:5em;overflow:hidden/);
+  assert.match(html, /whitespace-pre-line[^>]*>Ada Lovelace, Grace Hopper/);
   assert.equal((html.match(/agenda-speaker-marker-session/g) ?? []).length, 1);
 });
 
@@ -234,7 +236,7 @@ test("Task #395 None removes the marker column and spacing", () => {
   const presenter = html.slice(presenterStart, presenterEnd);
   assert.equal(presenter.includes("agenda-speaker-marker-session"), false);
   assert.equal(presenter.includes('class="flex-none"'), false);
-  assert.match(presenter, /<span class="min-w-0 whitespace-pre-line">/);
+  assert.match(presenter, /agenda-presenter-viewport-session/);
 });
 
 test("Task #395 editor, public payload, and additive migration carry duration", () => {

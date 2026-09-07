@@ -131,7 +131,7 @@ test("Task #399 renders all six newline-separated presenters with one first-line
   assert.equal((html.match(/agenda-speaker-marker-session-399/g) ?? []).length, 1);
   assert.match(
     html,
-    /agenda-presenter-session-399[\s\S]*<span class="flex-none" style="width:[^"]+">[\s\S]*<span class="min-w-0 whitespace-pre-line">Ada Lovelace\nGrace Hopper/,
+    /agenda-presenter-session-399[\s\S]*<span class="flex-none" style="width:[^"]+">[\s\S]*agenda-presenter-viewport-session-399[\s\S]*Ada Lovelace\nGrace Hopper/,
   );
 });
 
@@ -140,7 +140,7 @@ test("Task #399 preserves compact single-presenter markup", () => {
     { descriptionLines: 2, descriptionAutoScroll: false },
     item({ presenter: "Ada Lovelace" }),
   );
-  assert.match(html, /class="min-w-0 whitespace-pre-line">Ada Lovelace<\/span>/);
+  assert.match(html, /agenda-presenter-viewport-session-399[\s\S]*Ada Lovelace<\/span>/);
   assert.equal((html.match(/agenda-speaker-marker-session-399/g) ?? []).length, 1);
   assert.equal(html.includes("agenda-description-scroll-track-session-399"), false);
 });
@@ -156,7 +156,7 @@ test("Task #399 preserves Now/Next labels while Full sizing changes", () => {
 
 test("Task #399 preserves newline-separated presenters and first-line marker layout", () => {
   assert.match(source, /className="flex items-start break-words"/);
-  assert.match(source, /className="min-w-0 whitespace-pre-line"/);
+  assert.match(source, /className="block whitespace-pre-line"/);
   assert.match(
     source,
     /speakerMarker[\s\S]{0,1200}className="flex-none"[\s\S]{0,300}width: scale \* 1\.35/,

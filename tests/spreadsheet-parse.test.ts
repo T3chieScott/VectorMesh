@@ -51,7 +51,7 @@ test("parseWorkbookBuffer grid feeds applyMapping end-to-end", async () => {
   const ok = out.filter((r) => r.status === "ok");
   assert.equal(ok.length, 2);
   assert.equal(ok[0].item!.title, "Keynote");
-  assert.equal(ok[0].item!.status, "scheduled");
+  assert.equal(ok[0].item!.status, "confirmed");
   assert.equal(ok[1].item!.status, "in_progress");
 });
 

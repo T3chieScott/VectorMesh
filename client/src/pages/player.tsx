@@ -8,7 +8,9 @@ import {
 } from "@/lib/playerAuthStrike";
 import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, LayoutZone, Playlist, PlaylistItem, Client, Event, PlayerContentResponse } from "@shared/schema";
 
-type PlayerContentData = PlayerContentResponse;
+type PlayerContentData = PlayerContentResponse & {
+  presentation?: { revision?: string; activationEpoch?: number };
+};
 import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
 import { ScreenRenderSurface } from "@/components/screen-render-surface";
 import { buildFontFaceCss } from "@/lib/fontFace";
@@ -19,6 +21,17 @@ import { persistOffset } from "@/lib/playerTimeSync";
 import { useScreenWakeLock } from "@/hooks/use-screen-wake-lock";
 import { getVideoStats } from "@/hooks/use-video-keep-alive";
 import { useAgendaSceneCompletion } from "@/hooks/use-agenda-scene-completion";
+import {
+  buildContentPresentation,
+  claimPlayerProcessGeneration,
+  getNextPresentationRotationIndex,
+  getPresentationRotationIndex,
+  getPresentationSceneDurationMs,
+  getPresentationSequenceIdentity,
+  scheduleDebouncedPresentationHeartbeat,
+  shouldSchedulePresentationDwell,
+} from "@/lib/contentPresentation";
+import type { AgendaPresentationState } from "@/components/agenda/AgendaDisplayWidget";
 
 const TOKEN_KEY = "signage_device_token";
 const SCREEN_KEY = "signage_screen_id";
@@ -307,6 +320,29 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const [weatherTimezone, setWeatherTimezone] = useState<string | undefined>(undefined);
   const [authError, setAuthError] = useState(false);
   const [layoutRotationIndex, setLayoutRotationIndex] = useState(0);
+  const presentationReportRef = useRef<{
+    revision?: string; activationEpoch?: number; sceneId?: string;
+    sceneActivationEpoch?: number;
+    processGeneration?: number; sequence?: number; sceneGeneration?: number;
+    source?: string; playlistId?: string;
+    agenda?: Array<{ zoneId: string; stage: string; page: number; cycle: number }>;
+  }>({});
+  const agendaPresentationStatesRef = useRef(
+    new Map<string, AgendaPresentationState>(),
+  );
+  const heartbeatSendRef = useRef<(() => void) | null>(null);
+  const agendaHeartbeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const presentationIdentityRef = useRef("");
+  const sceneActivationEpochRef = useRef(0);
+  const sceneGenerationRef = useRef(0);
+  const presentationSequenceRef = useRef(0);
+  const playerProcessIdRef = useRef(
+    typeof crypto?.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+  );
+  const playerProcessGenerationRef = useRef<number | null>(null);
+  if (playerProcessGenerationRef.current === null) {
+    playerProcessGenerationRef.current = claimPlayerProcessGeneration(screenId);
+  }
   const contentHashRef = useRef<string>("");
   // Audit gap #2: last ETag returned by /content. Sent back as
   // If-None-Match so the server can answer 304 (unchanged) and skip
@@ -474,6 +510,19 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         if (item.mediaAssetId) addMediaUrl(item.mediaAssetId);
       }
     }
+    // Canonical zone sources may directly carry mediaAssetIds instead of
+    // routing through a playlist. They are part of the resolved graph and
+    // must be cached for the physical Player just like playlist media.
+    const addSourceMediaUrls = (sources: unknown) => {
+      for (const source of Array.isArray(sources) ? sources : []) {
+        for (const id of Array.isArray((source as any)?.mediaAssetIds)
+          ? (source as any).mediaAssetIds
+          : []) {
+          if (typeof id === "string") addMediaUrl(id);
+        }
+      }
+    };
+    addSourceMediaUrls(data.zoneSources);
 
     if (data.layoutTemplates) {
       for (const lt of Object.values(data.layoutTemplates)) {
@@ -493,6 +542,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     // the owner tile.
     if (data.canvas?.tiles) {
       for (const tile of data.canvas.tiles) {
+        addSourceMediaUrls(tile.zoneSources);
         const tileZones = (tile.layout?.zones as LayoutZone[]) || [];
         for (const zone of tileZones) {
           if (zone.mediaId) addMediaUrl(zone.mediaId);
@@ -753,7 +803,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   }, [fetchContent, feedSample]);
 
   useEffect(() => {
-    heartbeatIntervalRef.current = setInterval(async () => {
+    const sendHeartbeat = async () => {
       try {
         // Heartbeat doubles as a 30s sync sample so the offset
         // stays warm even when /content is debounced or 304-cached.
@@ -768,7 +818,18 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         // Without this hop the in-memory cache is empty on a fresh
         // page lifecycle and the increase never reaches the server.
         const videoStats = getVideoStats();
-        const errorsPayload = { video: videoStats };
+        const errorsPayload = {
+          video: videoStats,
+          // Passive presentation report for authorized monitors. This is sent
+          // on the existing authenticated player heartbeat only; monitors
+          // never create this traffic.
+          presentation: {
+            processId: playerProcessIdRef.current,
+            processGeneration: playerProcessGenerationRef.current,
+            ...presentationReportRef.current,
+            sequence: ++presentationSequenceRef.current,
+          },
+        };
         const res = await playerFetch("/api/player/heartbeat", token, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -791,9 +852,12 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
           }
         }
       } catch {}
-    }, 30000);
+    };
+    heartbeatSendRef.current = () => { void sendHeartbeat(); };
+    heartbeatIntervalRef.current = setInterval(() => { void sendHeartbeat(); }, 30000);
     return () => {
       if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
+      if (heartbeatSendRef.current) heartbeatSendRef.current = null;
     };
   }, [screenId, token]);
 
@@ -884,98 +948,137 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     return () => clearInterval(interval);
   }, [content?.screenshotEnabled, captureScreenshot]);
 
-  const layoutRotationItems = useMemo(() => {
-    if (!content?.playlistItems || !content?.layoutTemplates) return [];
-    if (!content?.zoneSources || content.zoneSources.length === 0) return [];
-    for (const source of content.zoneSources) {
-      if (source.type !== "playlist" || !source.playlistId) continue;
-      const items = content.playlistItems[source.playlistId] || [];
-      const layoutItems = items
-        .filter(pi => pi.layoutTemplateId && content.layoutTemplates?.[pi.layoutTemplateId])
-        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-      if (layoutItems.length > 0) return layoutItems;
-    }
-    return [];
-  }, [content?.zoneSources, content?.playlistItems, content?.layoutTemplates]);
-
-  const isLayoutRotation = layoutRotationItems.length > 0;
-
-  const activeLayoutItem = isLayoutRotation ? layoutRotationItems[layoutRotationIndex % layoutRotationItems.length] : null;
-  const activeRotationLayout = activeLayoutItem?.layoutTemplateId && content?.layoutTemplates?.[activeLayoutItem.layoutTemplateId]
-    ? content.layoutTemplates[activeLayoutItem.layoutTemplateId]
+  const presentation = useMemo(
+    () => buildContentPresentation(content, layoutRotationIndex),
+    [content, layoutRotationIndex],
+  );
+  const { rotationItems: layoutRotationItems, isLayoutRotation, layout,
+    isFallbackPlaylist, isFallbackAgenda, rawZones, zones } = presentation;
+  const presentationSequenceIdentity = getPresentationSequenceIdentity(presentation);
+  const activeLayoutItem = isLayoutRotation
+    ? layoutRotationItems[layoutRotationIndex % layoutRotationItems.length]
     : null;
+  const sceneId = activeLayoutItem?.layoutTemplateId || layout?.id || "__none__";
+  // The shared presentation selected the source (including the synthetic
+  // __fallback__ source from a null-layout schedule block). Re-discovering it
+  // from item IDs can choose an unrelated playlist when IDs are reused.
+  const activePlaylistId = isLayoutRotation
+    ? presentation.rotationPlaylistId ?? undefined
+    : undefined;
+  // Semantic scene identity: fresh equivalent payload objects do not change
+  // it, while every physical rotation (including A -> B -> A) does.
+  const presentationIdentity = JSON.stringify({
+    revision: presentation.revision ?? null,
+    activationEpoch: presentation.activationEpoch,
+    playlistId: activePlaylistId ?? null,
+    rotationIndex: isLayoutRotation && layoutRotationItems.length > 0
+      ? layoutRotationIndex % layoutRotationItems.length
+      : null,
+    sceneId,
+  });
+  if (presentationIdentityRef.current !== presentationIdentity) {
+    presentationIdentityRef.current = presentationIdentity;
+    agendaPresentationStatesRef.current.clear();
+    sceneActivationEpochRef.current = Math.floor(getSyncedNow());
+    sceneGenerationRef.current += 1;
+  }
+  presentationReportRef.current = {
+    revision: presentation.revision ?? undefined,
+    activationEpoch: presentation.activationEpoch,
+    sceneId,
+    sceneActivationEpoch: sceneActivationEpochRef.current,
+    sceneGeneration: sceneGenerationRef.current,
+    source: isLayoutRotation ? "playlist-layout" : (layout ? "layout" : "nothing"),
+    playlistId: activePlaylistId,
+    agenda: [...agendaPresentationStatesRef.current.entries()].map(([zoneId, state]) => ({
+      zoneId, stage: state.stage, page: state.page, cycle: state.cycle,
+    })),
+  };
 
-  const layout = isLayoutRotation ? (activeRotationLayout || content?.layout || null) : (content?.layout || null);
-  const isFallbackPlaylist = !layout && content?.zoneSources?.some(zs => zs.zoneId === "__fallback__" && zs.type === "playlist");
-  // Task #209 — programme block targets an agenda widget config
-  // directly (no layout). The content resolver emits a synthetic
-  // `{zoneId:"__fallback__", type:"agenda", agendaConfigId}` source
-  // and the player wraps it in a fullscreen agenda zone.
-  const isFallbackAgenda = !layout && !isFallbackPlaylist && content?.zoneSources?.some(zs => zs.zoneId === "__fallback__" && zs.type === "agenda" && zs.agendaConfigId);
-  const rawZones: LayoutZone[] = useMemo(() => {
-    if (layout) return (layout.zones as LayoutZone[]) || [];
-    if (isFallbackAgenda) {
-      const source = content!.zoneSources!.find(zs => zs.zoneId === "__fallback__" && zs.type === "agenda");
-      if (source?.agendaConfigId) {
-        return [{
-          id: "__fallback__",
-          name: "Agenda",
-          type: "agenda",
-          x: 0, y: 0, width: 100, height: 100,
-          zIndex: 1,
-          agendaConfigId: source.agendaConfigId,
-        }] as LayoutZone[];
-      }
+  // Scene and Agenda page/stage changes otherwise wait up to the regular 30s
+  // heartbeat. Coalesce all presentation changes through one timer: a static
+  // rotation and an Agenda callback in the same commit must produce one report
+  // containing the latest Agenda map, not two competing sends.
+  const schedulePresentationHeartbeat = useCallback(() => {
+    scheduleDebouncedPresentationHeartbeat(
+      agendaHeartbeatTimerRef,
+      () => heartbeatSendRef.current?.(),
+      setTimeout,
+    );
+  }, []);
+  useEffect(() => () => {
+    if (agendaHeartbeatTimerRef.current) {
+      clearTimeout(agendaHeartbeatTimerRef.current);
+      agendaHeartbeatTimerRef.current = null;
     }
-    if (isFallbackPlaylist) {
-      const source = content!.zoneSources!.find(zs => zs.zoneId === "__fallback__");
-      if (source?.playlistId) {
-        const playlistItemsList = content!.playlistItems?.[source.playlistId] || [];
-        const mediaOnlyItems = playlistItemsList.filter(pi => pi.mediaAssetId && !pi.layoutTemplateId);
-        if (mediaOnlyItems.length > 0) {
-          const mediaPlayerItems = mediaOnlyItems
-            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-            .map(pi => ({
-              id: pi.id,
-              mediaAssetId: pi.mediaAssetId!,
-              duration: pi.duration ?? undefined,
-            }));
-          return [{
-            id: "__fallback__",
-            type: "media_player",
-            x: 0, y: 0, width: 100, height: 100,
-            zIndex: 1,
-            mediaPlayerItems,
-          }] as LayoutZone[];
-        }
-      }
-    }
-    return [];
-  }, [layout, isFallbackPlaylist, isFallbackAgenda, content?.zoneSources, content?.playlistItems]);
+  }, []);
 
-  const zones = useMemo(() => {
-    if (isLayoutRotation) return rawZones;
-    if (!content?.zoneSources || content.zoneSources.length === 0) return rawZones;
-    return rawZones.map(zone => {
-      const source = content.zoneSources?.find(zs => zs.zoneId === zone.id);
-      if (!source || source.type !== "playlist" || !source.playlistId) return zone;
-      const playlistItemsList = content.playlistItems?.[source.playlistId] || [];
-      if (playlistItemsList.length === 0) return zone;
-      const mediaOnlyItems = playlistItemsList.filter(pi => pi.mediaAssetId && !pi.layoutTemplateId);
-      if (mediaOnlyItems.length === 0) return zone;
-      const mediaPlayerItems = mediaOnlyItems
-        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-        .map(pi => ({
-          id: pi.id,
-          mediaAssetId: pi.mediaAssetId!,
-          duration: pi.duration ?? undefined,
-        }));
-      return { ...zone, mediaPlayerItems };
-    });
-  }, [rawZones, isLayoutRotation, content?.zoneSources, content?.playlistItems]);
+  useEffect(() => {
+    // The heartbeat effect is declared earlier and installs heartbeatSendRef
+    // before this effect runs on mount. This also queues each later semantic
+    // scene transition, but not equivalent content polls/renders.
+    schedulePresentationHeartbeat();
+  }, [presentationIdentity, schedulePresentationHeartbeat]);
+
+  const onAgendaPresentationState = useCallback((
+    zoneId: string,
+    state: AgendaPresentationState,
+  ) => {
+    // Zone callbacks can arrive after React has begun swapping scenes. The
+    // identity reset above, plus this current-scene check, keeps an old page
+    // from escaping in the next heartbeat.
+    if (!presentation.revision || presentationIdentityRef.current !== presentationIdentity) return;
+    const previous = agendaPresentationStatesRef.current.get(zoneId);
+    agendaPresentationStatesRef.current.set(zoneId, state);
+    presentationReportRef.current = {
+      revision: presentation.revision,
+      activationEpoch: presentation.activationEpoch,
+      sceneId,
+      sceneActivationEpoch: sceneActivationEpochRef.current,
+      sceneGeneration: sceneGenerationRef.current,
+      source: isLayoutRotation ? "playlist-layout" : (layout ? "layout" : "nothing"),
+      playlistId: activePlaylistId,
+      agenda: [...agendaPresentationStatesRef.current.entries()].map(([id, value]) => ({
+        zoneId: id, stage: value.stage, page: value.page, cycle: value.cycle,
+      })),
+    };
+    if (
+      previous?.stage !== state.stage ||
+      previous?.page !== state.page ||
+      previous?.cycle !== state.cycle
+    ) {
+      schedulePresentationHeartbeat();
+    }
+  }, [presentation.revision, presentation.activationEpoch, presentationIdentity, sceneId,
+    isLayoutRotation, layout, activePlaylistId, schedulePresentationHeartbeat]);
+
+  // The shared epoch is a *join/recovery* cursor, not the physical playback
+  // authority. Once activated this Player owns progression: ordinary scenes
+  // use their authored dwell and agenda scenes advance exclusively through
+  // useAgendaSceneCompletion below.
+  useEffect(() => {
+    setLayoutRotationIndex(getPresentationRotationIndex(presentation, getSyncedNow()));
+    // Intentionally only rebase when the canonical payload activates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presentationSequenceIdentity]);
+
+  const activeSceneHasAgenda = zones.some((zone) => zone.type === "agenda");
+  useEffect(() => {
+    if (!shouldSchedulePresentationDwell(presentation, activeSceneHasAgenda)) return;
+    const durationMs = getPresentationSceneDurationMs(
+      presentation,
+      layoutRotationIndex,
+    );
+    const timer = setTimeout(() => {
+      setLayoutRotationIndex((previous) =>
+        getNextPresentationRotationIndex(presentation, previous),
+      );
+    }, durationMs);
+    return () => clearTimeout(timer);
+  }, [presentationSequenceIdentity, layoutRotationIndex, activeSceneHasAgenda]);
 
   const agendaCompletionBindings = useAgendaSceneCompletion({
-    enabled: isLayoutRotation && layoutRotationItems.length > 1,
+    enabled: isLayoutRotation && layoutRotationItems.length > 1 && activeSceneHasAgenda,
     playerInstanceId: screenId,
     sceneIdValue: activeLayoutItem?.layoutTemplateId || activeLayoutItem?.id || "layout",
     activationKey: layoutRotationIndex,
@@ -1606,6 +1709,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       weatherTimezone={weatherTimezone}
       agendaTestAt={agendaTestAt}
       agendaCompletionBindings={agendaCompletionBindings}
+      onAgendaPresentationState={onAgendaPresentationState}
       playerContext={{
         screenName: content.playerVars?.screenName ?? content.screen?.name,
         roomName: content.playerVars?.roomName ?? content.screen?.location,

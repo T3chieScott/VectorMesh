@@ -517,14 +517,34 @@ export async function resolveScreenContent(
       }
 
       const blockZoneSources = (block.zoneSources as any[]) || [];
-      const hasFallback = blockZoneSources.some(
+      const fallbackSource = blockZoneSources.find(
         (zs: any) =>
           zs.zoneId === "__fallback__" &&
           zs.type === "playlist" &&
-          zs.playlistId,
+          typeof zs.playlistId === "string" &&
+          zs.playlistId.length > 0,
       );
-      if (hasFallback) {
-        activeZoneSources = blockZoneSources;
+      if (fallbackSource) {
+        // A null-layout schedule block is still a complete presentation when
+        // it names the reserved fallback playlist. Validate the playlist here:
+        // treating a deleted reference as a match would suppress a legitimate
+        // lower-precedence screen fallback, while treating a valid one as empty
+        // loses its reachable items/templates in the player payload.
+        const scheduledPlaylist = await deps.getPlaylist(fallbackSource.playlistId);
+        if (!scheduledPlaylist) {
+          trace.push({
+            kind: "block-evaluated",
+            blockId: block.id,
+            blockName: block.name,
+            priority: block.priority ?? 0,
+            layoutTemplateId: null,
+            layoutName: null,
+            decision: "no-layout-no-fallback",
+            detail: `Block's fallback playlist ${fallbackSource.playlistId} no longer exists.`,
+          });
+          continue;
+        }
+        activeZoneSources = [fallbackSource];
         outcomeSource = "block";
         outcomeBlock = { id: block.id, name: block.name };
         chosen = true;

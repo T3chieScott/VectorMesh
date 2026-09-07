@@ -563,7 +563,7 @@ test("__TEST_S382__ rotation timer uses setTimeout not setInterval in renderer",
   // And it should NOT use setInterval for page rotation (only for clock/fonts)
   // The page advance should use setTimeout
   assert.ok(
-    src.includes("setPageIndex((i) => (i + 1) % pages.length"),
+    src.includes("const next = (i + 1) % pages.length"),
     "Rotation should still advance pages cyclically",
   );
 });

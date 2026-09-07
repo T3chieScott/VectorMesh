@@ -57,12 +57,14 @@ export const AGENDA_SETTINGS_CLIPBOARD_KEYS = [
   "showDescriptionDivider",
   "descriptionTextAlign",
   "showPresenter",
+  "presenterVisibleLines",
   "speakerMarkerStyle",
   "speakerCustomMarker",
   "showRoom",
   "showTrack",
   "showStatus",
   "showSessionDuration",
+  "showSessionCount",
   "showSessionEndTime",
   "sessionDurationPrefix",
   "showCurrentTime",
@@ -127,6 +129,9 @@ const agendaClipboardSettingsSchema = z
     showDescriptionDivider: z.boolean().optional(),
     descriptionTextAlign: z.enum(AGENDA_DESCRIPTION_TEXT_ALIGNS).optional(),
     showPresenter: z.boolean().optional(),
+    // Older clipboard payloads were produced directly from form controls and
+    // therefore stored this numeric input as a string.
+    presenterVisibleLines: z.coerce.number().int().min(1).max(20).optional(),
     speakerMarkerStyle: z.enum(AGENDA_SPEAKER_MARKER_STYLES).optional(),
     speakerCustomMarker: z
       .string()
@@ -140,6 +145,7 @@ const agendaClipboardSettingsSchema = z
     showTrack: z.boolean().optional(),
     showStatus: z.boolean().optional(),
     showSessionDuration: z.boolean().optional(),
+    showSessionCount: z.boolean().optional(),
     showSessionEndTime: z.boolean().optional(),
     sessionDurationPrefix: z.string().max(24).transform((value) => value.trim()).optional(),
     showCurrentTime: z.boolean().optional(),
@@ -161,7 +167,14 @@ export function buildAgendaSettingsClipboardPayload(
 ): AgendaSettingsClipboardPayload {
   const settings = {} as Record<AgendaSettingsClipboardKey, unknown>;
   for (const key of AGENDA_SETTINGS_CLIPBOARD_KEYS) {
-    settings[key] = values[key];
+    if (key === "presenterVisibleLines") {
+      const parsed = Number(values[key]);
+      settings[key] = Number.isInteger(parsed) && parsed >= 1 && parsed <= 20
+        ? parsed
+        : 4;
+    } else {
+      settings[key] = values[key];
+    }
   }
   return {
     type: AGENDA_SETTINGS_CLIPBOARD_TYPE,

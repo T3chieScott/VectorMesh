@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -52,10 +52,44 @@ const itemFormSchema = z.object({
   statusMessage: z.string().optional(),
 });
 type ItemFormValues = z.infer<typeof itemFormSchema>;
-const isBuiltInAgendaStatus = (status: string) =>
-  (AGENDA_STATUSES as readonly string[]).includes(
-    normalizeAgendaStatus(status, AGENDA_STATUSES) ?? "",
+
+function buildItemFormDefaults(
+  initial: AgendaItem | undefined,
+  persistedStatusOptions: readonly string[],
+  now = new Date(),
+): ItemFormValues {
+  if (initial) {
+    return {
+      title: initial.title,
+      description: initial.description ?? "",
+      room: initial.room ?? "",
+      track: initial.track ?? "",
+      presenter: initial.presenter ?? "",
+      startsAt: toLocalInput(initial.startsAt),
+      endsAt: toLocalInput(initial.endsAt),
+      status: normalizeAgendaStatus(initial.status, AGENDA_STATUSES) ?? initial.status,
+      statusMessage: initial.statusMessage ?? "",
+    };
+  }
+  const siteStatuses = deriveAgendaFilterOptions(
+    persistedStatusOptions.map(
+      (status) => normalizeAgendaStatus(status, AGENDA_STATUSES) ?? status,
+    ),
   );
+  return {
+    title: "",
+    description: "",
+    room: "",
+    track: "",
+    presenter: "",
+    startsAt: toLocalInput(now),
+    endsAt: toLocalInput(new Date(now.getTime() + 60 * 60 * 1000)),
+    status: siteStatuses.includes("scheduled")
+      ? "scheduled"
+      : siteStatuses[0] ?? "scheduled",
+    statusMessage: "",
+  };
+}
 
 function toLocalInput(d: Date | string): string {
   const date = typeof d === "string" ? new Date(d) : d;
@@ -69,39 +103,36 @@ function ItemDialog({
   onOpenChange,
   initial,
   clientId,
+  persistedStatusOptions,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   initial?: AgendaItem;
   clientId: string;
+  persistedStatusOptions: string[];
 }) {
   const { toast } = useToast();
+  // Keep the custom-entry mode separate from the value: the typed custom
+  // value is deliberately unioned into options to preserve it on refetch.
+  const [customStatusMode, setCustomStatusMode] = useState(false);
   const form = useForm<ItemFormValues>({
     resolver: zodResolver(itemFormSchema),
-    defaultValues: initial
-      ? {
-          title: initial.title,
-          description: initial.description ?? "",
-          room: initial.room ?? "",
-          track: initial.track ?? "",
-          presenter: initial.presenter ?? "",
-          startsAt: toLocalInput(initial.startsAt),
-          endsAt: toLocalInput(initial.endsAt),
-          status: normalizeAgendaStatus(initial.status, AGENDA_STATUSES) ?? initial.status,
-          statusMessage: initial.statusMessage ?? "",
-        }
-      : {
-          title: "",
-          description: "",
-          room: "",
-          track: "",
-          presenter: "",
-          startsAt: toLocalInput(new Date()),
-          endsAt: toLocalInput(new Date(Date.now() + 60 * 60 * 1000)),
-          status: "scheduled",
-          statusMessage: "",
-        },
+    defaultValues: buildItemFormDefaults(initial, persistedStatusOptions),
   });
+  const wasOpen = useRef(open);
+
+  useEffect(() => {
+    // React Hook Form intentionally keeps defaultValues after mount. Reset on
+    // each closed→open lifecycle so a prior custom value or other draft fields
+    // cannot leak into the next create/edit. Status-option refetches are not a
+    // dependency: while open they update the choices below without replacing
+    // what the operator is currently typing.
+    if (open && !wasOpen.current) {
+      form.reset(buildItemFormDefaults(initial, persistedStatusOptions));
+      setCustomStatusMode(false);
+    }
+    wasOpen.current = open;
+  }, [open]);
 
   const mutation = useMutation({
     mutationFn: async (values: ItemFormValues) => {
@@ -168,23 +199,48 @@ function ItemDialog({
             <div className="grid grid-cols-2 gap-3">
               <FormField control={form.control} name="status" render={({ field }) => (
                 <FormItem><FormLabel>Status</FormLabel>
+                  {/*
+                    The select is sourced from this site's persisted values.
+                    Union the in-progress value so a refetch never clears a
+                    stale edit, and canonicalize built-ins while retaining
+                    custom spellings.
+                  */}
+                  {(() => {
+                    const current = normalizeAgendaStatus(field.value, AGENDA_STATUSES) ?? field.value;
+                    const options = deriveAgendaFilterOptions(
+                      persistedStatusOptions.map((status) =>
+                        normalizeAgendaStatus(status, AGENDA_STATUSES) ?? status,
+                      ),
+                      [current],
+                    );
+                    const selected = customStatusMode
+                      ? undefined
+                      : options.find(
+                          (option) => agendaFilterValueKey(option) === agendaFilterValueKey(current),
+                        );
+                    return <>
                   <Select
-                    value={isBuiltInAgendaStatus(field.value) ? field.value : "__custom__"}
-                    onValueChange={(value) => field.onChange(value === "__custom__" ? "" : value)}
+                    value={selected ?? "__custom__"}
+                    onValueChange={(value) => {
+                      setCustomStatusMode(value === "__custom__");
+                      field.onChange(value === "__custom__" ? "" : value);
+                    }}
                   >
                     <FormControl><SelectTrigger data-testid="select-agenda-status"><SelectValue /></SelectTrigger></FormControl>
                     <SelectContent>
-                      {AGENDA_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                       {options.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
                       <SelectItem value="__custom__">Custom status…</SelectItem>
                     </SelectContent>
                   </Select>
-                  {!isBuiltInAgendaStatus(field.value) && <Input
+                  {!selected && <Input
                     value={field.value}
                     onChange={(event) => field.onChange(event.target.value)}
                     placeholder="Or enter a custom status"
                     maxLength={AGENDA_FILTER_VALUE_MAX_LENGTH}
                     data-testid="input-agenda-custom-status"
                   />}
+                    </>;
+                  })()}
                   <FormMessage />
                 </FormItem>
               )} />
@@ -1870,6 +1926,14 @@ export default function AgendaItemsPage() {
   const rooms = useMemo(() => deriveAgendaFilterOptions(items.map((item) => item.room), roomFilter === "__all__" ? [] : [roomFilter]), [items, roomFilter]);
   const tracks = useMemo(() => deriveAgendaFilterOptions(items.map((item) => item.track), trackFilter === "__all__" ? [] : [trackFilter]), [items, trackFilter]);
   const statuses = useMemo(() => deriveAgendaFilterOptions(items.map((item) => item.status), statusFilter === "__all__" ? [] : [statusFilter]), [items, statusFilter]);
+  // Status editing uses the same site-derived, stable option semantics as
+  // filters. Built-ins are canonicalized; custom statuses remain untouched.
+  const persistedStatusOptions = useMemo(
+    () => deriveAgendaFilterOptions(
+      items.map((item) => normalizeAgendaStatus(item.status, AGENDA_STATUSES) ?? item.status),
+    ),
+    [items],
+  );
 
   // Filtered + sorted view used both for rendering AND for export.
   const filtered = useMemo(() => {
@@ -2059,8 +2123,8 @@ export default function AgendaItemsPage() {
         </div>
       )}
 
-      {createOpen && <ItemDialog open={createOpen} onOpenChange={setCreateOpen} clientId={selectedClientId} />}
-      {editing && <ItemDialog open={!!editing} onOpenChange={(o) => { if (!o) setEditing(null); }} initial={editing} clientId={selectedClientId} />}
+      {createOpen && <ItemDialog open={createOpen} onOpenChange={setCreateOpen} clientId={selectedClientId} persistedStatusOptions={persistedStatusOptions} />}
+      {editing && <ItemDialog open={!!editing} onOpenChange={(o) => { if (!o) setEditing(null); }} initial={editing} clientId={selectedClientId} persistedStatusOptions={persistedStatusOptions} />}
       {importOpen && <CsvImportDialog open={importOpen} onOpenChange={setImportOpen} clientId={selectedClientId} />}
     </div>
   );

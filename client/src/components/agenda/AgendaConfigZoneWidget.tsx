@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { AgendaDisplayWidget } from "./AgendaDisplayWidget";
+import { AgendaDisplayWidget, type AgendaPresentationState } from "./AgendaDisplayWidget";
 import { CustomFontFaces } from "@/lib/fontFace";
 import type { AgendaItem, AgendaWidgetConfig } from "@shared/schema";
 import type { CustomFontRef } from "@shared/fonts";
@@ -27,6 +27,8 @@ export function AgendaConfigZoneWidget({
   configId,
   atIso,
   completionBinding,
+  onPresentationState,
+  followedPresentationState,
 }: {
   configId: string;
   // Optional test-date override (?at=<ISO instant>). When set, it is
@@ -35,6 +37,8 @@ export function AgendaConfigZoneWidget({
   atIso?: string;
   /** Optional playlist-layout lifecycle binding; AgendaDisplayWidget will own ready/complete later. */
   completionBinding?: AgendaZoneBinding;
+  onPresentationState?: (state: AgendaPresentationState) => void;
+  followedPresentationState?: AgendaPresentationState | null;
 }) {
   const [data, setData] = useState<DisplayPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -172,6 +176,8 @@ export function AgendaConfigZoneWidget({
         timezone={displayData.client?.timezone || null}
         now={testNow}
         completionBinding={completionBinding}
+        onPresentationState={onPresentationState}
+        followedPresentationState={followedPresentationState}
       />
     </>
   );

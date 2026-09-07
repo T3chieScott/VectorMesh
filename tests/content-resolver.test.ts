@@ -77,6 +77,10 @@ function makeLayout(id: string, name: string): LayoutTemplate {
   } as unknown as LayoutTemplate;
 }
 
+function makePlaylist(id: string, name = `Playlist ${id}`): Playlist {
+  return { id, name, clientId: "client-1", createdAt: new Date(), updatedAt: new Date() } as Playlist;
+}
+
 function makeProgramme(id: string, eventId: string): Programme {
   return {
     id,
@@ -937,6 +941,7 @@ test("block with no layout but a __fallback__ playlist zone source matches", asy
       programmes: [programme],
       versions: [version],
       blocksByVersion: { [version.id]: [block] },
+      playlists: { "pl-99": makePlaylist("pl-99") },
     }),
   );
 
@@ -946,5 +951,90 @@ test("block with no layout but a __fallback__ playlist zone source matches", asy
   assert.equal(
     step?.kind === "block-evaluated" && step.decision,
     "matched-block-fallback-playlist",
+  );
+});
+
+test("published schedule fallback playlist suppresses screen fallback layout and retains its source", async () => {
+  const event = makeEvent("evt-scheduled-playlist");
+  const programme = makeProgramme("prog-scheduled-playlist", event.id);
+  const version = makeVersion("version-scheduled-playlist", programme.id, "published");
+  const scheduledPlaylist = makePlaylist("scheduled-layout-playlist");
+  const screenFallbackLayout = makeLayout("screen-fallback-layout", "Screen fallback");
+  const block = makeBlock({
+    programmeVersionId: version.id,
+    layoutTemplateId: null,
+    zoneSources: [{ zoneId: "__fallback__", type: "playlist", playlistId: scheduledPlaylist.id }],
+  });
+  const result = await resolveScreenContent(
+    makeScreen({ fallbackLayoutId: screenFallbackLayout.id }),
+    new Date("2026-04-25T12:00:00Z"),
+    makeDeps({
+      event,
+      programmes: [programme],
+      versions: [version],
+      blocksByVersion: { [version.id]: [block] },
+      layouts: { [screenFallbackLayout.id]: screenFallbackLayout },
+      playlists: { [scheduledPlaylist.id]: scheduledPlaylist },
+    }),
+  );
+  assert.equal(result.layout, null);
+  assert.deepEqual(result.activeZoneSources, [block.zoneSources[0]]);
+  assert.equal(
+    result.trace.find((step) => step.kind === "outcome")?.kind === "outcome" &&
+      result.trace.find((step) => step.kind === "outcome")?.source,
+    "block",
+  );
+  assert.equal(result.trace.some((step) => step.kind === "fallback-layout" && step.pass), false);
+});
+
+test("published direct-layout schedule remains unchanged when its playlist source is valid", async () => {
+  const event = makeEvent("evt-direct-layout");
+  const programme = makeProgramme("prog-direct-layout", event.id);
+  const version = makeVersion("version-direct-layout", programme.id, "published");
+  const directLayout = makeLayout("direct-layout", "Direct schedule");
+  const playlist = makePlaylist("direct-zone-playlist");
+  const block = makeBlock({
+    programmeVersionId: version.id,
+    layoutTemplateId: directLayout.id,
+    zoneSources: [{ zoneId: "hero", type: "playlist", playlistId: playlist.id }],
+  });
+  const result = await resolveScreenContent(
+    makeScreen(),
+    new Date("2026-04-25T12:00:00Z"),
+    makeDeps({
+      event, programmes: [programme], versions: [version],
+      blocksByVersion: { [version.id]: [block] },
+      layouts: { [directLayout.id]: directLayout },
+      playlists: { [playlist.id]: playlist },
+    }),
+  );
+  assert.equal(result.layout?.id, directLayout.id);
+  assert.deepEqual(result.activeZoneSources, block.zoneSources);
+});
+
+test("deleted scheduled fallback playlist safely falls through to screen fallback acceptance", async () => {
+  const event = makeEvent("evt-deleted-scheduled-playlist");
+  const programme = makeProgramme("prog-deleted-scheduled-playlist", event.id);
+  const version = makeVersion("version-deleted-scheduled-playlist", programme.id, "published");
+  const screenFallbackLayout = makeLayout("safe-screen-fallback", "Safe fallback");
+  const block = makeBlock({
+    programmeVersionId: version.id,
+    zoneSources: [{ zoneId: "__fallback__", type: "playlist", playlistId: "deleted-playlist" }],
+  });
+  const result = await resolveScreenContent(
+    makeScreen({ fallbackLayoutId: screenFallbackLayout.id }),
+    new Date("2026-04-25T12:00:00Z"),
+    makeDeps({
+      event, programmes: [programme], versions: [version],
+      blocksByVersion: { [version.id]: [block] },
+      layouts: { [screenFallbackLayout.id]: screenFallbackLayout },
+    }),
+  );
+  assert.equal(result.layout?.id, screenFallbackLayout.id);
+  assert.deepEqual(result.activeZoneSources, []);
+  assert.equal(
+    result.trace.some((step) =>
+      step.kind === "block-evaluated" && step.decision === "no-layout-no-fallback"),
+    true,
   );
 });
