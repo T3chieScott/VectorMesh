@@ -21,6 +21,7 @@ import { describe, it, before, beforeEach, after } from "node:test";
 import crypto from "node:crypto";
 import {
   sha256Hex,
+  buildMonitorPresentationHandler,
   parseMonitorCookie,
   validateMonitorCookie,
   MONITOR_COOKIE_NAME,
@@ -268,6 +269,77 @@ describe("validateMonitorCookie", () => {
       makeStorage(session),
     );
     assert.ok(result);
+  });
+});
+
+describe("monitor presentation observation endpoint", () => {
+  const rawSecret = "b".repeat(64);
+  const session = makeSession({
+    id: "presentation-session",
+    screenId: "presentation-screen",
+    sessionSecretHash: sha256Hex(rawSecret),
+    bootstrapUsedAt: new Date(),
+  });
+  const storage = {
+    getMonitorSession: async (id: string) =>
+      id === session.id ? session : undefined,
+  } as any;
+  const makeReq = (screenId: string, withCookie = true) => ({
+    params: { screenId },
+    headers: withCookie
+      ? { cookie: `${MONITOR_COOKIE_NAME}=${session.id}:${rawSecret}` }
+      : {},
+  }) as any;
+  const makeRes = () => {
+    const output: any = { statusCode: 200, body: undefined };
+    output.status = (code: number) => { output.statusCode = code; return output; };
+    output.type = () => output;
+    output.send = (body: any) => { output.body = body; return output; };
+    output.json = (body: any) => { output.body = body; return output; };
+    return output;
+  };
+
+  it("returns only server time and bounded process-local state without mutation", async () => {
+    let reads = 0;
+    const observed = {
+      revision: "revision", activationEpoch: 0, processId: "player",
+      processGeneration: 2, sequence: 4, sceneGeneration: 1, sceneId: "scene",
+    };
+    const handler = buildMonitorPresentationHandler(storage, (screenId) => {
+      reads += 1;
+      assert.equal(screenId, session.screenId);
+      return observed;
+    });
+    const res = makeRes();
+    await handler(makeReq(session.screenId), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(typeof res.body.serverTime, "number");
+    assert.deepEqual(res.body.playerPresentationState, observed);
+    assert.deepEqual(Object.keys(res.body).sort(), ["playerPresentationState", "serverTime"]);
+    assert.equal(reads, 1);
+  });
+
+  it("returns an authorized null observation when no reader is configured", async () => {
+    const handler = buildMonitorPresentationHandler(storage);
+    const res = makeRes();
+    await handler(makeReq(session.screenId), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(typeof res.body.serverTime, "number");
+    assert.equal(res.body.playerPresentationState, null);
+  });
+
+  it("rejects absent and cross-screen cookies before reading observation", async () => {
+    let reads = 0;
+    const handler = buildMonitorPresentationHandler(storage, () => {
+      reads += 1;
+      return null;
+    });
+    for (const req of [makeReq(session.screenId, false), makeReq("other-screen")]) {
+      const res = makeRes();
+      await handler(req, res);
+      assert.equal(res.statusCode, 401);
+    }
+    assert.equal(reads, 0);
   });
 });
 

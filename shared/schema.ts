@@ -1770,6 +1770,10 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   eventName: text("event_name"),
   showDescription: boolean("show_description").notNull().default(true),
   showPresenter: boolean("show_presenter").notNull().default(true),
+  // Task #403 — keep the session summary independently configurable and bound
+  // the rendered speaker viewport when presenter text is enabled.
+  showSessionCount: boolean("show_session_count").notNull().default(true),
+  presenterVisibleLines: integer("presenter_visible_lines").notNull().default(4),
   // Task #394 — marker shown before presenter text. Microphone preserves the
   // legacy renderer; custom markers are short plain-text glyphs only.
   speakerMarkerStyle: text("speaker_marker_style").notNull().default("microphone"),
@@ -1885,6 +1889,8 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
     // Task #382 — enables auto-scroll for Full (no-clamp) descriptions.
     // false is the default; missing/undefined preserves the DB DEFAULT FALSE.
     descriptionAutoScroll: z.boolean().optional(),
+    showSessionCount: z.boolean().default(true),
+    presenterVisibleLines: z.number().int().min(1).max(20).default(4),
     showDescriptionDivider: z.boolean().default(false),
     speakerMarkerStyle: z.enum(AGENDA_SPEAKER_MARKER_STYLES).default("microphone"),
     speakerCustomMarker: z

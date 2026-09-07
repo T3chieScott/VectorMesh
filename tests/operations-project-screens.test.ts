@@ -195,6 +195,12 @@ const admin = { id: "admin-1", role: "admin" as const };
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+test("mountOperationsRoutes tolerates legacy callers without presentation reader", () => {
+  assert.doesNotThrow(() => {
+    makeApp(makeFakeStorage({}), admin, null);
+  });
+});
+
 test("GET /api/operations/projects/:id/screens — grouped screen returned with group info", async () => {
   const client = makeClient("c1");
   const group = makeGroup("g1", "c1", "Hall A");

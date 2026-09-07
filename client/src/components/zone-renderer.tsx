@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { AgendaConfigZoneWidget } from "./agenda/AgendaConfigZoneWidget";
+import type { AgendaPresentationState } from "./agenda/AgendaDisplayWidget";
 import type { AgendaZoneBinding } from "@/lib/agenda-scene-completion";
 import { SweepstakeConfigZoneWidget } from "./sweepstake/SweepstakeConfigZoneWidget";
 import { buildZoneBaseStyle } from "./zone-base-style";
@@ -5620,6 +5621,9 @@ export interface ZoneRendererProps {
   // moment. Other zone types ignore it.
   agendaTestAt?: string;
   agendaCompletionBinding?: AgendaZoneBinding;
+  /** Passive agenda position reporting/following, keyed by the host per zone. */
+  onAgendaPresentationState?: (zoneId: string, state: AgendaPresentationState) => void;
+  followedAgendaPresentationState?: AgendaPresentationState | null;
 }
 
 export function ZoneRenderer({
@@ -5638,6 +5642,8 @@ export function ZoneRenderer({
   playerContext,
   agendaTestAt,
   agendaCompletionBinding,
+  onAgendaPresentationState,
+  followedAgendaPresentationState,
 }: ZoneRendererProps) {
   const ZoneIcon = zoneTypeIcons[zone.type] || Layers;
   // Re-render every 30s so {{date}}/{{time}}/{{day}} stay current without reload
@@ -6020,7 +6026,7 @@ export function ZoneRenderer({
         );
       case "agenda":
         return (
-          <AgendaConfigZoneWidget configId={zone.agendaConfigId || ""} atIso={agendaTestAt} completionBinding={agendaCompletionBinding} />
+          <AgendaConfigZoneWidget configId={zone.agendaConfigId || ""} atIso={agendaTestAt} completionBinding={agendaCompletionBinding} onPresentationState={onAgendaPresentationState ? (state) => onAgendaPresentationState(zone.id, state) : undefined} followedPresentationState={followedAgendaPresentationState} />
         );
       case "sweepstake":
         return (

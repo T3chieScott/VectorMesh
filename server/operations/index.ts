@@ -173,6 +173,11 @@ export interface OperationsMonitorDeps {
    */
   resolveMonitorContent(screenId: string, atRaw?: string, elapsedMs?: number): Promise<Record<string, unknown>>;
   /**
+   * Reads only the process-local physical Player observation. This must not
+   * resolve content, mutate storage, or expose device credentials.
+   */
+  readMonitorPresentation?(screenId: string): Record<string, unknown> | null;
+  /**
    * Returns the absolute public base URL (no trailing slash) used to
    * construct `monitorUrl` in POST monitor-session responses.
    * Falls back to REPLIT_DEV_DOMAIN in development.
@@ -200,6 +205,28 @@ export interface OperationsMonitorDeps {
     req: Request,
     res: Response,
   ): Promise<void>;
+}
+
+export function buildMonitorPresentationHandler(
+  st: OperationsRoutesStorage,
+  readMonitorPresentation?: OperationsMonitorDeps["readMonitorPresentation"],
+) {
+  return async (req: Request, res: Response) => {
+    try {
+      const screenId = getPathParam(req, "screenId");
+      const session = await validateMonitorCookie(req, st, screenId);
+      if (!session) {
+        return res.status(401).type("application/json").send(MONITOR_401_JSON);
+      }
+      return res.json({
+        serverTime: Date.now(),
+        playerPresentationState: readMonitorPresentation?.(screenId) ?? null,
+      });
+    } catch (err) {
+      console.error("[operations] GET /api/monitor/:screenId/presentation error:", err);
+      return res.status(500).json({ error: "Failed to read monitor presentation" });
+    }
+  };
 }
 
 // ============ Cookie helpers (exported for use in monitor page route) ============
@@ -1323,6 +1350,11 @@ export function mountOperationsRoutes(
   //   - screenshotRequested always false
   //   - screenshotEnabled always false
   // Device credentials are never included (no deviceToken, pairingCode).
+  app.get(
+    "/api/monitor/:screenId/presentation",
+    buildMonitorPresentationHandler(st, monitor?.readMonitorPresentation),
+  );
+
   app.get(
     "/api/monitor/:screenId/content",
     async (req: Request, res: Response) => {

@@ -283,6 +283,36 @@ describe("Shared logical screen surface", () => {
       /localStorage\.(getItem|setItem)/,
       "must not persist device token in localStorage",
     );
+    assert.match(
+      monitorSrc,
+      /fetch\(`\/api\/monitor\/\$\{screenId\}\/presentation`,\s*\{\s*credentials:\s*"same-origin",\s*cache:\s*"no-store"/s,
+      "presentation observation must be a credential-cookie GET with no-store",
+    );
+    assert.match(
+      monitorSrc,
+      /MONITOR_PRESENTATION_POLL_MS\s*=\s*600/,
+      "3-second Agenda pages must converge comfortably within 1.5 seconds",
+    );
+    assert.doesNotMatch(
+      monitorSrc,
+      /\/presentation`[\s\S]{0,160}method:\s*"POST"/,
+      "Monitor presentation observation must never POST",
+    );
+    assert.match(
+      monitorSrc,
+      /presentationObservation\.state\.revision === presentation\.revision[\s\S]*presentationObservation\.state\.activationEpoch === presentation\.activationEpoch/,
+      "stale canonical revisions must not control Monitor rendering",
+    );
+    assert.match(
+      monitorSrc,
+      /res\.status === 401 \|\| res\.status === 403[\s\S]*clearInterval\(presentationFetchIntervalRef\.current\)/,
+      "observation polling must stop on auth failure",
+    );
+    assert.match(
+      monitorSrc,
+      /now - previous\.receivedAt <= 2_000 \? previous : null/,
+      "network failures retain observation only for a bounded recovery window",
+    );
   });
 
   test("9. Player capture target uses profile dimensions, not REFERENCE_HEIGHT", () => {

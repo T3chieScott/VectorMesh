@@ -203,7 +203,6 @@ function statusKey(s: string): string {
 const STATUS_ALIAS_ENTRIES: Array<[string, AgendaStatus]> = [
   ["scheduled", "scheduled"],
   ["schedule", "scheduled"],
-  ["confirmed", "scheduled"],
   ["planned", "scheduled"],
   ["upcoming", "scheduled"],
   ["tbc", "scheduled"],

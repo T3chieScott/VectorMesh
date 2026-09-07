@@ -120,6 +120,7 @@ const configFormSchema = z.object({
   showDescriptionDivider: z.boolean(),
   descriptionTextAlign: z.enum(AGENDA_DESCRIPTION_TEXT_ALIGNS),
   showPresenter: z.boolean(),
+  presenterVisibleLines: z.coerce.number().int().min(1).max(20),
   speakerMarkerStyle: z.enum(AGENDA_SPEAKER_MARKER_STYLES),
   speakerCustomMarker: z
     .string()
@@ -134,6 +135,7 @@ const configFormSchema = z.object({
   showTrack: z.boolean(),
   showStatus: z.boolean(),
   showSessionDuration: z.boolean(),
+  showSessionCount: z.boolean(),
   showSessionEndTime: z.boolean(),
   sessionDurationPrefix: z.string().max(24, "Use 24 characters or fewer"),
   showCurrentTime: z.boolean(),
@@ -185,6 +187,7 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
       (c?.descriptionTextAlign as ConfigFormValues["descriptionTextAlign"]) ??
       "left",
     showPresenter: c?.showPresenter ?? true,
+    presenterVisibleLines: c?.presenterVisibleLines ?? 4,
     speakerMarkerStyle:
       (c?.speakerMarkerStyle as ConfigFormValues["speakerMarkerStyle"]) ??
       "microphone",
@@ -193,6 +196,7 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     showTrack: c?.showTrack ?? true,
     showStatus: c?.showStatus ?? true,
     showSessionDuration: c?.showSessionDuration ?? false,
+    showSessionCount: c?.showSessionCount ?? true,
     showSessionEndTime: c?.showSessionEndTime ?? true,
     sessionDurationPrefix: c?.sessionDurationPrefix ?? "",
     showCurrentTime: c?.showCurrentTime ?? true,
@@ -248,6 +252,7 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     showDescriptionDivider: values.showDescriptionDivider,
     descriptionTextAlign: values.descriptionTextAlign,
     showPresenter: values.showPresenter,
+    presenterVisibleLines: values.presenterVisibleLines,
     speakerMarkerStyle: values.speakerMarkerStyle,
     speakerCustomMarker:
       values.speakerMarkerStyle === "custom"
@@ -257,6 +262,7 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     showTrack: values.showTrack,
     showStatus: values.showStatus,
     showSessionDuration: values.showSessionDuration,
+    showSessionCount: values.showSessionCount,
     showSessionEndTime: values.showSessionEndTime,
     sessionDurationPrefix: values.sessionDurationPrefix.trim(),
     showCurrentTime: values.showCurrentTime,
@@ -734,6 +740,7 @@ function ConfigEditor({
                   ["showRoom", "Room"],
                   ["showTrack", "Track"],
                   ["showPresenter", "Presenter"],
+                  ["showSessionCount", "Session count"],
                   ["showDescription", "Description"],
                   ["showStatus", "Status"],
                   ["showSessionDuration", "Session duration"],
@@ -746,6 +753,26 @@ function ConfigEditor({
                   )} />
                 ))}
               </div>
+              <FormField control={form.control} name="presenterVisibleLines" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Visible speaker lines before scrolling</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={20}
+                      step={1}
+                      {...field}
+                      disabled={!watched.showPresenter}
+                      data-testid="input-presenter-visible-lines"
+                    />
+                  </FormControl>
+                  {!watched.showPresenter && (
+                    <p className="text-xs text-muted-foreground">Enable Presenter to apply this limit.</p>
+                  )}
+                  <FormMessage />
+                </FormItem>
+              )} />
               {isAgendaNowNextLabelApplicable(
                 watched.displayMode,
                 watched.layoutMode,

@@ -455,6 +455,7 @@ export interface AgendaSyncDeps {
 // A Set is sufficient because this is a single-process deployment.
 // Multi-process deployments should use pg_try_advisory_xact_lock instead.
 const IN_FLIGHT_SYNCS = new Set<string>();
+const IN_FLIGHT_SYNC_COMPLETIONS = new Map<string, Promise<void>>();
 // Rate-limit map for manual /run requests (production only, per config).
 // Prevents an operator from hammering Refresh Now faster than the cooldown.
 export const MANUAL_RUN_COOLDOWN_MS = 30_000;
@@ -966,6 +967,7 @@ async function parseUpstreamForConfig(
 export async function runAgendaSync(
   config: AgendaSyncConfig,
   deps: AgendaSyncDeps,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<AgendaSyncResult> {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const now = deps.now ? deps.now() : new Date();
@@ -979,6 +981,7 @@ export async function runAgendaSync(
   };
 
   const isMsBacked = isMicrosoftBackedSource(config);
+  const forceRefresh = options.forceRefresh === true;
   // A null source timezone inherits the site's timezone. Resolve it before
   // the cTag check so changing the site timezone also safely triggers a
   // reparse rather than reusing instants interpreted under the old timezone.
@@ -1000,13 +1003,33 @@ export async function runAgendaSync(
   // test). Tests use injected locks for isolation; phases aren't meaningful
   // in test-controlled environments.
   const trackPhase = isMsBacked && !deps.inFlightLock;
+  let completeInFlight: (() => void) | undefined;
   if (isMsBacked) {
     if (lockSet.has(config.id)) {
+      // A manual request must be serialized after (not coalesced into) a
+      // background run so it can perform corrective reprocessing of an
+      // unchanged cTag. There is no durable "force" flag: if this process
+      // dies, the request fails and retrying it safely creates a new run.
+      if (forceRefresh) {
+        const completion = IN_FLIGHT_SYNC_COMPLETIONS.get(config.id);
+        if (!completion) {
+          result.error = "A sync is already in progress; retry the manual refresh.";
+          return result;
+        }
+        await completion;
+        return runAgendaSync(config, deps, options);
+      }
       result.ok = true;
       result.noChange = true;
       return result;
     }
     lockSet.add(config.id);
+    IN_FLIGHT_SYNC_COMPLETIONS.set(
+      config.id,
+      new Promise<void>((resolve) => {
+        completeInFlight = resolve;
+      }),
+    );
   }
   if (trackPhase) IN_FLIGHT_PHASES.set(config.id, "checking");
 
@@ -1023,6 +1046,7 @@ export async function runAgendaSync(
         config.lastCTag !== null &&
         config.lastCTag !== undefined &&
         prefetchedCTag === config.lastCTag &&
+        !forceRefresh &&
         config.lastProcessedConfigFingerprint === configFingerprint
       ) {
         // The file and the parsing/merge configuration are unchanged — record
@@ -1279,6 +1303,8 @@ export async function runAgendaSync(
     // Release in-process lock and clear phase so the next scheduler tick can run.
     if (isMsBacked) {
       lockSet.delete(config.id);
+      IN_FLIGHT_SYNC_COMPLETIONS.delete(config.id);
+      completeInFlight?.();
     }
     if (trackPhase) IN_FLIGHT_PHASES.delete(config.id);
   }

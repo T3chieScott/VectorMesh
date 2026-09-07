@@ -234,6 +234,34 @@ test("simulator parity: fallback layout maps to layoutSource='fallback' / 'Fallb
   assert.equal(sim.summary.fallbackPlaylistId, null);
 });
 
+test("simulator resolver adapter forwards live overrides for an unpaired screen with a fallback layout", async () => {
+  const fbLayout = makeLayout("layout-unpaired-fallback", "Unpaired Fallback");
+  let liveOverridesRead = 0;
+  const deps: ResolverDeps = {
+    ...makeDeps({ layouts: { [fbLayout.id]: fbLayout } }),
+    getLiveOverrides: async () => {
+      liveOverridesRead += 1;
+      return [];
+    },
+  };
+  const screen = makeScreen({
+    isPaired: false,
+    fallbackLayoutId: fbLayout.id,
+  });
+
+  const sim = await resolveSimulatorContent(
+    screen,
+    new Date("2026-04-25T12:00:00Z"),
+    deps,
+    null,
+  );
+
+  assert.equal(liveOverridesRead, 1);
+  assert.equal(sim.result.layout?.id, fbLayout.id);
+  assert.equal(sim.summary.layoutSource, "fallback");
+  assert.equal(sim.summary.layoutSourceDetail, "Fallback Layout");
+});
+
 test("simulator parity: fallback playlist maps to layoutSource='fallback' / 'Fallback Playlist'", async () => {
   const playlist: Playlist = {
     id: "pl-1",

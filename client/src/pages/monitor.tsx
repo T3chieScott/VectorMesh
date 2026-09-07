@@ -50,6 +50,10 @@ import { TestPattern } from "@/components/test-pattern";
 // are not used in runtime conditions — each capability is enforced by
 // the absence of the corresponding code (see module-level comment above).
 import { MONITOR_CAPABILITIES } from "@/pages/player";
+import { buildContentPresentation, getPresentationRotationIndex, getPresentationTransitionMs } from "@/lib/contentPresentation";
+import type { AgendaPresentationState } from "@/components/agenda/AgendaDisplayWidget";
+
+export const MONITOR_PRESENTATION_POLL_MS = 600;
 
 // Validate at module load time that MONITOR_CAPABILITIES denies every
 // capability.  Any new capability added to PlayerCapabilities that is
@@ -133,11 +137,27 @@ interface MonitorContentData {
    */
   previewAnchorEpoch?: number;
   canvas?: { tiles?: any[] } | null;
+  presentation?: { revision?: string; activationEpoch?: number };
+  playerPresentationState?: {
+    processId: string; revision: string; activationEpoch: number; sceneId: string;
+    sceneActivationEpoch?: number;
+    processGeneration: number; sequence: number; sceneGeneration: number;
+    source?: string; playlistId?: string;
+    agenda?: Array<{ zoneId: string; stage: string; page: number; cycle: number }>;
+  };
 }
+
+type MonitorPresentationState = NonNullable<
+  MonitorContentData["playerPresentationState"]
+>;
 
 function MonitorContentInner({ screenId }: { screenId: string }) {
   const { feedSample, getSyncedNow } = usePlayerClock();
   const [content, setContent] = useState<MonitorContentData | null>(null);
+  const [presentationObservation, setPresentationObservation] = useState<{
+    state: MonitorPresentationState;
+    receivedAt: number;
+  } | null>(null);
   const [authError, setAuthError] = useState(false);
   const [scale, setScale] = useState(1);
   const [zoneMediaIndices, setZoneMediaIndices] = useState<Record<string, number>>({});
@@ -146,6 +166,8 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
   const [weatherTimezone, setWeatherTimezone] = useState<string | undefined>(undefined);
   const layoutRotationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const presentationFetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const presentationFetchInFlightRef = useRef(false);
   // Preview-time: read ?at= once on mount (stable across renders), track the
   // real-clock anchor so elapsed time can be computed on each subsequent poll.
   const previewAtRaw = useMemo(
@@ -172,135 +194,54 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
     el.textContent = buildFontFaceCss(fonts);
   }, [content?.fonts]);
 
-  // ── Layout rotation items (mirrors PlayerContent.layoutRotationItems) ──────
-  const layoutRotationItems = useMemo(() => {
-    if (!content?.playlistItems || !content?.layoutTemplates) return [];
-    if (!content?.zoneSources || content.zoneSources.length === 0) return [];
-    for (const source of content.zoneSources) {
-      if (source.zoneId !== "__fallback_rotation__" || source.type !== "playlist" || !source.playlistId) continue;
-      const items = content.playlistItems[source.playlistId] || [];
-      return items
-        .filter((pi) => pi.layoutTemplateId)
-        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const presentation = useMemo(
+    () => buildContentPresentation(content, layoutRotationIndex),
+    [content, layoutRotationIndex],
+  );
+  const { rotationItems: layoutRotationItems, isLayoutRotation, layout, zones } = presentation;
+  const freshPlayerScene = presentationObservation?.state &&
+    presentationObservation.state.revision === presentation.revision &&
+    presentationObservation.state.activationEpoch === presentation.activationEpoch
+    ? presentationObservation.state
+    : undefined;
+  const followedAgendaPresentationStates = useMemo(() => {
+    const report = freshPlayerScene;
+    if (!report || report.revision !== presentation.revision ||
+        report.activationEpoch !== presentation.activationEpoch ||
+        report.sceneId !== (layoutRotationItems[layoutRotationIndex % Math.max(1, layoutRotationItems.length)]?.layoutTemplateId || layout?.id || "__none__")) {
+      return new Map<string, AgendaPresentationState>();
     }
-    return [];
-  }, [content?.zoneSources, content?.playlistItems, content?.layoutTemplates]);
-
-  const isLayoutRotation = layoutRotationItems.length > 0;
-
-  const activeLayoutItem = isLayoutRotation
-    ? layoutRotationItems[layoutRotationIndex % layoutRotationItems.length]
-    : null;
-
-  const activeRotationLayout =
-    activeLayoutItem?.layoutTemplateId && content?.layoutTemplates?.[activeLayoutItem.layoutTemplateId]
-      ? content.layoutTemplates[activeLayoutItem.layoutTemplateId]
-      : null;
-
-  // Layout to render: rotation → layout → null (triggers fallback)
-  const layout = isLayoutRotation
-    ? activeRotationLayout || content?.layout || null
-    : content?.layout || null;
-
-  // ── Layout rotation timer (mirrors PlayerContent) ──────────────────────────
+    return new Map(report.agenda?.map((state) => [state.zoneId, {
+      stage: state.stage, page: state.page, cycle: state.cycle,
+    }]) ?? []);
+  }, [freshPlayerScene, presentation.revision, presentation.activationEpoch,
+    layoutRotationIndex, layoutRotationItems, layout?.id]);
   useEffect(() => {
-    if (!isLayoutRotation || layoutRotationItems.length <= 1) return;
-    if (layoutRotationTimerRef.current) clearTimeout(layoutRotationTimerRef.current);
-    const currentItem = layoutRotationItems[layoutRotationIndex % layoutRotationItems.length];
-    let durationSec = currentItem?.duration || 0;
-    if (!durationSec && currentItem?.mediaAssetId) {
-      const asset = content?.media?.find((m: MediaAsset) => m.id === currentItem.mediaAssetId);
-      if (asset?.duration) durationSec = asset.duration;
+    const reportedIndex = freshPlayerScene
+      ? layoutRotationItems.findIndex((item) =>
+          item.layoutTemplateId === freshPlayerScene.sceneId)
+      : -1;
+    // A fresh, server-verified physical report wins over clock estimation,
+    // which covers joins during an agenda-controlled scene. It cannot be
+    // cross-screen/revision state: the server filters those before exposure.
+    if (reportedIndex >= 0) {
+      setLayoutRotationIndex(reportedIndex);
+      // A physical player is the authority while its report is fresh. Do not
+      // arm a wall-clock timer that would snap an agenda scene back.
+      return;
     }
-    if (!durationSec) durationSec = 30;
+    setLayoutRotationIndex(getPresentationRotationIndex(presentation, getSyncedNow()));
+    const delay = getPresentationTransitionMs(presentation, getSyncedNow());
+    if (delay === null) return;
     layoutRotationTimerRef.current = setTimeout(() => {
-      setLayoutRotationIndex((prev) => (prev + 1) % layoutRotationItems.length);
-    }, durationSec * 1000);
+      setLayoutRotationIndex(getPresentationRotationIndex(presentation, getSyncedNow()));
+    }, delay + 5);
     return () => {
       if (layoutRotationTimerRef.current) clearTimeout(layoutRotationTimerRef.current);
     };
-  }, [isLayoutRotation, layoutRotationIndex, layoutRotationItems, content?.media]);
-
-  // ── Fallback detection (mirrors PlayerContent) ─────────────────────────────
-  const isFallbackPlaylist =
-    !layout &&
-    content?.zoneSources?.some(
-      (zs) => zs.zoneId === "__fallback__" && zs.type === "playlist",
-    );
-  const isFallbackAgenda =
-    !layout &&
-    !isFallbackPlaylist &&
-    content?.zoneSources?.some(
-      (zs) => zs.zoneId === "__fallback__" && zs.type === "agenda" && zs.agendaConfigId,
-    );
-
-  // ── rawZones (mirrors PlayerContent.rawZones) ─────────────────────────────
-  const rawZones = useMemo((): LayoutZone[] => {
-    if (layout) return (layout.zones as LayoutZone[]) || [];
-    if (isFallbackAgenda) {
-      const source = content!.zoneSources!.find(
-        (zs) => zs.zoneId === "__fallback__" && zs.type === "agenda",
-      );
-      if (source?.agendaConfigId) {
-        return [{
-          id: "__fallback__",
-          name: "Agenda",
-          type: "agenda",
-          x: 0, y: 0, width: 100, height: 100,
-          zIndex: 1,
-          agendaConfigId: source.agendaConfigId,
-        }] as LayoutZone[];
-      }
-    }
-    if (isFallbackPlaylist) {
-      const source = content!.zoneSources!.find((zs) => zs.zoneId === "__fallback__");
-      if (source?.playlistId) {
-        const playlistItemsList = content!.playlistItems?.[source.playlistId] || [];
-        const mediaOnlyItems = playlistItemsList.filter(
-          (pi) => pi.mediaAssetId && !pi.layoutTemplateId,
-        );
-        if (mediaOnlyItems.length > 0) {
-          const mediaPlayerItems = mediaOnlyItems
-            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-            .map((pi) => ({
-              id: pi.id,
-              mediaAssetId: pi.mediaAssetId!,
-              duration: pi.duration ?? undefined,
-            }));
-          return [{
-            id: "__fallback__",
-            type: "media_player",
-            x: 0, y: 0, width: 100, height: 100,
-            zIndex: 1,
-            mediaPlayerItems,
-          }] as LayoutZone[];
-        }
-      }
-    }
-    return [];
-  }, [layout, isFallbackPlaylist, isFallbackAgenda, content?.zoneSources, content?.playlistItems]);
-
-  // ── Zone injection (mirrors PlayerContent zones useMemo) ──────────────────
-  const zones = useMemo((): LayoutZone[] => {
-    if (isLayoutRotation) return rawZones;
-    if (!content?.zoneSources || content.zoneSources.length === 0) return rawZones;
-    return rawZones.map((zone) => {
-      const source = content.zoneSources!.find((zs) => zs.zoneId === zone.id);
-      if (!source || source.type !== "playlist" || !source.playlistId) return zone;
-      const items = content.playlistItems?.[source.playlistId] || [];
-      if (items.length === 0) return zone;
-      const mediaOnly = items.filter((pi) => pi.mediaAssetId && !pi.layoutTemplateId);
-      if (mediaOnly.length === 0) return zone;
-      const mediaPlayerItems = mediaOnly
-        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-        .map((pi) => ({
-          id: pi.id,
-          mediaAssetId: pi.mediaAssetId!,
-          duration: pi.duration ?? undefined,
-        }));
-      return { ...zone, mediaPlayerItems };
-    });
-  }, [isLayoutRotation, rawZones, content?.zoneSources, content?.playlistItems]);
+  }, [presentation.revision, presentation.activationEpoch, layoutRotationItems,
+    freshPlayerScene?.processGeneration, freshPlayerScene?.processId,
+    freshPlayerScene?.sceneId, freshPlayerScene?.sequence, getSyncedNow]);
 
   // ── Layout dimensions ─────────────────────────────────────────────────────
   const layoutAspect = useMemo(() => {
@@ -424,6 +365,10 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
           clearInterval(fetchIntervalRef.current);
           fetchIntervalRef.current = null;
         }
+        if (presentationFetchIntervalRef.current) {
+          clearInterval(presentationFetchIntervalRef.current);
+          presentationFetchIntervalRef.current = null;
+        }
         return;
       }
       if (!res.ok) return;
@@ -445,6 +390,47 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
     }
   }, [screenId, feedSample, previewAtRaw]);
 
+  // Lightweight physical-Player observation. Full content remains on its 7s
+  // cadence; this cookie-authenticated GET reads only process-local state.
+  const fetchPresentationObservation = useCallback(async () => {
+    if (presentationFetchInFlightRef.current) return;
+    presentationFetchInFlightRef.current = true;
+    try {
+      const res = await fetch(`/api/monitor/${screenId}/presentation`, {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (res.status === 401 || res.status === 403) {
+        setAuthError(true);
+        if (presentationFetchIntervalRef.current) {
+          clearInterval(presentationFetchIntervalRef.current);
+          presentationFetchIntervalRef.current = null;
+        }
+        if (fetchIntervalRef.current) {
+          clearInterval(fetchIntervalRef.current);
+          fetchIntervalRef.current = null;
+        }
+        return;
+      }
+      if (!res.ok) throw new Error(`Presentation observation failed: ${res.status}`);
+      const data = await res.json();
+      const observed = data?.playerPresentationState;
+      setPresentationObservation(
+        observed ? { state: observed as MonitorPresentationState, receivedAt: Date.now() } : null,
+      );
+    } catch {
+      // Retain the last authenticated observation only for a short network
+      // recovery window, then let one consistent deterministic state drive
+      // both Agenda rows and labels.
+      const now = Date.now();
+      setPresentationObservation((previous) =>
+        previous && now - previous.receivedAt <= 2_000 ? previous : null,
+      );
+    } finally {
+      presentationFetchInFlightRef.current = false;
+    }
+  }, [screenId]);
+
   useEffect(() => {
     fetchContent();
     fetchIntervalRef.current = setInterval(fetchContent, 7000);
@@ -452,6 +438,20 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
       if (fetchIntervalRef.current) clearInterval(fetchIntervalRef.current);
     };
   }, [fetchContent]);
+
+  useEffect(() => {
+    void fetchPresentationObservation();
+    presentationFetchIntervalRef.current = setInterval(
+      () => { void fetchPresentationObservation(); },
+      MONITOR_PRESENTATION_POLL_MS,
+    );
+    return () => {
+      if (presentationFetchIntervalRef.current) {
+        clearInterval(presentationFetchIntervalRef.current);
+        presentationFetchIntervalRef.current = null;
+      }
+    };
+  }, [fetchPresentationObservation]);
 
   // ── Render states ──────────────────────────────────────────────────────────
   if (authError) return <MonitorAuthError />;
@@ -557,6 +557,7 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
           screenTimezone={content.screen?.timezone ?? undefined}
           weatherTimezone={weatherTimezone}
           agendaTestAt={agendaTestAt}
+          followedAgendaPresentationStates={followedAgendaPresentationStates}
           playerContext={{
             screenName: content.playerVars?.screenName ?? content.screen?.name,
             roomName: content.playerVars?.roomName ?? content.screen?.location,

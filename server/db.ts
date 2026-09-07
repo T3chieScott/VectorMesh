@@ -261,6 +261,51 @@ export async function ensureAgendaDescriptionLinesMigration(): Promise<void> {
 }
 
 const AGENDA_DESCRIPTION_AUTO_SCROLL_MIGRATION_LOCK_KEY = 715129_008n;
+const AGENDA_SESSION_COUNT_PRESENTER_LINES_MIGRATION_LOCK_KEY = 715129_009n;
+
+/** Idempotent startup counterpart to migration 0036. */
+export async function ensureAgendaSessionCountPresenterLinesMigration(): Promise<void> {
+  const client = await pool.connect();
+  let haveLock = false;
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [
+      AGENDA_SESSION_COUNT_PRESENTER_LINES_MIGRATION_LOCK_KEY.toString(),
+    ]);
+    haveLock = true;
+    await client.query(`
+      ALTER TABLE agenda_widget_configs
+        ADD COLUMN IF NOT EXISTS show_session_count BOOLEAN NOT NULL DEFAULT TRUE;
+      ALTER TABLE agenda_widget_configs
+        ADD COLUMN IF NOT EXISTS presenter_visible_lines INTEGER NOT NULL DEFAULT 4;
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'agenda_widget_configs_presenter_visible_lines_check'
+        ) THEN
+          ALTER TABLE agenda_widget_configs
+            ADD CONSTRAINT agenda_widget_configs_presenter_visible_lines_check
+            CHECK (presenter_visible_lines BETWEEN 1 AND 20);
+        END IF;
+      END $$;
+    `);
+    console.log("[ensureAgendaSessionCountPresenterLinesMigration] agenda display columns ready");
+  } finally {
+    if (haveLock) {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [
+          AGENDA_SESSION_COUNT_PRESENTER_LINES_MIGRATION_LOCK_KEY.toString(),
+        ]);
+      } catch (unlockErr) {
+        console.error(
+          "ensureAgendaSessionCountPresenterLinesMigration: failed to release advisory lock:",
+          unlockErr,
+        );
+      }
+    }
+    client.release();
+  }
+}
 
 /**
  * Idempotent startup migration for the description_auto_scroll column on

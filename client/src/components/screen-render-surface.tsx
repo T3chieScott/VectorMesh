@@ -34,6 +34,7 @@
 
 import type { LayoutZone, MediaAsset } from "@shared/schema";
 import { ZoneRenderer } from "@/components/zone-renderer";
+import type { AgendaPresentationState } from "@/components/agenda/AgendaDisplayWidget";
 import type { PlayerVariableContext } from "@/components/zone-renderer";
 import type { AgendaZoneBinding } from "@/lib/agenda-scene-completion";
 
@@ -94,6 +95,10 @@ export interface ScreenRenderSurfaceProps {
   agendaTestAt?: string;
   /** Per-zone lifecycle bindings for completion-aware playlist layouts. */
   agendaCompletionBindings?: ReadonlyMap<string, AgendaZoneBinding>;
+  /** Passive per-zone presentation reports (Player collector). */
+  onAgendaPresentationState?: (zoneId: string, state: AgendaPresentationState) => void;
+  /** Read-only per-zone follower states (Monitor). */
+  followedAgendaPresentationStates?: ReadonlyMap<string, AgendaPresentationState>;
   /**
    * Pre-computed player / template variables (screenName, roomName, …,
    * getNowMs).  Identical shape to what PlayerContent and MonitorContentInner
@@ -138,6 +143,8 @@ export function ScreenRenderSurface({
   weatherTimezone,
   agendaTestAt,
   agendaCompletionBindings,
+  onAgendaPresentationState,
+  followedAgendaPresentationStates,
   playerContext,
   canvasGeometry,
   liveBanner,
@@ -212,6 +219,8 @@ export function ScreenRenderSurface({
                 deviceToken={deviceToken}
                 agendaTestAt={agendaTestAt}
                 agendaCompletionBinding={agendaCompletionBindings?.get(zone.id)}
+                onAgendaPresentationState={onAgendaPresentationState}
+                followedAgendaPresentationState={followedAgendaPresentationStates?.get(zone.id)}
                 playerContext={playerContext}
               />
             </div>

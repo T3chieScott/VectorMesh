@@ -48,7 +48,10 @@ import { ALLOWED_FONT_EXTENSIONS } from "@shared/fonts";
 import { find as findTimezone } from "geo-tz";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendAdminPasswordResetEmail, sendPasswordChangedEmail, sendScreenOfflineAlert, sendScreenOnlineAlert, sendTestAlert, sendAgendaFeedFailingAlert, sendAgendaFeedRecoveredAlert } from "./email";
 import { resolveScreenContent, type ResolverDeps } from "./contentResolver";
-import { buildContentTraceHandler } from "./contentTraceHandler";
+import {
+  buildContentTraceHandler,
+  type TraceHandlerDeps,
+} from "./contentTraceHandler";
 import { buildBulkBookingsHandler, type BulkBookingResult } from "./bulkBookingsHandler";
 import { buildBulkBlocksHandler, type BulkBlockResult } from "./bulkBlocksHandler";
 import { resolveSimulatorContent } from "./simulatorContent";
@@ -102,6 +105,31 @@ const PLAYER_WEATHER_CONDITIONS: Record<number, string> = {
   80: "Rain Showers", 81: "Heavy Rain Showers", 82: "Violent Rain",
   95: "Thunderstorm", 96: "Thunderstorm with Hail", 99: "Severe Thunderstorm",
 };
+
+/**
+ * Keep every caller of the canonical content resolver on one explicit,
+ * compile-time checked storage adapter. Do not use `storage as ResolverDeps`:
+ * an assertion can conceal a newly-required resolver method until a live
+ * request reaches that branch.
+ */
+const contentResolverDeps = {
+  getLiveOverrides: () => storage.getLiveOverrides(),
+  getCurrentEventForScreen: (screenId: string, now?: Date) =>
+    storage.getCurrentEventForScreen(screenId, now),
+  getProgrammes: () => storage.getProgrammes(),
+  getProgrammeVersions: () => storage.getProgrammeVersions(),
+  getScheduleBlocks: (programmeVersionId: string) =>
+    storage.getScheduleBlocks(programmeVersionId),
+  getLayoutTemplate: (id: string) => storage.getLayoutTemplate(id),
+  getScreenGroupIds: (screenId: string) => storage.getScreenGroupIds(screenId),
+  getPlaylist: (id: string) => storage.getPlaylist(id),
+} satisfies ResolverDeps;
+
+const contentTraceDeps = {
+  ...contentResolverDeps,
+  getScreen: (id: string) => storage.getScreen(id),
+  getClient: (id: string) => storage.getClient(id),
+} satisfies TraceHandlerDeps;
 
 async function fetchWeatherSummary(lat: number, lng: number, unit: string): Promise<string | null> {
   const key = `${lat.toFixed(3)},${lng.toFixed(3)},${unit}`;
@@ -460,6 +488,92 @@ function logAudit(req: Request, action: string, entityType: string, entityId?: s
 const pendingPlayerRefreshes = new Map<string, number>();
 const pendingScreenshotRequests = new Map<string, number>();
 const REFRESH_SIGNAL_TTL = 60_000;
+// Ephemeral by design: this is observational monitor state, never playback
+// authority. A process restart safely falls back to the deterministic epoch.
+const PLAYER_PRESENTATION_TTL_MS = 45_000;
+type ReportedPresentationState = {
+  processId: string; revision: string; activationEpoch: number; sceneId: string;
+  sceneActivationEpoch?: number;
+  processGeneration: number; sequence: number; sceneGeneration: number;
+  source?: string; playlistId?: string; agenda?: { zoneId: string; stage?: string; page?: number; cycle?: number }[];
+  reportedAt: number;
+};
+const playerPresentationStates = new Map<string, ReportedPresentationState>();
+
+export function acceptPlayerPresentationReport(
+  screenId: string,
+  reported: any,
+  now = Date.now(),
+): boolean {
+  if (!reported || typeof reported.processId !== "string" || !reported.processId ||
+      reported.processId.length > 128 ||
+      typeof reported.revision !== "string" || !reported.revision || reported.revision.length > 128 ||
+      !Number.isSafeInteger(reported.activationEpoch) || reported.activationEpoch < 0 ||
+      typeof reported.sceneId !== "string" || !reported.sceneId || reported.sceneId.length > 128 ||
+      !Number.isSafeInteger(reported.processGeneration) || reported.processGeneration <= 0 ||
+      !Number.isSafeInteger(reported.sequence) || reported.sequence <= 0 ||
+      !Number.isSafeInteger(reported.sceneGeneration) || reported.sceneGeneration <= 0 ||
+      (reported.sceneActivationEpoch !== undefined &&
+        (!Number.isSafeInteger(reported.sceneActivationEpoch) || reported.sceneActivationEpoch < 0))) {
+    return false;
+  }
+  let previous = playerPresentationStates.get(screenId);
+  // Presentation leasing is only authoritative while the report is fresh.
+  // Use the same strict expiry boundary as readFreshPresentationState: exactly
+  // TTL old remains valid; older entries are removed before generation checks
+  // so a Player whose local browser metadata was cleared can recover.
+  if (previous && now - previous.reportedAt > PLAYER_PRESENTATION_TTL_MS) {
+    playerPresentationStates.delete(screenId);
+    previous = undefined;
+  }
+  if (previous && reported.processGeneration < previous.processGeneration) return false;
+  if (previous && reported.processGeneration === previous.processGeneration) {
+    if (previous.processId !== reported.processId) return false;
+    if (reported.sequence <= previous.sequence ||
+        reported.sceneGeneration < previous.sceneGeneration) return false;
+    if (reported.sceneGeneration === previous.sceneGeneration &&
+        (reported.sceneId !== previous.sceneId ||
+          reported.sceneActivationEpoch !== previous.sceneActivationEpoch)) return false;
+    if (reported.sceneGeneration > previous.sceneGeneration &&
+        (reported.sceneActivationEpoch ?? 0) < (previous.sceneActivationEpoch ?? 0)) return false;
+  }
+  const agenda = Array.isArray(reported.agenda) ? reported.agenda.slice(0, 20)
+    .filter((a: any) =>
+      typeof a?.zoneId === "string" && a.zoneId.length > 0 &&
+      typeof a?.stage === "string" && a.stage.length > 0 &&
+      Number.isInteger(a?.page) && a.page >= 0 && a.page <= 10_000 &&
+      Number.isInteger(a?.cycle) && a.cycle >= 0 && a.cycle <= 1_000_000)
+    .map((a: any) => ({
+      zoneId: a.zoneId.slice(0, 128), stage: a.stage.slice(0, 64),
+      page: a.page, cycle: a.cycle,
+    })) : undefined;
+  playerPresentationStates.set(screenId, {
+    processId: reported.processId.slice(0, 128),
+    processGeneration: reported.processGeneration,
+    revision: reported.revision.slice(0, 128),
+    activationEpoch: reported.activationEpoch,
+    sceneId: reported.sceneId.slice(0, 128),
+    sequence: reported.sequence,
+    sceneGeneration: reported.sceneGeneration,
+    ...(reported.sceneActivationEpoch !== undefined &&
+      { sceneActivationEpoch: reported.sceneActivationEpoch }),
+    ...(typeof reported.source === "string" && { source: reported.source.slice(0, 64) }),
+    ...(typeof reported.playlistId === "string" && { playlistId: reported.playlistId.slice(0, 128) }),
+    agenda,
+    reportedAt: now,
+  });
+  return true;
+}
+
+export function readFreshPresentationState(screenId: string, presentation?: any): ReportedPresentationState | undefined {
+  const state = playerPresentationStates.get(screenId);
+  if (!state || Date.now() - state.reportedAt > PLAYER_PRESENTATION_TTL_MS) {
+    return undefined;
+  }
+  if (presentation === undefined) return state;
+  return state.revision === presentation?.revision &&
+    state.activationEpoch === presentation?.activationEpoch ? state : undefined;
+}
 
 // ===== Player content cache (audit gap #2) =====
 // `GET /api/player/:screenId/content` does a lot of DB work per poll
@@ -490,6 +604,109 @@ function prunePlayerContentCache(now: number) {
   for (const [key, entry] of playerContentCache) {
     if (entry.expires <= now) playerContentCache.delete(key);
   }
+}
+
+// Deliberately excludes host-only fields (device screenshot settings, monitor
+// credential stripping, fonts, etc.). Both read-only Monitor and Player must
+// receive the same scene revision for the same resolver result.
+function buildPresentationMetadata(
+  layout: unknown,
+  zoneSources: unknown,
+  playlistItems: unknown,
+  layoutTemplates: unknown,
+) {
+  const revision = crypto.createHash("sha1").update(JSON.stringify({
+    layout, zoneSources, playlistItems, layoutTemplates,
+  })).digest("hex");
+  // Epoch zero is restart-safe and gives hosts a deterministic shared cursor.
+  return { revision, activationEpoch: 0 };
+}
+
+/** Reduce a player cache body to the graph reachable from resolved content. */
+export function scopeMonitorContentBody(
+  body: Record<string, any>,
+  targetScreenId?: string,
+): Record<string, any> {
+  const zoneSources = Array.isArray(body.zoneSources) ? body.zoneSources : [];
+  // A physical Player rendering a canvas needs its sibling tile assets too.
+  // Monitor passes targetScreenId and intentionally remains restricted to one
+  // tile; Player omits it and gets only the additional canvas-reachable graph.
+  const canvasTiles = !targetScreenId && Array.isArray(body.canvas?.tiles)
+    ? body.canvas.tiles
+    : [];
+  const reachableZoneSources = [
+    ...zoneSources,
+    ...canvasTiles.flatMap((tile: any) =>
+      Array.isArray(tile?.zoneSources) ? tile.zoneSources : []),
+  ];
+  const playlistIds = new Set(
+    reachableZoneSources.filter((source: any) =>
+      source?.type === "playlist" && typeof source.playlistId === "string")
+      .map((source: any) => source.playlistId),
+  );
+  const playlistItems: Record<string, any[]> = {};
+  const layoutTemplateIds = new Set<string>();
+  const mediaIds = new Set<string>();
+  // Zone sources can directly reference assets (without an intermediate
+  // playlist). Include both the resolved screen sources and, for a physical
+  // canvas Player only, sibling tile sources collected above.
+  for (const source of reachableZoneSources) {
+    for (const mediaId of Array.isArray((source as any)?.mediaAssetIds)
+      ? (source as any).mediaAssetIds
+      : []) {
+      if (typeof mediaId === "string") mediaIds.add(mediaId);
+    }
+  }
+  for (const playlistId of playlistIds) {
+    const items = Array.isArray(body.playlistItems?.[playlistId])
+      ? [...body.playlistItems[playlistId]].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+      : [];
+    playlistItems[playlistId] = items;
+    for (const item of items) {
+      if (typeof item.layoutTemplateId === "string") layoutTemplateIds.add(item.layoutTemplateId);
+      if (typeof item.mediaAssetId === "string") mediaIds.add(item.mediaAssetId);
+    }
+  }
+  const layoutTemplates: Record<string, any> = {};
+  for (const id of layoutTemplateIds) {
+    if (body.layoutTemplates?.[id]) layoutTemplates[id] = body.layoutTemplates[id];
+  }
+  const collectLayoutMedia = (candidate: any) => {
+    const zones = Array.isArray(candidate?.zones) ? candidate.zones : [];
+    for (const zone of zones) {
+      if (typeof zone?.mediaId === "string") mediaIds.add(zone.mediaId);
+      for (const id of Array.isArray(zone?.montageMediaIds) ? zone.montageMediaIds : []) {
+        if (typeof id === "string") mediaIds.add(id);
+      }
+      for (const item of Array.isArray(zone?.mediaPlayerItems) ? zone.mediaPlayerItems : []) {
+        if (typeof item?.mediaAssetId === "string") mediaIds.add(item.mediaAssetId);
+      }
+    }
+  };
+  collectLayoutMedia(body.layout);
+  Object.values(layoutTemplates).forEach(collectLayoutMedia);
+  canvasTiles.forEach((tile: any) => collectLayoutMedia(tile?.layout));
+  return {
+    ...body,
+    playlists: Array.isArray(body.playlists)
+      ? body.playlists.filter((playlist: any) => playlistIds.has(playlist.id))
+      : [],
+    playlistItems,
+    layoutTemplates,
+    media: Array.isArray(body.media)
+      ? body.media.filter((media: any) => mediaIds.has(media.id))
+      : [],
+    // A monitor session is for one authorized screen, not an implicit grant
+    // to inspect sibling tile payloads.
+    canvas: body.canvas && targetScreenId
+      ? {
+          ...body.canvas,
+          tiles: Array.isArray(body.canvas.tiles)
+            ? body.canvas.tiles.filter((tile: any) => tile.screenId === targetScreenId)
+            : [],
+        }
+      : body.canvas,
+  };
 }
 
 async function refreshScreensForVersion(versionId: string) {
@@ -3327,6 +3544,14 @@ export async function registerRoutes(
     try {
       const data = insertPlayerHeartbeatSchema.parse(req.body);
       await storage.createPlayerHeartbeat(data);
+      const reported = (req.body as any)?.errors?.presentation;
+      const pairedScreenId = (req as any).pairedScreen?.id;
+      // Bound and validate the optional observational state. It is never used
+      // to command playback and is only released to an already-authorized
+      // monitor when it matches that monitor's canonical resolved revision.
+      if (pairedScreenId === data.screenId) {
+        acceptPlayerPresentationReport(pairedScreenId, reported);
+      }
 
       const screen = await storage.getScreen(data.screenId);
       const wasOffline = screen && !screen.isOnline;
@@ -3534,7 +3759,7 @@ export async function registerRoutes(
       const resolved = await resolveScreenContent(
         screen,
         now,
-        storage as ResolverDeps,
+        contentResolverDeps,
         screenTz,
       );
       const layout = resolved.layout;
@@ -3710,7 +3935,7 @@ export async function registerRoutes(
             : await resolveScreenContent(
                 member,
                 now,
-                storage as ResolverDeps,
+                contentResolverDeps,
                 screenTz,
               );
           const memberProfile = member.displayProfileId
@@ -3779,6 +4004,17 @@ export async function registerRoutes(
         screenshotEnabled: screen.screenshotEnabled || false,
         canvas: canvasPayload,
       };
+        // Host-neutral presentation clock. Epoch zero intentionally gives every
+        // player/monitor a deterministic wall-clock cursor after a process
+        // restart; revision changes whenever the resolved scene changes.
+        const scopedPlayerBody = scopeMonitorContentBody(stableBody);
+        stableBody = {
+          ...scopedPlayerBody,
+          presentation: buildPresentationMetadata(
+            scopedPlayerBody.layout, scopedPlayerBody.zoneSources,
+            scopedPlayerBody.playlistItems, scopedPlayerBody.layoutTemplates,
+          ),
+        };
       etag = `W/"${crypto.createHash("sha1").update(JSON.stringify(stableBody)).digest("base64")}"`;
       const cacheNow = Date.now();
       prunePlayerContentCache(cacheNow);
@@ -3854,7 +4090,7 @@ export async function registerRoutes(
     requireAuth,
     loadUserContext,
     requireAdminOrAccountManager,
-    buildContentTraceHandler(storage as any, { isAdmin, canAccessClient }),
+    buildContentTraceHandler(contentTraceDeps, { isAdmin, canAccessClient }),
   );
 
   // ============ SIMULATOR CONTENT ============
@@ -3888,7 +4124,7 @@ export async function registerRoutes(
       const { summary } = await resolveSimulatorContent(
         screen,
         now,
-        storage as ResolverDeps,
+        contentResolverDeps,
         simAllowed,
         simTz,
       );
@@ -5127,6 +5363,9 @@ export async function registerRoutes(
     requireAuthOrToken: requireAuthOrToken,
     loadUserContext,
     monitor: {
+      readMonitorPresentation(screenId: string) {
+        return readFreshPresentationState(screenId) ?? null;
+      },
       /**
        * Resolves monitor-mode content for a screen.  Reuses the existing
        * playerContentCache so monitor polls don't add extra DB load.
@@ -5176,7 +5415,7 @@ export async function registerRoutes(
           const resolved = await resolveScreenContent(
             screen,
             now,
-            storage as ResolverDeps,
+            contentResolverDeps,
             screenTz,
           );
 
@@ -5255,6 +5494,12 @@ export async function registerRoutes(
             // playerVars — needed for template-variable rendering in HTML/ticker zones
             playerVars: monitorPlayerVars,
           };
+          stableBody = {
+            ...stableBody,
+            presentation: buildPresentationMetadata(
+              resolved.layout, resolved.activeZoneSources, playlistItemsMap, layoutTemplatesMap,
+            ),
+          };
         }
 
         // Monitor mode: ALL side-effect signals are always suppressed.
@@ -5297,11 +5542,27 @@ export async function registerRoutes(
               return safeFields;
             })()
           : null;
+        const monitorContentBody = scopeMonitorContentBody(safeBody, screenId);
+        const scopedSafeBody = {
+          ...monitorContentBody,
+          presentation: buildPresentationMetadata(
+            monitorContentBody.layout,
+            monitorContentBody.zoneSources,
+            monitorContentBody.playlistItems,
+            monitorContentBody.layoutTemplates,
+          ),
+        };
 
         return {
-          ...safeBody,
+          ...scopedSafeBody,
           screen: sanitizedScreen,
           serverTime: Date.now(),
+          // Read-only observation from the physical player, only while fresh
+          // and only when it is the exact canonical presentation this monitor
+          // was authorized to resolve.
+          playerPresentationState: readFreshPresentationState(
+            screenId, scopedSafeBody.presentation,
+          ),
           // When a preview anchor was resolved, echo its epoch ms so the client
           // can compute an advancing agendaTestAt without re-doing the timezone
           // conversion on every poll.

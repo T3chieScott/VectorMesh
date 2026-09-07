@@ -171,6 +171,27 @@ test("complete mapping syncs the CSV upstream normally", async () => {
   assert.equal(s.items[0].title, "Keynote");
 });
 
+test("mapped external ID upserts status changes without creating duplicates", async () => {
+  const cfg = baseMappedConfig({
+    columnMapping: { title: "Title", startsAt: "Start", endsAt: "End", status: "Status" } as any,
+    externalIdColumn: "ID",
+  });
+  const s = makeStubStorage(cfg);
+  const body = (status: string) =>
+    `ID,Title,Start,End,Status\nsession-1,Keynote,2026-06-02 09:00,2026-06-02 10:00,${status}\n`;
+  const first = await runAgendaSync(s.config, {
+    storage: s.storage as any, fetchImpl: mockFetch(body("confirmed")), safeFetchOptions: safeOpts,
+  });
+  const second = await runAgendaSync(s.config, {
+    storage: s.storage as any, fetchImpl: mockFetch(body("Not a session")), safeFetchOptions: safeOpts,
+  });
+  assert.equal(first.inserted, 1);
+  assert.equal(second.updated, 1);
+  assert.equal(s.items.length, 1);
+  assert.equal(s.items[0].externalId, "session-1");
+  assert.equal(s.items[0].status, "Not a session");
+});
+
 test("interval sync threads resolveStoredPath for uploaded_xlsx", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "agenda-xlsx-"));
   const abs = path.join(dir, "book.xlsx");

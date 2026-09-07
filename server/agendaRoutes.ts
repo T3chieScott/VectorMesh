@@ -176,6 +176,7 @@ export const PUBLIC_AGENDA_CONFIG_FIELDS = [
   "maxItemsPerPage",
   "showDescription",
   "showPresenter",
+  "presenterVisibleLines",
   "showRoom",
   "showTrack",
   "showStatus",
@@ -194,6 +195,7 @@ export const PUBLIC_AGENDA_CONFIG_FIELDS = [
   "descriptionTextAlign",
   "showNowNextLabel",
   "showSessionDuration",
+  "showSessionCount",
   "showSessionEndTime",
   "sessionDurationPrefix",
   // Task #231 — optional typography & role-colour overrides. All
@@ -591,17 +593,6 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         });
       }
 
-      // Task #362 — surface an explicit conflict when a background tick is
-      // already in flight for this config, rather than silently returning
-      // noChange:true from the lock-skip path.
-      const phase = getConfigSyncPhase(id);
-      if (phase) {
-        return res.status(409).json({
-          error: "A sync is already in progress for this source",
-          phase,
-        });
-      }
-
       // Record the trigger time before dispatching so the cooldown starts at
       // the moment the operator clicks, not after the (potentially slow) sync.
       recordManualRun(id);
@@ -609,7 +600,14 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       // AgendaRoutesStorage is structurally a superset of AgendaSyncStorage
       // (both reference identical method signatures from the @shared/schema
       // types), so this pass-through is type-safe.
-      const result = await runAgendaSync(existing, { storage, now, resolveStoredPath, graphFetch, graphCTagFetch });
+      // Explicit request-scoped force refresh: unlike periodic runs, this
+      // intentionally reparses an unchanged cTag. The sync engine serializes
+      // it behind an in-flight automatic run rather than dropping it.
+      const result = await runAgendaSync(
+        existing,
+        { storage, now, resolveStoredPath, graphFetch, graphCTagFetch },
+        { forceRefresh: true },
+      );
       await invalidateAgendaDisplayForClient(existing.clientId);
       audit(req, "run", "agenda_sync_config", id, {
         ok: result.ok,
@@ -1298,6 +1296,8 @@ async function buildAgendaDisplayPayload(
         maxItemsPerPage: config.maxItemsPerPage,
         showDescription: config.showDescription,
         showPresenter: config.showPresenter,
+        showSessionCount: config.showSessionCount ?? true,
+        presenterVisibleLines: config.presenterVisibleLines ?? 4,
         showRoom: config.showRoom,
         // Task #393 — default true for pre-migration/legacy rows so the new
         // visibility setting does not hide existing track values.

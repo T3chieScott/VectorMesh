@@ -595,6 +595,115 @@ test("unchanged Microsoft cTag reparses a corrected config, publishes a snapshot
   assert.equal(s.atomicCalls, 1, "a cTag skip must not create another snapshot");
 });
 
+test("manual Refresh reprocesses one unchanged Microsoft workbook, then automatic cTag skipping resumes", async () => {
+  const xlsx = await buildXlsxBytes();
+  const cfg = msConfig({ id: "task-403-manual-refresh", lastCTag: "stable-tag" });
+  cfg.lastProcessedConfigFingerprint = computeAgendaParsingConfigFingerprint(cfg);
+  const s = makeAtomicSnapshotStorage(cfg);
+  let downloads = 0;
+  const deps = {
+    storage: s.storage as any,
+    graphFetch: async () => {
+      downloads++;
+      return xlsx;
+    },
+    graphCTagFetch: async () => "stable-tag",
+  };
+
+  recordManualRun(cfg.id); // route cooldown bookkeeping is independent of force.
+  const manual = await runAgendaSync(s.config, deps, { forceRefresh: true });
+  assert.equal(manual.ok, true);
+  assert.equal(manual.noChange, undefined);
+  assert.equal(downloads, 1, "manual Refresh must bypass the matching cTag once");
+  assert.equal(s.config.lastCTag, "stable-tag", "the stable cTag is stored normally");
+
+  const automatic = await runAgendaSync(s.config, deps);
+  assert.equal(automatic.noChange, true);
+  assert.equal(downloads, 1, "the following automatic tick uses the cTag skip");
+});
+
+test("manual force refresh serializes behind an in-flight scheduler sync", async () => {
+  const xlsx = await buildXlsxBytes();
+  const cfg = msConfig({ id: "task-403-queued-manual" });
+  const s = makeStubStorage(cfg);
+  const lock = new Set<string>();
+  let releaseAutomatic!: () => void;
+  const automaticStarted = new Promise<void>((resolve) => {
+    releaseAutomatic = resolve;
+  });
+  let release!: () => void;
+  const holdAutomatic = new Promise<void>((resolve) => { release = resolve; });
+  let downloads = 0;
+  const automatic = runAgendaSync(s.config, {
+    storage: s.storage as any,
+    inFlightLock: lock,
+    graphFetch: async () => {
+      downloads++;
+      releaseAutomatic();
+      await holdAutomatic;
+      return xlsx;
+    },
+  });
+  await automaticStarted;
+  const manual = runAgendaSync(s.config, {
+    storage: s.storage as any,
+    inFlightLock: lock,
+    graphFetch: async () => {
+      downloads++;
+      return xlsx;
+    },
+  }, { forceRefresh: true });
+  release();
+  assert.equal((await automatic).ok, true);
+  assert.equal((await manual).ok, true);
+  assert.equal(downloads, 2, "manual work runs after, rather than coalescing with, automatic work");
+});
+
+test("an automatic tick coalesces into an in-flight manual force refresh", async () => {
+  const xlsx = await buildXlsxBytes();
+  const cfg = msConfig({ id: "task-403-manual-first" });
+  const s = makeStubStorage(cfg);
+  const lock = new Set<string>();
+  let started!: () => void;
+  const manualStarted = new Promise<void>((resolve) => { started = resolve; });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let downloads = 0;
+  const manual = runAgendaSync(s.config, {
+    storage: s.storage as any, inFlightLock: lock,
+    graphFetch: async () => { downloads++; started(); await held; return xlsx; },
+  }, { forceRefresh: true });
+  await manualStarted;
+  const automatic = await runAgendaSync(s.config, {
+    storage: s.storage as any, inFlightLock: lock,
+    graphFetch: async () => { throw new Error("automatic tick must coalesce"); },
+  });
+  assert.equal(automatic.noChange, true);
+  release();
+  assert.equal((await manual).ok, true);
+  assert.equal(downloads, 1);
+});
+
+test("a failed force-refresh request releases its lock for a retry", async () => {
+  const xlsx = await buildXlsxBytes();
+  const cfg = msConfig({ id: "task-403-force-failure" });
+  const s = makeStubStorage(cfg);
+  const lock = new Set<string>();
+  const failed = await runAgendaSync(s.config, {
+    storage: s.storage as any,
+    inFlightLock: lock,
+    graphFetch: async () => { throw new Error("temporary Graph failure"); },
+  }, { forceRefresh: true });
+  assert.equal(failed.ok, false);
+  assert.equal(lock.has(cfg.id), false);
+  const retried = await runAgendaSync(s.config, {
+    storage: s.storage as any,
+    inFlightLock: lock,
+    graphFetch: async () => xlsx,
+  }, { forceRefresh: true });
+  assert.equal(retried.ok, true);
+});
+
 test("same-cTag parsing changes reprocess only the affected Microsoft config", async () => {
   const xlsx = await buildXlsxBytes();
   const sourceA = msConfig({ id: "source-A", lastCTag: "stable-tag" });
