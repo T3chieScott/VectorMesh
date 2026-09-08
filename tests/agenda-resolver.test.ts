@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  paginateAgendaItemsByLocalDay,
   resolveAgendaItems,
   splitCurrentNext,
   pickAgendaLayout,
@@ -221,7 +222,7 @@ test("today_tomorrow auto-rolls to tomorrow's items once today is exhausted", ()
   assert.deepEqual(got.map((i) => i.id), ["tomorrow"]);
 });
 
-test("today_tomorrow stays empty when today is exhausted and tomorrow has no sessions", () => {
+test("today_tomorrow advances to the next future matching day when tomorrow is empty", () => {
   const lateNow = new Date("2026-06-01T23:30:00Z");
   const items = [
     item({ id: "today_done", startsAt: new Date("2026-06-01T09:00:00Z"), endsAt: new Date("2026-06-01T10:00:00Z") }),
@@ -229,7 +230,7 @@ test("today_tomorrow stays empty when today is exhausted and tomorrow has no ses
     item({ id: "much_later", startsAt: new Date("2026-06-04T09:00:00Z"), endsAt: new Date("2026-06-04T10:00:00Z") }),
   ];
   const got = resolveAgendaItems({ items, config: cfg({ displayMode: "today_tomorrow" }), now: lateNow, tz: "UTC" });
-  assert.deepEqual(got, []);
+  assert.deepEqual(got.map((i) => i.id), ["much_later"]);
 });
 
 test("today_tomorrow respects DST spring-forward in Europe/London when rolling to tomorrow", () => {
@@ -315,7 +316,7 @@ function dayItems() {
   ];
 }
 
-test("dayFilter=all keeps every (non-past) day", () => {
+test("dayFilter=all preserves every filtered multi-day candidate", () => {
   const got = resolveAgendaItems({ items: dayItems(), config: cfg({ dayFilter: "all" }), now: DAY_NOW, tz: "UTC" });
   // "mon" ended >15min before now → dropped by the trailing window.
   assert.deepEqual(got.map((i) => i.id), ["today-am", "today-pm", "tomorrow", "sun", "nextmon"]);
@@ -326,9 +327,25 @@ test("dayFilter=today keeps only today's sessions", () => {
   assert.deepEqual(got.map((i) => i.id), ["today-am", "today-pm"]);
 });
 
+test("manual today retains a populated day and otherwise rolls to the next matching local day", () => {
+  const populated = resolveAgendaItems({ items: dayItems(), config: cfg({ dayFilter: "today" }), now: DAY_NOW, tz: "UTC" });
+  assert.deepEqual(populated.map((entry) => entry.id), ["today-am", "today-pm"]);
+  const noToday = dayItems().filter((entry) => !entry.id.startsWith("today"));
+  const rolled = resolveAgendaItems({ items: noToday, config: cfg({ dayFilter: "today" }), now: DAY_NOW, tz: "UTC" });
+  assert.deepEqual(rolled.map((entry) => entry.id), ["tomorrow"]);
+});
+
 test("dayFilter=tomorrow keeps only tomorrow's sessions", () => {
   const got = resolveAgendaItems({ items: dayItems(), config: cfg({ dayFilter: "tomorrow" }), now: DAY_NOW, tz: "UTC" });
   assert.deepEqual(got.map((i) => i.id), ["tomorrow"]);
+});
+
+test("manual tomorrow retains tomorrow and otherwise rolls to the next matching local day", () => {
+  const populated = resolveAgendaItems({ items: dayItems(), config: cfg({ dayFilter: "tomorrow" }), now: DAY_NOW, tz: "UTC" });
+  assert.deepEqual(populated.map((entry) => entry.id), ["tomorrow"]);
+  const noTomorrow = dayItems().filter((entry) => entry.id !== "tomorrow");
+  const rolled = resolveAgendaItems({ items: noTomorrow, config: cfg({ dayFilter: "tomorrow" }), now: DAY_NOW, tz: "UTC" });
+  assert.deepEqual(rolled.map((entry) => entry.id), ["sun"]);
 });
 
 test("dayFilter=this_week keeps Mon..Sun of the current week", () => {
@@ -346,6 +363,26 @@ test("dayFilter=specific_date keeps only that calendar day", () => {
     tz: "UTC",
   });
   assert.deepEqual(got.map((i) => i.id), ["tomorrow"]);
+});
+
+test("specific_date returns empty rather than rolling when its selected day has no match", () => {
+  const got = resolveAgendaItems({
+    items: dayItems(), config: cfg({ dayFilter: "specific_date", dayFilterDate: "2026-06-05" }),
+    now: DAY_NOW, tz: "UTC",
+  });
+  assert.deepEqual(got, []);
+});
+
+test("this_week uses timezone-local Monday through Sunday at a UTC midnight boundary", () => {
+  const now = new Date("2026-06-08T00:30:00Z"); // Sunday evening in Los Angeles
+  const got = resolveAgendaItems({
+    items: [
+      item({ id: "local-sun", startsAt: new Date("2026-06-08T00:15:00Z"), endsAt: new Date("2026-06-08T01:00:00Z") }),
+      item({ id: "next-local-mon", startsAt: new Date("2026-06-08T07:30:00Z"), endsAt: new Date("2026-06-08T08:00:00Z") }),
+    ],
+    config: cfg({ dayFilter: "this_week" }), now, tz: "America/Los_Angeles",
+  });
+  assert.deepEqual(got.map((entry) => entry.id), ["local-sun"]);
 });
 
 test("dayFilter=specific_date with no date set is a no-op", () => {
@@ -436,6 +473,14 @@ test("paginate returns [] for empty input", () => {
 
 test("paginate returns single page when pageSize is 0", () => {
   assert.deepEqual(paginate([1, 2, 3], 0), [[1, 2, 3]]);
+});
+
+test("day pagination never mixes timezone-local days and preserves empty", () => {
+  const pages = paginateAgendaItemsByLocalDay(dayItems().slice(1, 5), 2, "UTC");
+  assert.deepEqual(pages.map((page) => page.map((entry) => entry.id)), [
+    ["today-am", "today-pm"], ["tomorrow"], ["sun"],
+  ]);
+  assert.deepEqual(paginateAgendaItemsByLocalDay([], 2, "UTC"), []);
 });
 
 test("dedupeAgendaSessions collapses per-speaker rows into one session, merging presenters", () => {

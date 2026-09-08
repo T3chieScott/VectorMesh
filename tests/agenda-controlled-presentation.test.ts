@@ -6,6 +6,7 @@ import {
   buildControlledNowNextPages,
   nextControlledPageIndex,
   resolveAgendaPresentationDwellMs,
+  SCROLL_PX_PER_SEC,
   TOP_PAUSE_MS,
 } from "../client/src/components/agenda/AgendaDisplayWidget";
 
@@ -29,6 +30,70 @@ test("controlled dwell is readable for natural fit/reduced motion and extends on
   assert.equal(
     resolveAgendaPresentationDwellMs(3_000, ["a"], { a: 56 }, true),
     TOP_PAUSE_MS + 2_000 + BOTTOM_PAUSE_MS,
+  );
+});
+
+test("page dwell takes the longest presenter or description reveal, never their sum", () => {
+  const configured = 3_000;
+  const presenterLong = TOP_PAUSE_MS + Math.ceil(280 / SCROLL_PX_PER_SEC * 1_000) + BOTTOM_PAUSE_MS;
+  const descriptionLong = TOP_PAUSE_MS + Math.ceil(560 / SCROLL_PX_PER_SEC * 1_000) + BOTTOM_PAUSE_MS;
+  assert.equal(
+    resolveAgendaPresentationDwellMs(configured, ["card"], {
+      "description:card": 56,
+      "presenter:card": 280,
+    }, true),
+    presenterLong,
+  );
+  assert.equal(
+    resolveAgendaPresentationDwellMs(configured, ["card"], {
+      "description:card": 560,
+      "presenter:card": 56,
+    }, true),
+    descriptionLong,
+  );
+  assert.equal(
+    resolveAgendaPresentationDwellMs(configured, ["card"], {
+      "description:card": 280,
+      "presenter:card": 280,
+    }, true),
+    presenterLong,
+    "concurrent card viewports share the page clock",
+  );
+});
+
+test("page dwell uses the longest reveal across cards and remains finite under reduced motion", () => {
+  const configured = 3_000;
+  const expected = TOP_PAUSE_MS + Math.ceil(336 / SCROLL_PX_PER_SEC * 1_000) + BOTTOM_PAUSE_MS;
+  assert.equal(
+    resolveAgendaPresentationDwellMs(configured, ["first", "second"], {
+      "presenter:first": 28,
+      "description:second": 336,
+    }, true),
+    expected,
+  );
+  assert.equal(
+    resolveAgendaPresentationDwellMs(configured, ["first", "second"], {
+      "presenter:first": 999,
+      "description:second": 999,
+    }, false),
+    configured,
+    "reduced motion uses the configured finite dwell",
+  );
+});
+
+test("Now/Next stages use the same page dwell calculation", () => {
+  const expected = TOP_PAUSE_MS + Math.ceil(84 / SCROLL_PX_PER_SEC * 1_000) + BOTTOM_PAUSE_MS;
+  assert.equal(
+    resolveAgendaPresentationDwellMs(3_000, ["now-stage"], {
+      "presenter:now-stage": 84,
+    }, true),
+    expected,
+  );
+  assert.equal(
+    resolveAgendaPresentationDwellMs(3_000, ["next-stage"], {
+      "description:next-stage": 84,
+    }, true),
+    expected,
   );
 });
 

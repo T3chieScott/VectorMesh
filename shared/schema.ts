@@ -1793,6 +1793,9 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   // existing configs render identically after migration.
   showDayName: boolean("show_day_name").notNull().default(false),
   showDate: boolean("show_date").notNull().default(false),
+  // Task #404 — optional heading above agenda days. Kept off by default so
+  // existing displays retain their current header layout.
+  showAgendaDayHeading: boolean("show_agenda_day_heading").notNull().default(false),
   // Operator-selectable description line limit. NULL = Full (no clamp);
   // integer = clamp to N lines. DEFAULT 2 preserves the previous
   // hard-coded two-line behaviour for all existing rows.
@@ -1808,6 +1811,10 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   // Task #394 — card-layout NOW/NEXT labels are opt-in. Totem and room-door
   // layouts retain their purpose-built headings instead.
   showNowNextLabel: boolean("show_now_next_label").notNull().default(false),
+  // Task #404 — an explicitly opt-in colour for Now/Next labels. NULL means
+  // the renderer uses its existing theme colour.
+  overrideNowNextColor: boolean("override_now_next_color").notNull().default(false),
+  nowNextColor: text("now_next_color"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
@@ -1906,6 +1913,13 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
       .optional(),
     descriptionTextAlign: z.enum(AGENDA_DESCRIPTION_TEXT_ALIGNS).default("left"),
     showNowNextLabel: z.boolean().default(false),
+    showAgendaDayHeading: z.boolean().default(false),
+    overrideNowNextColor: z.boolean().default(false),
+    nowNextColor: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{6}$/, "Must be a six-digit hex colour like #ffffff")
+      .nullable()
+      .optional(),
     showSessionDuration: z.boolean().default(false),
     showSessionEndTime: z.boolean().default(true),
     sessionDurationPrefix: z.string().trim().max(24).default(""),

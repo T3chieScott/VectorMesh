@@ -78,6 +78,32 @@ export function weekRangeForDayKey(key: string): { start: string; end: string } 
   return { start, end: shiftDayKey(start, 6) };
 }
 
+/** Paginate without ever mixing timezone-local calendar days on one page. */
+export function paginateAgendaItemsByLocalDay(
+  items: readonly AgendaItem[],
+  pageSize: number,
+  tz?: string | null,
+): AgendaItem[][] {
+  const pages: AgendaItem[][] = [];
+  const size = pageSize > 0 ? pageSize : Number.MAX_SAFE_INTEGER;
+  let day = "";
+  let group: AgendaItem[] = [];
+  const flush = () => {
+    for (let i = 0; i < group.length; i += size) pages.push(group.slice(i, i + size));
+  };
+  for (const item of items) {
+    const nextDay = tzCalendarDayKey(new Date(item.startsAt), tz);
+    if (group.length && nextDay !== day) {
+      flush();
+      group = [];
+    }
+    day = nextDay;
+    group.push(item);
+  }
+  if (group.length) flush();
+  return pages;
+}
+
 // Status precedence when merging duplicate session rows — a more
 // "urgent"/active status on any participant row wins so a cancellation,
 // move, delay, or live state is never hidden by collapsing the
@@ -279,64 +305,53 @@ export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
     return a.title.localeCompare(b.title);
   });
 
-  // Manual "What's on" day filter — scopes the board to a single day
-  // or window in the site timezone, independent of the display mode.
-  // Deliberately skipped for today_tomorrow mode, which owns its own
-  // auto-rolling day logic below (the UI also hides the day filter for
-  // that mode). The existing trailing-window drop above still applies,
-  // so "today" shows current + upcoming sessions, not ones that ended
-  // long ago.
-  const dayFilter = config.dayFilter ?? "all";
-  if (config.displayMode !== "today_tomorrow" && dayFilter !== "all") {
-    const todayKey = tzCalendarDayKey(now, input.tz);
-    const dayKeyOf = (it: AgendaItem) =>
-      tzCalendarDayKey(new Date(it.startsAt), input.tz);
-    if (dayFilter === "today") {
-      filtered = filtered.filter((it) => dayKeyOf(it) === todayKey);
-    } else if (dayFilter === "tomorrow") {
-      const tomorrowKey = shiftDayKey(todayKey, 1);
-      filtered = filtered.filter((it) => dayKeyOf(it) === tomorrowKey);
-    } else if (dayFilter === "this_week") {
-      const { start, end } = weekRangeForDayKey(todayKey);
-      filtered = filtered.filter((it) => {
-        const k = dayKeyOf(it);
-        return k >= start && k <= end;
-      });
-    } else if (dayFilter === "specific_date") {
-      const target = config.dayFilterDate;
-      // No date chosen yet → leave the set untouched rather than
-      // blanking the board.
-      if (target) {
-        filtered = filtered.filter((it) => dayKeyOf(it) === target);
-      }
+  // Day selection is deliberately last.  The candidate pool above has
+  // already enforced every tenant-owned room/track/status/time facet, so a
+  // roll-forward can never expose an unrelated session. Relative choices
+  // select their intended local date when it has content and otherwise jump
+  // to the date of the next future matching session. Specific dates are an
+  // explicit instruction and therefore never roll.
+  const dayFilter = config.displayMode === "today_tomorrow"
+    ? "today"
+    : config.dayFilter ?? "all";
+  const todayKey = tzCalendarDayKey(now, input.tz);
+  const dayKeyOf = (it: AgendaItem) =>
+    tzCalendarDayKey(new Date(it.startsAt), input.tz);
+  if (dayFilter === "this_week") {
+    const { start, end } = weekRangeForDayKey(todayKey);
+    filtered = filtered.filter((it) => {
+      const key = dayKeyOf(it);
+      return key >= start && key <= end;
+    });
+  } else {
+    // "All" is genuinely all matching candidates.  In particular Full Agenda
+    // owns pagination/day headings and must receive every local day rather
+    // than a resolver-selected effective day.
+    if (dayFilter === "all") {
+      // no day reduction
+    } else {
+    const requestedDay =
+      dayFilter === "tomorrow" ? shiftDayKey(todayKey, 1)
+      : dayFilter === "specific_date" ? config.dayFilterDate ?? null
+      : todayKey;
+    // A partially edited legacy config may name the specific-date mode
+    // without a date. Preserve the historical no-op until an actual date is
+    // supplied; once supplied it is authoritative and never rolls.
+    if (!requestedDay) return filtered;
+    const onRequestedDay = filtered.filter((it) => dayKeyOf(it) === requestedDay);
+    if (onRequestedDay.length || dayFilter === "specific_date") {
+      filtered = onRequestedDay;
+    } else {
+      // Tomorrow's fallback must not jump backwards to a still-upcoming
+      // session today: roll forward from the requested local day.
+      const future = filtered.find((it) =>
+        dayKeyOf(it) >= requestedDay && new Date(it.startsAt).getTime() >= nowMs,
+      );
+      filtered = future
+        ? filtered.filter((it) => dayKeyOf(it) === dayKeyOf(future))
+        : [];
     }
-  }
-
-  // today_tomorrow mode (Task #240): show only items whose startsAt
-  // falls on today's tz-local calendar day. Once today has nothing
-  // left to show (no item ending after the trailing window cutoff),
-  // auto-roll to tomorrow's items so the board never goes blank
-  // overnight. The trailing-window drop above still applies in both
-  // cases (so a "today" item that ended 30 min ago is gone exactly
-  // like in full mode).
-  if (input.config.displayMode === "today_tomorrow") {
-    const todayKey = tzCalendarDayKey(now, input.tz);
-    const todayItems = filtered.filter(
-      (it) => tzCalendarDayKey(new Date(it.startsAt), input.tz) === todayKey,
-    );
-    const todayStillRelevant = todayItems.some(
-      (it) => new Date(it.endsAt).getTime() > nowMs - trailingMs,
-    );
-    if (todayStillRelevant) return todayItems;
-    // Auto-roll to *tomorrow's* tz-local calendar day once today is
-    // exhausted (per spec). We deliberately do not jump further than
-    // tomorrow — if tomorrow has no sessions the board stays empty
-    // (operators should configure a fallback layout/playlist for that).
-    // shiftDayKey is DST-safe (pure calendar arithmetic in UTC).
-    const tomorrowKey = shiftDayKey(todayKey, 1);
-    return filtered.filter(
-      (it) => tzCalendarDayKey(new Date(it.startsAt), input.tz) === tomorrowKey,
-    );
+    }
   }
 
   // now_next mode: keep only the currently-running session(s) and the

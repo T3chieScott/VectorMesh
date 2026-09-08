@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useRef } from "react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
 import {
   activationId,
@@ -43,8 +43,22 @@ export function resolveAgendaActivationInputs(
   };
 }
 
+/** Retain only the visible activation and the one currently being prepared. */
+export function pruneAgendaPreparedRecords<T>(
+  records: Map<string, T>,
+  activeKey: string | null,
+  desiredKey: string | null,
+): void {
+  for (const key of records.keys()) {
+    if (key !== activeKey && key !== desiredKey) records.delete(key);
+  }
+}
+
 interface Options {
+  /** Whether the desired scene needs Agenda bindings, including while hidden. */
   enabled: boolean;
+  /** Whether the desired scene is now the visibly committed scene. */
+  active?: boolean;
   playerInstanceId: string;
   sceneIdValue: string;
   activationKey: string | number;
@@ -60,12 +74,20 @@ interface Options {
  * timing; static scenes retain their exact legacy timeout.
  */
 export function useAgendaSceneCompletion({
-  enabled, playerInstanceId, sceneIdValue, activationKey, item, media, zones, onAdvance,
+  enabled, active: activeOption, playerInstanceId, sceneIdValue, activationKey, item, media, zones, onAdvance,
 }: Options): ReadonlyMap<string, AgendaZoneBinding> {
+  // Legacy callers without an explicit preparation phase are always visible.
+  const active = activeOption ?? true;
   const coordinatorRef = useRef<ReturnType<typeof createAgendaSceneCompletionCoordinator>>();
   const advanceRef = useRef(onAdvance);
   const serialRef = useRef(0);
-  const [activation, setActivation] = useState<SceneActivation | null>(null);
+  interface PreparedRecord {
+    key: string;
+    activation: SceneActivation;
+    bindings: ReadonlyMap<string, AgendaZoneBinding>;
+  }
+  const recordsRef = useRef(new Map<string, PreparedRecord>());
+  const activeRecordRef = useRef<PreparedRecord | null>(null);
   advanceRef.current = onAdvance;
 
   if (!coordinatorRef.current) {
@@ -88,14 +110,11 @@ export function useAgendaSceneCompletion({
   // JSON preserves IDs containing separators and is still a primitive
   // dependency, unlike the server-polled layout array.
   const agendaZoneKey = JSON.stringify(agendaZoneIds);
-
-  useEffect(() => {
-    const coordinator = coordinatorRef.current!;
-    if (!enabled) {
-      coordinator.dispose();
-      setActivation(null);
-      return;
-    }
+  const preparedKey = JSON.stringify([
+    playerInstanceId, sceneIdValue, activationKey, agendaZoneKey, durationMs,
+  ]);
+  let prepared = enabled ? recordsRef.current.get(preparedKey) : undefined;
+  if (enabled && !prepared) {
     const base = {
       playerId: playerId(playerInstanceId),
       sceneId: sceneId(sceneIdValue),
@@ -104,27 +123,88 @@ export function useAgendaSceneCompletion({
     const next: SceneActivation = agendaZoneIds.length > 0
       ? { ...base, kind: "agenda", minimumDurationMs: durationMs, expectedAgendaZoneIds: agendaZoneIds.map(zoneId) }
       : { ...base, kind: "static", durationMs };
-    coordinator.begin(next);
-    setActivation(next);
-    return () => coordinator.dispose();
-  }, [enabled, playerInstanceId, sceneIdValue, activationKey, agendaZoneKey, durationMs]);
-
-  return useMemo(() => {
-    if (!activation || activation.kind !== "agenda") return new Map();
     const coordinator = coordinatorRef.current!;
-    return new Map(activation.expectedAgendaZoneIds.map((id) => [id as string, {
-      playerId: activation.playerId,
-      sceneId: activation.sceneId,
+    const bindings = next.kind === "agenda"
+      ? new Map(next.expectedAgendaZoneIds.map((id) => [id as string, {
+      playerId: next.playerId,
+      sceneId: next.sceneId,
       zoneId: id,
-      activationId: activation.activationId,
-      register: (duration?: number) => coordinator.registerZone(activation.activationId, id, duration),
+      activationId: next.activationId,
+      register: (duration?: number) =>
+        activeRecordRef.current?.activation.activationId === next.activationId &&
+        coordinator.registerZone(next.activationId, id, duration),
       ready: (duration?: number) => {
-        if (duration !== undefined) coordinator.registerZone(activation.activationId, id, duration);
-        return coordinator.markZoneReady(activation.activationId, id);
+        if (activeRecordRef.current?.activation.activationId !== next.activationId) return false;
+        if (duration !== undefined) coordinator.registerZone(next.activationId, id, duration);
+        return coordinator.markZoneReady(next.activationId, id);
       },
-      complete: () => coordinator.completeZone(activation.activationId, id),
-      fail: () => coordinator.failZone(activation.activationId, id),
-      unregister: () => coordinator.unregisterZone(activation.activationId, id),
-    }]));
-  }, [activation]);
+      complete: () => activeRecordRef.current?.activation.activationId === next.activationId &&
+        coordinator.completeZone(next.activationId, id),
+      fail: () => activeRecordRef.current?.activation.activationId === next.activationId &&
+        coordinator.failZone(next.activationId, id),
+      unregister: () => activeRecordRef.current?.activation.activationId === next.activationId &&
+        coordinator.unregisterZone(next.activationId, id),
+    }]))
+      : new Map<string, AgendaZoneBinding>();
+    prepared = { key: preparedKey, activation: next, bindings };
+    recordsRef.current.set(preparedKey, prepared);
+  }
+  // This must happen during render, not in an effect: C's first hidden render
+  // abandons B immediately, closing the window in which a later B could reuse
+  // B's stale activation id.
+  pruneAgendaPreparedRecords(
+    recordsRef.current,
+    activeRecordRef.current?.key ?? null,
+    enabled ? preparedKey : null,
+  );
+
+  const desiredRecord = prepared;
+  useLayoutEffect(() => {
+    // StrictMode's lifetime cleanup clears the render cache. Always restore
+    // the exact record captured by this render, including while the surface is
+    // still preparing and `active` is false. Equivalent parent rerenders must
+    // keep the binding/activation that already owns AgendaConfig's frozen
+    // fetched snapshot rather than manufacturing a new activation and refetch.
+    if (enabled && desiredRecord) {
+      recordsRef.current.set(desiredRecord.key, desiredRecord);
+    }
+    if (!active) return;
+    if (!enabled || !desiredRecord) {
+      // A non-Agenda desired scene must not retire visible A while it is only
+      // preparing. Once that scene is committed, stop A exactly once.
+      if (activeRecordRef.current) {
+        coordinatorRef.current!.dispose();
+        activeRecordRef.current = null;
+        recordsRef.current.clear();
+      }
+      return;
+    }
+    if (activeRecordRef.current?.key === desiredRecord.key) return;
+    const previous = activeRecordRef.current;
+    // StrictMode lifetime cleanup clears the render cache before replaying
+    // this activation setup. Restore the exact prepared record so an
+    // equivalent render cannot manufacture a second id/binding whose guard
+    // disagrees with the coordinator activated here.
+    recordsRef.current.set(desiredRecord.key, desiredRecord);
+    coordinatorRef.current!.begin(desiredRecord.activation);
+    activeRecordRef.current = desiredRecord;
+    // Keep a currently visible A record during B preparation, but once B is
+    // active A is retired so a later legitimate A cycle gets a fresh id.
+    if (previous && previous.key !== desiredRecord.key) {
+      recordsRef.current.delete(previous.key);
+    }
+  }, [enabled, active, preparedKey]);
+
+  // This must be a layout cleanup. In React StrictMode, layout effects are
+  // replayed before passive cleanup replay; a passive lifetime cleanup could
+  // therefore dispose the coordinator *after* the activation layout effect
+  // had already decided A was active, leaving a live-looking but inert
+  // binding. Layout cleanup clears the record before activation replay.
+  useLayoutEffect(() => () => {
+    coordinatorRef.current?.dispose();
+    activeRecordRef.current = null;
+    recordsRef.current.clear();
+  }, []);
+
+  return desiredRecord?.bindings ?? new Map();
 }

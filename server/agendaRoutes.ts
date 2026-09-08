@@ -53,6 +53,24 @@ import {
 } from "./microsoftOAuth";
 import { getPathParam, getQueryString } from "./requestParams";
 import { getOrSet, set, del, buildCacheKey, registerRefresher, CACHE_NAMESPACES, DEFAULT_TTLS } from "./sharedCache";
+import { tzCalendarDayKey } from "@shared/agenda-resolver";
+
+/** Keep display cache freshness aligned with the config's polling cadence. */
+export function resolveAgendaDisplayCacheTtlMs(
+  config: Pick<AgendaWidgetConfig, "refreshIntervalSeconds">,
+): number {
+  const configured = config.refreshIntervalSeconds;
+  // Invalid/missing legacy values use the established cache default. Valid
+  // values are normalized to the display's five-second minimum, then capped
+  // so a long polling interval can never make public data staler than before.
+  if (!Number.isFinite(configured) || configured == null || configured <= 0) {
+    return DEFAULT_TTLS.AGENDA_DISPLAY;
+  }
+  return Math.min(
+    DEFAULT_TTLS.AGENDA_DISPLAY,
+    Math.max(5_000, Math.floor(configured * 1_000)),
+  );
+}
 
 // Task #290 — drop the cached computed agenda display payload for a single
 // widget config (tenant-scoped key). Best effort: never let a cache failure
@@ -184,6 +202,7 @@ export const PUBLIC_AGENDA_CONFIG_FIELDS = [
   "showEventName",
   "showDayName",
   "showDate",
+  "showAgendaDayHeading",
   // Task #376 — operator-selectable description line limit. null = Full.
   "descriptionLines",
   // Task #382 — auto-scroll overflowing descriptions (Full mode only).
@@ -194,6 +213,8 @@ export const PUBLIC_AGENDA_CONFIG_FIELDS = [
   "speakerCustomMarker",
   "descriptionTextAlign",
   "showNowNextLabel",
+  "overrideNowNextColor",
+  "nowNextColor",
   "showSessionDuration",
   "showSessionCount",
   "showSessionEndTime",
@@ -1216,7 +1237,7 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         const result = await getOrSet({
           namespace: CACHE_NAMESPACES.AGENDA,
           key: buildCacheKey(cfg.clientId, configId),
-          ttlMs: DEFAULT_TTLS.AGENDA_DISPLAY,
+          ttlMs: resolveAgendaDisplayCacheTtlMs(cfg),
           source: "agenda:display",
           metadata: { clientId: cfg.clientId },
           fetcher: async () => {
@@ -1253,7 +1274,7 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       return null;
     }
     await set(CACHE_NAMESPACES.AGENDA, entry.cacheKey, built, {
-      ttlMs: DEFAULT_TTLS.AGENDA_DISPLAY,
+      ttlMs: resolveAgendaDisplayCacheTtlMs(cfg),
       source: "agenda:display",
       metadata: { clientId: cfg.clientId },
     });
@@ -1310,6 +1331,7 @@ async function buildAgendaDisplayPayload(
         // and PUBLIC_AGENDA_CONFIG_FIELDS asserts both are emitted).
         showDayName: config.showDayName ?? false,
         showDate: config.showDate ?? false,
+        showAgendaDayHeading: config.showAgendaDayHeading ?? false,
         // Task #376 — description line limit. Preserve null (Full/no clamp)
         // — do NOT coerce with ?? 2 here; null is a meaningful value. The
         // renderer falls back to 2 only for undefined (missing legacy key).
@@ -1324,6 +1346,8 @@ async function buildAgendaDisplayPayload(
         speakerCustomMarker: config.speakerCustomMarker ?? null,
         descriptionTextAlign: config.descriptionTextAlign ?? "left",
         showNowNextLabel: config.showNowNextLabel ?? false,
+        overrideNowNextColor: config.overrideNowNextColor ?? false,
+        nowNextColor: config.nowNextColor ?? null,
         showSessionDuration: config.showSessionDuration ?? false,
         showSessionEndTime: config.showSessionEndTime ?? true,
         sessionDurationPrefix: config.sessionDurationPrefix ?? "",
@@ -1365,6 +1389,16 @@ async function buildAgendaDisplayPayload(
       return {
         config: publicConfig,
         items: publicItems,
+        // Additive and default-off: legacy public payloads keep their shape.
+        // This is calculated from the resolver's already-selected bucket,
+        // rather than reinterpreting an instant in the browser.
+        ...(config.showAgendaDayHeading === true
+          ? {
+              effectiveDay: publicItems[0]
+                ? tzCalendarDayKey(new Date(publicItems[0].startsAt), client?.timezone)
+                : null,
+            }
+          : {}),
         client: client ? { name: client.name, timezone: client.timezone } : null,
         fonts: fonts.map((f) => ({ id: f.id, familyId: f.familyId, name: f.name, weight: f.weight, style: f.style, format: f.format })),
       };

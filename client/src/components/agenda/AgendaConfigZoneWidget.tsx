@@ -1,9 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
-import { AgendaDisplayWidget, type AgendaPresentationState } from "./AgendaDisplayWidget";
+import {
+  AgendaDisplayWidget,
+  type AgendaDisplayWidgetProps,
+  type AgendaPresentationState,
+} from "./AgendaDisplayWidget";
 import { CustomFontFaces } from "@/lib/fontFace";
 import type { AgendaItem, AgendaWidgetConfig } from "@shared/schema";
 import type { CustomFontRef } from "@shared/fonts";
 import type { AgendaZoneBinding } from "@/lib/agenda-scene-completion";
+import {
+  agendaPollDelayMs,
+  buildAgendaDisplayPollUrl,
+  DEFAULT_AGENDA_POLL_SECONDS,
+} from "@/lib/agendaDisplayPolling";
 
 // Wrapper that turns an agenda widget config id into the live
 // AgendaDisplayWidget by polling the same public endpoint that
@@ -18,6 +27,7 @@ import type { AgendaZoneBinding } from "@/lib/agenda-scene-completion";
 interface DisplayPayload {
   config: AgendaWidgetConfig;
   items: AgendaItem[];
+  effectiveDay?: string | null;
   client: { id: string; name: string; timezone: string } | null;
   fonts?: CustomFontRef[];
   serverTime: number;
@@ -29,6 +39,10 @@ export function AgendaConfigZoneWidget({
   completionBinding,
   onPresentationState,
   followedPresentationState,
+  onRenderReady,
+  onPreparationOutcome,
+  agendaPreparing = false,
+  testPresentationTiming,
 }: {
   configId: string;
   // Optional test-date override (?at=<ISO instant>). When set, it is
@@ -39,9 +53,31 @@ export function AgendaConfigZoneWidget({
   completionBinding?: AgendaZoneBinding;
   onPresentationState?: (state: AgendaPresentationState) => void;
   followedPresentationState?: AgendaPresentationState | null;
+  /**
+   * Signals that this activation has a usable agenda snapshot.  In particular,
+   * an empty items array is a valid, transparent-complete agenda and must not
+   * be confused with the loading placeholder.
+   */
+  onRenderReady?: () => void;
+  /** Hidden-frame preparation result; empty is distinct from renderable data. */
+  onPreparationOutcome?: (outcome: "visible-ready" | "empty-ready" | "failed") => void;
+  /** Hidden atomic-frame preparation: load/freeze data without lifecycle effects. */
+  agendaPreparing?: boolean;
+  /** Deterministic mounted timing seam used only by component tests. */
+  testPresentationTiming?: AgendaDisplayWidgetProps["testPresentationTiming"];
 }) {
   const [data, setData] = useState<DisplayPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Effects clean up after commit. Track the requested config synchronously as
+  // well, so an A response resolving in the A→B render/effect gap cannot put A
+  // back on screen over B (or over B's valid empty response).
+  const requestedConfigIdRef = useRef(configId);
+  const requestGenerationRef = useRef(0);
+  const requestSequenceRef = useRef(0);
+  if (requestedConfigIdRef.current !== configId) {
+    requestedConfigIdRef.current = configId;
+    requestGenerationRef.current += 1;
+  }
   // Bindings are recreated by some hosts while an activation is mounted. Keep
   // the latest callbacks without making the polling lifecycle restart.
   const bindingRef = useRef(completionBinding);
@@ -67,28 +103,35 @@ export function AgendaConfigZoneWidget({
 
   useEffect(() => {
     if (!configId) return;
+    const requestGeneration = requestGenerationRef.current;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    let intervalSec = 30;
+    let intervalSec = DEFAULT_AGENDA_POLL_SECONDS;
 
     async function load() {
       try {
-        const url = validAtIso
-          ? `/api/agenda/display/${configId}?at=${encodeURIComponent(validAtIso)}`
-          : `/api/agenda/display/${configId}`;
+        const url = buildAgendaDisplayPollUrl(
+          configId,
+          validAtIso,
+          ++requestSequenceRef.current,
+        );
         const res = await fetch(url, {
           cache: "no-store",
+          headers: {
+            "Cache-Control": "no-cache, no-store, max-age=0",
+            Pragma: "no-cache",
+          },
         });
         if (!res.ok) {
-          if (!cancelled) {
+          if (!cancelled && requestGeneration === requestGenerationRef.current) {
             setError(`HTTP ${res.status}`);
             // Once a controlled activation has a readable snapshot, a later
             // refresh failure is not a failure of that presentation cycle.
-            if (frozenActivationRef.current !== activationKey) bindingRef.current?.fail();
+            if (!agendaPreparing && frozenActivationRef.current !== activationKey) bindingRef.current?.fail();
           }
         } else {
           const payload: DisplayPayload = await res.json();
-          if (!cancelled) {
+          if (!cancelled && requestGeneration === requestGenerationRef.current) {
             // Playlist-controlled scenes deliberately present one immutable
             // payload. Polling remains useful for the following activation,
             // but must not move the current scene back to page one.
@@ -101,13 +144,13 @@ export function AgendaConfigZoneWidget({
           }
         }
       } catch {
-        if (!cancelled) {
+        if (!cancelled && requestGeneration === requestGenerationRef.current) {
           setError("Request failed");
-          if (frozenActivationRef.current !== activationKey) bindingRef.current?.fail();
+          if (!agendaPreparing && frozenActivationRef.current !== activationKey) bindingRef.current?.fail();
         }
       }
       if (!cancelled) {
-        timer = setTimeout(load, Math.max(5, intervalSec) * 1000);
+        timer = setTimeout(load, agendaPollDelayMs(intervalSec));
       }
     }
     load();
@@ -123,12 +166,15 @@ export function AgendaConfigZoneWidget({
 
   useEffect(() => {
     const activationBinding = bindingRef.current;
+    if (agendaPreparing) return;
     if (!configId) activationBinding?.fail();
-    else activationBinding?.register();
+    else {
+      activationBinding?.register();
+    }
     return () => {
       activationBinding?.unregister();
     };
-  }, [configId, activationKey]);
+  }, [configId, activationKey, agendaPreparing]);
 
   useEffect(() => {
     // Clear the prior controlled snapshot before its new activation fetch.
@@ -145,6 +191,18 @@ export function AgendaConfigZoneWidget({
     completionBinding && frozenActivationRef.current !== activationKey
       ? null
       : data;
+
+  useEffect(() => {
+    if (!configId) {
+      onPreparationOutcome?.("failed");
+    } else if (displayData) {
+      const outcome = displayData.items.length ? "visible-ready" : "empty-ready";
+      onPreparationOutcome?.(outcome);
+      if (displayData.items.length) onRenderReady?.();
+    } else if (error) {
+      onPreparationOutcome?.("failed");
+    }
+  }, [configId, displayData, error, onRenderReady, onPreparationOutcome]);
 
   if (!configId) {
     return (
@@ -171,13 +229,16 @@ export function AgendaConfigZoneWidget({
     <>
       <CustomFontFaces fonts={displayData.fonts} />
       <AgendaDisplayWidget
+        key={configId}
         config={displayData.config}
         items={displayData.items}
+        effectiveDay={displayData.effectiveDay}
         timezone={displayData.client?.timezone || null}
         now={testNow}
-        completionBinding={completionBinding}
-        onPresentationState={onPresentationState}
+        completionBinding={agendaPreparing ? undefined : completionBinding}
+        onPresentationState={agendaPreparing ? undefined : onPresentationState}
         followedPresentationState={followedPresentationState}
+        testPresentationTiming={testPresentationTiming}
       />
     </>
   );

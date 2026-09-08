@@ -7,6 +7,7 @@ import {
   mountAgendaRoutes,
   PUBLIC_AGENDA_CONFIG_FIELDS,
   PUBLIC_AGENDA_ITEM_FIELDS,
+  resolveAgendaDisplayCacheTtlMs,
   type AgendaRoutesStorage,
 } from "../server/agendaRoutes";
 import { AGENDA_CSV_HEADER } from "../shared/agenda-csv";
@@ -263,10 +264,32 @@ function makeConfig(over: Partial<AgendaWidgetConfig> & { id: string; clientId: 
     showStatus: over.showStatus ?? true,
     showCurrentTime: over.showCurrentTime ?? true,
     showEventName: over.showEventName ?? true,
+    showAgendaDayHeading: over.showAgendaDayHeading ?? false,
+    overrideNowNextColor: over.overrideNowNextColor ?? false,
+    nowNextColor: over.nowNextColor ?? null,
     createdAt: over.createdAt ?? new Date("2026-05-01T00:00:00Z"),
     updatedAt: over.updatedAt ?? new Date("2026-05-01T00:00:00Z"),
   };
 }
+
+test("agenda display cache TTL follows a valid config refresh cadence safely", () => {
+  assert.equal(
+    resolveAgendaDisplayCacheTtlMs(makeConfig({ id: "fast", clientId: "a", refreshIntervalSeconds: 5 })),
+    5_000,
+  );
+  assert.equal(
+    resolveAgendaDisplayCacheTtlMs(makeConfig({ id: "legacy", clientId: "a", refreshIntervalSeconds: 30 })),
+    30_000,
+  );
+  assert.equal(
+    resolveAgendaDisplayCacheTtlMs(makeConfig({ id: "long", clientId: "a", refreshIntervalSeconds: 300 })),
+    30_000,
+  );
+  assert.equal(
+    resolveAgendaDisplayCacheTtlMs({ refreshIntervalSeconds: Number.NaN } as AgendaWidgetConfig),
+    30_000,
+  );
+});
 
 function makeAgendaFolder(over: Partial<AgendaFolder> & { id: string; clientId: string }): AgendaFolder {
   return {
@@ -710,6 +733,9 @@ test("GET /api/agenda/display/:configId — public payload never leaks internal 
     name: "Public",
     folderId: "admin-only-folder",
     timeWindowMinutes: 60, // an internal/admin-only filter — must NOT leak
+    showAgendaDayHeading: true,
+    overrideNowNextColor: true,
+    nowNextColor: "#0ea5e9",
   });
   const fixedNow = new Date("2026-06-01T10:30:00Z");
   const start = new Date("2026-06-01T10:00:00Z");
@@ -743,6 +769,7 @@ test("GET /api/agenda/display/:configId — public payload never leaks internal 
       config: Record<string, unknown>;
       items: Array<Record<string, unknown>>;
       client: { name: string; timezone: string } | null;
+      effectiveDay?: string | null;
       serverTime: number;
     };
 
@@ -754,6 +781,10 @@ test("GET /api/agenda/display/:configId — public payload never leaks internal 
       expected,
       `public config payload drift — got ${JSON.stringify(cfgKeys)}`,
     );
+    assert.equal(body.config.showAgendaDayHeading, true);
+    assert.equal(body.config.overrideNowNextColor, true);
+    assert.equal(body.config.nowNextColor, "#0ea5e9");
+    assert.equal(body.effectiveDay, "2026-06-01");
 
     // Spot-check that the obviously-sensitive fields are absent.
     for (const banned of ["clientId", "createdAt", "updatedAt", "timeWindowMinutes", "folderId"]) {
@@ -785,6 +816,28 @@ test("GET /api/agenda/display/:configId — public payload never leaks internal 
 
     // Client block: just name + timezone (no id, no contact info).
     assert.deepEqual(Object.keys(body.client ?? {}).sort(), ["name", "timezone"]);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("public display omits effective-day metadata while day headings are disabled", async () => {
+  const cfg = makeConfig({ id: "cfgLegacyDay", clientId: "siteA", showAgendaDayHeading: false });
+  const storage = makeFakeStorage({
+    configs: [cfg],
+    items: [makeItem({
+      id: "legacy-day-item", clientId: "siteA",
+      startsAt: new Date("2026-09-11T10:00:00Z"),
+      endsAt: new Date("2026-09-11T11:00:00Z"),
+    })],
+    clients: [{ id: "siteA", name: "Site A", timezone: "UTC" } as Client],
+  });
+  const srv = await startTestServer({ storage, user: null, now: () => new Date("2026-09-10T10:00:00Z") });
+  try {
+    const body = await (await fetch(
+      `${srv.base}/api/agenda/display/cfgLegacyDay?at=2026-09-10T10:00:00.000Z`,
+    )).json() as Record<string, unknown>;
+    assert.equal("effectiveDay" in body, false);
   } finally {
     await srv.close();
   }

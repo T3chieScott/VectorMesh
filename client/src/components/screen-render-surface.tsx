@@ -32,8 +32,8 @@
  * - Authentication: mediaBaseUrl + deviceToken differ by host.
  */
 
+import React, { useEffect, useLayoutEffect, useRef, useState, type ComponentType } from "react";
 import type { LayoutZone, MediaAsset } from "@shared/schema";
-import { ZoneRenderer } from "@/components/zone-renderer";
 import type { AgendaPresentationState } from "@/components/agenda/AgendaDisplayWidget";
 import type { PlayerVariableContext } from "@/components/zone-renderer";
 import type { AgendaZoneBinding } from "@/lib/agenda-scene-completion";
@@ -67,6 +67,21 @@ export interface ScreenCanvasGeometry {
 // ── Component interface ───────────────────────────────────────────────────────
 
 export interface ScreenRenderSurfaceProps {
+  /**
+   * Semantic identity of the complete scene.  A changed identity is prepared
+   * behind the committed frame and is promoted as one React commit.
+   */
+  frameKey?: string;
+  /** Host acknowledgement: this semantic frame is now visibly committed. */
+  onFrameCommitted?: (frameKey: string) => void;
+  /** A controlled Agenda-only candidate resolved transparently empty. */
+  onFrameSkipped?: (frameKey: string) => void;
+  /**
+   * Explicit host policy for a successfully resolved Agenda-only empty frame.
+   * Rotation players skip, read-only rotating monitors retain, and resolved
+   * nonrotating hosts commit their transparent/no-content frame.
+   */
+  emptyAgendaPolicy: "skip" | "retain" | "commit-no-content";
   /** Zones to render (with mediaPlayerItems already injected by the host). */
   zones: LayoutZone[];
   /**
@@ -122,6 +137,174 @@ export interface ScreenRenderSurfaceProps {
    * Defaults to "screen-render-zone-frame".
    */
   zoneFrameTestId?: string;
+  /**
+   * Zone implementation. Hosts supply the production ZoneRenderer; accepting
+   * it here also keeps the frame coordinator independently DOM-testable.
+   */
+  ZoneRendererComponent: ComponentType<any>;
+}
+
+type FrameProps = Omit<ScreenRenderSurfaceProps, "frameKey" | "onFrameCommitted" | "onFrameSkipped">;
+
+/**
+ * Both sides of a handoff use this exact element type and keyed-list position.
+ * Consequently React retains the prepared B subtree when [A, B] becomes [B],
+ * rather than tearing B down and mounting a second visible copy.
+ */
+function SurfaceFrameSlot({
+  hidden,
+  children,
+}: {
+  hidden: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="absolute inset-0"
+      style={hidden ? { opacity: 0, visibility: "hidden", pointerEvents: "none" } : undefined}
+      aria-hidden={hidden ? "true" : undefined}
+      {...(hidden ? ({ inert: "" } as any) : {})}
+      data-testid={hidden ? "screen-render-preparing-frame" : "screen-render-committed-frame"}
+    >
+      {children}
+    </div>
+  );
+}
+
+function SurfaceFrame({
+  frameIdentity,
+  preparing,
+  onReady,
+  onSkip,
+  ...props
+}: FrameProps & { frameIdentity: string; preparing: boolean; onReady?: (identity: string) => void; onSkip?: (identity: string) => void }) {
+  const { useOffset, canvasX, canvasY, canvasW, canvasH } = props.canvasGeometry;
+  // Keep the Task #350 source contract explicit: this exact semantic key is
+  // used by both the committed and preparing frame instances.
+  const { zoneKey } = props;
+  const frameRef = useRef<HTMLDivElement>(null);
+  const pendingAgendaRef = useRef(new Set(
+    props.zones.filter((zone) => zone.type === "agenda").map((zone) => zone.id),
+  ));
+  const agendaOutcomesRef = useRef(new Map<string, "visible-ready" | "empty-ready" | "failed">());
+  const readyRef = useRef(false);
+  const skippedRef = useRef(false);
+  const mediaReadyRef = useRef(!preparing);
+  const fontsReadyRef = useRef(!preparing);
+  const resolveTerminalNoContent = () => {
+    if (skippedRef.current) return;
+    skippedRef.current = true;
+    if (props.emptyAgendaPolicy === "skip") {
+      onSkip?.(frameIdentity);
+    } else if (props.emptyAgendaPolicy === "commit-no-content") {
+      pendingAgendaRef.current.clear();
+      markReady();
+    }
+  };
+  const markReady = () => {
+    if (!preparing || readyRef.current || pendingAgendaRef.current.size ||
+      !mediaReadyRef.current || !fontsReadyRef.current) return;
+    readyRef.current = true;
+    onReady?.(frameIdentity);
+  };
+  // A scene without agendas has no asynchronous render gate.  Run this after
+  // it has mounted, rather than while rendering, so promotion is still atomic.
+  useLayoutEffect(() => {
+    if (!preparing) return;
+    const root = frameRef.current;
+    const media = root
+      ? Array.from(root.querySelectorAll<HTMLImageElement | HTMLVideoElement>("img,video"))
+      : [];
+    const unresolved = () => media.some((element) =>
+      element instanceof HTMLImageElement ? !element.complete :
+        element.readyState < HTMLMediaElement.HAVE_CURRENT_DATA,
+    );
+    const checkMedia = () => {
+      mediaReadyRef.current = !unresolved();
+      markReady();
+    };
+    checkMedia();
+    media.forEach((element) => {
+      element.addEventListener("load", checkMedia);
+      element.addEventListener("loadeddata", checkMedia);
+      element.addEventListener("error", checkMedia);
+    });
+    // Font loading is part of frame preparation: promoting before custom faces
+    // settle causes exactly the one-frame reflow this gate is intended to hide.
+    const fonts = document.fonts;
+    if (fonts) {
+      fonts.ready.then(() => {
+        fontsReadyRef.current = true;
+        markReady();
+      });
+    } else {
+      fontsReadyRef.current = true;
+    }
+    markReady();
+    return () => media.forEach((element) => {
+      element.removeEventListener("load", checkMedia);
+      element.removeEventListener("loadeddata", checkMedia);
+      element.removeEventListener("error", checkMedia);
+    });
+  }, []);
+  const onAgendaRenderReady = (zoneId: string) => {
+    pendingAgendaRef.current.delete(zoneId);
+    if (pendingAgendaRef.current.size === 0) markReady();
+  };
+  const onAgendaPreparationOutcome = (zoneId: string, outcome: "visible-ready" | "empty-ready" | "failed") => {
+    // Outcomes are per-zone snapshots, not events. Repeating a response is
+    // idempotent and response order cannot decide whether a frame skips.
+    agendaOutcomesRef.current.set(zoneId, outcome);
+    const agendaIds = props.zones.filter((zone) => zone.type === "agenda").map((zone) => zone.id);
+    if (agendaIds.some((id) => !agendaOutcomesRef.current.has(id))) return;
+    const outcomes = agendaIds.map((id) => agendaOutcomesRef.current.get(id)!);
+    if (outcomes.some((value) => value === "failed")) return;
+    const hasVisibleAgenda = outcomes.some((value) => value === "visible-ready");
+    const hasVisibleNonAgenda = props.zones.some((zone) => zone.type !== "agenda");
+    if (hasVisibleAgenda || hasVisibleNonAgenda) {
+      agendaIds.forEach((id) => pendingAgendaRef.current.delete(id));
+      markReady();
+      return;
+    }
+    resolveTerminalNoContent();
+  };
+
+  const resolveZoneMedia = (zone: Pick<LayoutZone, "id" | "mediaId">): MediaAsset[] => {
+    if (zone.mediaId) {
+      const specific = props.media.filter((m) => m.id === zone.mediaId);
+      if (specific.length > 0) return specific;
+    }
+    return props.media;
+  };
+
+  return (
+    <>
+      {props.liveBanner}
+      <div ref={frameRef} className="absolute" style={useOffset
+        ? { left: `${-canvasX}px`, top: `${-canvasY}px`, width: `${canvasW}px`, height: `${canvasH}px` }
+        : { left: 0, top: 0, width: "100%", height: "100%" }}
+        data-testid={props.zoneFrameTestId || "screen-render-zone-frame"}>
+        {props.zones.map((zone) => (
+          <div key={zoneKey ? zoneKey(zone) : zone.id} className="absolute"
+            style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.width}%`, height: `${zone.height}%`, zIndex: zone.zIndex || 1 }}>
+            <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
+              <props.ZoneRendererComponent zone={zone} media={resolveZoneMedia(zone)}
+                mediaIndex={props.zoneMediaIndices[zone.id] || 0} isPlaying={true} showBorder={false}
+                timezone={props.weatherTimezone} screenTimezone={props.screenTimezone} fillContainer={true}
+                mediaBaseUrl={props.mediaBaseUrl} deviceToken={props.deviceToken} agendaTestAt={props.agendaTestAt}
+                agendaCompletionBinding={props.agendaCompletionBindings?.get(zone.id)}
+                onAgendaPresentationState={props.onAgendaPresentationState}
+                followedAgendaPresentationState={props.followedAgendaPresentationStates?.get(zone.id)}
+                onAgendaRenderReady={undefined}
+                onAgendaPreparationOutcome={preparing ? onAgendaPreparationOutcome : undefined}
+                agendaPreparing={preparing}
+                playerContext={props.playerContext} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -133,6 +316,10 @@ export interface ScreenRenderSurfaceProps {
  * (whose width × height the caller sets via inline style + CSS transform).
  */
 export function ScreenRenderSurface({
+  frameKey,
+  onFrameCommitted,
+  onFrameSkipped,
+  emptyAgendaPolicy,
   zones,
   zoneKey,
   media,
@@ -149,84 +336,93 @@ export function ScreenRenderSurface({
   canvasGeometry,
   liveBanner,
   zoneFrameTestId = "screen-render-zone-frame",
+  ZoneRendererComponent,
 }: ScreenRenderSurfaceProps) {
-  const { useOffset, canvasX, canvasY, canvasW, canvasH } = canvasGeometry;
-
-  // Resolve media for a zone: prefer zone-specific media when mediaId is set,
-  // otherwise return the full screen media array (matching both Player and
-  // Monitor behaviour).
-  const resolveZoneMedia = (
-    zone: Pick<LayoutZone, "id" | "mediaId">,
-  ): MediaAsset[] => {
-    if (zone.mediaId) {
-      const specific = media.filter((m) => m.id === zone.mediaId);
-      if (specific.length > 0) return specific;
+  const incoming: FrameProps = { emptyAgendaPolicy, zones, zoneKey, media, zoneMediaIndices, mediaBaseUrl, deviceToken,
+    screenTimezone, weatherTimezone, agendaTestAt, agendaCompletionBindings, onAgendaPresentationState,
+    followedAgendaPresentationStates, playerContext, canvasGeometry, liveBanner, zoneFrameTestId,
+    ZoneRendererComponent };
+  const identity = frameKey ?? JSON.stringify(zones.map((zone) => [zone.id, zone.type, zone.agendaConfigId]));
+  const initialAgendaOnlyRef = useRef(
+    zones.length > 0 && zones.every((zone) => zone.type === "agenda"),
+  );
+  // Only controlled Agenda-only startup needs outcome preparation. Every
+  // initial frame containing non-Agenda content preserves legacy immediate
+  // visibility, with a post-reconciliation acknowledgement to synchronize the
+  // Player's report/coordinator gates.
+  const [committed, setCommitted] = useState<{ identity: string; props: FrameProps } | null>(
+    initialAgendaOnlyRef.current ? null : { identity, props: incoming },
+  );
+  const [candidate, setCandidate] = useState<{ identity: string; props: FrameProps } | null>(
+    initialAgendaOnlyRef.current ? { identity, props: incoming } : null,
+  );
+  const pendingAcknowledgementRef = useRef<string | null>(
+    initialAgendaOnlyRef.current ? null : identity,
+  );
+  const acknowledgementRef = useRef(onFrameCommitted);
+  acknowledgementRef.current = onFrameCommitted;
+  const skipRef = useRef(onFrameSkipped);
+  skipRef.current = onFrameSkipped;
+  // This ref is deliberately written during render. A late promise/event from
+  // B can therefore never win during the A → B → A render/effect gap.
+  const desiredIdentityRef = useRef(identity);
+  desiredIdentityRef.current = identity;
+  useEffect(() => {
+    // A rapid A → B → A reversal discards B before it can promote.  Do not
+    // leave an old hidden candidate alive to win a late agenda response.
+    if (identity === committed?.identity) {
+      setCandidate((previous) => previous ? null : previous);
+    } else {
+      // `incoming` is intentionally not a dependency: it is a new aggregate
+      // each render. A candidate is an immutable semantic snapshot, and
+      // recreating it while it waits for Agenda/media/fonts loses readiness
+      // state and causes an update loop. Live values for an unchanged
+      // committed identity are supplied directly below instead.
+      setCandidate((previous) =>
+        previous?.identity === identity ? previous : { identity, props: incoming },
+      );
     }
-    return media;
+  }, [identity, committed?.identity]);
+  const promote = (candidateIdentity: string) => {
+    if (desiredIdentityRef.current !== candidateIdentity) return;
+    if (!candidate || candidate.identity !== candidateIdentity) return;
+    pendingAcknowledgementRef.current = candidateIdentity;
+    setCommitted(candidate);
+    setCandidate(null);
   };
-
+  // `onReady` runs from an async Agenda/font/media callback. Acknowledging
+  // there incorrectly lets the host report B before the visible B commit.
+  // Layout effects run after React has reconciled [A, B] into [B].
+  useLayoutEffect(() => {
+    const acknowledged = pendingAcknowledgementRef.current;
+    if (!acknowledged || candidate || committed?.identity !== acknowledged ||
+      desiredIdentityRef.current !== acknowledged) return;
+    pendingAcknowledgementRef.current = null;
+    acknowledgementRef.current?.(acknowledged);
+  }, [candidate, committed?.identity]);
+  const committedProps = committed?.identity === identity ? incoming : committed?.props;
+  const frames = candidate
+    ? [
+        ...(committed && committedProps
+          ? [{ identity: committed.identity, props: committedProps, preparing: false }]
+          : []),
+        { identity: candidate.identity, props: candidate.props, preparing: true },
+      ]
+    : committed && committedProps
+      ? [{ identity: committed.identity, props: committedProps, preparing: false }]
+      : [];
   return (
     <>
-      {liveBanner}
-      {/*
-       * Zone frame:
-       *   useOffset=true  → canvas-spanning layout; sized canvasW×canvasH and
-       *                      translated by (−canvasX, −canvasY) so the
-       *                      overflow:hidden viewport clips to this screen's
-       *                      slice only.
-       *   useOffset=false → normal or per-screen layout; fills 100%×100% of
-       *                      the logical surface directly.
-       */}
-      <div
-        className="absolute"
-        style={
-          useOffset
-            ? {
-                left: `${-canvasX}px`,
-                top: `${-canvasY}px`,
-                width: `${canvasW}px`,
-                height: `${canvasH}px`,
-              }
-            : { left: 0, top: 0, width: "100%", height: "100%" }
-        }
-        data-testid={zoneFrameTestId}
-      >
-        {zones.map((zone) => (
-          <div
-            key={zoneKey ? zoneKey(zone) : zone.id}
-            className="absolute"
-            style={{
-              left: `${zone.x}%`,
-              top: `${zone.y}%`,
-              width: `${zone.width}%`,
-              height: `${zone.height}%`,
-              zIndex: zone.zIndex || 1,
-            }}
-          >
-            <div
-              className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}
-            >
-              <ZoneRenderer
-                zone={zone}
-                media={resolveZoneMedia(zone)}
-                mediaIndex={zoneMediaIndices[zone.id] || 0}
-                isPlaying={true}
-                showBorder={false}
-                timezone={weatherTimezone}
-                screenTimezone={screenTimezone}
-                fillContainer={true}
-                mediaBaseUrl={mediaBaseUrl}
-                deviceToken={deviceToken}
-                agendaTestAt={agendaTestAt}
-                agendaCompletionBinding={agendaCompletionBindings?.get(zone.id)}
-                onAgendaPresentationState={onAgendaPresentationState}
-                followedAgendaPresentationState={followedAgendaPresentationStates?.get(zone.id)}
-                playerContext={playerContext}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
+      {frames.map((frame) => (
+        <SurfaceFrameSlot key={frame.identity} hidden={frame.preparing}>
+          <SurfaceFrame {...frame.props} frameIdentity={frame.identity}
+            preparing={frame.preparing} onReady={promote}
+            onSkip={onFrameSkipped ? (skipped) => {
+              if (desiredIdentityRef.current !== skipped || !candidate || candidate.identity !== skipped) return;
+              skipRef.current?.(skipped);
+            } : undefined} />
+        </SurfaceFrameSlot>
+      ))}
     </>
   );
 }

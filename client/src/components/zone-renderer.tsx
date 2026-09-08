@@ -1,7 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
-import "leaflet/dist/leaflet.css";
 import { useQuery } from "@tanstack/react-query";
 import { useOptionalSiteFilteredQuery } from "@/hooks/use-site-context";
 import { useVideoKeepAlive } from "@/hooks/use-video-keep-alive";
@@ -5624,6 +5623,11 @@ export interface ZoneRendererProps {
   /** Passive agenda position reporting/following, keyed by the host per zone. */
   onAgendaPresentationState?: (zoneId: string, state: AgendaPresentationState) => void;
   followedAgendaPresentationState?: AgendaPresentationState | null;
+  /** Used by atomic screen-frame preparation; emitted after agenda data loads. */
+  onAgendaRenderReady?: (zoneId: string) => void;
+  onAgendaPreparationOutcome?: (zoneId: string, outcome: "visible-ready" | "empty-ready" | "failed") => void;
+  /** Prepare agenda data while suppressing lifecycle/reporting side effects. */
+  agendaPreparing?: boolean;
 }
 
 export function ZoneRenderer({
@@ -5644,6 +5648,9 @@ export function ZoneRenderer({
   agendaCompletionBinding,
   onAgendaPresentationState,
   followedAgendaPresentationState,
+  onAgendaRenderReady,
+  onAgendaPreparationOutcome,
+  agendaPreparing = false,
 }: ZoneRendererProps) {
   const ZoneIcon = zoneTypeIcons[zone.type] || Layers;
   // Re-render every 30s so {{date}}/{{time}}/{{day}} stay current without reload
@@ -6026,7 +6033,7 @@ export function ZoneRenderer({
         );
       case "agenda":
         return (
-          <AgendaConfigZoneWidget configId={zone.agendaConfigId || ""} atIso={agendaTestAt} completionBinding={agendaCompletionBinding} onPresentationState={onAgendaPresentationState ? (state) => onAgendaPresentationState(zone.id, state) : undefined} followedPresentationState={followedAgendaPresentationState} />
+          <AgendaConfigZoneWidget configId={zone.agendaConfigId || ""} atIso={agendaTestAt} completionBinding={agendaCompletionBinding} onPresentationState={onAgendaPresentationState ? (state) => onAgendaPresentationState(zone.id, state) : undefined} followedPresentationState={followedAgendaPresentationState} onRenderReady={onAgendaRenderReady ? () => onAgendaRenderReady(zone.id) : undefined} onPreparationOutcome={onAgendaPreparationOutcome ? (outcome) => onAgendaPreparationOutcome(zone.id, outcome) : undefined} agendaPreparing={agendaPreparing} />
         );
       case "sweepstake":
         return (

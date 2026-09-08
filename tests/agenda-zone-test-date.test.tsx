@@ -20,10 +20,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import * as React from "react";
-import { render, waitFor, cleanup } from "@testing-library/react";
+import { render, waitFor, cleanup, act } from "@testing-library/react";
 import { AgendaConfigZoneWidget } from "../client/src/components/agenda/AgendaConfigZoneWidget";
-import type { AgendaItem, AgendaWidgetConfig } from "../shared/schema";
+import { AgendaDisplayWidget } from "../client/src/components/agenda/AgendaDisplayWidget";
+import type { AgendaItem, AgendaWidgetConfig, LayoutZone } from "../shared/schema";
 import type { AgendaZoneBinding } from "../client/src/lib/agenda-scene-completion";
+import { useAgendaSceneCompletion } from "../client/src/hooks/use-agenda-scene-completion";
 
 const CONFIG_ID = "cfg-279";
 
@@ -139,14 +141,12 @@ test("valid atIso forwards ?at=<UTC ISO> to the fetch AND freezes the widget clo
       assert.ok(clockText(container), "agenda-clock not yet rendered");
     });
 
-    // Leg 1: the fetch URL carries the override as an encoded UTC ISO.
+    // Leg 1: the fetch URL carries the override plus a unique cache buster.
     assert.equal(fetchStub.calls.length >= 1, true, "expected at least one fetch");
-    const url = fetchStub.calls[0];
-    assert.equal(
-      url,
-      `/api/agenda/display/${CONFIG_ID}?at=${encodeURIComponent(atIso)}`,
-      `unexpected fetch url: ${url}`,
-    );
+    const url = new URL(fetchStub.calls[0], "https://display.test");
+    assert.equal(url.pathname, `/api/agenda/display/${CONFIG_ID}`);
+    assert.equal(url.searchParams.get("at"), new Date(atIso).toISOString());
+    assert.ok(url.searchParams.get("_vmr"), "cache-buster must be present");
 
     // Leg 2: the widget's clock reflects the frozen instant, proving
     // AgendaDisplayWidget received `now` === the override.
@@ -204,10 +204,12 @@ test("garbage atIso falls back to live (no ?at= param, no frozen now)", async ()
       assert.ok(clockText(container), "agenda-clock not yet rendered");
     });
 
-    // Leg 1: no override param — the live display URL is used verbatim.
-    const url = fetchStub.calls[0];
-    assert.equal(url, `/api/agenda/display/${CONFIG_ID}`, `unexpected url: ${url}`);
-    assert.equal(url.includes("?at="), false);
+    // Leg 1: garbage does not produce an `at` parameter, but every poll
+    // remains cache-busted so an intermediary cannot serve a stale agenda.
+    const url = new URL(fetchStub.calls[0], "https://display.test");
+    assert.equal(url.pathname, `/api/agenda/display/${CONFIG_ID}`);
+    assert.equal(url.searchParams.has("at"), false);
+    assert.ok(url.searchParams.get("_vmr"), "cache-buster must be present");
 
     // Leg 2: no frozen `now` — the widget ticks live. Accept the
     // minute the assertion runs in plus the two neighbours so a clock
@@ -272,5 +274,633 @@ test("a new controlled activation cannot render or ready a previous payload befo
   } finally {
     cleanup();
     (globalThis as any).fetch = original;
+  }
+});
+
+test("prepared activation becomes active without clearing data or refetching", async () => {
+  const original = (globalThis as any).fetch;
+  let fetchCount = 0;
+  (globalThis as any).fetch = async () => {
+    fetchCount += 1;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        config: buildConfig(),
+        items: [],
+        client: { id: "c1", name: "Acme", timezone: "UTC" },
+        serverTime: 0,
+      }),
+    } as Response;
+  };
+  let registrations = 0;
+  const binding: AgendaZoneBinding = {
+    playerId: "p" as any,
+    sceneId: "s" as any,
+    zoneId: "z" as any,
+    activationId: "activation-prepared" as any,
+    register: () => { registrations += 1; return true; },
+    ready: () => true,
+    complete: () => true,
+    fail: () => true,
+    unregister: () => true,
+  };
+  let emptyReady = 0;
+  const rendered = render(React.createElement(AgendaConfigZoneWidget, {
+    configId: CONFIG_ID,
+    completionBinding: binding,
+    agendaPreparing: true,
+    onPreparationOutcome: (outcome) => { if (outcome === "empty-ready") emptyReady += 1; },
+  }));
+  try {
+    await waitFor(() => assert.equal(emptyReady, 1));
+    assert.equal(fetchCount, 1);
+    assert.equal(registrations, 0);
+    assert.equal(rendered.container.querySelector('[data-testid="agenda-zone-loading"]'), null);
+
+    rendered.rerender(React.createElement(AgendaConfigZoneWidget, {
+      configId: CONFIG_ID,
+      completionBinding: binding,
+      agendaPreparing: false,
+      onPreparationOutcome: (outcome) => { if (outcome === "empty-ready") emptyReady += 1; },
+    }));
+    await waitFor(() => assert.ok(registrations >= 1));
+    assert.equal(fetchCount, 1, "activation must reuse its hidden prepared payload");
+    assert.equal(rendered.container.querySelector('[data-testid="agenda-zone-loading"]'), null);
+  } finally {
+    cleanup();
+    (globalThis as any).fetch = original;
+  }
+});
+
+test("controlled empty Agenda is transparent and immediately reports ready(0) then complete", async () => {
+  const calls: string[] = [];
+  const binding: AgendaZoneBinding = {
+    playerId: "p" as any, sceneId: "s" as any, zoneId: "z" as any, activationId: "empty" as any,
+    register: () => true,
+    ready: (duration) => { calls.push(`ready:${duration}`); return true; },
+    complete: () => { calls.push("complete"); return true; },
+    fail: () => true, unregister: () => true,
+  };
+  const rendered = render(React.createElement(AgendaDisplayWidget, {
+    config: buildConfig(), items: [], timezone: "UTC", now: new Date("2031-07-04T09:15:00Z"),
+    width: 800, height: 500, completionBinding: binding,
+  }));
+  try {
+    await waitFor(() => assert.deepEqual(calls, ["ready:0", "complete"]));
+    assert.equal(rendered.container.querySelector('[data-testid="agenda-display-root"]'), null);
+    assert.equal(rendered.container.textContent, "");
+  } finally {
+    cleanup();
+  }
+});
+
+test("measured Full Agenda pages keep local days separate and followers receive matching headings", async () => {
+  const originalObserver = (globalThis as any).ResizeObserver;
+  const observers: any[] = [];
+  class MeasuringObserver {
+    callback: any;
+    constructor(callback: any) { this.callback = callback; observers.push(this); }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  (globalThis as any).ResizeObserver = MeasuringObserver;
+  (window as any).ResizeObserver = MeasuringObserver;
+  const originalHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+  let nowMs = 0;
+  let nextTimer = 0;
+  const agendaTimers = new Map<number, {
+    callback: () => void;
+    due: number;
+    cancelled: boolean;
+    fired: boolean;
+  }>();
+  const setAgendaTimeout = (callback: () => void, delay: number) => {
+    const id = ++nextTimer;
+    agendaTimers.set(id, {
+      callback,
+      due: nowMs + delay,
+      cancelled: false,
+      fired: false,
+    });
+    return id;
+  };
+  const clearAgendaTimeout = (handle: unknown) => {
+    const timer = agendaTimers.get(Number(handle));
+    if (timer) timer.cancelled = true;
+  };
+  Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get() { return (this as HTMLElement).dataset.measureId ? 110 : 0; },
+  });
+  const calls: string[] = [];
+  const reports: number[] = [];
+  const binding: AgendaZoneBinding = {
+    playerId: "p" as any, sceneId: "s" as any, zoneId: "z" as any, activationId: "days" as any,
+    register: () => { calls.push("register"); return true; },
+    ready: (duration) => { calls.push(`ready:${duration}`); return true; },
+    complete: () => { calls.push("complete"); return true; },
+    fail: () => true, unregister: () => true,
+  };
+  const entries = [
+    buildItem({ id: "today", startsAt: new Date("2031-07-04T10:00:00Z"), endsAt: new Date("2031-07-04T11:00:00Z") }),
+    buildItem({ id: "tomorrow", startsAt: new Date("2031-07-05T10:00:00Z"), endsAt: new Date("2031-07-05T11:00:00Z") }),
+    buildItem({ id: "sunday", startsAt: new Date("2031-07-06T10:00:00Z"), endsAt: new Date("2031-07-06T11:00:00Z") }),
+  ];
+  const props = {
+    config: buildConfig({ showAgendaDayHeading: true, layoutMode: "portrait", maxItemsPerPage: 8, rotationIntervalSeconds: 3 }),
+    items: entries, timezone: "UTC", now: new Date("2031-07-04T09:00:00Z"),
+    width: 800, height: 300, completionBinding: binding,
+    onPresentationState: (state: any) => reports.push(state.page),
+    testPresentationTiming: {
+      metrics: {},
+      now: () => nowMs,
+      setTimeout: setAgendaTimeout,
+      clearTimeout: clearAgendaTimeout,
+    },
+  };
+  const rendered = render(React.createElement(AgendaDisplayWidget, props));
+  try {
+    // Drive the real ResizeObserver content-box path, then the offscreen
+    // measurement pass uses the mocked intrinsic card heights above.
+    await act(async () => {
+      for (const observer of observers) {
+        observer.callback([{ contentRect: { width: 800, height: 150 } }]);
+      }
+    });
+    await waitFor(() => assert.ok(calls.includes("ready:9000")));
+    // The measured controlled plan is actively registered before any dwell
+    // callback is allowed to advance it.
+    await waitFor(() => assert.ok(calls.includes("register")));
+    assert.equal(rendered.getByTestId("agenda-day-heading").textContent, "Today’s Agenda");
+    assert.ok(rendered.queryByTestId("agenda-title-today"));
+    assert.equal(rendered.queryByTestId("agenda-title-tomorrow"), null);
+
+    rendered.rerender(React.createElement(AgendaDisplayWidget, { ...props, followedPresentationState: { stage: "page", page: 1, cycle: 0 } }));
+    await waitFor(() => assert.equal(rendered.getByTestId("agenda-day-heading").textContent, "Tomorrow’s Agenda"));
+    assert.ok(rendered.queryByTestId("agenda-title-tomorrow"));
+    assert.equal(rendered.queryByTestId("agenda-title-sunday"), null);
+    rendered.rerender(React.createElement(AgendaDisplayWidget, { ...props, followedPresentationState: { stage: "page", page: 2, cycle: 0 } }));
+    await waitFor(() => assert.match(rendered.getByTestId("agenda-day-heading").textContent ?? "", /Sunday/));
+    assert.ok(reports.includes(0) && reports.includes(1) && reports.includes(2));
+    assert.equal(calls.filter((call) => call === "complete").length, 0);
+
+    // Return to the production-controlled local pager and fire its captured
+    // dwell callbacks. This proves the same measured plan visits all pages
+    // before issuing exactly one completion.
+    rendered.rerender(React.createElement(AgendaDisplayWidget, props));
+    for (let page = 0; page < 3; page += 1) {
+      let active: (typeof agendaTimers extends Map<any, infer T> ? T : never) | undefined;
+      await waitFor(() => {
+        const candidates = [...agendaTimers.values()].filter((timer) => !timer.cancelled && !timer.fired);
+        assert.equal(candidates.length, 1);
+        active = candidates[0];
+      });
+      active!.fired = true;
+      nowMs = active!.due;
+      await act(async () => active!.callback());
+      if (page < 2) assert.equal(calls.filter((call) => call === "complete").length, 0);
+    }
+    await waitFor(() => assert.equal(calls.filter((call) => call === "complete").length, 1));
+  } finally {
+    cleanup();
+    (globalThis as any).ResizeObserver = originalObserver;
+    (window as any).ResizeObserver = originalObserver;
+    if (originalHeight) Object.defineProperty(HTMLElement.prototype, "offsetHeight", originalHeight);
+    else delete (HTMLElement.prototype as any).offsetHeight;
+  }
+});
+
+test("StrictMode replay keeps the initial visible Agenda coordinator active", async () => {
+  const agendaZone = { id: "agenda", type: "agenda" } as LayoutZone;
+  let advances = 0;
+  const observedBindings: AgendaZoneBinding[] = [];
+  function LifecycleProbe({ binding, run }: { binding?: AgendaZoneBinding; run: boolean }) {
+    React.useEffect(() => {
+      if (!binding || !run) return;
+      binding.register(1);
+      binding.ready(1);
+      binding.complete();
+    }, [binding, run]);
+    return null;
+  }
+  function Harness({ activationKey, active, run }: { activationKey: number; active: boolean; run: boolean }) {
+    const bindings = useAgendaSceneCompletion({
+      enabled: true,
+      active,
+      playerInstanceId: "player",
+      sceneIdValue: "layout-a",
+      activationKey,
+      item: { id: "a", layoutTemplateId: "layout-a", duration: 0.001 },
+      media: [],
+      zones: [agendaZone],
+      onAdvance: () => { advances += 1; },
+    });
+    const binding = bindings.get("agenda");
+    if (binding) observedBindings.push(binding);
+    return React.createElement(LifecycleProbe, { binding, run });
+  }
+  const rendered = render(React.createElement(React.StrictMode, null,
+    React.createElement(Harness, { activationKey: 0, active: false, run: false })));
+  try {
+    const initialBinding = observedBindings.at(-1)!;
+    rendered.rerender(React.createElement(React.StrictMode, null,
+      React.createElement(Harness, { activationKey: 0, active: false, run: false })));
+    const equivalentBinding = observedBindings.at(-1)!;
+    assert.equal(equivalentBinding.activationId, initialBinding.activationId);
+    assert.equal(equivalentBinding.register(1), false, "prepared binding remains inert before visible commit");
+    rendered.rerender(React.createElement(React.StrictMode, null,
+      React.createElement(Harness, { activationKey: 0, active: true, run: true })));
+    const activatedBinding = observedBindings.at(-1)!;
+    assert.equal(activatedBinding.activationId, initialBinding.activationId);
+    await waitFor(() => assert.equal(advances, 1));
+    assert.equal(advances, 1, "StrictMode must not double-begin or double-advance");
+
+    rendered.rerender(React.createElement(React.StrictMode, null,
+      React.createElement(Harness, { activationKey: 1, active: true, run: false })));
+    const nextBinding = observedBindings.at(-1)!;
+    assert.notEqual(nextBinding.activationId, equivalentBinding.activationId);
+    assert.equal(equivalentBinding.register(1), false, "retired activation must be inert");
+  } finally {
+    cleanup();
+  }
+  assert.equal(observedBindings.at(-1)!.register(1), false, "unmount must dispose the coordinator");
+});
+
+test("mounted NOW/NEXT presenter dwell uses the production timer and advances only at its high-water deadline", async () => {
+  let nowMs = 0;
+  let serial = 0;
+  const timers = new Map<number, { callback: () => void; due: number; cancelled: boolean }>();
+  const fakeTimeout = (callback: () => void, delay = 0) => {
+    const id = ++serial;
+    timers.set(id, { callback, due: nowMs + delay, cancelled: false });
+    return id;
+  };
+  const fakeClear = (id: unknown) => {
+    const timer = timers.get(Number(id));
+    if (timer) timer.cancelled = true;
+  };
+  const advance = async (ms: number) => {
+    const target = nowMs + ms;
+    while (true) {
+      const next = [...timers.entries()]
+        .filter(([, timer]) => !timer.cancelled && timer.due <= target)
+        .sort((a, b) => a[1].due - b[1].due)[0];
+      if (!next) break;
+      timers.delete(next[0]);
+      nowMs = next[1].due;
+      await act(async () => next[1].callback());
+    }
+    nowMs = target;
+  };
+  const states: Array<{ stage: string; page: number }> = [];
+  const current = buildItem({
+    id: "now-dwell", presenter: "A very long presenter", startsAt: new Date("2030-01-01T09:00:00Z"),
+    endsAt: new Date("2030-01-01T11:00:00Z"),
+  });
+  const next = buildItem({
+    id: "next-dwell", presenter: "Next", startsAt: new Date("2030-01-01T12:00:00Z"),
+    endsAt: new Date("2030-01-01T13:00:00Z"),
+  });
+  const metrics = { "presenter:now-dwell": 280 };
+  const expected = 3_000 + Math.ceil(280 / 28 * 1_000) + 3_000;
+  try {
+    render(<AgendaDisplayWidget
+      config={buildConfig({ displayMode: "now_next", rotationIntervalSeconds: 3, showPresenter: true })}
+      items={[current, next]} now={new Date("2030-01-01T10:00:00Z")} timezone="UTC"
+      onPresentationState={(state) => states.push({ stage: state.stage, page: state.page })}
+      testPresentationTiming={{ metrics, now: () => nowMs, setTimeout: fakeTimeout, clearTimeout: fakeClear }}
+    />);
+    await waitFor(() => assert.ok(states.some((state) => state.stage === "now")));
+    await advance(expected - 1);
+    assert.equal(states.at(-1)?.stage, "now");
+    await advance(1);
+    await waitFor(() => assert.equal(states.at(-1)?.stage, "next"));
+  } finally {
+    cleanup();
+  }
+});
+
+test("StrictMode production Agenda widget completes its initial measured one-page activation", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalObserver = (globalThis as any).ResizeObserver;
+  const originalHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+  const originalRect = HTMLElement.prototype.getBoundingClientRect;
+  const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+  const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+  const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+  class LiveMeasuringObserver {
+    constructor(private callback: any) {}
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  (globalThis as any).ResizeObserver = LiveMeasuringObserver;
+  (window as any).ResizeObserver = LiveMeasuringObserver;
+  Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get() { return (this as HTMLElement).dataset.measureId ? 100 : 0; },
+  });
+  Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+    configurable: true, get() { return 800; },
+  });
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+    configurable: true, get() { return (this as HTMLElement).dataset.measureId ? 100 : 400; },
+  });
+  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+    configurable: true, get() { return (this as HTMLElement).dataset.measureId ? 100 : 400; },
+  });
+  HTMLElement.prototype.getBoundingClientRect = function () {
+    // Deliberately conflicting transformed coordinates: pagination must use
+    // the 800×400 client layout metrics above, not this scale(0.5)-like rect.
+    const height = this.dataset.measureId ? 50 : 200;
+    return { x: 0, y: 0, top: 0, left: 0, right: 400, bottom: height,
+      width: 400, height, toJSON() { return {}; } } as DOMRect;
+  };
+  const config = buildConfig({
+    layoutMode: "portrait",
+    rotationIntervalSeconds: 3,
+    maxItemsPerPage: 8,
+  });
+  (globalThis as any).fetch = async () => ({
+    ok: true, status: 200,
+    json: async () => ({
+      config,
+      items: [buildItem({
+        id: "initial-a",
+        startsAt: new Date("2031-07-04T09:00:00Z"),
+        endsAt: new Date("2031-07-04T10:00:00Z"),
+      })],
+      client: { id: "c1", name: "Acme", timezone: "UTC" },
+      serverTime: 0,
+    }),
+  } as Response);
+  let advances = 0;
+  const reports: number[] = [];
+  const accepted = { register: 0, ready: 0, complete: 0 };
+  function Harness() {
+    const bindings = useAgendaSceneCompletion({
+      enabled: true, active: true, playerInstanceId: "player",
+      sceneIdValue: "layout-a", activationKey: 0,
+      item: { id: "a", layoutTemplateId: "layout-a", duration: 0.001 },
+      media: [], zones: [{ id: "agenda", type: "agenda" } as LayoutZone],
+      onAdvance: () => { advances += 1; },
+    });
+    const original = bindings.get("agenda");
+    const binding = React.useMemo<AgendaZoneBinding | undefined>(() => original && ({
+      ...original,
+      register: (duration) => { const result = original.register(duration); if (result) accepted.register += 1; return result; },
+      ready: (duration) => { const result = original.ready(duration); if (result) accepted.ready += 1; return result; },
+      complete: () => { const result = original.complete(); if (result) accepted.complete += 1; return result; },
+    }), [original]);
+    return React.createElement(AgendaConfigZoneWidget, {
+      configId: CONFIG_ID,
+      completionBinding: binding,
+      agendaPreparing: false,
+      onPresentationState: (state) => reports.push(state.page),
+    });
+  }
+  render(React.createElement(React.StrictMode, null, React.createElement(Harness)));
+  try {
+    await waitFor(() => assert.ok(accepted.ready >= 1), { timeout: 2_000 });
+    assert.ok(accepted.ready >= 1);
+    await waitFor(() => assert.ok(reports.includes(0)), { timeout: 2_000 });
+    await waitFor(() => assert.equal(advances, 1), { timeout: 5_000 });
+    assert.ok(accepted.register >= 1);
+    assert.equal(accepted.complete, 1);
+  } finally {
+    cleanup();
+    (globalThis as any).fetch = originalFetch;
+    (globalThis as any).ResizeObserver = originalObserver;
+    (window as any).ResizeObserver = originalObserver;
+    if (originalHeight) Object.defineProperty(HTMLElement.prototype, "offsetHeight", originalHeight);
+    if (originalClientWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
+    if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+    if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+    HTMLElement.prototype.getBoundingClientRect = originalRect;
+  }
+});
+
+test("StrictMode scaled production chain freezes intrinsic multi-page plan before delayed ResizeObserver", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalObserver = (globalThis as any).ResizeObserver;
+  const originalHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+  const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+  const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+  const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+  const originalRect = HTMLElement.prototype.getBoundingClientRect;
+
+  const observers: Array<{ callback: (entries: any[]) => void; active: boolean }> = [];
+  class SilentObserver {
+    record: { callback: (entries: any[]) => void; active: boolean };
+    constructor(callback: (entries: any[]) => void) {
+      this.record = { callback, active: true };
+      observers.push(this.record);
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() { this.record.active = false; }
+  }
+  (globalThis as any).ResizeObserver = SilentObserver;
+  (window as any).ResizeObserver = SilentObserver;
+
+  const intrinsicHeights: Record<string, number> = {
+    "scaled-1": 140,
+    "scaled-2": 150,
+    "scaled-3": 120,
+    "scaled-4": 160,
+  };
+  const intrinsicHeight = (element: HTMLElement) =>
+    element.dataset.measureId ? intrinsicHeights[element.dataset.measureId] ?? 0 : 0;
+  Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get() { return intrinsicHeight(this as HTMLElement); },
+  });
+  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+    configurable: true,
+    get() { return intrinsicHeight(this as HTMLElement); },
+  });
+  Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+    configurable: true,
+    get() { return (this as HTMLElement).dataset.measureId ? 394 : 800; },
+  });
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+    configurable: true,
+    get() { return (this as HTMLElement).dataset.measureId ? intrinsicHeight(this as HTMLElement) : 260; },
+  });
+  HTMLElement.prototype.getBoundingClientRect = function () {
+    const height = this.dataset.measureId ? intrinsicHeight(this) / 2 : 130;
+    return {
+      x: 0, y: 0, top: 0, left: 0, right: 400, bottom: height,
+      width: 400, height, toJSON() { return {}; },
+    } as DOMRect;
+  };
+
+  let nowMs = 0;
+  let timerId = 0;
+  const timers = new Map<number, {
+    callback: () => void;
+    due: number;
+    cancelled: boolean;
+    fired: boolean;
+  }>();
+  const fakeTimeout = (callback: () => void, delay = 0) => {
+    const id = ++timerId;
+    timers.set(id, {
+      callback,
+      due: nowMs + delay,
+      cancelled: false,
+      fired: false,
+    });
+    return id;
+  };
+  const fakeClear = (handle: unknown) => {
+    const timer = timers.get(Number(handle));
+    if (timer) timer.cancelled = true;
+  };
+
+  const config = buildConfig({
+    displayMode: "full",
+    layoutMode: "landscape",
+    showAgendaDayHeading: true,
+    maxItemsPerPage: 8,
+    rotationIntervalSeconds: 3,
+  });
+  const items = [1, 2, 3, 4].map((number) => buildItem({
+    id: `scaled-${number}`,
+    title: `Width-sensitive session ${number} with a deliberately long title that wraps at the calculated column width`,
+    description: `Long description ${number} that produces a distinct intrinsic card measurement at 394 CSS pixels`,
+    startsAt: new Date(`2031-07-04T${String(8 + number).padStart(2, "0")}:00:00Z`),
+    endsAt: new Date(`2031-07-04T${String(9 + number).padStart(2, "0")}:00:00Z`),
+  }));
+  (globalThis as any).fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      config,
+      items,
+      client: { id: "c1", name: "Acme", timezone: "UTC" },
+      serverTime: 0,
+    }),
+  } as Response);
+
+  const readyDurations: number[] = [];
+  let completed = 0;
+  let advances = 0;
+  const reports: number[] = [];
+  function Harness() {
+    const bindings = useAgendaSceneCompletion({
+      enabled: true,
+      active: true,
+      playerInstanceId: "scaled-player",
+      sceneIdValue: "scaled-layout",
+      activationKey: 0,
+      item: { id: "scene", layoutTemplateId: "scaled-layout", duration: 0.001 },
+      media: [],
+      zones: [{ id: "agenda", type: "agenda" } as LayoutZone],
+      onAdvance: () => { advances += 1; },
+    });
+    const original = bindings.get("agenda");
+    const binding = React.useMemo<AgendaZoneBinding | undefined>(() => original && ({
+      ...original,
+      ready: (duration) => {
+        const accepted = original.ready(duration);
+        if (accepted) readyDurations.push(duration ?? -1);
+        return accepted;
+      },
+      complete: () => {
+        const accepted = original.complete();
+        if (accepted) completed += 1;
+        return accepted;
+      },
+    }), [original]);
+    return React.createElement("div", { style: { transform: "scale(.5)", transformOrigin: "top left" } },
+      React.createElement(AgendaConfigZoneWidget, {
+        configId: CONFIG_ID,
+        completionBinding: binding,
+        agendaPreparing: false,
+        onPresentationState: (state) => reports.push(state.page),
+        testPresentationTiming: {
+          metrics: {},
+          now: () => nowMs,
+          setTimeout: fakeTimeout,
+          clearTimeout: fakeClear,
+        },
+      }));
+  }
+
+  const rendered = render(React.createElement(React.StrictMode, null, React.createElement(Harness)));
+  const expectedPageCount = 2;
+  const seenIds: string[] = [];
+  const visibleIds = () => [...rendered.container.querySelectorAll<HTMLElement>("[data-testid^='agenda-title-scaled-']")]
+    .map((element) => element.dataset.testid!.replace("agenda-title-", ""));
+  const runDwell = async () => {
+    let timer: (typeof timers extends Map<any, infer T> ? T : never) | undefined;
+    await waitFor(() => {
+      const active = [...timers.values()].filter((candidate) => !candidate.cancelled && !candidate.fired);
+      assert.equal(active.length, 1);
+      timer = active[0];
+    });
+    timer!.fired = true;
+    nowMs = timer!.due;
+    await act(async () => timer!.callback());
+  };
+
+  try {
+    await waitFor(() => assert.deepEqual(readyDurations, [expectedPageCount * 3_000]));
+    await waitFor(() => assert.deepEqual(reports, [0]));
+    assert.deepEqual(visibleIds(), ["scaled-1", "scaled-2"]);
+    seenIds.push(...visibleIds());
+    const measureRoot = rendered.container.querySelector<HTMLElement>("[data-measure-id='scaled-1']")?.parentElement;
+    assert.equal(measureRoot?.style.width, "394px", "800px client width, not transformed 400px rect, must determine columns");
+    assert.equal(completed, 0);
+    assert.equal(advances, 0);
+
+    // The initially-silent observer reports a valid but conflicting box only
+    // after the intrinsic client-metric plan has frozen.
+    const liveObserver = observers.findLast((observer) => observer.active)!;
+    await act(async () => liveObserver.callback([{ contentRect: { width: 400, height: 600 } }]));
+    await waitFor(() => assert.deepEqual(readyDurations, [expectedPageCount * 3_000]));
+    assert.deepEqual(visibleIds(), ["scaled-1", "scaled-2"]);
+    assert.deepEqual(reports, [0]);
+
+    await runDwell();
+    await waitFor(() => assert.deepEqual(reports, [0, 1]));
+    assert.deepEqual(visibleIds(), ["scaled-3", "scaled-4"]);
+    seenIds.push(...visibleIds());
+    assert.equal(completed, 0);
+    assert.equal(advances, 0);
+
+    await runDwell();
+    await waitFor(() => assert.equal(completed, 1));
+    await waitFor(() => assert.equal(advances, 1));
+    assert.deepEqual(reports, [0, 1]);
+    assert.deepEqual(seenIds, ["scaled-1", "scaled-2", "scaled-3", "scaled-4"]);
+
+    // Flush any remaining captured callback: a frozen activation cannot ready,
+    // reset, complete, or advance a second time.
+    for (const timer of [...timers.values()].filter((candidate) => !candidate.cancelled && !candidate.fired)) {
+      timer.fired = true;
+      await act(async () => timer.callback());
+    }
+    assert.deepEqual(readyDurations, [expectedPageCount * 3_000]);
+    assert.deepEqual(reports, [0, 1]);
+    assert.equal(completed, 1);
+    assert.equal(advances, 1);
+  } finally {
+    cleanup();
+    (globalThis as any).fetch = originalFetch;
+    (globalThis as any).ResizeObserver = originalObserver;
+    (window as any).ResizeObserver = originalObserver;
+    if (originalHeight) Object.defineProperty(HTMLElement.prototype, "offsetHeight", originalHeight);
+    else delete (HTMLElement.prototype as any).offsetHeight;
+    if (originalClientWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
+    else delete (HTMLElement.prototype as any).clientWidth;
+    if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+    else delete (HTMLElement.prototype as any).clientHeight;
+    if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+    else delete (HTMLElement.prototype as any).scrollHeight;
+    HTMLElement.prototype.getBoundingClientRect = originalRect;
   }
 });

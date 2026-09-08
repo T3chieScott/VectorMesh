@@ -39,8 +39,9 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { MediaAsset, LayoutZone } from "@shared/schema";
-import { getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
+import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
 import { ScreenRenderSurface } from "@/components/screen-render-surface";
+import { committedIdentityAfterReport, observedRotationSelection } from "@/lib/frame-transition";
 import { PlayerClockProvider, usePlayerClock } from "@/lib/playerClock";
 import { buildFontFaceCss } from "@/lib/fontFace";
 import { validatePreviewAtFormat } from "@shared/previewTime";
@@ -164,6 +165,8 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
   // Layout rotation: index into the zoneSources-driven rotation list
   const [layoutRotationIndex, setLayoutRotationIndex] = useState(0);
   const [weatherTimezone, setWeatherTimezone] = useState<string | undefined>(undefined);
+  const committedFrameIdentityRef = useRef<string | null>(null);
+  const [, setCommittedFrameIdentity] = useState<string | null>(null);
   const layoutRotationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const presentationFetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -199,11 +202,27 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
     [content, layoutRotationIndex],
   );
   const { rotationItems: layoutRotationItems, isLayoutRotation, layout, zones } = presentation;
-  const freshPlayerScene = presentationObservation?.state &&
+  const frameIdentity = JSON.stringify({
+    revision: presentation.revision ?? null,
+    activationEpoch: presentation.activationEpoch,
+    rotationIndex: isLayoutRotation && layoutRotationItems.length
+      ? layoutRotationIndex % layoutRotationItems.length : null,
+    sceneId: layoutRotationItems[layoutRotationIndex % Math.max(1, layoutRotationItems.length)]?.layoutTemplateId || layout?.id || "__none__",
+  });
+  if (committedFrameIdentityRef.current === null) {
+    committedFrameIdentityRef.current = frameIdentity;
+  }
+  const isFrameCommitted = committedFrameIdentityRef.current === frameIdentity;
+  const matchingPlayerScene = presentationObservation?.state &&
     presentationObservation.state.revision === presentation.revision &&
     presentationObservation.state.activationEpoch === presentation.activationEpoch
     ? presentationObservation.state
     : undefined;
+  const freshPlayerScene = isFrameCommitted ? matchingPlayerScene : undefined;
+  const observedRotationIndex = observedRotationSelection(
+    matchingPlayerScene?.sceneId,
+    layoutRotationItems.map((item) => item.layoutTemplateId),
+  );
   const followedAgendaPresentationStates = useMemo(() => {
     const report = freshPlayerScene;
     if (!report || report.revision !== presentation.revision ||
@@ -217,6 +236,15 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
   }, [freshPlayerScene, presentation.revision, presentation.activationEpoch,
     layoutRotationIndex, layoutRotationItems, layout?.id]);
   useEffect(() => {
+    // Authenticated scene selection may supersede a still-preparing candidate.
+    // Agenda page/cycle following below remains gated by freshPlayerScene,
+    // which is only exposed after that selected frame visibly commits.
+    if (observedRotationIndex !== null &&
+        observedRotationIndex !== layoutRotationIndex) {
+      setLayoutRotationIndex(observedRotationIndex);
+      return;
+    }
+    if (!isFrameCommitted) return;
     const reportedIndex = freshPlayerScene
       ? layoutRotationItems.findIndex((item) =>
           item.layoutTemplateId === freshPlayerScene.sceneId)
@@ -239,7 +267,8 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
     return () => {
       if (layoutRotationTimerRef.current) clearTimeout(layoutRotationTimerRef.current);
     };
-  }, [presentation.revision, presentation.activationEpoch, layoutRotationItems,
+  }, [presentation.revision, presentation.activationEpoch, layoutRotationItems, layoutRotationIndex,
+    isFrameCommitted, observedRotationIndex,
     freshPlayerScene?.processGeneration, freshPlayerScene?.processId,
     freshPlayerScene?.sceneId, freshPlayerScene?.sequence, getSyncedNow]);
 
@@ -549,6 +578,19 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
          * token) and the absence of a live banner.
          */}
         <ScreenRenderSurface
+          frameKey={frameIdentity}
+          onFrameCommitted={(identity) => {
+            const nextIdentity = committedIdentityAfterReport(
+              committedFrameIdentityRef.current,
+              frameIdentity,
+              identity,
+            );
+            if (nextIdentity !== identity) return;
+            committedFrameIdentityRef.current = nextIdentity;
+            setCommittedFrameIdentity(identity);
+          }}
+          emptyAgendaPolicy={isLayoutRotation ? "retain" : "commit-no-content"}
+          ZoneRendererComponent={ZoneRenderer}
           zones={zones}
           zoneKey={(zone) => isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
           media={content.media || []}

@@ -417,4 +417,27 @@ describe("Shared logical screen surface", () => {
       "monitor.tsx must import/use ScreenRenderSurface",
     );
   });
+
+  test("11. Atomic handoff uses one keyed sibling frame structure", () => {
+    const surfaceSrc = readFileSync(
+      join(__dirname, "..", "client", "src", "components", "screen-render-surface.tsx"),
+      "utf8",
+    );
+    assert.match(surfaceSrc, /function SurfaceFrameSlot/);
+    assert.match(
+      surfaceSrc,
+      /frames\.map\(\(frame\) => \(\s*<SurfaceFrameSlot key=\{frame\.identity\}/s,
+      "committed and candidate frames must be siblings in one semantic keyed list",
+    );
+    assert.match(
+      surfaceSrc,
+      /opacity: 0, visibility: "hidden", pointerEvents: "none"/,
+      "prepared sibling must be visually and interactively hidden",
+    );
+    assert.match(
+      surfaceSrc,
+      /useLayoutEffect\(\(\) => \{[\s\S]*pendingAcknowledgementRef[\s\S]*acknowledgementRef/s,
+      "host acknowledgement must follow the visible commit",
+    );
+  });
 });

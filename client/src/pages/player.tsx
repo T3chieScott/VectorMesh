@@ -13,6 +13,14 @@ type PlayerContentData = PlayerContentResponse & {
 };
 import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
 import { ScreenRenderSurface } from "@/components/screen-render-surface";
+import {
+  committedIdentityAfterReport,
+  shouldAdvanceSkippedRotation,
+  visiblePresentationEmission,
+  createVisiblePresentationEmission,
+  buildHeartbeatErrorsPayload,
+  isCompletePresentationReport,
+} from "@/lib/frame-transition";
 import { buildFontFaceCss } from "@/lib/fontFace";
 import { TestPattern } from "@/components/test-pattern";
 import html2canvas from "html2canvas";
@@ -327,12 +335,17 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     source?: string; playlistId?: string;
     agenda?: Array<{ zoneId: string; stage: string; page: number; cycle: number }>;
   }>({});
+  const presentationReportIdentityRef = useRef<string | null>(null);
   const agendaPresentationStatesRef = useRef(
     new Map<string, AgendaPresentationState>(),
   );
   const heartbeatSendRef = useRef<(() => void) | null>(null);
   const agendaHeartbeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presentationIdentityRef = useRef("");
+  // The resolver may have received a newer scene, but it is not the Player's
+  // presentation until ScreenRenderSurface has atomically made it visible.
+  const committedPresentationIdentityRef = useRef<string | null>(null);
+  const [, setCommittedPresentationIdentity] = useState<string | null>(null);
   const sceneActivationEpochRef = useRef(0);
   const sceneGenerationRef = useRef(0);
   const presentationSequenceRef = useRef(0);
@@ -818,18 +831,23 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         // Without this hop the in-memory cache is empty on a fresh
         // page lifecycle and the increase never reaches the server.
         const videoStats = getVideoStats();
-        const errorsPayload = {
-          video: videoStats,
-          // Passive presentation report for authorized monitors. This is sent
-          // on the existing authenticated player heartbeat only; monitors
-          // never create this traffic.
-          presentation: {
+        // Do this before building errors: sequence allocation itself is a
+        // visible-frame emission and must not occur for a pending candidate.
+        const visiblePresentation = isCompletePresentationReport(presentationReportRef.current)
+          ? createVisiblePresentationEmission(
+            committedPresentationIdentityRef.current,
+            presentationReportIdentityRef.current,
+            () => ({
             processId: playerProcessIdRef.current,
             processGeneration: playerProcessGenerationRef.current,
             ...presentationReportRef.current,
             sequence: ++presentationSequenceRef.current,
-          },
-        };
+            }),
+          )
+          : undefined;
+        // Passive presentation reports are omitted—not partial—until a
+        // complete committed frame report exists.
+        const errorsPayload = buildHeartbeatErrorsPayload(videoStats, visiblePresentation);
         const res = await playerFetch("/api/player/heartbeat", token, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -976,13 +994,18 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       : null,
     sceneId,
   });
-  if (presentationIdentityRef.current !== presentationIdentity) {
+  const isPresentationCommitted =
+    committedPresentationIdentityRef.current === presentationIdentity;
+  if (isPresentationCommitted && presentationIdentityRef.current !== presentationIdentity) {
     presentationIdentityRef.current = presentationIdentity;
     agendaPresentationStatesRef.current.clear();
     sceneActivationEpochRef.current = Math.floor(getSyncedNow());
     sceneGenerationRef.current += 1;
   }
-  presentationReportRef.current = {
+  const nextPresentationReport = visiblePresentationEmission(
+    committedPresentationIdentityRef.current,
+    presentationIdentity,
+    {
     revision: presentation.revision ?? undefined,
     activationEpoch: presentation.activationEpoch,
     sceneId,
@@ -993,7 +1016,12 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     agenda: [...agendaPresentationStatesRef.current.entries()].map(([zoneId, state]) => ({
       zoneId, stage: state.stage, page: state.page, cycle: state.cycle,
     })),
-  };
+    },
+  );
+  if (nextPresentationReport) {
+    presentationReportRef.current = nextPresentationReport;
+    presentationReportIdentityRef.current = presentationIdentity;
+  }
 
   // Scene and Agenda page/stage changes otherwise wait up to the regular 30s
   // heartbeat. Coalesce all presentation changes through one timer: a static
@@ -1017,8 +1045,8 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     // The heartbeat effect is declared earlier and installs heartbeatSendRef
     // before this effect runs on mount. This also queues each later semantic
     // scene transition, but not equivalent content polls/renders.
-    schedulePresentationHeartbeat();
-  }, [presentationIdentity, schedulePresentationHeartbeat]);
+    if (isPresentationCommitted) schedulePresentationHeartbeat();
+  }, [presentationIdentity, isPresentationCommitted, schedulePresentationHeartbeat]);
 
   const onAgendaPresentationState = useCallback((
     zoneId: string,
@@ -1027,10 +1055,14 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     // Zone callbacks can arrive after React has begun swapping scenes. The
     // identity reset above, plus this current-scene check, keeps an old page
     // from escaping in the next heartbeat.
-    if (!presentation.revision || presentationIdentityRef.current !== presentationIdentity) return;
+    if (!isPresentationCommitted || !presentation.revision ||
+      presentationIdentityRef.current !== presentationIdentity) return;
     const previous = agendaPresentationStatesRef.current.get(zoneId);
     agendaPresentationStatesRef.current.set(zoneId, state);
-    presentationReportRef.current = {
+    const nextReport = visiblePresentationEmission(
+      committedPresentationIdentityRef.current,
+      presentationIdentity,
+      {
       revision: presentation.revision,
       activationEpoch: presentation.activationEpoch,
       sceneId,
@@ -1041,7 +1073,11 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       agenda: [...agendaPresentationStatesRef.current.entries()].map(([id, value]) => ({
         zoneId: id, stage: value.stage, page: value.page, cycle: value.cycle,
       })),
-    };
+      },
+    );
+    if (!nextReport) return;
+    presentationReportRef.current = nextReport;
+    presentationReportIdentityRef.current = presentationIdentity;
     if (
       previous?.stage !== state.stage ||
       previous?.page !== state.page ||
@@ -1049,7 +1085,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     ) {
       schedulePresentationHeartbeat();
     }
-  }, [presentation.revision, presentation.activationEpoch, presentationIdentity, sceneId,
+  }, [presentation.revision, presentation.activationEpoch, presentationIdentity, isPresentationCommitted, sceneId,
     isLayoutRotation, layout, activePlaylistId, schedulePresentationHeartbeat]);
 
   // The shared epoch is a *join/recovery* cursor, not the physical playback
@@ -1057,14 +1093,16 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   // use their authored dwell and agenda scenes advance exclusively through
   // useAgendaSceneCompletion below.
   useEffect(() => {
+    if (!isPresentationCommitted) return;
     setLayoutRotationIndex(getPresentationRotationIndex(presentation, getSyncedNow()));
     // Intentionally only rebase when the canonical payload activates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presentationSequenceIdentity]);
+  }, [presentationSequenceIdentity, isPresentationCommitted]);
 
   const activeSceneHasAgenda = zones.some((zone) => zone.type === "agenda");
   useEffect(() => {
-    if (!shouldSchedulePresentationDwell(presentation, activeSceneHasAgenda)) return;
+    if (!isPresentationCommitted ||
+      !shouldSchedulePresentationDwell(presentation, activeSceneHasAgenda)) return;
     const durationMs = getPresentationSceneDurationMs(
       presentation,
       layoutRotationIndex,
@@ -1075,10 +1113,11 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       );
     }, durationMs);
     return () => clearTimeout(timer);
-  }, [presentationSequenceIdentity, layoutRotationIndex, activeSceneHasAgenda]);
+  }, [presentationSequenceIdentity, layoutRotationIndex, activeSceneHasAgenda, isPresentationCommitted]);
 
   const agendaCompletionBindings = useAgendaSceneCompletion({
     enabled: isLayoutRotation && layoutRotationItems.length > 1 && activeSceneHasAgenda,
+    active: isPresentationCommitted,
     playerInstanceId: screenId,
     sceneIdValue: activeLayoutItem?.layoutTemplateId || activeLayoutItem?.id || "layout",
     activationKey: layoutRotationIndex,
@@ -1086,8 +1125,8 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     media: content?.media || [],
     zones,
     onAdvance: () => setLayoutRotationIndex((previous) => (
-      layoutRotationItems.length > 1 ? (previous + 1) % layoutRotationItems.length : previous
-    )),
+        layoutRotationItems.length > 1 ? (previous + 1) % layoutRotationItems.length : previous
+      )),
   });
 
   useEffect(() => {
@@ -1699,6 +1738,36 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   // iteration, and ZoneRenderer delegation with identical props on both hosts.
   const slotContents = (
     <ScreenRenderSurface
+      frameKey={presentationIdentity}
+      onFrameCommitted={(identity) => {
+        // Ignore stale notifications defensively; SurfaceRenderSurface also
+        // rejects them before calling us.
+        const nextIdentity = committedIdentityAfterReport(
+          committedPresentationIdentityRef.current,
+          presentationIdentity,
+          identity,
+        );
+        if (nextIdentity !== identity) return;
+        committedPresentationIdentityRef.current = nextIdentity;
+        setCommittedPresentationIdentity(identity);
+      }}
+      onFrameSkipped={isLayoutRotation ? (identity) => {
+        // Only the still-desired hidden candidate may skip itself. Its
+        // coordinator was never activated, so this cannot complete A/B by
+        // mistake or emit a presentation report for the transparent scene.
+        if (!shouldAdvanceSkippedRotation({
+          rotating: isLayoutRotation,
+          desiredIdentity: presentationIdentity,
+          skippedIdentity: identity,
+          alreadyCommitted: isPresentationCommitted,
+          itemCount: layoutRotationItems.length,
+        })) return;
+        setLayoutRotationIndex((previous) =>
+          getNextPresentationRotationIndex(presentation, previous),
+        );
+      } : undefined}
+      emptyAgendaPolicy={isLayoutRotation ? "skip" : "commit-no-content"}
+      ZoneRendererComponent={ZoneRenderer}
       zones={zones}
       zoneKey={(zone) => isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
       media={content.media}
