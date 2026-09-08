@@ -15,6 +15,7 @@ import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/co
 import { ScreenRenderSurface } from "@/components/screen-render-surface";
 import {
   committedIdentityAfterReport,
+  committedSequenceAfterFrame,
   shouldAdvanceSkippedRotation,
   visiblePresentationEmission,
   createVisiblePresentationEmission,
@@ -29,6 +30,7 @@ import { persistOffset } from "@/lib/playerTimeSync";
 import { useScreenWakeLock } from "@/hooks/use-screen-wake-lock";
 import { getVideoStats } from "@/hooks/use-video-keep-alive";
 import { useAgendaSceneCompletion } from "@/hooks/use-agenda-scene-completion";
+import { useCommitGatedPresentationRebase } from "@/hooks/use-commit-gated-presentation-rebase";
 import {
   buildContentPresentation,
   claimPlayerProcessGeneration,
@@ -346,6 +348,9 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   // presentation until ScreenRenderSurface has atomically made it visible.
   const committedPresentationIdentityRef = useRef<string | null>(null);
   const [, setCommittedPresentationIdentity] = useState<string | null>(null);
+  const committedPresentationSequenceIdentityRef = useRef<string | null>(null);
+  const [committedPresentationSequenceIdentity, setCommittedPresentationSequenceIdentity] =
+    useState<string | null>(null);
   const sceneActivationEpochRef = useRef(0);
   const sceneGenerationRef = useRef(0);
   const presentationSequenceRef = useRef(0);
@@ -1092,12 +1097,18 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   // authority. Once activated this Player owns progression: ordinary scenes
   // use their authored dwell and agenda scenes advance exclusively through
   // useAgendaSceneCompletion below.
-  useEffect(() => {
-    if (!isPresentationCommitted) return;
-    setLayoutRotationIndex(getPresentationRotationIndex(presentation, getSyncedNow()));
-    // Intentionally only rebase when the canonical payload activates.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presentationSequenceIdentity, isPresentationCommitted]);
+  const isPresentationSequenceCommitted = isPresentationCommitted &&
+    committedPresentationSequenceIdentity === presentationSequenceIdentity;
+  useCommitGatedPresentationRebase(
+    presentationSequenceIdentity,
+    isPresentationSequenceCommitted,
+    () => {
+      setLayoutRotationIndex(getPresentationRotationIndex(presentation, getSyncedNow()));
+      // A Player owns local progression after this one committed join/recovery
+      // rebase. In particular, a later A -> B -> A frame wrap must not be sent
+      // back to the epoch's current wall-clock scene.
+    },
+  );
 
   const activeSceneHasAgenda = zones.some((zone) => zone.type === "agenda");
   useEffect(() => {
@@ -1750,6 +1761,14 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         if (nextIdentity !== identity) return;
         committedPresentationIdentityRef.current = nextIdentity;
         setCommittedPresentationIdentity(identity);
+        const nextSequenceIdentity = committedSequenceAfterFrame(
+          committedPresentationSequenceIdentityRef.current,
+          presentationIdentity,
+          identity,
+          presentationSequenceIdentity,
+        );
+        committedPresentationSequenceIdentityRef.current = nextSequenceIdentity;
+        setCommittedPresentationSequenceIdentity(nextSequenceIdentity);
       }}
       onFrameSkipped={isLayoutRotation ? (identity) => {
         // Only the still-desired hidden candidate may skip itself. Its
