@@ -69,8 +69,10 @@ function makeScreen(overrides: Partial<Screen> = {}): Screen {
   // column the Drizzle schema produces.
   return {
     id: "screen-1",
+    videoStatsRecoveries: 0,
     videoStatsReloads: 0,
     videoStatsLastReloadAt: null,
+    videoStatsLastRecoveryAt: null,
     ...overrides,
   } as Screen;
 }
@@ -88,6 +90,7 @@ test(`${PREFIX} decideVideoHealthUpdate: writes patch + audit row when reloads w
   assert.equal(decision.patch.videoStatsReloads, 2);
   assert.equal(decision.patch.videoStatsUpdatedAt.getTime(), now.getTime());
   assert.equal(decision.patch.videoStatsLastReloadAt?.getTime(), now.getTime());
+  assert.equal(decision.patch.videoStatsLastRecoveryAt?.getTime(), now.getTime());
   assert.ok(decision.auditLog, "expected audit log row");
   assert.equal(decision.auditLog!.action, "screen_video_reload");
   assert.equal(decision.auditLog!.entityType, "screen");
@@ -115,6 +118,19 @@ test(`${PREFIX} decideVideoHealthUpdate: equal reloads → no audit row, no last
   assert.equal(decision.patch.videoStatsLastReloadAt, undefined);
 });
 
+test(`${PREFIX} decideVideoHealthUpdate: recovery increase stamps its own event time`, () => {
+  const now = new Date("2026-04-29T10:00:00Z");
+  const decision = decideVideoHealthUpdate(
+    makeScreen({ videoStatsRecoveries: 1 }),
+    { stalls: 9, recoveries: 2, reloads: 0 },
+    now,
+  );
+
+  assert.equal(decision.patch.videoStatsLastRecoveryAt?.getTime(), now.getTime());
+  assert.equal(decision.patch.videoStatsLastReloadAt, undefined);
+  assert.equal(decision.auditLog, null);
+});
+
 test(`${PREFIX} decideVideoHealthUpdate: lower reloads (player page-load reset) → no audit row`, () => {
   // The watchdog resets to 0 whenever the player tab itself reloads.
   // Treat a decrease as "fresh page" — overwrite the counters so we
@@ -128,6 +144,20 @@ test(`${PREFIX} decideVideoHealthUpdate: lower reloads (player page-load reset) 
   assert.equal(decision.auditLog, null);
   assert.equal(decision.patch.videoStatsReloads, 0);
   assert.equal(decision.patch.videoStatsLastReloadAt, undefined);
+  assert.equal(decision.patch.videoStatsLastRecoveryAt, undefined);
+});
+
+test(`${PREFIX} decideVideoHealthUpdate: any counter decrease is a baseline, not a mixed false event`, () => {
+  const decision = decideVideoHealthUpdate(
+    makeScreen({ videoStatsStalls: 4, videoStatsRecoveries: 1, videoStatsReloads: 3 }),
+    // A reset can race a new watchdog count; do not interpret its
+    // higher recoveries as a new event while reloads have reset.
+    { stalls: 0, recoveries: 2, reloads: 0 },
+    new Date(),
+  );
+  assert.equal(decision.auditLog, null);
+  assert.equal(decision.patch.videoStatsLastReloadAt, undefined);
+  assert.equal(decision.patch.videoStatsLastRecoveryAt, undefined);
 });
 
 // ─── deriveVideoHealth (UI consumer) ─────────────────────────────
@@ -138,6 +168,7 @@ test(`${PREFIX} deriveVideoHealth: unknown when never reported`, () => {
     videoStatsRecoveries: 0,
     videoStatsReloads: 0,
     videoStatsLastReloadAt: null,
+    videoStatsLastRecoveryAt: null,
     videoStatsUpdatedAt: null,
   });
   assert.equal(v.status, "unknown");
@@ -151,6 +182,7 @@ test(`${PREFIX} deriveVideoHealth: green when reported zeroes`, () => {
       videoStatsRecoveries: 0,
       videoStatsReloads: 0,
       videoStatsLastReloadAt: null,
+      videoStatsLastRecoveryAt: null,
       videoStatsUpdatedAt: now,
     },
     now,
@@ -158,7 +190,7 @@ test(`${PREFIX} deriveVideoHealth: green when reported zeroes`, () => {
   assert.equal(v.status, "green");
 });
 
-test(`${PREFIX} deriveVideoHealth: amber when recoveries > 0 within recency window`, () => {
+test(`${PREFIX} deriveVideoHealth: ordinary heartbeat cannot prolong an old recovery amber state`, () => {
   const now = new Date("2026-04-29T10:00:00Z");
   const v = deriveVideoHealth(
     {
@@ -166,11 +198,34 @@ test(`${PREFIX} deriveVideoHealth: amber when recoveries > 0 within recency wind
       videoStatsRecoveries: 2,
       videoStatsReloads: 0,
       videoStatsLastReloadAt: null,
+      // The last heartbeat is fresh, but its recovery happened long
+      // ago. Using updatedAt here would incorrectly leave this amber.
+      videoStatsLastRecoveryAt: new Date(
+        now.getTime() - VIDEO_HEALTH_RECENT_WINDOW_MS - 1,
+      ),
       videoStatsUpdatedAt: now,
     },
     now,
   );
-  assert.equal(v.status, "amber");
+  assert.equal(v.status, "green");
+});
+
+test(`${PREFIX} deriveVideoHealth: recent genuine recovery is amber and expiry returns green`, () => {
+  const now = new Date("2026-04-29T10:00:00Z");
+  const recoveryAt = new Date(now.getTime() - 5 * 60 * 1000);
+  const base = {
+    videoStatsStalls: 5,
+    videoStatsRecoveries: 2,
+    videoStatsReloads: 0,
+    videoStatsLastReloadAt: null,
+    videoStatsLastRecoveryAt: recoveryAt,
+    videoStatsUpdatedAt: now,
+  };
+  assert.equal(deriveVideoHealth(base, now).status, "amber");
+  assert.equal(
+    deriveVideoHealth(base, new Date(recoveryAt.getTime() + VIDEO_HEALTH_RECENT_WINDOW_MS + 1)).status,
+    "green",
+  );
 });
 
 test(`${PREFIX} deriveVideoHealth: red when reload landed inside the recency window`, () => {
@@ -181,6 +236,7 @@ test(`${PREFIX} deriveVideoHealth: red when reload landed inside the recency win
       videoStatsRecoveries: 0,
       videoStatsReloads: 1,
       videoStatsLastReloadAt: new Date(now.getTime() - 5 * 60 * 1000),
+      videoStatsLastRecoveryAt: null,
       videoStatsUpdatedAt: now,
     },
     now,
@@ -202,6 +258,7 @@ test(`${PREFIX} deriveVideoHealth: stale reload (outside recency window) falls b
       videoStatsLastReloadAt: new Date(
         now.getTime() - VIDEO_HEALTH_RECENT_WINDOW_MS - 1000,
       ),
+      videoStatsLastRecoveryAt: null,
       videoStatsUpdatedAt: now,
     },
     now,
@@ -219,6 +276,7 @@ test(`${PREFIX} deriveVideoHealth: handles ISO string timestamps from JSON wire`
       videoStatsRecoveries: 0,
       videoStatsReloads: 1,
       videoStatsLastReloadAt: new Date(now.getTime() - 60_000).toISOString(),
+      videoStatsLastRecoveryAt: null,
       videoStatsUpdatedAt: now.toISOString(),
     },
     now,

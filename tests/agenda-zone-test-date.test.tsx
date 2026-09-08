@@ -125,6 +125,43 @@ function clockText(container: HTMLElement): string | null {
   return container.querySelector('[data-testid="agenda-clock"]')?.textContent ?? null;
 }
 
+function forceAgendaIndicatorOverflow() {
+  const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+  const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+    configurable: true,
+    get() {
+      const element = this as HTMLElement;
+      return element.dataset.testid?.startsWith("agenda-description-viewport-") ||
+        element.dataset.testid?.startsWith("agenda-presenter-viewport-")
+        ? 40
+        : 0;
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+    configurable: true,
+    get() {
+      const element = this as HTMLElement;
+      return element.dataset.testid?.startsWith("agenda-description-") ||
+        element.classList.contains("whitespace-pre-line")
+        ? 120
+        : 0;
+    },
+  });
+  return () => {
+    if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+    else delete (HTMLElement.prototype as any).clientHeight;
+    if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+    else delete (HTMLElement.prototype as any).scrollHeight;
+  };
+}
+
+function indicatorColor(container: HTMLElement, testId: string, property: "color" | "backgroundColor") {
+  const element = container.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+  assert.ok(element, `${testId} should render`);
+  return element.style[property];
+}
+
 test("valid atIso forwards ?at=<UTC ISO> to the fetch AND freezes the widget clock", async () => {
   const tz = "UTC";
   const fetchStub = stubFetch(buildConfig(), tz);
@@ -160,6 +197,127 @@ test("valid atIso forwards ?at=<UTC ISO> to the fetch AND freezes the widget clo
   } finally {
     cleanup();
     fetchStub.restore();
+  }
+});
+
+test("persisted Now/Next colour override reaches the standalone zone's indicator surfaces", async () => {
+  // This is the same public payload consumed by both a standalone agenda zone
+  // and the player. Keep this mounted assertion so the fetch-to-widget path
+  // cannot silently discard the persisted Task 404 settings.
+  const accent = "#0ea5e9";
+  const override = "#c026d3";
+  const fetchStub = stubFetch(buildConfig({
+    displayMode: "now_next",
+    accentColor: accent,
+    overrideNowNextColor: true,
+    nowNextColor: override,
+    showNowNextLabel: true,
+    showDescriptionDivider: true,
+    speakerMarkerStyle: "circle",
+  }), "UTC");
+  const atIso = "2031-07-04T09:15:00.000Z";
+  const { container } = render(
+    React.createElement(AgendaConfigZoneWidget, { configId: CONFIG_ID, atIso }),
+  );
+
+  try {
+    await waitFor(() => {
+      assert.ok(
+        container.querySelector('[data-testid="agenda-now-next-label-i1"]'),
+        "agenda payload has not rendered",
+      );
+    });
+    assert.equal(
+      (container.querySelector('[data-testid="agenda-now-next-label-i1"]') as HTMLElement).style.color,
+      "rgb(192, 38, 211)",
+    );
+    assert.equal(
+      (container.querySelector('[data-testid="agenda-now-next-divider-i1"]') as HTMLElement).style.backgroundColor,
+      "rgb(192, 38, 211)",
+    );
+    assert.equal(
+      (container.querySelector('[data-testid="agenda-speaker-marker-i1"]') as HTMLElement).style.color,
+      "rgb(192, 38, 211)",
+    );
+    assert.equal(
+      (container.querySelector('[data-testid="agenda-description-divider-i1"]') as HTMLElement).style.backgroundColor,
+      "rgb(192, 38, 211)",
+    );
+  } finally {
+    cleanup();
+    fetchStub.restore();
+  }
+});
+
+test("mounted Now/Next applies its override only to all six indicator targets", async () => {
+  const restoreMetrics = forceAgendaIndicatorOverflow();
+  const accent = "rgb(14, 165, 233)";
+  const override = "rgb(192, 38, 211)";
+  const view = render(<AgendaDisplayWidget
+    config={buildConfig({
+      displayMode: "now_next", accentColor: "#0ea5e9",
+      overrideNowNextColor: true, nowNextColor: "#c026d3",
+      showNowNextLabel: true, showDescriptionDivider: true,
+      descriptionLines: null, descriptionAutoScroll: true,
+      speakerMarkerStyle: "square", titleColor: "#f97316", bodyColor: "#a3e635",
+    })}
+    items={[buildItem({ startsAt: new Date("2031-07-04T09:00:00Z"), endsAt: new Date("2031-07-04T10:00:00Z") })]}
+    timezone="UTC" now={new Date("2031-07-04T09:15:00Z")} width={800} height={500}
+  />);
+  try {
+    await waitFor(() => assert.ok(view.queryByTestId("agenda-description-scroll-thumb-i1")));
+    for (const [id, property] of [
+      ["agenda-now-next-label-i1", "color"],
+      ["agenda-now-next-divider-i1", "backgroundColor"],
+      ["agenda-speaker-marker-i1", "color"],
+      ["agenda-description-divider-i1", "backgroundColor"],
+      ["agenda-presenter-scroll-thumb-i1", "backgroundColor"],
+      ["agenda-description-scroll-thumb-i1", "backgroundColor"],
+    ] as const) assert.equal(indicatorColor(view.container, id, property), override, id);
+    assert.equal(indicatorColor(view.container, "agenda-presenter-scroll-rail-i1", "backgroundColor"), "rgba(0, 0, 0, 0.24)");
+    assert.equal(indicatorColor(view.container, "agenda-description-scroll-track-i1", "backgroundColor"), "rgba(0, 0, 0, 0.24)");
+    const row = view.getByTestId("agenda-row-i1");
+    assert.equal(row.style.borderLeftColor, accent);
+    assert.equal(row.style.background, "var(--ag-card-bg-current)");
+    assert.equal(
+      (view.getByTestId("agenda-display-root").firstElementChild as HTMLElement).style.backgroundColor,
+      accent,
+    );
+    assert.equal(view.getByTestId("agenda-event-title").style.color, "rgb(249, 115, 22)");
+    assert.equal(view.getByTestId("agenda-title-i1").style.color, "rgb(163, 230, 53)");
+    assert.equal(view.getByTestId("agenda-description-i1").style.color, "rgb(163, 230, 53)");
+  } finally {
+    cleanup();
+    restoreMetrics();
+  }
+});
+
+test("mounted Full Agenda restricts the override to its square speaker marker", async () => {
+  const restoreMetrics = forceAgendaIndicatorOverflow();
+  const accent = "rgb(14, 165, 233)";
+  const override = "rgb(192, 38, 211)";
+  const view = render(<AgendaDisplayWidget
+    config={buildConfig({
+      displayMode: "full", accentColor: "#0ea5e9",
+      overrideNowNextColor: true, nowNextColor: "#c026d3",
+      showDescriptionDivider: true, descriptionLines: null,
+      descriptionAutoScroll: true, speakerMarkerStyle: "square",
+    })}
+    items={[buildItem()]} timezone="UTC" now={new Date("2031-07-04T09:15:00Z")} width={800} height={500}
+  />);
+  try {
+    await waitFor(() => assert.ok(view.queryByTestId("agenda-description-scroll-thumb-i1")));
+    assert.equal(indicatorColor(view.container, "agenda-speaker-marker-i1", "color"), override);
+    for (const [id, property] of [
+      ["agenda-description-divider-i1", "backgroundColor"],
+      ["agenda-presenter-scroll-thumb-i1", "backgroundColor"],
+      ["agenda-description-scroll-thumb-i1", "backgroundColor"],
+    ] as const) assert.equal(indicatorColor(view.container, id, property), accent, id);
+    assert.equal(indicatorColor(view.container, "agenda-presenter-scroll-rail-i1", "backgroundColor"), "rgba(0, 0, 0, 0.24)");
+    assert.equal(indicatorColor(view.container, "agenda-description-scroll-track-i1", "backgroundColor"), "rgba(0, 0, 0, 0.24)");
+  } finally {
+    cleanup();
+    restoreMetrics();
   }
 });
 
@@ -274,6 +432,74 @@ test("a new controlled activation cannot render or ready a previous payload befo
   } finally {
     cleanup();
     (globalThis as any).fetch = original;
+  }
+});
+
+test("player activation fetches and renders changed persisted agenda colour config", async () => {
+  const original = globalThis.fetch;
+  const originalObserver = (globalThis as any).ResizeObserver;
+  class PlayerSizeObserver {
+    constructor(private callback: (entries: any[]) => void) {}
+    observe() { this.callback([{ contentRect: { width: 800, height: 500 } }]); }
+    unobserve() {}
+    disconnect() {}
+  }
+  (globalThis as any).ResizeObserver = PlayerSizeObserver;
+  (window as any).ResizeObserver = PlayerSizeObserver;
+  const first = buildConfig({
+    displayMode: "now_next", overrideNowNextColor: true, nowNextColor: "#c026d3",
+    showNowNextLabel: true, speakerMarkerStyle: "circle",
+  });
+  const second = { ...first, nowNextColor: "#f97316" };
+  let calls = 0;
+  globalThis.fetch = async () => {
+    const config = calls++ === 0 ? first : second;
+    return {
+      ok: true, status: 200,
+      json: async () => ({
+        config,
+        items: [buildItem({
+          startsAt: new Date("2031-07-04T09:00:00Z"),
+          endsAt: new Date("2031-07-04T10:00:00Z"),
+        })],
+        client: { id: "c1", name: "Acme", timezone: "UTC" },
+        serverTime: 0,
+      }),
+    } as Response;
+  };
+  function PlayerActivation({ activationKey }: { activationKey: number }) {
+    const bindings = useAgendaSceneCompletion({
+      enabled: true, active: true, playerInstanceId: "player-colour",
+      sceneIdValue: "scene-colour", activationKey,
+      item: { id: "scene-colour", layoutTemplateId: "scene-colour", duration: 300 },
+      media: [], zones: [{ id: "agenda-colour", type: "agenda", agendaConfigId: CONFIG_ID } as LayoutZone],
+      onAdvance: () => {},
+    });
+    return <AgendaConfigZoneWidget
+      configId={CONFIG_ID}
+      atIso="2031-07-04T09:15:00.000Z"
+      completionBinding={bindings.get("agenda-colour")}
+    />;
+  }
+  const view = render(<PlayerActivation activationKey={0} />);
+  try {
+    await waitFor(() => assert.equal(
+      indicatorColor(view.container, "agenda-speaker-marker-i1", "color"),
+      "rgb(192, 38, 211)",
+    ));
+    view.rerender(<PlayerActivation activationKey={1} />);
+    await waitFor(() => {
+      assert.ok(calls >= 2, "next player activation must fetch a fresh payload");
+      assert.equal(
+        indicatorColor(view.container, "agenda-speaker-marker-i1", "color"),
+        "rgb(249, 115, 22)",
+      );
+    });
+  } finally {
+    cleanup();
+    globalThis.fetch = original;
+    (globalThis as any).ResizeObserver = originalObserver;
+    (window as any).ResizeObserver = originalObserver;
   }
 });
 

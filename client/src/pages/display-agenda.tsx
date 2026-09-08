@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRoute } from "wouter";
 import { AgendaDisplayWidget } from "@/components/agenda/AgendaDisplayWidget";
 import { CustomFontFaces } from "@/lib/fontFace";

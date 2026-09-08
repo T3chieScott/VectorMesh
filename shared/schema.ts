@@ -274,6 +274,10 @@ export const screens = pgTable("screens", {
   // moment the player actually refreshed itself. Used by the badge
   // to decide whether a reload is "recent" (red) or stale.
   videoStatsLastReloadAt: timestamp("video_stats_last_reload_at"),
+  // Server-stamped timestamp when the recovery counter genuinely
+  // advanced. This intentionally differs from videoStatsUpdatedAt:
+  // routine heartbeats must not keep an old recovery amber forever.
+  videoStatsLastRecoveryAt: timestamp("video_stats_last_recovery_at"),
   // Server-stamped timestamp of the most recent heartbeat that
   // carried a video-stats payload. Lets the UI distinguish "never
   // reported" from "reported zeroes" without a separate column.

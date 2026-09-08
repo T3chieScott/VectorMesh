@@ -506,6 +506,7 @@ test(`${PREFIX} cleanup detaches every listener`, () => {
 const {
   getVideoStats,
   VIDEO_STATS_STORAGE_KEY,
+  VIDEO_STATS_STORAGE_VERSION,
 } = await import("../client/src/hooks/use-video-keep-alive");
 
 interface FakeStorage {
@@ -552,7 +553,7 @@ test(`${PREFIX} Task #197: getVideoStats hydrates from sessionStorage on first c
   // Simulate the post-reload fresh page: sessionStorage already
   // carries the bumped reloads count from the pre-reload tick.
   await withFakeWindow(
-    { [VIDEO_STATS_STORAGE_KEY]: JSON.stringify({ stalls: 7, recoveries: 4, reloads: 2 }) },
+    { [VIDEO_STATS_STORAGE_KEY]: JSON.stringify({ version: VIDEO_STATS_STORAGE_VERSION, stalls: 7, recoveries: 4, reloads: 2 }) },
     () => {
       const stats = getVideoStats();
       assert.deepEqual(stats, { stalls: 7, recoveries: 4, reloads: 2 });
@@ -619,7 +620,7 @@ test(`${PREFIX} Task #197: corrupt sessionStorage value falls back to clean stat
 
 test(`${PREFIX} Task #197: negative or non-numeric values in sessionStorage are coerced to 0`, async () => {
   await withFakeWindow(
-    { [VIDEO_STATS_STORAGE_KEY]: JSON.stringify({ stalls: -3, recoveries: "abc", reloads: 5.7 }) },
+    { [VIDEO_STATS_STORAGE_KEY]: JSON.stringify({ version: VIDEO_STATS_STORAGE_VERSION, stalls: -3, recoveries: "abc", reloads: 5.7 }) },
     () => {
       const stats = getVideoStats();
       assert.deepEqual(stats, { stalls: 0, recoveries: 0, reloads: 5 });
@@ -638,7 +639,7 @@ test(`${PREFIX} Task #197: post-reload first heartbeat picks up persisted reload
   // already carries the persisted count even though no stall,
   // recovery or other watchdog event has fired yet.
   await withFakeWindow(
-    { [VIDEO_STATS_STORAGE_KEY]: JSON.stringify({ stalls: 9, recoveries: 3, reloads: 4 }) },
+    { [VIDEO_STATS_STORAGE_KEY]: JSON.stringify({ version: VIDEO_STATS_STORAGE_VERSION, stalls: 9, recoveries: 3, reloads: 4 }) },
     () => {
       // Sanity: in-memory cache is empty at the start of the new
       // page lifecycle (we wipe __vmPlayerVideoStats in withFakeWindow's
@@ -789,4 +790,168 @@ test(`${PREFIX} Task #199: with no muted option the property is left untouched (
   assert.equal(video.listeners["volumechange"]?.length ?? 0, 0, "volumechange must not be subscribed when muted is undefined");
 
   cleanup();
+});
+
+// ─── Episode state-machine regressions ────────────────────────────
+
+test(`${PREFIX} an intended=false preparation never starts playback`, async () => {
+  const video = makeFakeVideo();
+  const timer = makeManualTimer();
+  const { stats, bump } = makeStats();
+  const cleanup = attachVideoKeepAlive(video, {
+    doc: makeFakeTarget("visible"),
+    win: { addEventListener: () => {}, removeEventListener: () => {} },
+    intendedPlaying: false,
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    bump,
+  });
+
+  video.fire("pause");
+  video.fire("stalled");
+  video.fire("error");
+  timer.flush();
+  await flushMicrotasks();
+  assert.equal(video.playCalls, 0, "preparing/inactive videos must not be autoplayed");
+  assert.deepEqual(stats, { stalls: 0, recoveries: 0, reloads: 0 });
+  cleanup();
+});
+
+test(`${PREFIX} attaching an intended-playing video does not itself autoplay it`, async () => {
+  const video = makeFakeVideo();
+  const timer = makeManualTimer();
+  const cleanup = attachVideoKeepAlive(video, {
+    doc: makeFakeTarget("visible"),
+    win: { addEventListener: () => {}, removeEventListener: () => {} },
+    intendedPlaying: true,
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    bump: makeStats().bump,
+  });
+  timer.flush();
+  await flushMicrotasks();
+  assert.equal(video.playCalls, 0, "attachment is not an autoplay signal");
+  cleanup();
+});
+
+test(`${PREFIX} pause, stalled, and error coalesce into one visible recovery episode`, async () => {
+  const video = makeFakeVideo();
+  const timer = makeManualTimer();
+  const { stats, bump } = makeStats();
+  const cleanup = attachVideoKeepAlive(video, {
+    doc: makeFakeTarget("visible"),
+    win: { addEventListener: () => {}, removeEventListener: () => {} },
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    bump,
+  });
+
+  video.fire("pause");
+  video.fire("stalled");
+  video.fire("error");
+  assert.equal(timer.pendingCount(), 1, "an event storm owns one deferred retry");
+  assert.equal(stats.stalls, 1, "stalled/error is one visible incident");
+  timer.flush();
+  await flushMicrotasks();
+  assert.equal(video.playCalls, 1, "an episode owns at most one play() call");
+  assert.equal(stats.recoveries, 1, "successful episode is counted once");
+  cleanup();
+});
+
+for (const order of [
+  ["pause", "stalled", "error"],
+  ["pause", "error", "stalled"],
+  ["stalled", "pause", "error"],
+  ["stalled", "error", "pause"],
+  ["error", "pause", "stalled"],
+  ["error", "stalled", "pause"],
+] as const) {
+  test(`${PREFIX} ${order.join(" → ")} is one recorded incident and one retry`, async () => {
+    const video = makeFakeVideo();
+    const timer = makeManualTimer();
+    const { stats, bump } = makeStats();
+    const cleanup = attachVideoKeepAlive(video, {
+      doc: makeFakeTarget("visible"),
+      win: { addEventListener: () => {}, removeEventListener: () => {} },
+      setTimeoutFn: timer.setTimeoutFn,
+      clearTimeoutFn: timer.clearTimeoutFn,
+      bump,
+    });
+
+    for (const event of order) video.fire(event);
+    // A trailing duplicate from the browser's event storm cannot reopen it.
+    video.fire("stalled");
+    video.fire("error");
+    video.fire("pause");
+    assert.equal(stats.stalls, 1, "stalled/error has one operator-visible count");
+    assert.equal(timer.pendingCount(), 1, "the episode has exactly one timer");
+    timer.flush();
+    await flushMicrotasks();
+    assert.equal(video.playCalls, 1, "the episode has exactly one play() retry");
+    assert.equal(stats.recoveries, 1);
+    cleanup();
+  });
+}
+
+test(`${PREFIX} cleanup while a recovery is scheduled cancels its only retry`, async () => {
+  const video = makeFakeVideo();
+  const timer = makeManualTimer();
+  const cleanup = attachVideoKeepAlive(video, {
+    doc: makeFakeTarget("visible"),
+    win: { addEventListener: () => {}, removeEventListener: () => {} },
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    bump: makeStats().bump,
+  });
+  video.fire("pause");
+  assert.equal(timer.pendingCount(), 1);
+  cleanup(); // unmount / intended-playing lifecycle change
+  assert.equal(timer.pendingCount(), 0);
+  timer.flush();
+  await flushMicrotasks();
+  assert.equal(video.playCalls, 0);
+});
+
+test(`${PREFIX} cleanup while play is in-flight cannot report recovery or retry`, async () => {
+  const video = makeFakeVideo();
+  let resolvePlay: (() => void) | undefined;
+  video.play = () => {
+    video.playCalls += 1;
+    return new Promise<void>((resolve) => { resolvePlay = resolve; });
+  };
+  const timer = makeManualTimer();
+  const { stats, bump } = makeStats();
+  const cleanup = attachVideoKeepAlive(video, {
+    doc: makeFakeTarget("visible"),
+    win: { addEventListener: () => {}, removeEventListener: () => {} },
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    bump,
+  });
+  video.fire("pause");
+  timer.flush();
+  assert.equal(video.playCalls, 1);
+  cleanup(); // unmount / intended-playing lifecycle change
+  resolvePlay?.();
+  await flushMicrotasks();
+  assert.equal(stats.recoveries, 0, "a detached element cannot publish recovery");
+  video.fire("error");
+  await flushMicrotasks();
+  assert.equal(video.playCalls, 1, "detached listeners cannot start another retry");
+});
+
+test(`${PREFIX} stale session stats reset once but current-version counters survive`, async () => {
+  await withFakeWindow(
+    { [VIDEO_STATS_STORAGE_KEY]: JSON.stringify({ stalls: 99, recoveries: 99, reloads: 99 }) },
+    (storage) => {
+      assert.deepEqual(getVideoStats(), { stalls: 0, recoveries: 0, reloads: 0 });
+      const reset = JSON.parse(storage.getItem(VIDEO_STATS_STORAGE_KEY)!) as { version: number };
+      assert.equal(reset.version, VIDEO_STATS_STORAGE_VERSION);
+      delete (globalThis as { window: Record<string, unknown> }).window.__vmPlayerVideoStats;
+      storage.setItem(VIDEO_STATS_STORAGE_KEY, JSON.stringify({
+        version: VIDEO_STATS_STORAGE_VERSION, stalls: 2, recoveries: 3, reloads: 4,
+      }));
+      assert.deepEqual(getVideoStats(), { stalls: 2, recoveries: 3, reloads: 4 });
+    },
+  );
 });

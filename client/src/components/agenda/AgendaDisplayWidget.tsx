@@ -582,6 +582,65 @@ export function resolveDescriptionViewportMaxHeight(
   );
 }
 
+export interface DescriptionViewportSizingInput {
+  allocatedCardHeight: number | null;
+  naturalCardHeight: number;
+  fixedCardHeight: number;
+  descriptionContentHeight: number;
+  minimumViewportHeight: number;
+}
+
+export interface DescriptionViewportSizing {
+  /** A finite description viewport is needed only after real text overflow. */
+  shouldBound: boolean;
+  viewportMaxHeight: number | null;
+}
+
+/**
+ * Decides whether an auto-scroll card needs to leave its intrinsic path.
+ *
+ * In particular, a short NOW/NEXT card must not inherit a `1fr` row merely
+ * because scrolling is enabled. We first render it at max-content, measure
+ * the actual description, and only then constrain that description when it
+ * cannot fit in the card's finite page share.
+ */
+export function resolveDescriptionViewportSizing({
+  allocatedCardHeight,
+  naturalCardHeight,
+  fixedCardHeight,
+  descriptionContentHeight,
+  minimumViewportHeight,
+}: DescriptionViewportSizingInput): DescriptionViewportSizing {
+  if (
+    allocatedCardHeight == null ||
+    !Number.isFinite(allocatedCardHeight) ||
+    !Number.isFinite(naturalCardHeight) ||
+    !Number.isFinite(fixedCardHeight) ||
+    !Number.isFinite(descriptionContentHeight) ||
+    allocatedCardHeight <= 0 ||
+    descriptionContentHeight <= 0
+  ) {
+    return { shouldBound: false, viewportMaxHeight: null };
+  }
+
+  const availableDescriptionHeight = Math.max(0, allocatedCardHeight - fixedCardHeight);
+  const descriptionOverflowsAllocation =
+    naturalCardHeight > allocatedCardHeight &&
+    descriptionContentHeight > availableDescriptionHeight;
+  if (!descriptionOverflowsAllocation) {
+    return { shouldBound: false, viewportMaxHeight: null };
+  }
+
+  return {
+    shouldBound: true,
+    viewportMaxHeight: resolveDescriptionViewportMaxHeight(
+      allocatedCardHeight,
+      fixedCardHeight,
+      minimumViewportHeight,
+    ),
+  };
+}
+
 export function isDescriptionAutoScrollMode(
   descriptionAutoScroll: boolean | null | undefined,
   descriptionLines: number | null | undefined,
@@ -673,10 +732,37 @@ function shouldShowStatusMessage(status: unknown): boolean {
 
 type NowNextItemLabel = "NOW" | "NEXT";
 
-function resolveNowNextColor(config: AgendaWidgetConfig, accentColor?: string): string | undefined {
-  return config.overrideNowNextColor === true
-    ? config.nowNextColor || accentColor || config.accentColor
-    : accentColor || config.accentColor;
+export type AgendaIndicatorColorTarget =
+  | "now-next-heading"
+  | "now-next-divider"
+  | "speaker-marker"
+  | "description-divider"
+  | "presenter-scroll-thumb"
+  | "description-scroll-thumb";
+
+/**
+ * Returns the colour for the small, semantic indicators that may opt into the
+ * Now/Next override.  Stored configs can predate validation or arrive from an
+ * older player payload, so never trust an override merely because it is set.
+ * Card chrome and ordinary text deliberately do not call this resolver.
+ */
+export function resolveEffectiveAgendaIndicatorColor(
+  config: AgendaWidgetConfig,
+  target: AgendaIndicatorColorTarget,
+  accentColor?: string,
+): string | undefined {
+  const ordinaryAccent = accentColor || config.accentColor;
+  const override = config.nowNextColor;
+  const hasValidOverride =
+    config.overrideNowNextColor === true &&
+    typeof override === "string" &&
+    /^#[0-9a-fA-F]{6}$/.test(override);
+  if (!hasValidOverride) return ordinaryAccent;
+
+  // A Full Agenda only uses the override for its speaker dot. All other
+  // Full Agenda separators and scroll thumbs remain on the ordinary accent.
+  if (target === "speaker-marker") return override;
+  return config.displayMode === "now_next" ? override : ordinaryAccent;
 }
 
 function resolveNowNextItemLabel(
@@ -742,7 +828,13 @@ function SpeakerMarker({
     <span
       aria-hidden="true"
       className="mr-1 inline-block"
-      style={marker.usesAccent ? { color: accentColor || config.accentColor } : undefined}
+      style={marker.usesAccent ? {
+        color: resolveEffectiveAgendaIndicatorColor(
+          config,
+          "speaker-marker",
+          accentColor,
+        ),
+      } : undefined}
       data-testid={testId}
     >
       {marker.glyph}
@@ -986,12 +1078,12 @@ function AgendaRow({
   const roleSizes = resolveAgendaRoleSizes(config);
   const endTimeMult = roleSizes.time * (0.75 / AGENDA_ROLE_SIZE_DEFAULTS.time);
   const descMult = roleSizes.body * (0.8 / AGENDA_ROLE_SIZE_DEFAULTS.body);
-  // Full Agenda and Now/Next deliberately have different sizing contracts.
-  // Full cards are content-sized; Now/Next cards occupy their allocated slot
-  // and let CSS flexbox, rather than a JS cap, give the description its share.
+  // NOW/NEXT starts content-sized: a short card must leave unused zone space
+  // outside the card rather than becoming a full-height 1fr surface. Full
+  // Agenda retains its established intrinsic-card sizing path below.
   const nowNextMode = config.displayMode === "now_next";
   const allocatedH =
-    !nowNextMode && pageH != null && pageItemCount != null
+    pageH != null && pageItemCount != null
       ? Math.max(0, (pageH - (pageItemCount - 1) * SCROLL_ROW_GAP) / pageItemCount)
       : null;
   const descriptionMinViewportPx =
@@ -1043,6 +1135,7 @@ function AgendaRow({
   const [descriptionContentHeight, setDescriptionContentHeight] = useState(0);
   const [descriptionViewportMaxHeight, setDescriptionViewportMaxHeight] =
     useState<number | null>(null);
+  const [descriptionIsBounded, setDescriptionIsBounded] = useState(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
 
   // CSS transform state for the scrolling animation.
@@ -1060,7 +1153,35 @@ function AgendaRow({
     // has settled (clientHeight > 0). Both values are read from separate
     // elements so neither is affected by overflow:hidden on an ancestor.
     if (!viewport || !inner || viewport.clientHeight <= 0) return;
-    if (!nowNextMode && cardRef.current && allocatedH != null) {
+    if (nowNextMode && cardRef.current && allocatedH != null) {
+      const fixedCardHeight = Math.max(
+        0,
+        cardRef.current.offsetHeight - viewport.clientHeight,
+      );
+      const sizing = resolveDescriptionViewportSizing({
+        allocatedCardHeight: allocatedH,
+        // Once a cap is applied offsetHeight is no longer the natural card
+        // height. Reconstruct the measured intrinsic candidate from the
+        // stationary card chrome plus the un-clipped paragraph so the bounded
+        // state remains stable across ResizeObserver passes.
+        naturalCardHeight: Math.max(
+          cardRef.current.offsetHeight,
+          fixedCardHeight + inner.scrollHeight,
+        ),
+        fixedCardHeight,
+        descriptionContentHeight: inner.scrollHeight,
+        minimumViewportHeight: descriptionMinViewportPx,
+      });
+      const maxViewportHeight = sizing.viewportMaxHeight;
+      setDescriptionViewportMaxHeight((prev) =>
+        prev === maxViewportHeight ? prev : maxViewportHeight,
+      );
+      setDescriptionIsBounded((prev) =>
+        prev === sizing.shouldBound ? prev : sizing.shouldBound,
+      );
+    } else if (!nowNextMode && cardRef.current && allocatedH != null) {
+      // Full Agenda's original contract: the card itself remains intrinsic
+      // and only its description viewport receives the finite page budget.
       const fixedCardHeight = Math.max(
         0,
         cardRef.current.offsetHeight - viewport.clientHeight,
@@ -1073,6 +1194,7 @@ function AgendaRow({
       setDescriptionViewportMaxHeight((prev) =>
         prev === maxViewportHeight ? prev : maxViewportHeight,
       );
+      setDescriptionIsBounded((prev) => (prev ? false : prev));
     }
     const viewportHeight = viewport.clientHeight;
     const contentHeight = inner.scrollHeight;
@@ -1096,17 +1218,14 @@ function AgendaRow({
       setDescriptionViewportHeight(0);
       setDescriptionContentHeight(0);
       setDescriptionViewportMaxHeight(null);
+      setDescriptionIsBounded(false);
       return;
-    }
-    if (nowNextMode) {
-      setDescriptionViewportMaxHeight((prev) => (prev === null ? prev : null));
     }
     doMeasureRef.current();
   // onScrollOverflow intentionally omitted — captured via doMeasureRef.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     scrollEnabled,
-    nowNextMode,
     allocatedH,
     descriptionMinViewportPx,
     item.id,
@@ -1194,29 +1313,40 @@ function AgendaRow({
     translateY,
   );
   const descriptionDividerEnabled = config.showDescriptionDivider === true;
-  const descriptionAccent = accentColor || config.accentColor || "currentColor";
-  const nowNextColor = resolveNowNextColor(config, accentColor);
+  const descriptionDividerColor =
+    resolveEffectiveAgendaIndicatorColor(
+      config,
+      "description-divider",
+      accentColor,
+    ) || "currentColor";
+  const descriptionScrollThumbColor =
+    resolveEffectiveAgendaIndicatorColor(
+      config,
+      "description-scroll-thumb",
+      accentColor,
+    ) || "currentColor";
+  const nowNextHeadingColor = resolveEffectiveAgendaIndicatorColor(
+    config,
+    "now-next-heading",
+    accentColor,
+  );
+  const nowNextDividerColor = resolveEffectiveAgendaIndicatorColor(
+    config,
+    "now-next-divider",
+    accentColor,
+  );
 
   return (
     <div
-      // Task #382 — when scrollEnabled the card is bounded only when its
-      // natural content is taller than the available space. The flex body
-      // column then lets the description viewport shrink to the remaining
-      // space and report genuine overflow.
-      //
-      // The bounded grid supplies the upper edge. The automatic minimum
-      // retains the fixed card content while the description viewport alone
-      // may shrink. The card itself stays intrinsic; the finite budget is
-      // applied to the description viewport after fixed content is measured.
+      // Only NOW/NEXT is intrinsic-first. Once its measured description
+      // exceeds the finite share, bound both card and viewport so text cannot
+      // paint beyond the Agenda zone. Full Agenda remains description-only.
       ref={cardRef}
       className={`flex ${nowNextMode && scrollEnabled ? "items-stretch" : "items-start"} gap-4 rounded-lg px-4 py-3`}
       style={{
         ...cardStyle,
-        // Now/Next is a slot-filling surface. Do not use the Full Agenda
-        // intrinsic-height contract here: the body must receive the CSS
-        // remaining space in the allocated row.
-        ...(nowNextMode && scrollEnabled
-          ? { height: "100%", alignSelf: "stretch", minHeight: 0 }
+        ...(nowNextMode && descriptionIsBounded && allocatedH != null
+          ? { maxHeight: allocatedH, overflow: "hidden" }
           : {}),
       }}
       data-testid={tid(`agenda-row-${item.id}`)}
@@ -1268,13 +1398,13 @@ function AgendaRow({
       <div
         className={`flex-1 min-w-0${
           scrollEnabled ? " flex flex-col min-h-0" : ""
-        }${nowNextMode && scrollEnabled ? " h-full self-stretch" : ""}`}
+        }`}
       >
         {nowNextLabel && (
           <div className={`${scrollEnabled ? "shrink-0 " : ""}mb-1`}>
             <p
               className="font-semibold uppercase tracking-widest"
-              style={{ fontSize: scale * 0.62, color: nowNextColor }}
+              style={{ fontSize: scale * 0.62, color: nowNextHeadingColor }}
               data-testid={tid(`agenda-now-next-label-${item.id}`)}
             >
               {nowNextLabel}
@@ -1291,7 +1421,7 @@ function AgendaRow({
             <div
               aria-hidden="true"
               data-testid={tid(`agenda-now-next-divider-${item.id}`)}
-              style={{ height: 1, backgroundColor: nowNextColor, opacity: 0.7, marginTop: scale * 0.2 }}
+              style={{ height: 1, backgroundColor: nowNextDividerColor, opacity: 0.7, marginTop: scale * 0.2 }}
             />
           </div>
         )}
@@ -1351,7 +1481,11 @@ function AgendaRow({
                   text={item.presenter}
                   lines={presenterVisibleLines}
                   fontSize={scale * roleSizes.body}
-                  accentColor={accentColor || config.accentColor}
+                  accentColor={resolveEffectiveAgendaIndicatorColor(
+                    config,
+                    "presenter-scroll-thumb",
+                    accentColor,
+                  )}
                   onOverflow={onScrollOverflow}
                   resetTick={scrollResetTick}
                   reducedMotion={prefersReducedMotion}
@@ -1367,7 +1501,7 @@ function AgendaRow({
               <div
                 aria-hidden="true"
                 className={`mt-2 ${scrollEnabled ? "mb-0" : "mb-1"} h-px w-full opacity-70${scrollEnabled ? " shrink-0" : ""}`}
-                style={{ backgroundColor: descriptionAccent }}
+                style={{ backgroundColor: descriptionDividerColor }}
                 data-testid={tid(`agenda-description-divider-${item.id}`)}
               />
             )}
@@ -1420,7 +1554,7 @@ function AgendaRow({
                         height: descriptionScrollIndicator.thumbHeight,
                         transform: `translateY(${descriptionScrollIndicator.thumbOffset}px)`,
                         borderRadius: 9999,
-                        backgroundColor: descriptionAccent,
+                        backgroundColor: descriptionScrollThumbColor,
                         opacity: 0.9,
                         transition:
                           transitionMs > 0
@@ -1588,18 +1722,18 @@ function BoundedScrollGrid({
   const cols = numCols ?? 2;
   const numRows = Math.ceil(pageItems.length / cols);
   const nowNextMode = config.displayMode === "now_next";
-  const rowTrack = nowNextMode
-    ? "minmax(0, 1fr)"
-    : "max-content";
+  // NOW/NEXT no longer uses a 1fr row: short cards retain their intrinsic
+  // height. Full Agenda remains on its existing max-content row contract.
+  const rowTrack = "max-content";
   return (
     <div
-      className="flex-1 min-h-0"
+      className={`flex-1 min-h-0${nowNextMode ? " overflow-hidden" : ""}`}
       style={{
         display: "grid",
         gridTemplateColumns: `repeat(${cols}, 1fr)`,
-        // Full rows are max-content and therefore never absorb leftover
-        // height. Now/Next rows use the zero-minimum flexible track so the
-        // card fills its slot and CSS flexbox owns the remaining viewport.
+        // Rows remain max-content, leaving unused space outside short
+        // NOW/NEXT cards. Only the NOW/NEXT grid clips residual overflow;
+        // Full Agenda keeps its established description-only sizing behavior.
         gridTemplateRows: `repeat(${numRows}, ${rowTrack})`,
         gap: SCROLL_ROW_GAP,
         // Fill columns first so sessions read chronologically top-to-bottom
@@ -1734,7 +1868,10 @@ function TotemNowNext({
     : null;
   const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
   const bodyStyle = roleColors.body ? { color: roleColors.body } : undefined;
-  const nowNextColor = resolveNowNextColor(config);
+  const nowNextColor = resolveEffectiveAgendaIndicatorColor(
+    config,
+    "now-next-heading",
+  );
   return (
     <div className="flex-1 flex flex-col gap-6 overflow-hidden">
       {(!hasSemanticStage || showingNow) && <section>

@@ -26,6 +26,13 @@ export interface VideoKeepAliveOptions {
    */
   enabled?: boolean;
   /**
+   * Playback is deliberately wanted by the owning player.  This is separate
+   * from `enabled`: an attached, active video can be preparing, stopped, or
+   * otherwise intentionally paused and must never be started by the
+   * watchdog.
+   */
+  intendedPlaying?: boolean;
+  /**
    * Task #199 — desired `muted` state for the element. When set
    * (the player passes `true` for every video unless an operator
    * explicitly opts in to audio) the hook imperatively enforces
@@ -52,6 +59,8 @@ export interface VmPlayerVideoStats {
   stalls: number;
   recoveries: number;
   reloads: number;
+  /** Wall-clock time of the latest successful watchdog recovery. */
+  lastRecoveryAt?: number;
 }
 
 const STAT_KEY = "__vmPlayerVideoStats";
@@ -62,6 +71,7 @@ const STAT_KEY = "__vmPlayerVideoStats";
 // the pre-reload one, the server would never see the increase, and
 // neither the audit-log row nor the red badge would ever trigger.
 export const VIDEO_STATS_STORAGE_KEY = "vm:video-stats";
+export const VIDEO_STATS_STORAGE_VERSION = 2;
 export const FAILURE_WINDOW_MS = 60_000;
 export const MAX_CONSECUTIVE_FAILURES = 5;
 export const RESUME_DELAY_MS = 250;
@@ -75,17 +85,30 @@ function readStorageStats(): VmPlayerVideoStats | null {
     if (typeof window === "undefined" || !window.sessionStorage) return null;
     const raw = window.sessionStorage.getItem(VIDEO_STATS_STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<VmPlayerVideoStats>;
+    const parsed = JSON.parse(raw) as Partial<VmPlayerVideoStats> & { version?: unknown };
+    // This is intentionally a reset rather than a migration. Older versions
+    // could record duplicate recoveries and should not be reported as though
+    // they were produced by this state machine. A valid current-version value
+    // remains intact across ordinary (including watchdog) reloads.
+    if (parsed.version !== VIDEO_STATS_STORAGE_VERSION) {
+      writeStorageStats(emptyStats());
+      return emptyStats();
+    }
     // Defensive: only trust finite, non-negative integers. Anything
     // else means the storage was tampered with or written by an
     // older format — fall back to a clean slate rather than poison
     // the in-memory counter.
     const coerce = (n: unknown) =>
       typeof n === "number" && Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+    const lastRecoveryAt = typeof parsed.lastRecoveryAt === "number" &&
+      Number.isFinite(parsed.lastRecoveryAt) && parsed.lastRecoveryAt >= 0
+      ? Math.floor(parsed.lastRecoveryAt)
+      : undefined;
     return {
       stalls: coerce(parsed.stalls),
       recoveries: coerce(parsed.recoveries),
       reloads: coerce(parsed.reloads),
+      ...(lastRecoveryAt === undefined ? {} : { lastRecoveryAt }),
     };
   } catch {
     return null;
@@ -95,7 +118,10 @@ function readStorageStats(): VmPlayerVideoStats | null {
 function writeStorageStats(stats: VmPlayerVideoStats) {
   try {
     if (typeof window === "undefined" || !window.sessionStorage) return;
-    window.sessionStorage.setItem(VIDEO_STATS_STORAGE_KEY, JSON.stringify(stats));
+    window.sessionStorage.setItem(
+      VIDEO_STATS_STORAGE_KEY,
+      JSON.stringify({ version: VIDEO_STATS_STORAGE_VERSION, ...stats }),
+    );
   } catch {
     // sessionStorage can throw under quota/security restrictions —
     // never let stat bookkeeping take down the watchdog.
@@ -117,6 +143,14 @@ function bumpStat(key: keyof VmPlayerVideoStats) {
   const stats = ensureWindowStats();
   if (!stats) return;
   stats[key] = (stats[key] || 0) + 1;
+  writeStorageStats(stats);
+}
+
+function recordRecoveryAt(timestamp: number) {
+  const stats = ensureWindowStats();
+  if (!stats) return;
+  stats.recoveries = (stats.recoveries || 0) + 1;
+  stats.lastRecoveryAt = timestamp;
   writeStorageStats(stats);
 }
 
@@ -166,6 +200,9 @@ export interface KeepAliveDeps {
    * that don't model audio). See `VideoKeepAliveOptions.muted`.
    */
   muted?: boolean;
+  /** See VideoKeepAliveOptions.intendedPlaying. Defaults to true for callers
+   * of the low-level helper that already attach only to intended playback. */
+  intendedPlaying?: boolean;
 }
 
 /**
@@ -193,11 +230,23 @@ export function attachVideoKeepAlive(
   const clearTimer = deps.clearTimeoutFn ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
   const now = deps.nowFn ?? (() => Date.now());
   const bump = deps.bump ?? bumpStat;
+  const intendedPlaying = deps.intendedPlaying ?? true;
 
   let cancelled = false;
   let failures = 0;
   let lastFailureAt = 0;
   let resumeTimer: unknown = null;
+  // A single constant-space episode state machine.  Event storms are common
+  // (`pause`, `stalled`, and `error` often arrive together), so an incident
+  // may own at most one timer and one play promise.
+  // Recovery ownership and whether the operator-visible incident was
+  // recorded are deliberately independent. A pause often arrives before
+  // stalled/error; tying the counter to scheduling silently loses that
+  // incident. Conversely stalled/error can arrive before pause and must not
+  // schedule a second retry.
+  let episode: "idle" | "scheduled" | "playing" | "settled" = "idle";
+  let stallRecorded = false;
+  let playPromise: Promise<boolean> | null = null;
 
   // Task #199 — pin the element to its intended muted state. A muted
   // <video> never participates in Chromium's audio-focus arbitration,
@@ -219,10 +268,35 @@ export function attachVideoKeepAlive(
   // Enforce immediately on attach, before any play() can fire.
   assertMuted();
 
-  const tryPlay = async (): Promise<boolean> => {
-    if (cancelled) return false;
-    if (!video.paused) return false;
-    if (video.ended && !video.loop) return false;
+  const isEligible = () =>
+    !cancelled &&
+    intendedPlaying &&
+    doc?.visibilityState !== "hidden" &&
+    video.paused &&
+    !(video.ended && !video.loop);
+
+  const finishRecovery = (ok: boolean) => {
+    playPromise = null;
+    if (cancelled) return;
+    if (ok) {
+      // Do not allow duplicate events between play() resolving and the DOM
+      // `playing` event to produce a second recovery.
+      episode = "settled";
+      if (deps.bump) bump("recoveries");
+      else recordRecoveryAt(now());
+    } else {
+      // The failed retry closes this recovery attempt. A later media incident
+      // can form a new episode and is the only route toward the existing
+      // failed-retry reload threshold.
+      episode = "idle";
+      stallRecorded = false;
+    }
+  };
+
+  const tryPlay = (): Promise<boolean> => {
+    if (!isEligible() || playPromise) return playPromise ?? Promise.resolve(false);
+    episode = "playing";
+    const attempt = (async (): Promise<boolean> => {
     try {
       const promise = video.play();
       if (promise && typeof (promise as Promise<void>).then === "function") {
@@ -240,21 +314,27 @@ export function attachVideoKeepAlive(
       handleRetryFailure();
       return false;
     }
+    })();
+    playPromise = attempt;
+    void attempt.then(finishRecovery);
+    return attempt;
   };
 
-  const scheduleResume = () => {
-    if (resumeTimer) clearTimer(resumeTimer);
+  const beginEpisode = (visibleIncident: boolean, immediate = false) => {
+    if (!visibleIncident || !isEligible() || episode !== "idle") return;
+    episode = "scheduled";
+    if (immediate) {
+      void tryPlay();
+      return;
+    }
     resumeTimer = setTimer(() => {
       resumeTimer = null;
-      if (cancelled) return;
-      if (video.paused && !(video.ended && !video.loop)) {
-        // Recovery counter only ticks on a play() that actually
-        // resolves — counting attempts would over-report and mask
-        // chronically failing streams.
-        void tryPlay().then((ok) => {
-          if (ok && !cancelled) bump("recoveries");
-        });
+      if (episode !== "scheduled") return;
+      if (!isEligible()) {
+        episode = "idle";
+        return;
       }
+      void tryPlay();
     }, RESUME_DELAY_MS);
   };
 
@@ -280,29 +360,51 @@ export function attachVideoKeepAlive(
     // up unmuted), re-mute before resuming so the next play() can't be
     // paused again for the same reason.
     assertMuted();
-    scheduleResume();
+    if (episode === "settled") {
+      episode = "idle";
+      stallRecorded = false;
+    }
+    beginEpisode(true);
   };
   const onStalled = () => {
     // Bump the operator-visible stat, but DO NOT touch the reload
     // threshold — that escalation only fires when retries fail.
-    bump("stalls");
-    scheduleResume();
+    if (!isEligible()) return;
+    // Stalled/error are operator-visible only for a real foreground
+    // incident; their common paired delivery counts once.
+    if (episode === "settled") {
+      episode = "idle";
+      stallRecorded = false;
+    }
+    if (!stallRecorded) {
+      stallRecorded = true;
+      bump("stalls");
+    }
+    beginEpisode(true);
   };
   const onError = () => {
-    bump("stalls");
-    scheduleResume();
+    if (!isEligible()) return;
+    if (episode === "settled") {
+      episode = "idle";
+      stallRecorded = false;
+    }
+    if (!stallRecorded) {
+      stallRecorded = true;
+      bump("stalls");
+    }
+    beginEpisode(true);
   };
   // `suspend` is benign and fires often during normal buffering — we
   // do NOT treat it as a stall, but it is a useful prompt to verify
   // we're still playing. If we are, scheduleResume short-circuits as
   // a no-op; if we silently stalled, this kicks us back to life.
   const onSuspend = () => {
-    if (!video.paused) return;
-    if (video.ended && !video.loop) return;
-    scheduleResume();
+    beginEpisode(true);
   };
   const onPlaying = () => {
     failures = 0;
+    episode = "idle";
+    stallRecorded = false;
     // Re-assert at the moment playback (re)starts — the most likely
     // point at which a stale unmuted state would otherwise cause the
     // next audio-focus steal to pause us again.
@@ -317,29 +419,19 @@ export function attachVideoKeepAlive(
   const onVisibility = () => {
     if (!doc) return;
     if (doc.visibilityState !== "visible") return;
-    if (video.paused && !(video.ended && !video.loop)) {
-      void tryPlay().then((ok) => {
-        if (ok && !cancelled) bump("recoveries");
-      });
-    }
+    // Visibility is a prompt, not initial autoplay. It merely starts the
+    // deferred episode if this active video is unexpectedly still paused.
+    beginEpisode(true, true);
   };
   const onPageShow = () => {
-    if (video.paused && !(video.ended && !video.loop)) {
-      void tryPlay().then((ok) => {
-        if (ok && !cancelled) bump("recoveries");
-      });
-    }
+    beginEpisode(true, true);
   };
   // The player root broadcasts `vm:player-wake` whenever any
   // lifecycle thaw event lands (visibilitychange/focus/pageshow/
   // resume). Each video subscribes individually so they receive the
   // signal even if the root happens to walk a stale DOM snapshot.
   const onPlayerWake = () => {
-    if (video.paused && !(video.ended && !video.loop)) {
-      void tryPlay().then((ok) => {
-        if (ok && !cancelled) bump("recoveries");
-      });
-    }
+    beginEpisode(true, true);
   };
 
   video.addEventListener("pause", onPause);
@@ -359,6 +451,8 @@ export function attachVideoKeepAlive(
   return () => {
     cancelled = true;
     if (resumeTimer) clearTimer(resumeTimer);
+    resumeTimer = null;
+    playPromise = null;
     video.removeEventListener("pause", onPause);
     video.removeEventListener("stalled", onStalled);
     video.removeEventListener("error", onError);
@@ -379,11 +473,12 @@ export function useVideoKeepAlive(
 ): void {
   const enabled = options.enabled ?? true;
   const muted = options.muted;
+  const intendedPlaying = options.intendedPlaying ?? enabled;
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !intendedPlaying) return;
     const v = ref.current;
     if (!v) return;
-    return attachVideoKeepAlive(v as unknown as KeepAliveVideoLike, { muted });
-  }, [enabled, muted, ref]);
+    return attachVideoKeepAlive(v as unknown as KeepAliveVideoLike, { muted, intendedPlaying });
+  }, [enabled, muted, intendedPlaying, ref]);
 }

@@ -38,7 +38,7 @@ test(`${PREFIX} bucketVideoHealthSamples: monotonic counters credit positive del
   assert.equal(sumStalls, 3, "1 + 2 stall events across the diffs");
 });
 
-test(`${PREFIX} bucketVideoHealthSamples: counter reset is treated as new events, never negative`, () => {
+test(`${PREFIX} bucketVideoHealthSamples: counter decrease replaces the baseline without false history`, () => {
   const buckets = bucketVideoHealthSamples(
     [
       { timestamp: new Date(NOW.getTime() - 2.5 * HOUR), stalls: 5, recoveries: 5, reloads: 7 },
@@ -55,9 +55,24 @@ test(`${PREFIX} bucketVideoHealthSamples: counter reset is treated as new events
     }),
     { stalls: 0, recoveries: 0, reloads: 0 },
   );
-  assert.equal(totals.reloads, 1);
-  assert.equal(totals.stalls, 2);
-  assert.equal(totals.recoveries, 1);
+  assert.equal(totals.reloads, 0);
+  assert.equal(totals.stalls, 0);
+  assert.equal(totals.recoveries, 0);
+});
+
+test(`${PREFIX} bucketVideoHealthSamples: mixed values after a reset create no false positive delta`, () => {
+  const buckets = bucketVideoHealthSamples(
+    [
+      { timestamp: new Date(NOW.getTime() - 2.5 * HOUR), stalls: 5, recoveries: 1, reloads: 5 },
+      { timestamp: new Date(NOW.getTime() - 1.5 * HOUR), stalls: 0, recoveries: 2, reloads: 0 },
+    ],
+    { now: NOW },
+  );
+  const totals = buckets.reduce(
+    (acc, bucket) => acc + bucket.stalls + bucket.recoveries + bucket.reloads,
+    0,
+  );
+  assert.equal(totals, 0);
 });
 
 test(`${PREFIX} bucketVideoHealthSamples: first sample seeds the diff and does not itself contribute`, () => {
