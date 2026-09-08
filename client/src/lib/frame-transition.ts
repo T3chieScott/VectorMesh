@@ -40,6 +40,56 @@ export function shouldAdvanceSkippedRotation({
 }
 
 /**
+ * Commit-gated permission for the one wall-clock join/recovery rebase owned by
+ * a presentation sequence.  The state is intentionally host-owned (normally a
+ * ref): preparing, skipped, and stale frames never call this with a visible
+ * commit and therefore cannot spend the sequence's rebase.
+ */
+export type PresentationRebaseState = {
+  sequenceIdentity: string | null;
+  claimed: boolean;
+};
+
+export function createPresentationRebaseState(): PresentationRebaseState {
+  return { sequenceIdentity: null, claimed: false };
+}
+
+export function claimPresentationRebase(
+  state: PresentationRebaseState,
+  presentationSequenceIdentity: string,
+  isPresentationCommitted: boolean,
+): boolean {
+  // A sequence returning after another sequence is a new presentation
+  // occurrence, so it gets one fresh join/recovery claim without retaining an
+  // unbounded history of old identities.
+  if (state.sequenceIdentity !== presentationSequenceIdentity) {
+    state.sequenceIdentity = presentationSequenceIdentity;
+    state.claimed = false;
+  }
+  if (!isPresentationCommitted || state.claimed) {
+    return false;
+  }
+  state.claimed = true;
+  return true;
+}
+
+/**
+ * A reported frame may stamp the rebase sequence only when it is the current
+ * desired frame. This keeps a late acknowledgement for an old presentation
+ * from making a newer desired sequence look visibly committed.
+ */
+export function committedSequenceAfterFrame(
+  previousSequenceIdentity: string | null,
+  desiredFrameIdentity: string,
+  reportedFrameIdentity: string,
+  desiredSequenceIdentity: string,
+): string | null {
+  return acceptsCommittedFrame(desiredFrameIdentity, reportedFrameIdentity)
+    ? desiredSequenceIdentity
+    : previousSequenceIdentity;
+}
+
+/**
  * Scene selection is safe to follow before the currently desired frame has
  * committed. Page/agenda follower state remains separately commit-gated.
  * The monitor endpoint has already authenticated and screen-scoped the report.

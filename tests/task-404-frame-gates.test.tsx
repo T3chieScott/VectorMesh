@@ -13,8 +13,61 @@ import {
   visiblePresentationEmission,
   createVisiblePresentationEmission,
   buildHeartbeatErrorsPayload,
+  claimPresentationRebase,
+  committedSequenceAfterFrame,
+  createPresentationRebaseState,
   isCompletePresentationReport,
 } from "../client/src/lib/frame-transition";
+import { useCommitGatedPresentationRebase } from "../client/src/hooks/use-commit-gated-presentation-rebase";
+
+type PlaylistLifecycleControls = {
+  commit: () => void;
+  completeAgendaPage: () => void;
+};
+
+/**
+ * This mirrors the Player's commit-gated wall-clock rebase effect. A is an
+ * NOW/NEXT agenda scene (only NEXT completes it); B is a three-page agenda
+ * scene.  Keeping the effect mounted makes the wrap failure observable rather
+ * than merely testing index arithmetic.
+ */
+function PlaylistLifecycleHarness({
+  wallClockIndex,
+  expose,
+}: {
+  wallClockIndex: number;
+  expose: (controls: PlaylistLifecycleControls) => void;
+}) {
+  const sequenceIdentity = "agenda-playlist-r1";
+  const [index, setIndex] = React.useState(0);
+  const [committed, setCommitted] = React.useState(false);
+  const [bPage, setBPage] = React.useState(0);
+  useCommitGatedPresentationRebase(sequenceIdentity, committed, () => {
+    setIndex(wallClockIndex);
+  });
+
+  React.useEffect(() => {
+    expose({
+      commit: () => setCommitted(true),
+      completeAgendaPage: () => {
+        if (!committed) return;
+        if (index === 0) {
+          setIndex(1);
+          setCommitted(false);
+          return;
+        }
+        if (bPage < 2) setBPage((page) => page + 1);
+        else {
+          setIndex(0);
+          setCommitted(false);
+          setBPage(0);
+        }
+      },
+    });
+  }, [bPage, committed, expose, index]);
+
+  return <div data-testid="playlist-lifecycle">{index === 0 ? "A:next" : `B:${bPage}`}</div>;
+}
 
 test("heartbeat errors omit presentation before a committed emission without allocating sequence", () => {
   let sequences = 0;
@@ -382,6 +435,93 @@ describe("Task404 ScreenRenderSurface real DOM frame gate", () => {
 });
 
 describe("Task404 Player and Monitor transition protocol", () => {
+  test("mounted A NEXT and B three-page agenda cycle does not wall-clock rebase after wrapping to A", async () => {
+    let controls: PlaylistLifecycleControls | null = null;
+    const expose = (next: PlaylistLifecycleControls) => { controls = next; };
+    const view = render(<PlaylistLifecycleHarness wallClockIndex={0} expose={expose} />);
+    try {
+      await waitFor(() => assert.ok(controls));
+      await act(async () => controls!.commit());
+      await waitFor(() => assert.equal(view.getByTestId("playlist-lifecycle").textContent, "A:next"));
+
+      // A begins at its NEXT semantic page; its one controlled completion
+      // advances the scene to B.
+      await act(async () => controls!.completeAgendaPage());
+      await waitFor(() => assert.equal(view.getByTestId("playlist-lifecycle").textContent, "B:0"));
+      // B is the shared-clock selection while its own visible frame commits.
+      view.rerender(<PlaylistLifecycleHarness wallClockIndex={1} expose={expose} />);
+      await act(async () => controls!.commit());
+
+      // B advances its three controlled pages before it wraps.
+      await act(async () => controls!.completeAgendaPage());
+      assert.equal(view.getByTestId("playlist-lifecycle").textContent, "B:1");
+      await act(async () => controls!.completeAgendaPage());
+      assert.equal(view.getByTestId("playlist-lifecycle").textContent, "B:2");
+      await act(async () => controls!.completeAgendaPage());
+      await waitFor(() => assert.equal(view.getByTestId("playlist-lifecycle").textContent, "A:next"));
+
+      // The shared epoch still points at B.  Committing wrapped A must retain
+      // Player-owned progression, not rebase it back to B.
+      view.rerender(<PlaylistLifecycleHarness wallClockIndex={1} expose={expose} />);
+      await act(async () => controls!.commit());
+      await waitFor(() => assert.equal(view.getByTestId("playlist-lifecycle").textContent, "A:next"));
+
+      // A second complete local cycle remains Player-owned too.
+      await act(async () => controls!.completeAgendaPage());
+      await waitFor(() => assert.equal(view.getByTestId("playlist-lifecycle").textContent, "B:0"));
+      await act(async () => controls!.commit());
+      await act(async () => controls!.completeAgendaPage());
+      await act(async () => controls!.completeAgendaPage());
+      await act(async () => controls!.completeAgendaPage());
+      await waitFor(() => assert.equal(view.getByTestId("playlist-lifecycle").textContent, "A:next"));
+      await act(async () => controls!.commit());
+      await waitFor(() => assert.equal(view.getByTestId("playlist-lifecycle").textContent, "A:next"));
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("rebase permission waits for a visible commit and is spent once per sequence identity", () => {
+    const state = createPresentationRebaseState();
+    // Initial join cannot run while the candidate is preparing, skipped, or
+    // stale. None of these outcomes consumes its eventual visible commit.
+    assert.equal(claimPresentationRebase(state, "r1", false), false);
+    assert.equal(claimPresentationRebase(state, "r1", false), false);
+    assert.deepEqual(state, { sequenceIdentity: "r1", claimed: false });
+    assert.equal(claimPresentationRebase(state, "r1", true), true);
+
+    // Equivalent polls/rerenders and ordinary false -> true scene handoffs
+    // (including an A -> B -> A wrap) do not rebase local playback again.
+    assert.equal(claimPresentationRebase(state, "r1", true), false);
+    assert.equal(claimPresentationRebase(state, "r1", false), false);
+    assert.equal(claimPresentationRebase(state, "r1", true), false);
+    assert.equal(claimPresentationRebase(state, "r1", false), false);
+    assert.equal(claimPresentationRebase(state, "r1", true), false);
+
+    // A new revision, activation epoch, playlist, or meaningful item sequence
+    // has a new identity and earns one new rebase only after it visibly commits.
+    for (const identity of ["r2", "epoch-2", "playlist-2", "sequence-2"]) {
+      assert.equal(claimPresentationRebase(state, identity, false), false);
+      assert.equal(claimPresentationRebase(state, identity, true), true);
+      assert.equal(claimPresentationRebase(state, identity, true), false);
+    }
+    // Returning after another sequence begins a fresh occurrence and earns
+    // exactly one new rebase without historical identity storage.
+    assert.equal(claimPresentationRebase(state, "r1", true), true);
+    assert.deepEqual(state, { sequenceIdentity: "r1", claimed: true });
+  });
+
+  test("stale frame reports cannot stamp a newer presentation sequence", () => {
+    assert.equal(
+      committedSequenceAfterFrame("r1", "frame-r2", "frame-r1", "r2"),
+      "r1",
+    );
+    assert.equal(
+      committedSequenceAfterFrame("r1", "frame-r2", "frame-r2", "r2"),
+      "r2",
+    );
+  });
+
   test("rotating empty B advances once toward C; stale B and nonrotating skips are no-ops", () => {
     assert.equal(shouldAdvanceSkippedRotation({
       rotating: true, desiredIdentity: "B", skippedIdentity: "B", alreadyCommitted: false, itemCount: 3,
