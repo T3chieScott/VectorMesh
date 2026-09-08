@@ -9,16 +9,13 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { AgendaItem, AgendaWidgetConfig } from "../shared/schema";
-import { AgendaDisplayWidget } from "../client/src/components/agenda/AgendaDisplayWidget";
-
-const source = readFileSync(
-  "client/src/components/agenda/AgendaDisplayWidget.tsx",
-  "utf8",
-);
+import {
+  AgendaDisplayWidget,
+  resolveDescriptionViewportSizing,
+} from "../client/src/components/agenda/AgendaDisplayWidget";
 
 const NOW = new Date("2026-09-02T12:00:00Z");
 const SIX_PRESENTERS = [
@@ -112,17 +109,24 @@ function item(overrides: Partial<AgendaItem> = {}): AgendaItem {
 function render(
   overrides: Partial<AgendaWidgetConfig> = {},
   agendaItem: AgendaItem = item(),
+  dimensions = { width: 1920, height: 1080 },
 ): string {
   return renderToStaticMarkup(
     React.createElement(AgendaDisplayWidget, {
       config: config(overrides),
       items: [agendaItem],
-      width: 1920,
-      height: 1080,
+      width: dimensions.width,
+      height: dimensions.height,
       now: NOW,
       timezone: "UTC",
     }),
   );
+}
+
+function openTag(html: string, testId: string): string {
+  const match = html.match(new RegExp(`<[^>]*data-testid="${testId}"[^>]*>`));
+  assert.ok(match, `expected ${testId} element`);
+  return match[0];
 }
 
 test("Task #399 renders all six newline-separated presenters with one first-line marker", () => {
@@ -154,65 +158,63 @@ test("Task #399 preserves Now/Next labels while Full sizing changes", () => {
   assert.match(html, />NEXT</);
 });
 
-test("Task #399 preserves newline-separated presenters and first-line marker layout", () => {
-  assert.match(source, /className="flex items-start break-words"/);
-  assert.match(source, /className="block whitespace-pre-line"/);
-  assert.match(
-    source,
-    /speakerMarker[\s\S]{0,1200}className="flex-none"[\s\S]{0,300}width: scale \* 1\.35/,
+test("Task #400 short NOW/NEXT cards begin intrinsic with auto-scroll enabled", () => {
+  const html = render(
+    { displayMode: "now_next", showNowNextLabel: true },
+    item({
+      status: "scheduled",
+      presenter: null,
+      startsAt: new Date("2026-09-02T14:00:00Z"),
+    }),
   );
+  assert.match(html, /agenda-now-next-label-session-399/);
+  assert.match(html, />NEXT</);
+  const card = openTag(html, "agenda-row-session-399");
+  const viewport = openTag(html, "agenda-description-viewport-session-399");
+  assert.doesNotMatch(card, /height:100%|max-height:/);
+  assert.doesNotMatch(viewport, /max-height:/);
 });
 
-test("Task #399 applies emergency wrapping to title, presenter, description, and status", () => {
-  assert.match(source, /className="font-semibold leading-tight break-words"/);
-  assert.match(source, /className="opacity-75 break-words"/);
-  assert.match(source, /className={`mt-1 italic opacity-90/);
-  assert.match(source, /overflowWrap: "anywhere"/);
-});
-
-test("Task #400 Full rows are max-content and Now/Next rows are flexible", () => {
-  assert.match(
-    source,
-    /const rowTrack = nowNextMode\s*\?\s*"minmax\(0, 1fr\)"\s*:\s*"max-content"/,
+test("Task #400 Full Agenda retains its existing intrinsic-card first paint", () => {
+  const html = render(
+    { displayMode: "full", showPresenter: false },
+    item({ presenter: null }),
   );
-  assert.doesNotMatch(source, /minmax\(auto, 1fr\)/);
-  assert.doesNotMatch(source, /maxHeight: "100%"/);
-  assert.match(source, /cardRef\.current\.offsetHeight - viewport\.clientHeight/);
-  assert.match(source, /flex-auto min-h-0 overflow-hidden/);
-  assert.match(source, /ro\.observe\(viewport\)/);
-  assert.match(source, /ro\.observe\(card\)/);
-  assert.match(source, /ro\.observe\(inner\)/);
+  const card = openTag(html, "agenda-row-session-399");
+  const viewport = openTag(html, "agenda-description-viewport-session-399");
+  // Full's finite budget remains description-only after browser measurement;
+  // no card maximum is emitted during intrinsic SSR first paint.
+  assert.doesNotMatch(card, /max-height:/);
+  assert.doesNotMatch(viewport, /max-height:/);
 });
 
-test("Task #399 portrait Full auto-scroll uses the same bounded grid path", () => {
-  const portraitStart = source.indexOf("function PortraitCards");
-  const portraitEnd = source.indexOf("function UltraWideGrid");
-  assert.ok(portraitStart >= 0 && portraitEnd > portraitStart);
-  const portrait = source.slice(portraitStart, portraitEnd);
-  assert.match(portrait, /if \(scrollPageH != null\)/);
-  assert.match(portrait, /<BoundedScrollGrid/);
-  assert.match(portrait, /numCols=\{1\}/);
-  assert.match(portrait, /scrollPageH=\{scrollPageH\}/);
+test("Task #400 only bounds a card after measured description overflow", () => {
+  const fitting = resolveDescriptionViewportSizing({
+    allocatedCardHeight: 600,
+    naturalCardHeight: 220,
+    fixedCardHeight: 120,
+    descriptionContentHeight: 100,
+    minimumViewportHeight: 18,
+  });
+  assert.deepEqual(fitting, { shouldBound: false, viewportMaxHeight: null });
+
+  const overflowing = resolveDescriptionViewportSizing({
+    allocatedCardHeight: 300,
+    naturalCardHeight: 520,
+    fixedCardHeight: 160,
+    descriptionContentHeight: 360,
+    minimumViewportHeight: 18,
+  });
+  assert.deepEqual(overflowing, { shouldBound: true, viewportMaxHeight: 140 });
 });
 
-test("Task #399 leaves compact cards and Now/Next rendering on their established paths", () => {
-  assert.match(source, /isDescriptionAutoScrollMode\(/);
-  assert.match(source, /nowNextLabel\?: NowNextItemLabel/);
-  assert.match(source, /data-testid=\{tid\(`agenda-now-next-label-\$\{item\.id\}`\)\}/);
-  assert.match(source, /columnsClass="columns-2"/);
-});
-
-test("Task #400 keeps Full intrinsic rows and gives Now/Next the complete slot", () => {
-  assert.match(
-    source,
-    /const rowTrack = nowNextMode\s*\?\s*"minmax\(0, 1fr\)"\s*:\s*"max-content"/,
+test("Task #400 portrait 1080x1920 preserves semantic NEXT and intrinsic first paint", () => {
+  const html = render(
+    { displayMode: "now_next", layoutMode: "portrait", showNowNextLabel: true },
+    item({ status: "scheduled", startsAt: new Date("2026-09-02T14:00:00Z") }),
+    { width: 1080, height: 1920 },
   );
-  assert.match(source, /nowNextMode && scrollEnabled \? "items-stretch" : "items-start"/);
-  assert.match(source, /nowNextMode && scrollEnabled \? " h-full self-stretch" : ""/);
-  assert.match(source, /if \(!nowNextMode && cardRef\.current && allocatedH != null\)/);
-  assert.match(
-    source,
-    /if \(nowNextMode\) \{\s*setDescriptionViewportMaxHeight\(\(prev\) => \(prev === null \? prev : null\)\);/,
-  );
-  assert.doesNotMatch(source, /minmax\(auto, 1fr\)/);
+  assert.match(html, /agenda-row-session-399/);
+  assert.match(html, /agenda-now-next-label-session-399/);
+  assert.doesNotMatch(openTag(html, "agenda-row-session-399"), /height:100%/);
 });

@@ -3874,7 +3874,11 @@ function KeepAliveVideo({
   const ref = useRef<HTMLVideoElement>(null);
   // Default to muted unless the caller explicitly opts in to audio.
   const isMuted = muted ?? true;
-  useVideoKeepAlive(ref, { enabled: keepAliveEnabled ?? true, muted: isMuted });
+  useVideoKeepAlive(ref, {
+    enabled: keepAliveEnabled ?? true,
+    intendedPlaying: props.autoPlay ?? false,
+    muted: isMuted,
+  });
   return <video ref={ref} {...props} muted={isMuted} />;
 }
 

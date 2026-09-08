@@ -84,6 +84,37 @@ async function refresh() {
 }
 
 describe("standalone DisplayAgenda refresh policy", () => {
+  test("fetched persisted Now/Next override renders on the standalone display page", async () => {
+    window.history.replaceState({}, "", "/display/agenda/cfg-task404?at=2026-09-02T12:00:00.000Z");
+    const persisted = {
+      ...config(),
+      displayMode: "now_next",
+      overrideNowNextColor: true,
+      nowNextColor: "#c026d3",
+      showNowNextLabel: true,
+      showDescriptionDivider: true,
+      speakerMarkerStyle: "square",
+    };
+    const now = new Date("2026-09-02T12:00:00.000Z").getTime();
+    globalThis.fetch = async () => response({
+      config: persisted,
+      items: [{
+        ...populated().items[0],
+        startsAt: new Date(now - 30 * 60_000),
+        endsAt: new Date(now + 30 * 60_000),
+      }],
+      effectiveDay: null,
+      client: { id: "client", name: "Client", timezone: "UTC" },
+      serverTime: now,
+    });
+    const view = render(<DisplayAgendaPage />);
+    await waitFor(() => assert.ok(view.queryByTestId("agenda-now-next-label-session")));
+    assert.equal(view.getByTestId("agenda-now-next-label-session").style.color, "rgb(192, 38, 211)");
+    assert.equal(view.getByTestId("agenda-now-next-divider-session").style.backgroundColor, "rgb(192, 38, 211)");
+    assert.equal(view.getByTestId("agenda-speaker-marker-session").style.color, "rgb(192, 38, 211)");
+    assert.equal(view.getByTestId("agenda-description-divider-session").style.backgroundColor, "rgb(192, 38, 211)");
+  });
+
   test("successful populated then successful empty refresh clears the real display root", async () => {
     window.history.replaceState({}, "", "/display/agenda/cfg-task404");
     const queue = [

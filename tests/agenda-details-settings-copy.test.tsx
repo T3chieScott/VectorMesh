@@ -284,7 +284,7 @@ test("Task #397 passive track is black while the thumb remains accent-coloured",
   const trackEnd = source.indexOf("<p", trackStart);
   const trackSource = source.slice(trackStart, trackEnd);
   assert.match(trackSource, /backgroundColor: DESCRIPTION_SCROLL_TRACK_COLOR/);
-  assert.match(trackSource, /backgroundColor: descriptionAccent/);
+  assert.match(trackSource, /backgroundColor: descriptionScrollThumbColor/);
   assert.doesNotMatch(
     trackSource,
     /color-mix\(in srgb, \$\{descriptionAccent\}/,

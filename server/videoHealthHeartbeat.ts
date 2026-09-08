@@ -12,8 +12,8 @@ import type { Screen, InsertAuditLog } from "@shared/schema";
 // the lifetime of a player page; a full page reload (whether
 // triggered by the watchdog itself or anything else) resets them
 // to 0. We therefore treat a *decrease* in any counter as "fresh
-// page" and just overwrite — only an *increase* in `reloads`
-// counts as a real reload event worth auditing.
+// page" and just overwrite it as a new baseline. No accompanying
+// positive counter is trusted as a new event on that baseline tick.
 
 export interface VideoStatsPayload {
   stalls: number;
@@ -57,6 +57,7 @@ export interface VideoHealthDecision {
     videoStatsReloads: number;
     videoStatsUpdatedAt: Date;
     videoStatsLastReloadAt?: Date;
+    videoStatsLastRecoveryAt?: Date;
   };
   /**
    * Set when the new heartbeat reports more reloads than were
@@ -77,12 +78,27 @@ export interface VideoHealthDecision {
  * `now` is injectable for deterministic tests.
  */
 export function decideVideoHealthUpdate(
-  screen: Pick<Screen, "id" | "videoStatsReloads" | "videoStatsLastReloadAt">,
+  screen: Pick<
+    Screen,
+    | "id"
+    | "videoStatsStalls"
+    | "videoStatsRecoveries"
+    | "videoStatsReloads"
+    | "videoStatsLastReloadAt"
+    | "videoStatsLastRecoveryAt"
+  >,
   stats: VideoStatsPayload,
   now: Date = new Date(),
 ): VideoHealthDecision {
   const previousReloads = screen.videoStatsReloads ?? 0;
-  const reloadIncreased = stats.reloads > previousReloads;
+  const previousRecoveries = screen.videoStatsRecoveries ?? 0;
+  const previousStalls = screen.videoStatsStalls ?? 0;
+  const counterDecreased =
+    stats.stalls < previousStalls ||
+    stats.recoveries < previousRecoveries ||
+    stats.reloads < previousReloads;
+  const reloadIncreased = !counterDecreased && stats.reloads > previousReloads;
+  const recoveryIncreased = !counterDecreased && stats.recoveries > previousRecoveries;
 
   const patch: VideoHealthDecision["patch"] = {
     videoStatsStalls: stats.stalls,
@@ -92,6 +108,9 @@ export function decideVideoHealthUpdate(
   };
   if (reloadIncreased) {
     patch.videoStatsLastReloadAt = now;
+  }
+  if (recoveryIncreased) {
+    patch.videoStatsLastRecoveryAt = now;
   }
 
   const auditLog: InsertAuditLog | null = reloadIncreased

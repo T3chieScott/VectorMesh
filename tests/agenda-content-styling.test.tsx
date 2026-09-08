@@ -17,6 +17,7 @@ import {
 import {
   AgendaDisplayWidget,
   BOTTOM_PAUSE_MS,
+  resolveEffectiveAgendaIndicatorColor,
   resolveAgendaPresentationDwellMs,
   TOP_PAUSE_MS,
 } from "../client/src/components/agenda/AgendaDisplayWidget";
@@ -422,6 +423,56 @@ test("Task #394 disabled NOW/NEXT labels preserve the existing card output", () 
   assert.equal(html.includes("agenda-now-next-label-item-1"), false);
 });
 
+test("Task #404 resolves only the documented indicator override surfaces", () => {
+  const accent = "#0ea5e9";
+  const override = "#c026d3";
+  const nowNext = config({
+    displayMode: "now_next",
+    accentColor: accent,
+    overrideNowNextColor: true,
+    nowNextColor: override,
+  });
+  for (const target of [
+    "now-next-heading",
+    "now-next-divider",
+    "speaker-marker",
+    "description-divider",
+    "presenter-scroll-thumb",
+    "description-scroll-thumb",
+  ] as const) {
+    assert.equal(resolveEffectiveAgendaIndicatorColor(nowNext, target), override);
+  }
+
+  const full = { ...nowNext, displayMode: "full" as const };
+  assert.equal(resolveEffectiveAgendaIndicatorColor(full, "speaker-marker"), override);
+  for (const target of [
+    "description-divider",
+    "presenter-scroll-thumb",
+    "description-scroll-thumb",
+  ] as const) {
+    assert.equal(resolveEffectiveAgendaIndicatorColor(full, target), accent);
+  }
+});
+
+test("Task #404 ignores disabled, missing, and malformed persisted overrides", () => {
+  const accent = "#0ea5e9";
+  for (const overrides of [
+    { overrideNowNextColor: false, nowNextColor: "#c026d3" },
+    { overrideNowNextColor: true, nowNextColor: null },
+    { overrideNowNextColor: true, nowNextColor: "#fff" },
+    { overrideNowNextColor: true, nowNextColor: "c026d3" },
+    { overrideNowNextColor: true, nowNextColor: "#c026dz" },
+  ]) {
+    assert.equal(
+      resolveEffectiveAgendaIndicatorColor(
+        config({ displayMode: "now_next", accentColor: accent, ...overrides }),
+        "description-scroll-thumb",
+      ),
+      accent,
+    );
+  }
+});
+
 test("Task #402 renders every built-in status with its canonical label and styling despite input case", () => {
   const cases = [
     ["SCHEDULED", "Scheduled", "bg-slate-500/20"],
@@ -515,12 +566,9 @@ test("Task #394 recent agenda safeguards remain present", () => {
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
     "utf8",
   );
-  assert.match(
-    renderer,
-    /const rowTrack = nowNextMode\s*\?\s*"minmax\(0, 1fr\)"\s*:\s*"max-content"/,
-  );
+  assert.match(renderer, /const rowTrack = "max-content"/);
   assert.ok(renderer.includes('className={`flex ${nowNextMode && scrollEnabled ? "items-stretch" : "items-start"}'));
-  assert.ok(renderer.includes('nowNextMode && scrollEnabled ? " h-full self-stretch" : ""'));
+  assert.equal(renderer.includes('nowNextMode && scrollEnabled ? " h-full self-stretch" : ""'), false);
   assert.equal(renderer.includes("minmax(auto, 1fr)"), false);
   assert.equal(renderer.includes('maxHeight: "100%"'), false);
   assert.ok(renderer.includes("cardRef.current.offsetHeight - viewport.clientHeight"));

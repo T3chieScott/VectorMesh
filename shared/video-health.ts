@@ -26,6 +26,7 @@ export interface VideoHealthInput {
   videoStatsRecoveries: number | null;
   videoStatsReloads: number | null;
   videoStatsLastReloadAt: Date | string | null;
+  videoStatsLastRecoveryAt: Date | string | null;
   videoStatsUpdatedAt: Date | string | null;
 }
 
@@ -37,6 +38,7 @@ export interface VideoHealthVerdict {
   recoveries: number;
   reloads: number;
   lastReloadAt: Date | null;
+  lastRecoveryAt: Date | null;
   updatedAt: Date | null;
 }
 
@@ -60,27 +62,28 @@ export function deriveVideoHealth(
   const recoveries = screen.videoStatsRecoveries ?? 0;
   const reloads = screen.videoStatsReloads ?? 0;
   const lastReloadAt = toDate(screen.videoStatsLastReloadAt);
+  const lastRecoveryAt = toDate(screen.videoStatsLastRecoveryAt);
   const updatedAt = toDate(screen.videoStatsUpdatedAt);
 
   if (!updatedAt) {
-    return { status: "unknown", stalls, recoveries, reloads, lastReloadAt, updatedAt };
+    return { status: "unknown", stalls, recoveries, reloads, lastReloadAt, lastRecoveryAt, updatedAt };
   }
 
   const reloadIsRecent =
     lastReloadAt !== null &&
     now.getTime() - lastReloadAt.getTime() <= VIDEO_HEALTH_RECENT_WINDOW_MS;
   if (reloadIsRecent) {
-    return { status: "red", stalls, recoveries, reloads, lastReloadAt, updatedAt };
+    return { status: "red", stalls, recoveries, reloads, lastReloadAt, lastRecoveryAt, updatedAt };
   }
 
   const recoveryIsRecent =
-    recoveries > 0 &&
-    now.getTime() - updatedAt.getTime() <= VIDEO_HEALTH_RECENT_WINDOW_MS;
+    lastRecoveryAt !== null &&
+    now.getTime() - lastRecoveryAt.getTime() <= VIDEO_HEALTH_RECENT_WINDOW_MS;
   if (recoveryIsRecent) {
-    return { status: "amber", stalls, recoveries, reloads, lastReloadAt, updatedAt };
+    return { status: "amber", stalls, recoveries, reloads, lastReloadAt, lastRecoveryAt, updatedAt };
   }
 
-  return { status: "green", stalls, recoveries, reloads, lastReloadAt, updatedAt };
+  return { status: "green", stalls, recoveries, reloads, lastReloadAt, lastRecoveryAt, updatedAt };
 }
 
 // Task #200 — bucket per-heartbeat watchdog samples into a series of
@@ -92,9 +95,10 @@ export function deriveVideoHealth(
 // cumulative snapshots into per-bucket *event counts* we look at
 // consecutive samples and either:
 //   - take the positive delta (counter went up — N new events), or
-//   - take the new absolute value (counter dropped — the page just
-//     reloaded and we lost whatever the old top was; the new value
-//     is the count of events that have happened since the reset).
+//   - treat any counter decrease as a new baseline. A player reload
+//     can reset the watchdog totals, but it is not proof that any
+//     event happened at that instant, so it must not create false
+//     history from another counter that happened to be higher.
 // Events are credited to the bucket containing the *later* sample's
 // timestamp, which is where they actually occurred.
 
@@ -171,10 +175,15 @@ export function bucketVideoHealthSamples(
       // know how much of its counter is "new" vs pre-window. Drop
       // it as a baseline; it'll seed subsequent diffs.
     } else {
-      dStalls = curr.stalls >= prev.stalls ? curr.stalls - prev.stalls : curr.stalls;
-      dRecoveries =
-        curr.recoveries >= prev.recoveries ? curr.recoveries - prev.recoveries : curr.recoveries;
-      dReloads = curr.reloads >= prev.reloads ? curr.reloads - prev.reloads : curr.reloads;
+      const counterDecreased =
+        curr.stalls < prev.stalls ||
+        curr.recoveries < prev.recoveries ||
+        curr.reloads < prev.reloads;
+      if (!counterDecreased) {
+        dStalls = curr.stalls - prev.stalls;
+        dRecoveries = curr.recoveries - prev.recoveries;
+        dReloads = curr.reloads - prev.reloads;
+      }
     }
     prev = curr;
     if (currMs < windowStart || currMs >= windowEnd) continue;
