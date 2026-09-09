@@ -2,7 +2,7 @@ import "./setup-jsdom";
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import * as React from "react";
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import type { LayoutZone } from "../shared/schema";
 import { ScreenRenderSurface } from "../client/src/components/screen-render-surface";
 import {
@@ -116,6 +116,20 @@ type RenderedZone = {
   agendaPreparing?: boolean;
   onAgendaPreparationOutcome?: (zoneId: string, outcome: Outcome) => void;
 };
+
+function SubframeZoneRenderer({ zone, agendaPreparing = false }: RenderedZone) {
+  if (zone.id === "incoming-subframe") {
+    return (
+      <iframe
+        title="incoming-subframe"
+        data-testid="iframe-html-widget"
+        data-subframe-ready="false"
+        data-subframe-state={agendaPreparing ? "suppressed" : "visible"}
+      />
+    );
+  }
+  return <div>{zone.id}</div>;
+}
 
 function SynchronousMediaPlayerRenderer({ zone, media = [] }: RenderedZone) {
   const items = (zone as any).mediaPlayerItems as Array<{ mediaAssetId: string }> | undefined;
@@ -395,6 +409,40 @@ describe("Task404 ScreenRenderSurface real DOM frame gate", () => {
     const promoted = view.getByTestId("prepared-node");
     assert.strictEqual(promoted, prepared, "promotion must not remount the prepared subtree");
     assert.ok(promoted.closest("[data-testid='screen-render-committed-frame']"));
+    cleanup();
+  });
+
+  test("incoming subframe blocks promotion until loaded while outgoing frame stays visible", async () => {
+    const committed: string[] = [];
+    const common = {
+      media: [],
+      zoneMediaIndices: {},
+      playerContext: {} as any,
+      canvasGeometry: { useOffset: false, canvasX: 0, canvasY: 0, canvasW: 0, canvasH: 0 },
+      onFrameCommitted: (identity: string) => committed.push(identity),
+      ZoneRendererComponent: SubframeZoneRenderer as any,
+    };
+    const view = render(
+      <ScreenRenderSurface {...common} frameKey="A" renderKey="A" zones={[html("outgoing-frame")]} />,
+    );
+    await waitFor(() => assert.deepEqual(committed, ["A"]));
+
+    view.rerender(
+      <ScreenRenderSurface {...common} frameKey="B" renderKey="B" zones={[html("incoming-subframe")]} />,
+    );
+    const incoming = await view.findByTestId("iframe-html-widget") as HTMLIFrameElement;
+    assert.equal(incoming.dataset.subframeReady, "false");
+    assert.equal(incoming.dataset.subframeState, "suppressed");
+    assert.ok(view.getByTestId("screen-render-committed-frame").textContent?.includes("outgoing-frame"));
+    assert.deepEqual(committed, ["A"]);
+
+    await act(async () => {
+      incoming.dataset.subframeReady = "true";
+    });
+    await waitFor(() => assert.deepEqual(committed, ["A", "B"]));
+    assert.strictEqual(view.getByTestId("iframe-html-widget"), incoming);
+    assert.equal(incoming.dataset.subframeState, "visible");
+    assert.equal(view.queryByText("outgoing-frame"), null);
     cleanup();
   });
 
