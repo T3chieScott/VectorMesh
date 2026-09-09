@@ -72,6 +72,17 @@ export interface ScreenRenderSurfaceProps {
    * behind the committed frame and is promoted as one React commit.
    */
   frameKey?: string;
+  /**
+   * Stable visual identity used for React reconciliation. Unlike frameKey,
+   * this deliberately excludes database/rotation identity, allowing an
+   * equivalent scene to retain expensive media elements during A → B → A.
+   */
+  renderKey?: string;
+  /**
+   * Changes that need a new readiness lifecycle even if renderKey is visually
+   * identical (for example a newer monitor lease for the same agenda scene).
+   */
+  preparationKey?: string;
   /** Host acknowledgement: this semantic frame is now visibly committed. */
   onFrameCommitted?: (frameKey: string) => void;
   /** A controlled Agenda-only candidate resolved transparently empty. */
@@ -144,7 +155,7 @@ export interface ScreenRenderSurfaceProps {
   ZoneRendererComponent: ComponentType<any>;
 }
 
-type FrameProps = Omit<ScreenRenderSurfaceProps, "frameKey" | "onFrameCommitted" | "onFrameSkipped">;
+type FrameProps = Omit<ScreenRenderSurfaceProps, "frameKey" | "renderKey" | "preparationKey" | "onFrameCommitted" | "onFrameSkipped">;
 
 /**
  * Both sides of a handoff use this exact element type and keyed-list position.
@@ -173,11 +184,22 @@ function SurfaceFrameSlot({
 
 function SurfaceFrame({
   frameIdentity,
+  frameVisualIdentity,
+  frameReadinessIdentity,
+  frameInstanceKey,
   preparing,
   onReady,
   onSkip,
   ...props
-}: FrameProps & { frameIdentity: string; preparing: boolean; onReady?: (identity: string) => void; onSkip?: (identity: string) => void }) {
+}: FrameProps & {
+  frameIdentity: string;
+  frameVisualIdentity: string;
+  frameReadinessIdentity: string;
+  frameInstanceKey: string;
+  preparing: boolean;
+  onReady?: (identity: string, visualIdentity: string, readinessIdentity: string, instanceKey: string) => void;
+  onSkip?: (identity: string, visualIdentity: string, readinessIdentity: string, instanceKey: string) => void;
+}) {
   const { useOffset, canvasX, canvasY, canvasW, canvasH } = props.canvasGeometry;
   // Keep the Task #350 source contract explicit: this exact semantic key is
   // used by both the committed and preparing frame instances.
@@ -195,7 +217,7 @@ function SurfaceFrame({
     if (skippedRef.current) return;
     skippedRef.current = true;
     if (props.emptyAgendaPolicy === "skip") {
-      onSkip?.(frameIdentity);
+      onSkip?.(frameIdentity, frameVisualIdentity, frameReadinessIdentity, frameInstanceKey);
     } else if (props.emptyAgendaPolicy === "commit-no-content") {
       pendingAgendaRef.current.clear();
       markReady();
@@ -205,7 +227,7 @@ function SurfaceFrame({
     if (!preparing || readyRef.current || pendingAgendaRef.current.size ||
       !mediaReadyRef.current || !fontsReadyRef.current) return;
     readyRef.current = true;
-    onReady?.(frameIdentity);
+    onReady?.(frameIdentity, frameVisualIdentity, frameReadinessIdentity, frameInstanceKey);
   };
   // A scene without agendas has no asynchronous render gate.  Run this after
   // it has mounted, rather than while rendering, so promotion is still atomic.
@@ -214,6 +236,7 @@ function SurfaceFrame({
     const root = frameRef.current;
     const media = root
       ? Array.from(root.querySelectorAll<HTMLImageElement | HTMLVideoElement>("img,video"))
+        .filter((element) => element.getAttribute("data-screen-render-readiness-exempt") !== "true")
       : [];
     const unresolved = () => media.some((element) =>
       element instanceof HTMLImageElement ? !element.complete :
@@ -227,6 +250,7 @@ function SurfaceFrame({
     media.forEach((element) => {
       element.addEventListener("load", checkMedia);
       element.addEventListener("loadeddata", checkMedia);
+      element.addEventListener("canplay", checkMedia);
       element.addEventListener("error", checkMedia);
     });
     // Font loading is part of frame preparation: promoting before custom faces
@@ -244,6 +268,7 @@ function SurfaceFrame({
     return () => media.forEach((element) => {
       element.removeEventListener("load", checkMedia);
       element.removeEventListener("loadeddata", checkMedia);
+      element.removeEventListener("canplay", checkMedia);
       element.removeEventListener("error", checkMedia);
     });
   }, []);
@@ -289,7 +314,7 @@ function SurfaceFrame({
             style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.width}%`, height: `${zone.height}%`, zIndex: zone.zIndex || 1 }}>
             <div className={`absolute inset-0 ${zone.type === "shape" ? "" : "overflow-hidden"}`}>
               <props.ZoneRendererComponent zone={zone} media={resolveZoneMedia(zone)}
-                mediaIndex={props.zoneMediaIndices[zone.id] || 0} isPlaying={true} showBorder={false}
+                mediaIndex={props.zoneMediaIndices[zone.id] || 0} isPlaying={!preparing} showBorder={false}
                 timezone={props.weatherTimezone} screenTimezone={props.screenTimezone} fillContainer={true}
                 mediaBaseUrl={props.mediaBaseUrl} deviceToken={props.deviceToken} agendaTestAt={props.agendaTestAt}
                 agendaCompletionBinding={props.agendaCompletionBindings?.get(zone.id)}
@@ -317,6 +342,8 @@ function SurfaceFrame({
  */
 export function ScreenRenderSurface({
   frameKey,
+  renderKey,
+  preparationKey,
   onFrameCommitted,
   onFrameSkipped,
   emptyAgendaPolicy,
@@ -343,6 +370,11 @@ export function ScreenRenderSurface({
     followedAgendaPresentationStates, playerContext, canvasGeometry, liveBanner, zoneFrameTestId,
     ZoneRendererComponent };
   const identity = frameKey ?? JSON.stringify(zones.map((zone) => [zone.id, zone.type, zone.agendaConfigId]));
+  const visualIdentity = renderKey ?? identity;
+  // Existing callers retain their visual-reconciliation behavior. Only a host
+  // that explicitly supplies preparationKey asks an equivalent visual frame to
+  // go through readiness again.
+  const readinessIdentity = preparationKey ?? visualIdentity;
   const initialAgendaOnlyRef = useRef(
     zones.length > 0 && zones.every((zone) => zone.type === "agenda"),
   );
@@ -350,11 +382,13 @@ export function ScreenRenderSurface({
   // initial frame containing non-Agenda content preserves legacy immediate
   // visibility, with a post-reconciliation acknowledgement to synchronize the
   // Player's report/coordinator gates.
-  const [committed, setCommitted] = useState<{ identity: string; props: FrameProps } | null>(
-    initialAgendaOnlyRef.current ? null : { identity, props: incoming },
+  const nextInstanceKeyRef = useRef(0);
+  const allocateInstanceKey = () => `surface-frame-${++nextInstanceKeyRef.current}`;
+  const [committed, setCommitted] = useState<{ identity: string; visualIdentity: string; readinessIdentity: string; instanceKey: string; props: FrameProps } | null>(
+    () => initialAgendaOnlyRef.current ? null : { identity, visualIdentity, readinessIdentity, instanceKey: allocateInstanceKey(), props: incoming },
   );
-  const [candidate, setCandidate] = useState<{ identity: string; props: FrameProps } | null>(
-    initialAgendaOnlyRef.current ? { identity, props: incoming } : null,
+  const [candidate, setCandidate] = useState<{ identity: string; visualIdentity: string; readinessIdentity: string; instanceKey: string; props: FrameProps } | null>(
+    () => initialAgendaOnlyRef.current ? { identity, visualIdentity, readinessIdentity, instanceKey: allocateInstanceKey(), props: incoming } : null,
   );
   const pendingAcknowledgementRef = useRef<string | null>(
     initialAgendaOnlyRef.current ? null : identity,
@@ -367,10 +401,24 @@ export function ScreenRenderSurface({
   // B can therefore never win during the A → B → A render/effect gap.
   const desiredIdentityRef = useRef(identity);
   desiredIdentityRef.current = identity;
+  const desiredVisualIdentityRef = useRef(visualIdentity);
+  desiredVisualIdentityRef.current = visualIdentity;
+  const desiredReadinessIdentityRef = useRef(readinessIdentity);
+  desiredReadinessIdentityRef.current = readinessIdentity;
+  const candidateRef = useRef(candidate);
+  candidateRef.current = candidate;
   useEffect(() => {
     // A rapid A → B → A reversal discards B before it can promote.  Do not
     // leave an old hidden candidate alive to win a late agenda response.
-    if (identity === committed?.identity) {
+    if (visualIdentity === committed?.visualIdentity &&
+        readinessIdentity === committed?.readinessIdentity) {
+      // The semantic scene changed but its complete visual fingerprint did
+      // not. Reuse the committed subtree (notably the <video> decoder and
+      // currentTime), while still acknowledging the new logical scene.
+      if (identity !== committed?.identity && committed) {
+        pendingAcknowledgementRef.current = identity;
+        setCommitted({ ...committed, identity, visualIdentity, readinessIdentity, props: incoming });
+      }
       setCandidate((previous) => previous ? null : previous);
     } else {
       // `incoming` is intentionally not a dependency: it is a new aggregate
@@ -379,15 +427,29 @@ export function ScreenRenderSurface({
       // state and causes an update loop. Live values for an unchanged
       // committed identity are supplied directly below instead.
       setCandidate((previous) =>
-        previous?.identity === identity ? previous : { identity, props: incoming },
+        previous?.identity === identity && previous.visualIdentity === visualIdentity &&
+          previous.readinessIdentity === readinessIdentity
+          ? previous : { identity, visualIdentity, readinessIdentity, instanceKey: allocateInstanceKey(), props: incoming },
       );
     }
-  }, [identity, committed?.identity]);
-  const promote = (candidateIdentity: string) => {
+  }, [identity, visualIdentity, readinessIdentity, committed?.identity, committed?.visualIdentity,
+    committed?.readinessIdentity]);
+  const promote = (
+    candidateIdentity: string,
+    candidateVisualIdentity: string,
+    candidateReadinessIdentity: string,
+    candidateInstanceKey: string,
+  ) => {
     if (desiredIdentityRef.current !== candidateIdentity) return;
-    if (!candidate || candidate.identity !== candidateIdentity) return;
+    if (desiredVisualIdentityRef.current !== candidateVisualIdentity) return;
+    if (desiredReadinessIdentityRef.current !== candidateReadinessIdentity) return;
+    const currentCandidate = candidateRef.current;
+    if (!currentCandidate || currentCandidate.identity !== candidateIdentity ||
+      currentCandidate.visualIdentity !== candidateVisualIdentity ||
+      currentCandidate.readinessIdentity !== candidateReadinessIdentity ||
+      currentCandidate.instanceKey !== candidateInstanceKey) return;
     pendingAcknowledgementRef.current = candidateIdentity;
-    setCommitted(candidate);
+    setCommitted(currentCandidate);
     setCandidate(null);
   };
   // `onReady` runs from an async Agenda/font/media callback. Acknowledging
@@ -400,25 +462,41 @@ export function ScreenRenderSurface({
     pendingAcknowledgementRef.current = null;
     acknowledgementRef.current?.(acknowledged);
   }, [candidate, committed?.identity]);
-  const committedProps = committed?.identity === identity ? incoming : committed?.props;
+  const committedProps = committed?.visualIdentity === visualIdentity ? incoming : committed?.props;
   const frames = candidate
     ? [
         ...(committed && committedProps
-          ? [{ identity: committed.identity, props: committedProps, preparing: false }]
+          ? [{ identity: committed.identity, visualIdentity: committed.visualIdentity, readinessIdentity: committed.readinessIdentity, instanceKey: committed.instanceKey, props: committedProps, preparing: false }]
           : []),
-        { identity: candidate.identity, props: candidate.props, preparing: true },
+        { identity: candidate.identity, visualIdentity: candidate.visualIdentity, readinessIdentity: candidate.readinessIdentity, instanceKey: candidate.instanceKey, props: candidate.props, preparing: true },
       ]
     : committed && committedProps
-      ? [{ identity: committed.identity, props: committedProps, preparing: false }]
+      ? [{ identity: committed.identity, visualIdentity: committed.visualIdentity, readinessIdentity: committed.readinessIdentity, instanceKey: committed.instanceKey, props: committedProps, preparing: false }]
       : [];
   return (
     <>
       {frames.map((frame) => (
-        <SurfaceFrameSlot key={frame.identity} hidden={frame.preparing}>
+        <SurfaceFrameSlot
+          // A superseded *candidate* with the same pixels must begin a new
+          // preparation lifecycle. A committed same-visual handoff, however,
+          // intentionally retains its subtree and video decoder.
+          key={frame.instanceKey}
+          hidden={frame.preparing}
+        >
           <SurfaceFrame {...frame.props} frameIdentity={frame.identity}
+            frameVisualIdentity={frame.visualIdentity}
+            frameReadinessIdentity={frame.readinessIdentity}
+            frameInstanceKey={frame.instanceKey}
             preparing={frame.preparing} onReady={promote}
-            onSkip={onFrameSkipped ? (skipped) => {
-              if (desiredIdentityRef.current !== skipped || !candidate || candidate.identity !== skipped) return;
+            onSkip={onFrameSkipped ? (skipped, skippedVisual, skippedReadiness, skippedInstance) => {
+              const currentCandidate = candidateRef.current;
+              if (desiredIdentityRef.current !== skipped || !currentCandidate ||
+                desiredVisualIdentityRef.current !== skippedVisual ||
+                desiredReadinessIdentityRef.current !== skippedReadiness ||
+                currentCandidate.identity !== skipped ||
+                currentCandidate.visualIdentity !== skippedVisual ||
+                currentCandidate.readinessIdentity !== skippedReadiness ||
+                currentCandidate.instanceKey !== skippedInstance) return;
               skipRef.current?.(skipped);
             } : undefined} />
         </SurfaceFrameSlot>

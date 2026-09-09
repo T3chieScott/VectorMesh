@@ -11,7 +11,7 @@ import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, 
 type PlayerContentData = PlayerContentResponse & {
   presentation?: { revision?: string; activationEpoch?: number };
 };
-import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
+import { ZoneRenderer, getAspectRatioDimensions, getScreenRenderFingerprint, getZoneRenderFingerprint } from "@/components/zone-renderer";
 import { ScreenRenderSurface } from "@/components/screen-render-surface";
 import {
   committedIdentityAfterReport,
@@ -999,6 +999,10 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       : null,
     sceneId,
   });
+  // Keep visual ownership stable across logically distinct but pixel-identical
+  // rotation entries. This is intentionally independent of presentationIdentity
+  // so reporting still observes each scene handoff.
+  const renderFingerprint = getScreenRenderFingerprint(zones, content?.media || []);
   const isPresentationCommitted =
     committedPresentationIdentityRef.current === presentationIdentity;
   if (isPresentationCommitted && presentationIdentityRef.current !== presentationIdentity) {
@@ -1750,6 +1754,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const slotContents = (
     <ScreenRenderSurface
       frameKey={presentationIdentity}
+      renderKey={renderFingerprint}
       onFrameCommitted={(identity) => {
         // Ignore stale notifications defensively; SurfaceRenderSurface also
         // rejects them before calling us.
@@ -1788,7 +1793,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       emptyAgendaPolicy={isLayoutRotation ? "skip" : "commit-no-content"}
       ZoneRendererComponent={ZoneRenderer}
       zones={zones}
-      zoneKey={(zone) => isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
+      zoneKey={(zone) => getZoneRenderFingerprint(zone, content?.media || [])}
       media={content.media}
       zoneMediaIndices={zoneMediaIndices}
       mediaBaseUrl="/api/player/media"

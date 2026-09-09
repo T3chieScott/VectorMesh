@@ -6,8 +6,8 @@
 // integration test that drove a real <video> element through the
 // browser-throttling lifecycle:
 //
-//   visible → paused while hidden → tab returns to visible →
-//   hook calls play() → __vmPlayerVideoStats.recoveries bumps.
+//   visible → long hidden lifecycle → tab returns to visible while the
+//   naturally looping muted video remains benign to the watchdog.
 //
 // This file fills that gap. Shape:
 //
@@ -32,8 +32,8 @@
 //      Chromium does not couple lifecycle state to visibilityState
 //      on its own. Fast-forward 30 minutes of in-page elapsed time
 //      with Playwright's virtual clock, then restore visibility.
-//   5. Assert the watchdog resumed playback within 1s AND that
-//      window.__vmPlayerVideoStats.recoveries is >= 1.
+//   5. Assert the same muted video continues/replays after visibility and
+//      stalls/recoveries/reloads have zero lifecycle delta.
 //   6. Assert the single-item playlist keeps looping — currentTime
 //      resets to 0 at least twice over the observation window.
 //
@@ -203,7 +203,7 @@ test.describe("Task #198: player <video> keeps looping across a long tab-hidden 
     }
   });
 
-  test("tab hidden → 30 min simulated → visible: watchdog resumes within 1s and stats.recoveries >= 1; single-item playlist keeps replaying", async ({
+  test("tab hidden → 30 min simulated → visible: benign lifecycle preserves looping with zero watchdog recovery", async ({
     browser,
   }) => {
     test.setTimeout(120_000);
@@ -339,15 +339,17 @@ test.describe("Task #198: player <video> keeps looping across a long tab-hidden 
       "single-item fallback playlist must keep replaying (loop>=2 before hidden phase)",
     ).toBeGreaterThanOrEqual(2);
 
-    // Baseline recoveries before the hidden phase. Captured so the
-    // final assertion can also confirm at least one recovery occurred
-    // across the whole hidden→visible round-trip (belt-and-braces
-    // alongside the focused visible-transition delta below).
-    const recoveriesBefore = await page.evaluate(() => {
+    // Capture all watchdog counters before the lifecycle transition. A
+    // browser-hidden pause is benign and must not manufacture an incident.
+    const statsBefore = await page.evaluate(() => {
       const w = window as unknown as {
-        __vmPlayerVideoStats?: { recoveries?: number };
+        __vmPlayerVideoStats?: { stalls?: number; recoveries?: number; reloads?: number };
       };
-      return w.__vmPlayerVideoStats?.recoveries ?? 0;
+      return {
+        stalls: w.__vmPlayerVideoStats?.stalls ?? 0,
+        recoveries: w.__vmPlayerVideoStats?.recoveries ?? 0,
+        reloads: w.__vmPlayerVideoStats?.reloads ?? 0,
+      };
     });
 
     // ── Phase 2: drive a hidden transition via the Chrome DevTools
@@ -392,20 +394,6 @@ test.describe("Task #198: player <video> keeps looping across a long tab-hidden 
       timeout: 5000,
     });
 
-    // Pause the video to mimic the most common browser-throttled
-    // stall (some Chromium builds pause backgrounded media outright;
-    // others throttle then drop frames). The hook's onPause handler
-    // will scheduleResume after RESUME_DELAY_MS (250ms) — that is
-    // ONE recovery pathway. The visibility→visible transition below
-    // is the SECOND, belt-and-braces pathway the task explicitly asks
-    // us to exercise.
-    await page.evaluate(() => {
-      const v = document.querySelector<HTMLVideoElement>(
-        '[data-testid="media-player-widget"] video',
-      );
-      if (v && !v.paused) v.pause();
-    });
-
     // Fast-forward 30 minutes of in-page elapsed time via the
     // Playwright virtual clock installed before navigation. This
     // advances Date.now() / setTimeout / setInterval / setImmediate
@@ -417,52 +405,11 @@ test.describe("Task #198: player <video> keeps looping across a long tab-hidden 
     // same code paths a real 30-minute-hidden tab would.
     await page.clock.fastForward("30:00");
 
-    // Re-pause the video AFTER the fast-forward. The hook's
-    // onPause→scheduleResume path will have fired during the hidden
-    // window and likely already bumped recoveries; re-pausing here
-    // guarantees the video is in the paused state at the precise
-    // moment we flip visibility, so the recoveries delta we measure
-    // below is attributable to the visibility→visible pathway and
-    // not to a stale pause-driven resume.
-    await page.evaluate(() => {
-      const v = document.querySelector<HTMLVideoElement>(
-        '[data-testid="media-player-widget"] video',
-      );
-      if (v && !v.paused) v.pause();
-    });
-
-    // Sample the recoveries baseline AT THE MOMENT WE FLIP VISIBILITY
-    // (not the pre-hidden baseline). This is what isolates the
-    // visibility-transition recovery pathway in the assertion below.
-    const recoveriesAtVisible = await page.evaluate(() => {
-      const w = window as unknown as {
-        __vmPlayerVideoStats?: { recoveries?: number };
-      };
-      return w.__vmPlayerVideoStats?.recoveries ?? 0;
-    });
-
-    // Sanity: confirm the video really is paused right before we
-    // restore visibility. Without this, a passing assertion below
-    // could mean "visibility handler did nothing because video was
-    // already playing" rather than "visibility handler recovered a
-    // stalled video".
-    const pausedRightBeforeVisible = await page.evaluate(() => {
-      const v = document.querySelector<HTMLVideoElement>(
-        '[data-testid="media-player-widget"] video',
-      );
-      return !!v && v.paused;
-    });
-    expect(
-      pausedRightBeforeVisible,
-      "video must be paused at the moment visibility is restored — otherwise the visible-transition recovery path is not actually exercised",
-    ).toBe(true);
-
     // ── Phase 3: restore the tab to active via CDP. Setting
     //    lifecycle state back to "active" fires the real
     //    visibilitychange event with state === "visible", driving
     //    the keep-alive hook's listener exactly as a real foreground
     //    return would.
-    const visibleAt = Date.now();
     await cdp.send("Page.setWebLifecycleState", { state: "active" });
     await page.evaluate(() => {
       Object.defineProperty(document, "visibilityState", {
@@ -479,28 +426,8 @@ test.describe("Task #198: player <video> keeps looping across a long tab-hidden 
       timeout: 5000,
     });
 
-    // The hook calls play() synchronously on visibilitychange, then
-    // bumps `recoveries` inside the resolved-play microtask. Per the
-    // task contract this MUST complete within 1000ms.
-    await page.waitForFunction(
-      (base: number) => {
-        const w = window as unknown as {
-          __vmPlayerVideoStats?: { recoveries?: number };
-        };
-        const r = w.__vmPlayerVideoStats?.recoveries ?? 0;
-        return r > base;
-      },
-      recoveriesAtVisible,
-      { timeout: 1000 },
-    );
-    const elapsedToResume = Date.now() - visibleAt;
-    expect(
-      elapsedToResume,
-      "video must resume within 1s of becoming visible (recoveries bumped)",
-    ).toBeLessThanOrEqual(1000);
-
-    // And the actual <video> must be playing again, not just the
-    // counter ticked.
+    // The browser may take a moment to resume a naturally looping media
+    // element after a frozen lifecycle, but this is not a watchdog retry.
     await page.waitForFunction(
       () => {
         const v = document.querySelector<HTMLVideoElement>(
@@ -509,23 +436,22 @@ test.describe("Task #198: player <video> keeps looping across a long tab-hidden 
         return !!v && !v.paused;
       },
       undefined,
-      { timeout: 1000 },
+       { timeout: 5000 },
     );
 
-    const recoveriesAfter = await page.evaluate(() => {
+    const statsAfter = await page.evaluate(() => {
       const w = window as unknown as {
-        __vmPlayerVideoStats?: { recoveries?: number };
+        __vmPlayerVideoStats?: { stalls?: number; recoveries?: number; reloads?: number };
       };
-      return w.__vmPlayerVideoStats?.recoveries ?? 0;
+      return {
+        stalls: w.__vmPlayerVideoStats?.stalls ?? 0,
+        recoveries: w.__vmPlayerVideoStats?.recoveries ?? 0,
+        reloads: w.__vmPlayerVideoStats?.reloads ?? 0,
+      };
     });
-    expect(
-      recoveriesAfter - recoveriesAtVisible,
-      "window.__vmPlayerVideoStats.recoveries must have incremented as a result of the visible-transition recovery pathway",
-    ).toBeGreaterThanOrEqual(1);
-    expect(
-      recoveriesAfter - recoveriesBefore,
-      "window.__vmPlayerVideoStats.recoveries >= 1 across the whole hidden→visible round-trip (task contract)",
-    ).toBeGreaterThanOrEqual(1);
+    expect(statsAfter.stalls - statsBefore.stalls).toBe(0);
+    expect(statsAfter.recoveries - statsBefore.recoveries).toBe(0);
+    expect(statsAfter.reloads - statsBefore.reloads).toBe(0);
 
     // ── Phase 4: confirm the loop is still wrapping after the
     //    visibility round-trip — at least two more loop wraps over

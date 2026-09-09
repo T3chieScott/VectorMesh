@@ -73,6 +73,12 @@ function makeFakeVideo(): FakeVideo {
   return v;
 }
 
+function establishPlayback(video: FakeVideo) {
+  video.paused = false;
+  video.fire("playing");
+  video.paused = true;
+}
+
 interface FakeTarget {
   visibilityState?: string;
   listeners: ListenerMap;
@@ -179,7 +185,7 @@ test(`${PREFIX} unexpected pause schedules a deferred resume that calls play()`,
   cleanup();
 });
 
-test(`${PREFIX} suspend on a paused video triggers a deferred resume; suspend on a playing video is a no-op`, async () => {
+test(`${PREFIX} suspend is benign and never opens a recovery incident`, async () => {
   const video = makeFakeVideo();
   const { stats, bump } = makeStats();
   const timer = makeManualTimer();
@@ -202,14 +208,14 @@ test(`${PREFIX} suspend on a paused video triggers a deferred resume; suspend on
   assert.equal(timer.pendingCount(), 0, "suspend on playing video is benign");
   assert.equal(stats.stalls, 0, "suspend never bumps stall counter");
 
-  // Now paused — suspend should kick the watchdog.
+  // Even paused, suspend alone is normal browser buffering/lifecycle noise.
   video.paused = true;
   video.fire("suspend");
-  assert.equal(timer.pendingCount(), 1, "suspend on paused video schedules resume");
+  assert.equal(timer.pendingCount(), 0, "suspend without an interruption does not schedule resume");
   timer.flush();
   await flushMicrotasks();
-  assert.equal(video.playCalls, 1);
-  assert.equal(stats.recoveries, 1);
+  assert.equal(video.playCalls, 0);
+  assert.equal(stats.recoveries, 0);
   assert.equal(stats.stalls, 0, "suspend still must not bump stall counter");
 
   cleanup();
@@ -233,6 +239,7 @@ test(`${PREFIX} stalled event bumps stall counter and retries play()`, async () 
     bump,
   });
 
+  establishPlayback(video);
   video.fire("stalled");
   assert.equal(stats.stalls, 1, "stall should be counted immediately");
   timer.flush();
@@ -243,7 +250,7 @@ test(`${PREFIX} stalled event bumps stall counter and retries play()`, async () 
   cleanup();
 });
 
-test(`${PREFIX} visibilitychange → visible resumes a paused video`, async () => {
+test(`${PREFIX} visibilitychange → visible is only a prompt, not an initial recovery`, async () => {
   const video = makeFakeVideo();
   video.paused = true;
   const doc = makeFakeTarget("hidden");
@@ -267,17 +274,17 @@ test(`${PREFIX} visibilitychange → visible resumes a paused video`, async () =
   doc.fire("visibilitychange");
   assert.equal(video.playCalls, 0);
 
-  // Tab thaws → resume.
+  // Tab thaws without a recorded interruption: do not manufacture a recovery.
   doc.visibilityState = "visible";
   doc.fire("visibilitychange");
   await flushMicrotasks();
-  assert.equal(video.playCalls, 1, "becoming visible should retry play()");
-  assert.equal(stats.recoveries, 1);
+  assert.equal(video.playCalls, 0, "becoming visible alone must not retry play()");
+  assert.equal(stats.recoveries, 0);
 
   cleanup();
 });
 
-test(`${PREFIX} five consecutive failed retries inside the window trigger reload`, async () => {
+test(`${PREFIX} five distinct failed interruptions inside the window trigger reload`, async () => {
   const video = makeFakeVideo();
   video.paused = true;
   // play() always rejects so every retry counts as a failed retry.
@@ -299,6 +306,7 @@ test(`${PREFIX} five consecutive failed retries inside the window trigger reload
     bump,
   });
 
+  establishPlayback(video);
   // Drive the failure pipeline. Each `error` event bumps the stalls
   // stat and schedules a retry. We flush the timer (and microtasks)
   // between events so each retry actually runs and rejects, ticking
@@ -315,10 +323,50 @@ test(`${PREFIX} five consecutive failed retries inside the window trigger reload
     MAX_CONSECUTIVE_FAILURES,
     `error events should bump the stalls stat exactly once each (got ${stats.stalls})`,
   );
-  assert.equal(reloads, 1, "should reload once after MAX failed retries reached");
+  assert.equal(video.playCalls, MAX_CONSECUTIVE_FAILURES, "each distinct incident gets one retry");
+  assert.equal(reloads, 1, "five distinct failed incidents trigger one reload");
   assert.equal(stats.reloads, 1);
 
   cleanup();
+});
+
+test(`${PREFIX} rejected in-flight play after cleanup cannot count or reload`, async () => {
+  const video = makeFakeVideo();
+  const timer = makeManualTimer();
+  const { stats, bump } = makeStats();
+  let reloads = 0;
+  const cleanup = attachVideoKeepAlive(video, {
+    doc: makeFakeTarget("visible"),
+    win: {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      location: { reload: () => { reloads += 1; } },
+    },
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    nowFn: () => 1000,
+    bump,
+  });
+  establishPlayback(video);
+  video.playRejectsWith = new Error("decode failed");
+  for (let i = 0; i < MAX_CONSECUTIVE_FAILURES - 1; i++) {
+    video.fire("error");
+    timer.flush();
+    await flushMicrotasks();
+  }
+  let rejectPending!: (reason: Error) => void;
+  video.play = () => {
+    video.playCalls += 1;
+    return new Promise<void>((_resolve, reject) => { rejectPending = reject; });
+  };
+  video.fire("error");
+  timer.flush();
+  assert.equal(video.playCalls, MAX_CONSECUTIVE_FAILURES);
+  cleanup();
+  rejectPending(new Error("late rejection"));
+  await flushMicrotasks();
+  assert.equal(reloads, 0);
+  assert.equal(stats.reloads, 0);
 });
 
 test(`${PREFIX} stalled+recovered cycles never trigger reload, no matter how many`, async () => {
@@ -345,6 +393,7 @@ test(`${PREFIX} stalled+recovered cycles never trigger reload, no matter how man
     bump,
   });
 
+  establishPlayback(video);
   for (let i = 0; i < 50; i++) {
     video.paused = true; // simulate the browser re-pausing between cycles
     video.fire("stalled");
@@ -360,7 +409,7 @@ test(`${PREFIX} stalled+recovered cycles never trigger reload, no matter how man
   cleanup();
 });
 
-test(`${PREFIX} vm:player-wake on a paused video resumes playback`, async () => {
+test(`${PREFIX} vm:player-wake without an incident does not resume playback`, async () => {
   const video = makeFakeVideo();
   video.paused = true;
   const win = {
@@ -394,15 +443,15 @@ test(`${PREFIX} vm:player-wake on a paused video resumes playback`, async () => 
   win.fire("vm:player-wake");
   await flushMicrotasks();
 
-  assert.equal(video.playCalls, 1, "wake event should retry play() on paused video");
-  assert.equal(stats.recoveries, 1, "successful resume should bump recoveries");
+  assert.equal(video.playCalls, 0, "wake alone must not retry play()");
+  assert.equal(stats.recoveries, 0, "successful initial playback is not a recovery");
 
   cleanup();
 
   // After cleanup the listener is gone — extra wakes are no-ops.
   win.fire("vm:player-wake");
   await flushMicrotasks();
-  assert.equal(video.playCalls, 1, "wake after cleanup must not retry");
+  assert.equal(video.playCalls, 0, "wake after cleanup must not retry");
 });
 
 test(`${PREFIX} wake event has no effect on a video without keep-alive attached (inactive crossfade layer)`, async () => {
@@ -474,7 +523,7 @@ test(`${PREFIX} cleanup detaches every listener`, () => {
   });
 
   // Schedule a resume so we have a pending timer.
-  video.paused = true;
+  establishPlayback(video);
   video.fire("pause");
   assert.equal(timer.pendingCount(), 1);
 
@@ -587,6 +636,7 @@ test(`${PREFIX} Task #197: bumping reloads writes through to sessionStorage so t
       nowFn: () => now,
     });
 
+    establishPlayback(video);
     for (let i = 0; i < MAX_CONSECUTIVE_FAILURES; i++) {
       video.fire("pause");
       timer.flush();
@@ -807,6 +857,7 @@ test(`${PREFIX} an intended=false preparation never starts playback`, async () =
     bump,
   });
 
+  establishPlayback(video);
   video.fire("pause");
   video.fire("stalled");
   video.fire("error");
@@ -834,6 +885,53 @@ test(`${PREFIX} attaching an intended-playing video does not itself autoplay it`
   cleanup();
 });
 
+test(`${PREFIX} never-played active element pause plus wake records nothing`, async () => {
+  const video = makeFakeVideo();
+  const win = makeFakeTarget() as FakeTarget & { location?: { reload: () => void } };
+  const timer = makeManualTimer();
+  const { stats, bump } = makeStats();
+  const cleanup = attachVideoKeepAlive(video, {
+    doc: makeFakeTarget("visible"),
+    win,
+    intendedPlaying: true,
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    bump,
+  });
+  video.fire("pause");
+  win.fire("vm:player-wake");
+  timer.flush();
+  await flushMicrotasks();
+  assert.equal(video.playCalls, 0);
+  assert.deepEqual(stats, { stalls: 0, recoveries: 0, reloads: 0 });
+  cleanup();
+});
+
+test(`${PREFIX} prior-playing hidden pause plus visible wake records nothing`, async () => {
+  const video = makeFakeVideo();
+  const doc = makeFakeTarget("visible");
+  const win = makeFakeTarget() as FakeTarget & { location?: { reload: () => void } };
+  const timer = makeManualTimer();
+  const { stats, bump } = makeStats();
+  const cleanup = attachVideoKeepAlive(video, {
+    doc,
+    win,
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    bump,
+  });
+  establishPlayback(video);
+  doc.visibilityState = "hidden";
+  video.fire("pause");
+  doc.visibilityState = "visible";
+  win.fire("vm:player-wake");
+  timer.flush();
+  await flushMicrotasks();
+  assert.equal(video.playCalls, 0);
+  assert.deepEqual(stats, { stalls: 0, recoveries: 0, reloads: 0 });
+  cleanup();
+});
+
 test(`${PREFIX} pause, stalled, and error coalesce into one visible recovery episode`, async () => {
   const video = makeFakeVideo();
   const timer = makeManualTimer();
@@ -846,6 +944,7 @@ test(`${PREFIX} pause, stalled, and error coalesce into one visible recovery epi
     bump,
   });
 
+  establishPlayback(video);
   video.fire("pause");
   video.fire("stalled");
   video.fire("error");
@@ -878,6 +977,7 @@ for (const order of [
       bump,
     });
 
+    establishPlayback(video);
     for (const event of order) video.fire(event);
     // A trailing duplicate from the browser's event storm cannot reopen it.
     video.fire("stalled");
@@ -903,6 +1003,7 @@ test(`${PREFIX} cleanup while a recovery is scheduled cancels its only retry`, a
     clearTimeoutFn: timer.clearTimeoutFn,
     bump: makeStats().bump,
   });
+  establishPlayback(video);
   video.fire("pause");
   assert.equal(timer.pendingCount(), 1);
   cleanup(); // unmount / intended-playing lifecycle change
@@ -928,6 +1029,7 @@ test(`${PREFIX} cleanup while play is in-flight cannot report recovery or retry`
     clearTimeoutFn: timer.clearTimeoutFn,
     bump,
   });
+  establishPlayback(video);
   video.fire("pause");
   timer.flush();
   assert.equal(video.playCalls, 1);
@@ -953,5 +1055,43 @@ test(`${PREFIX} stale session stats reset once but current-version counters surv
       }));
       assert.deepEqual(getVideoStats(), { stalls: 2, recoveries: 3, reloads: 4 });
     },
+  );
+});
+
+test(`${PREFIX} v2 recovery-heavy storage is reset once to an exact v3 zero baseline`, async () => {
+  await withFakeWindow(
+    {
+      [VIDEO_STATS_STORAGE_KEY]: JSON.stringify({
+        version: 2,
+        stalls: 0,
+        recoveries: 12674,
+        reloads: 0,
+        lastRecoveryAt: 1_725_000_000_000,
+      }),
+    },
+    (storage) => {
+      assert.deepEqual(getVideoStats(), { stalls: 0, recoveries: 0, reloads: 0 });
+      assert.deepEqual(JSON.parse(storage.getItem(VIDEO_STATS_STORAGE_KEY)!), {
+        version: 3, stalls: 0, recoveries: 0, reloads: 0,
+      });
+      delete (globalThis as { window: Record<string, unknown> }).window.__vmPlayerVideoStats;
+      assert.deepEqual(getVideoStats(), { stalls: 0, recoveries: 0, reloads: 0 });
+      assert.deepEqual(JSON.parse(storage.getItem(VIDEO_STATS_STORAGE_KEY)!), {
+        version: 3, stalls: 0, recoveries: 0, reloads: 0,
+      });
+    },
+  );
+});
+
+test(`${PREFIX} valid v3 nonzero counters and recovery timestamp survive fresh-page hydration`, async () => {
+  await withFakeWindow(
+    {
+      [VIDEO_STATS_STORAGE_KEY]: JSON.stringify({
+        version: 3, stalls: 8, recoveries: 12674, reloads: 2, lastRecoveryAt: 1_725_000_000_000,
+      }),
+    },
+    () => assert.deepEqual(getVideoStats(), {
+      stalls: 8, recoveries: 12674, reloads: 2, lastRecoveryAt: 1_725_000_000_000,
+    }),
   );
 });

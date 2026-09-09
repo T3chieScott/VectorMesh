@@ -3,7 +3,18 @@ import { MapContainer, TileLayer, Marker, Tooltip, useMap } from "react-leaflet"
 import L from "leaflet";
 import { useQuery } from "@tanstack/react-query";
 import { useOptionalSiteFilteredQuery } from "@/hooks/use-site-context";
-import { useVideoKeepAlive } from "@/hooks/use-video-keep-alive";
+import {
+  KeepAliveVideo,
+  StableResolvedMediaVideo,
+  StableMediaVideoRenderer,
+  canonicalPlaybackOrder,
+  getMediaPlaybackIdentity,
+  getMediaSourceIdentity,
+  reconcileCanonicalPlaybackOrder,
+  pruneRetainedMediaAssets,
+  computeScreenRenderFingerprint,
+  computeZoneRenderFingerprint,
+} from "@/components/stable-media-video";
 import { getMediaPlayerVideoLoopProps } from "@/lib/media-player-loop";
 import { WORLD_MAP_PATHS, WORLD_MAP_VIEWBOX } from "./world-map-paths";
 import {
@@ -3073,7 +3084,7 @@ function parseYouTubeInput(input?: string): { type: "video"; id: string } | { ty
   return null;
 }
 
-function YouTubeLiveWidget({ url, mute = true }: { url?: string; mute?: boolean }) {
+function YouTubeLiveWidget({ url, mute = true, active = true }: { url?: string; mute?: boolean; active?: boolean }) {
   const parsed = useMemo(() => parseYouTubeInput(url), [url]);
 
   const embedSrc = useMemo(() => {
@@ -3096,7 +3107,7 @@ function YouTubeLiveWidget({ url, mute = true }: { url?: string; mute?: boolean 
     return `https://www.youtube.com/embed/${parsed.id}?${params.toString()}`;
   }, [parsed, mute]);
 
-  if (!embedSrc) {
+  if (!embedSrc || !active) {
     return (
       <div className="h-full w-full bg-black/90 flex flex-col items-center justify-center gap-2 text-white/60">
         <MonitorPlay className="h-8 w-8" />
@@ -3123,7 +3134,7 @@ function YouTubeLiveWidget({ url, mute = true }: { url?: string; mute?: boolean 
   );
 }
 
-function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean }) {
+function WebRtcStreamWidget({ url, mute = true, active = true }: { url?: string; mute?: boolean; active?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -3305,9 +3316,10 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
   connectRef.current = connect;
 
   useEffect(() => {
-    connect();
+    if (active) connect();
+    else destroy();
     return destroy;
-  }, [connect, destroy]);
+  }, [active, connect, destroy]);
 
   // Task #199 — enforce the muted property imperatively. React's
   // `muted` prop is not reliably reflected onto the DOM property, and
@@ -3339,10 +3351,11 @@ function WebRtcStreamWidget({ url, mute = true }: { url?: string; mute?: boolean
       <video
         ref={videoRef}
         className="w-full h-full object-contain"
-        autoPlay
+        autoPlay={active}
         playsInline
         muted={mute}
         data-testid="video-webrtc-stream"
+        data-screen-render-readiness-exempt={!active ? "true" : undefined}
       />
       {status !== "live" && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80">
@@ -3833,15 +3846,12 @@ function MediaWidget({
   
   if (currentMedia.mediaType === "video") {
     return (
-      <KeepAliveVideo
-        key={currentMedia.id}
-        src={mediaUrl}
-        className="h-full w-full object-contain"
-        autoPlay={isPlaying}
-        loop
-        muted
-        playsInline
-        keepAliveEnabled={isPlaying}
+      <StableMediaVideoRenderer
+        zone={{ mediaId: currentMedia.id } as LayoutZone}
+        media={[currentMedia]}
+        isPlaying={isPlaying}
+        mediaBaseUrl={mediaBaseUrl}
+        deviceToken={deviceToken}
       />
     );
   }
@@ -3854,32 +3864,6 @@ function MediaWidget({
       className="h-full w-full object-contain"
     />
   );
-}
-
-// Task #196 — small <video> wrapper that owns its own ref and
-// wires the keep-alive watchdog. Centralised so every player-side
-// <video> gets the same auto-resume behaviour.
-//
-// Task #199 — every player-side <video> is muted by default. A muted
-// element never participates in Chromium's audio-focus arbitration,
-// so it is never auto-paused when another tab claims audio focus
-// (e.g. a YouTube ad). An operator must opt in explicitly by passing
-// `muted={false}`. The keep-alive hook also enforces the property
-// imperatively to defend against React's `muted`-attribute bug.
-function KeepAliveVideo({
-  keepAliveEnabled,
-  muted,
-  ...props
-}: React.VideoHTMLAttributes<HTMLVideoElement> & { keepAliveEnabled?: boolean }) {
-  const ref = useRef<HTMLVideoElement>(null);
-  // Default to muted unless the caller explicitly opts in to audio.
-  const isMuted = muted ?? true;
-  useVideoKeepAlive(ref, {
-    enabled: keepAliveEnabled ?? true,
-    intendedPlaying: props.autoPlay ?? false,
-    muted: isMuted,
-  });
-  return <video ref={ref} {...props} muted={isMuted} />;
 }
 
 function MontageWidget({
@@ -5323,26 +5307,51 @@ function MediaPlayerWidget({
   const allMedia = hasProvidedMedia ? providedMedia : fetchedMedia;
 
   const baseUrl = mediaBaseUrl || "/api/media";
+  const allMediaRef = useRef(allMedia);
+  const mediaHistoryRef = useRef(new Map<string, MediaAsset>());
+  allMedia.forEach((asset) => mediaHistoryRef.current.set(asset.id, asset));
+  allMediaRef.current = allMedia;
+  const resolveCurrentAsset = useCallback((mediaAssetId: string) => {
+    const direct = allMediaRef.current.find((asset) => asset.id === mediaAssetId);
+    if (direct) return direct;
+    const previous = mediaHistoryRef.current.get(mediaAssetId);
+    if (!previous) return undefined;
+    const source = deepSortedStringify(getMediaSourceIdentity(previous));
+    return allMediaRef.current.find((asset) =>
+      deepSortedStringify(getMediaSourceIdentity(asset)) === source);
+  }, []);
   const getUrl = useCallback((mediaAssetId: string) => {
     if (!mediaAssetId) return "";
-    const asset = allMedia.find(m => m.id === mediaAssetId);
+    const asset = resolveCurrentAsset(mediaAssetId);
+    // A remote originalPath is the resolved source, not a database identity.
+    // Using it directly prevents equivalent rows from resetting a retained
+    // media element during a scene handoff.
+    if (asset?.originalPath?.startsWith("http")) return asset.originalPath;
     const v = asset?.updatedAt ? new Date(asset.updatedAt).getTime() : "";
-    const url = `${baseUrl}/${mediaAssetId}/file`;
+    const url = `${baseUrl}/${asset?.id ?? mediaAssetId}/file`;
     if (deviceToken) return `${url}?token=${deviceToken}${v ? `&v=${v}` : ""}`;
     return v ? `${url}?v=${v}` : url;
-  }, [baseUrl, deviceToken, allMedia]);
+  }, [baseUrl, deviceToken, resolveCurrentAsset]);
 
   const getMediaType = useCallback((mediaAssetId: string): "image" | "video" | "gif" => {
-    const asset = allMedia.find(m => m.id === mediaAssetId);
+    const asset = resolveCurrentAsset(mediaAssetId);
     return asset?.mediaType || "image";
-  }, [allMedia]);
+  }, [resolveCurrentAsset]);
 
-  const playOrder = useRef<Array<{ id: string; mediaAssetId: string; duration?: number }>>([]);
+  const itemsKey = getMediaPlaybackIdentity(items, allMedia);
+  const initialOrderRef = useRef<Array<{ id: string; mediaAssetId: string; duration?: number }> | null>(null);
+  if (initialOrderRef.current === null) {
+    initialOrderRef.current = canonicalPlaybackOrder(items, shuffle);
+  }
+  const playOrder = useRef(initialOrderRef.current);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [layerA, setLayerA] = useState<string>("");
-  const [layerB, setLayerB] = useState<string>("");
-  const [layerAType, setLayerAType] = useState<"image" | "video" | "gif">("image");
-  const [layerBType, setLayerBType] = useState<"image" | "video" | "gif">("image");
+  const [layerA, setLayerA] = useState<string>(() => playOrder.current[0]?.mediaAssetId ?? "");
+  const [layerB, setLayerB] = useState<string>(() =>
+    playOrder.current[1]?.mediaAssetId ?? playOrder.current[0]?.mediaAssetId ?? "");
+  const [layerAType, setLayerAType] = useState<"image" | "video" | "gif">(() =>
+    getMediaType(playOrder.current[0]?.mediaAssetId ?? ""));
+  const [layerBType, setLayerBType] = useState<"image" | "video" | "gif">(() =>
+    getMediaType(playOrder.current[1]?.mediaAssetId ?? playOrder.current[0]?.mediaAssetId ?? ""));
   const [activeLayer, setActiveLayer] = useState<"a" | "b">("a");
   const [crossfading, setCrossfading] = useState(false);
   const [stopped, setStopped] = useState(false);
@@ -5357,13 +5366,36 @@ function MediaPlayerWidget({
     return () => { isMountedRef.current = false; };
   }, []);
 
-  const itemsKey = JSON.stringify(items);
+  const canonicalItemsRef = useRef(items);
+  canonicalItemsRef.current = items;
+  const playOrderIdentityRef = useRef(itemsKey);
+  const initialItemsEffectRef = useRef(true);
+  if (playOrderIdentityRef.current === itemsKey &&
+      playOrder.current.length === items.length) {
+    // A refreshed payload may replace row IDs while retaining the same source
+    // identity. Refresh canonical references without resetting index/timers.
+    playOrder.current = reconcileCanonicalPlaybackOrder(
+      playOrder.current,
+      items,
+      Array.from(mediaHistoryRef.current.values()),
+    );
+  }
+  pruneRetainedMediaAssets(mediaHistoryRef.current, allMedia, [
+    ...playOrder.current.map((item) => item.mediaAssetId),
+    layerA,
+    layerB,
+  ]);
   useEffect(() => {
-    const parsed = JSON.parse(itemsKey) as typeof items;
-    const order = shuffle && parsed.length > 0
-      ? [...parsed].sort(() => Math.random() - 0.5)
-      : [...parsed];
+    if (initialItemsEffectRef.current) {
+      initialItemsEffectRef.current = false;
+      return;
+    }
+    // The fingerprint is comparison identity only; playback always consumes
+    // canonical items so mediaAssetId and URL resolution remain intact.
+    const canonical = canonicalItemsRef.current;
+    const order = canonicalPlaybackOrder(canonical, shuffle);
     playOrder.current = order;
+    playOrderIdentityRef.current = itemsKey;
     currentIndexRef.current = 0;
     setCurrentIndex(0);
     setStopped(false);
@@ -5554,18 +5586,24 @@ function MediaPlayerWidget({
         itemsLength: items.length,
         isActiveLayer: isActive,
       });
+      const asset = resolveCurrentAsset(mediaAssetId);
+      if (!asset) return null;
       return (
-        <KeepAliveVideo
-          key={`${mediaAssetId}-${isActive ? "active" : "inactive"}`}
-          src={url}
+        <StableResolvedMediaVideo
+          key={isActive ? "active-video" : "inactive-video"}
+          asset={asset}
+          mediaBaseUrl={baseUrl}
+          deviceToken={deviceToken}
+          identityConfig={{ fitMode, loop, muted, attachOnEnded }}
           className="h-full w-full"
           style={{ objectFit: fitMode, border: "none" }}
-          autoPlay={isActive && autoPlay}
+          autoPlay={isActive && autoPlay && isPlaying}
           muted={muted}
           playsInline
           loop={loop}
           onEnded={attachOnEnded ? handleVideoEnded : undefined}
           keepAliveEnabled={isActive && autoPlay && isPlaying && !stopped}
+          data-screen-render-readiness-exempt={!isActive ? "true" : undefined}
         />
       );
     }
@@ -5577,6 +5615,7 @@ function MediaPlayerWidget({
         alt=""
         className="h-full w-full"
         style={{ objectFit: fitMode, border: "none" }}
+        data-screen-render-readiness-exempt={!isActive ? "true" : undefined}
       />
     );
   };
@@ -6033,6 +6072,7 @@ export function ZoneRenderer({
           <YouTubeLiveWidget
             url={zone.youtubeUrl}
             mute={zone.youtubeMute}
+            active={isPlaying}
           />
         );
       case "agenda":
@@ -6051,6 +6091,7 @@ export function ZoneRenderer({
           <WebRtcStreamWidget
             url={webrtcFullUrl}
             mute={zone.webrtcMute}
+            active={isPlaying}
           />
         );
       }
@@ -6175,7 +6216,7 @@ export function ZoneRenderer({
       style={zoneStyle}
       data-testid={`zone-${zone.id}`}
     >
-      {zone.backgroundVideo && (
+      {zone.backgroundVideo && isPlaying && (
         <KeepAliveVideo
           src={zone.backgroundVideo}
           autoPlay
@@ -6230,6 +6271,22 @@ function deepSortedStringify(value: unknown): string {
 export function getZoneFingerprint(zone: LayoutZone): string {
   const { id, name, ...rest } = zone;
   return `zfp_${zone.type}_${zone.x}_${zone.y}_${zone.width}_${zone.height}_${djb2Hash(deepSortedStringify(rest))}`;
+}
+
+/**
+ * A media-aware visual key. Zone and playlist row IDs are transport identity,
+ * not pixels: resolve media references to their actual source before hashing
+ * so equivalent scenes can retain their mounted video element.
+ */
+export function getZoneRenderFingerprint(zone: LayoutZone, media: MediaAsset[]): string {
+  // Shared implementation resolves transport IDs through getMediaSourceIdentity(asset).
+  return computeZoneRenderFingerprint(zone, media);
+}
+
+/** Complete visual scene fingerprint; ordering, geometry and playback config
+ * remain significant through each normalized zone. */
+export function getScreenRenderFingerprint(zones: LayoutZone[], media: MediaAsset[]): string {
+  return computeScreenRenderFingerprint(zones, media);
 }
 
 export function getAspectRatioDimensions(aspectRatio: string, customWidth?: number | null, customHeight?: number | null): { width: number; height: number } {

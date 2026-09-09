@@ -65,6 +65,8 @@ export interface VideoHealthDecision {
    * refreshed itself" event.
    */
   auditLog: InsertAuditLog | null;
+  /** True when this heartbeat establishes a decreased-counter fresh-page baseline. */
+  isBaselineReset: boolean;
 }
 
 /**
@@ -128,5 +130,5 @@ export function decideVideoHealthUpdate(
       }
     : null;
 
-  return { patch, auditLog };
+  return { patch, auditLog, isBaselineReset: counterDecreased };
 }

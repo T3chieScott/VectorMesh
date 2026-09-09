@@ -95,6 +95,7 @@ test(`${PREFIX} decideVideoHealthUpdate: writes patch + audit row when reloads w
   assert.equal(decision.auditLog!.action, "screen_video_reload");
   assert.equal(decision.auditLog!.entityType, "screen");
   assert.equal(decision.auditLog!.entityId, "screen-1");
+  assert.equal(decision.isBaselineReset, false);
   assert.deepEqual(decision.auditLog!.payload, {
     previousReloads: 1,
     newReloads: 2,
@@ -129,6 +130,7 @@ test(`${PREFIX} decideVideoHealthUpdate: recovery increase stamps its own event 
   assert.equal(decision.patch.videoStatsLastRecoveryAt?.getTime(), now.getTime());
   assert.equal(decision.patch.videoStatsLastReloadAt, undefined);
   assert.equal(decision.auditLog, null);
+  assert.equal(decision.isBaselineReset, false);
 });
 
 test(`${PREFIX} decideVideoHealthUpdate: lower reloads (player page-load reset) → no audit row`, () => {
@@ -145,6 +147,7 @@ test(`${PREFIX} decideVideoHealthUpdate: lower reloads (player page-load reset) 
   assert.equal(decision.patch.videoStatsReloads, 0);
   assert.equal(decision.patch.videoStatsLastReloadAt, undefined);
   assert.equal(decision.patch.videoStatsLastRecoveryAt, undefined);
+  assert.equal(decision.isBaselineReset, true);
 });
 
 test(`${PREFIX} decideVideoHealthUpdate: any counter decrease is a baseline, not a mixed false event`, () => {

@@ -744,45 +744,71 @@ describe("Static analysis — source code consistency", () => {
     );
   });
 
-  test("player.tsx imports getZoneFingerprint from zone-renderer (not a local copy)", () => {
+  test("MediaWidget and render fingerprint share the production media-source seam", () => {
     assert.ok(
-      playerSrc.includes("getZoneFingerprint") && playerSrc.includes("zone-renderer"),
-      "player.tsx must import getZoneFingerprint from zone-renderer, not define its own copy",
+      zoneRendererSrc.includes("StableMediaVideoRenderer") &&
+        zoneRendererSrc.includes("getMediaSourceIdentity"),
+      "MediaWidget rendering and zone fingerprints must resolve media through the same stable source contract",
+    );
+    assert.match(
+      zoneRendererSrc,
+      /function getZoneRenderFingerprint[\s\S]*getMediaSourceIdentity\(asset\)/,
+      "media-aware zone fingerprints must hash the resolved source used by the video renderer",
+    );
+  });
+
+  test("preparing surfaces gate every explicit audio-capable renderer", () => {
+    assert.ok(zoneRendererSrc.includes("active={isPlaying}"), "YouTube/WebRTC receive the preparation gate");
+    assert.ok(
+      zoneRendererSrc.includes("zone.backgroundVideo && isPlaying"),
+      "background video is absent from hidden preparation",
+    );
+    assert.match(zoneRendererSrc, /autoPlay=\{isActive && autoPlay && isPlaying\}/);
+    assert.ok(
+      zoneRendererSrc.includes('data-screen-render-readiness-exempt={!active ? "true" : undefined}'),
+      "inactive WebRTC video must not deadlock candidate media readiness",
+    );
+  });
+
+  test("player.tsx imports the media-aware render fingerprint helpers (not local copies)", () => {
+    assert.ok(
+      playerSrc.includes("getScreenRenderFingerprint") && playerSrc.includes("getZoneRenderFingerprint") && playerSrc.includes("zone-renderer"),
+      "player.tsx must use the shared media-aware fingerprint helpers",
     );
     // Confirm it is an import, not a local function definition
     assert.ok(
-      !playerSrc.includes("function getZoneFingerprint"),
-      "player.tsx must not define its own getZoneFingerprint — use the shared export",
+      !playerSrc.includes("function getZoneRenderFingerprint"),
+      "player.tsx must not define a local render fingerprint",
     );
   });
 
-  test("monitor.tsx imports getZoneFingerprint from zone-renderer (not a local copy)", () => {
+  test("monitor.tsx imports the media-aware render fingerprint helpers (not local copies)", () => {
     assert.ok(
-      monitorSrc.includes("getZoneFingerprint") && monitorSrc.includes("zone-renderer"),
-      "monitor.tsx must import getZoneFingerprint from zone-renderer, not define its own copy",
+      monitorSrc.includes("getScreenRenderFingerprint") && monitorSrc.includes("getZoneRenderFingerprint") && monitorSrc.includes("zone-renderer"),
+      "monitor.tsx must use the shared media-aware fingerprint helpers",
     );
     assert.ok(
-      !monitorSrc.includes("function getZoneFingerprint"),
-      "monitor.tsx must not define its own getZoneFingerprint — use the shared export",
-    );
-  });
-
-  test("player.tsx zoneKey callback: isLayoutRotation ? getZoneFingerprint(zone) : zone.id", () => {
-    assert.ok(
-      playerSrc.includes("isLayoutRotation ? getZoneFingerprint(zone) : zone.id"),
-      "player.tsx must use the correct zoneKey callback pattern",
+      !monitorSrc.includes("function getZoneRenderFingerprint"),
+      "monitor.tsx must not define a local render fingerprint",
     );
   });
 
-  test("monitor.tsx zoneKey callback: isLayoutRotation ? getZoneFingerprint(zone) : zone.id", () => {
+  test("player.tsx uses media-aware stable zone keys for every scene", () => {
     assert.ok(
-      monitorSrc.includes("isLayoutRotation ? getZoneFingerprint(zone) : zone.id"),
-      "monitor.tsx must use the correct zoneKey callback pattern (identical to player.tsx)",
+      playerSrc.includes("zoneKey={(zone) => getZoneRenderFingerprint(zone, content?.media || [])}"),
+      "player must retain equivalent zones regardless of rotation/database identity",
+    );
+  });
+
+  test("monitor.tsx uses the same media-aware stable zone key", () => {
+    assert.ok(
+      monitorSrc.includes("zoneKey={(zone) => getZoneRenderFingerprint(zone, content?.media || [])}"),
+      "monitor must retain equivalent zones with the Player",
     );
   });
 
   test("player.tsx and monitor.tsx use the SAME zoneKey callback string", () => {
-    const pattern = "isLayoutRotation ? getZoneFingerprint(zone) : zone.id";
+    const pattern = "zoneKey={(zone) => getZoneRenderFingerprint(zone, content?.media || [])}";
     assert.ok(
       playerSrc.includes(pattern) && monitorSrc.includes(pattern),
       "Both hosts must use the identical zoneKey callback — any divergence breaks Monitor/Player symmetry",
