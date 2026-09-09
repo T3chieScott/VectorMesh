@@ -291,8 +291,9 @@ describe("monitor presentation observation endpoint", () => {
       : {},
   }) as any;
   const makeRes = () => {
-    const output: any = { statusCode: 200, body: undefined };
+    const output: any = { statusCode: 200, body: undefined, headers: {} };
     output.status = (code: number) => { output.statusCode = code; return output; };
+    output.set = (name: string, value: string) => { output.headers[name] = value; return output; };
     output.type = () => output;
     output.send = (body: any) => { output.body = body; return output; };
     output.json = (body: any) => { output.body = body; return output; };
@@ -316,6 +317,7 @@ describe("monitor presentation observation endpoint", () => {
     assert.equal(typeof res.body.serverTime, "number");
     assert.deepEqual(res.body.playerPresentationState, observed);
     assert.deepEqual(Object.keys(res.body).sort(), ["playerPresentationState", "serverTime"]);
+    assert.equal(res.headers["Cache-Control"], "private, no-store");
     assert.equal(reads, 1);
   });
 
