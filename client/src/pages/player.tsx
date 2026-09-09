@@ -1064,8 +1064,11 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     // Zone callbacks can arrive after React has begun swapping scenes. The
     // identity reset above, plus this current-scene check, keeps an old page
     // from escaping in the next heartbeat.
-    if (!isPresentationCommitted || !presentation.revision ||
-      presentationIdentityRef.current !== presentationIdentity) return;
+    // A prepared frame is promoted without remounting its Agenda subtree, so
+    // this callback can retain the render-time `isPresentationCommitted=false`
+    // closure from hidden preparation. Read the live committed owner instead.
+    if (committedPresentationIdentityRef.current !== presentationIdentity ||
+      !presentation.revision) return;
     const previous = agendaPresentationStatesRef.current.get(zoneId);
     agendaPresentationStatesRef.current.set(zoneId, state);
     const nextReport = visiblePresentationEmission(

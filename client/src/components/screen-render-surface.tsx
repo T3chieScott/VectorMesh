@@ -37,6 +37,10 @@ import type { LayoutZone, MediaAsset } from "@shared/schema";
 import type { AgendaPresentationState } from "@/components/agenda/AgendaDisplayWidget";
 import type { PlayerVariableContext } from "@/components/zone-renderer";
 import type { AgendaZoneBinding } from "@/lib/agenda-scene-completion";
+import {
+  StableVideoFrameScope,
+  StableVideoSurfaceProvider,
+} from "@/components/stable-media-video";
 
 // ── Canvas geometry ───────────────────────────────────────────────────────────
 
@@ -231,28 +235,35 @@ function SurfaceFrame({
   };
   // A scene without agendas has no asynchronous render gate.  Run this after
   // it has mounted, rather than while rendering, so promotion is still atomic.
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (!preparing) return;
     const root = frameRef.current;
-    const media = root
+    const observed = new Set<HTMLImageElement | HTMLVideoElement>();
+    const readMedia = () => root
       ? Array.from(root.querySelectorAll<HTMLImageElement | HTMLVideoElement>("img,video"))
         .filter((element) => element.getAttribute("data-screen-render-readiness-exempt") !== "true")
       : [];
-    const unresolved = () => media.some((element) =>
-      element instanceof HTMLImageElement ? !element.complete :
-        element.readyState < HTMLMediaElement.HAVE_CURRENT_DATA,
-    );
+    const unresolved = () => {
+      if (root?.querySelector("[data-stable-video-pending='true']:empty")) return true;
+      return readMedia().some((element) =>
+        element instanceof HTMLImageElement ? !element.complete :
+          element.readyState < HTMLMediaElement.HAVE_CURRENT_DATA);
+    };
     const checkMedia = () => {
+      readMedia().forEach((element) => {
+        if (observed.has(element)) return;
+        observed.add(element);
+        element.addEventListener("load", checkMedia);
+        element.addEventListener("loadeddata", checkMedia);
+        element.addEventListener("canplay", checkMedia);
+        element.addEventListener("error", checkMedia);
+      });
       mediaReadyRef.current = !unresolved();
       markReady();
     };
+    const mediaObserver = root ? new MutationObserver(checkMedia) : null;
+    if (root) mediaObserver?.observe(root, { childList: true, subtree: true });
     checkMedia();
-    media.forEach((element) => {
-      element.addEventListener("load", checkMedia);
-      element.addEventListener("loadeddata", checkMedia);
-      element.addEventListener("canplay", checkMedia);
-      element.addEventListener("error", checkMedia);
-    });
     // Font loading is part of frame preparation: promoting before custom faces
     // settle causes exactly the one-frame reflow this gate is intended to hide.
     const fonts = document.fonts;
@@ -265,12 +276,15 @@ function SurfaceFrame({
       fontsReadyRef.current = true;
     }
     markReady();
-    return () => media.forEach((element) => {
-      element.removeEventListener("load", checkMedia);
-      element.removeEventListener("loadeddata", checkMedia);
-      element.removeEventListener("canplay", checkMedia);
-      element.removeEventListener("error", checkMedia);
-    });
+    return () => {
+      mediaObserver?.disconnect();
+      observed.forEach((element) => {
+        element.removeEventListener("load", checkMedia);
+        element.removeEventListener("loadeddata", checkMedia);
+        element.removeEventListener("canplay", checkMedia);
+        element.removeEventListener("error", checkMedia);
+      });
+    };
   }, []);
   const onAgendaRenderReady = (zoneId: string) => {
     pendingAgendaRef.current.delete(zoneId);
@@ -474,7 +488,7 @@ export function ScreenRenderSurface({
       ? [{ identity: committed.identity, visualIdentity: committed.visualIdentity, readinessIdentity: committed.readinessIdentity, instanceKey: committed.instanceKey, props: committedProps, preparing: false }]
       : [];
   return (
-    <>
+    <StableVideoSurfaceProvider>
       {frames.map((frame) => (
         <SurfaceFrameSlot
           // A superseded *candidate* with the same pixels must begin a new
@@ -483,24 +497,26 @@ export function ScreenRenderSurface({
           key={frame.instanceKey}
           hidden={frame.preparing}
         >
-          <SurfaceFrame {...frame.props} frameIdentity={frame.identity}
-            frameVisualIdentity={frame.visualIdentity}
-            frameReadinessIdentity={frame.readinessIdentity}
-            frameInstanceKey={frame.instanceKey}
-            preparing={frame.preparing} onReady={promote}
-            onSkip={onFrameSkipped ? (skipped, skippedVisual, skippedReadiness, skippedInstance) => {
-              const currentCandidate = candidateRef.current;
-              if (desiredIdentityRef.current !== skipped || !currentCandidate ||
-                desiredVisualIdentityRef.current !== skippedVisual ||
-                desiredReadinessIdentityRef.current !== skippedReadiness ||
-                currentCandidate.identity !== skipped ||
-                currentCandidate.visualIdentity !== skippedVisual ||
-                currentCandidate.readinessIdentity !== skippedReadiness ||
-                currentCandidate.instanceKey !== skippedInstance) return;
-              skipRef.current?.(skipped);
-            } : undefined} />
+          <StableVideoFrameScope preparing={frame.preparing} frameInstanceKey={frame.instanceKey}>
+            <SurfaceFrame {...frame.props} frameIdentity={frame.identity}
+              frameVisualIdentity={frame.visualIdentity}
+              frameReadinessIdentity={frame.readinessIdentity}
+              frameInstanceKey={frame.instanceKey}
+              preparing={frame.preparing} onReady={promote}
+              onSkip={onFrameSkipped ? (skipped, skippedVisual, skippedReadiness, skippedInstance) => {
+                const currentCandidate = candidateRef.current;
+                if (desiredIdentityRef.current !== skipped || !currentCandidate ||
+                  desiredVisualIdentityRef.current !== skippedVisual ||
+                  desiredReadinessIdentityRef.current !== skippedReadiness ||
+                  currentCandidate.identity !== skipped ||
+                  currentCandidate.visualIdentity !== skippedVisual ||
+                  currentCandidate.readinessIdentity !== skippedReadiness ||
+                  currentCandidate.instanceKey !== skippedInstance) return;
+                skipRef.current?.(skipped);
+              } : undefined} />
+          </StableVideoFrameScope>
         </SurfaceFrameSlot>
       ))}
-    </>
+    </StableVideoSurfaceProvider>
   );
 }

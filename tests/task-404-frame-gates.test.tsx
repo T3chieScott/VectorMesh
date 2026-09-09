@@ -846,6 +846,67 @@ describe("Task404 ScreenRenderSurface real DOM frame gate", () => {
     );
     cleanup();
   });
+
+  test("surface ownership survives a differing non-video frame and replaces only a changed source", async () => {
+    const commits: string[] = [];
+    const media = [
+      { id: "same-a", mediaType: "video", originalPath: "/persistent.webm", mimeType: "video/webm" },
+      { id: "same-b", mediaType: "video", originalPath: "/persistent.webm", mimeType: "video/webm" },
+      { id: "changed", mediaType: "video", originalPath: "/replacement.webm", mimeType: "video/webm" },
+    ] as any;
+    const Renderer = (props: any) => props.zone.type === "media"
+      ? <StableMediaVideoRenderer {...props} />
+      : <div data-testid="non-video-zone">{props.zone.x}</div>;
+    const scene = (frameKey: string, mediaId: string, nonVideoX: number) => {
+      const zones = [
+        { ...html(`video-${frameKey}`), type: "media", mediaId, mediaFitMode: "contain" },
+        { ...html(`non-video-${frameKey}`), x: nonVideoX, width: 100 - nonVideoX },
+      ] as LayoutZone[];
+      return <ScreenRenderSurface
+        frameKey={frameKey}
+        renderKey={computeScreenRenderFingerprint(zones, media)}
+        zones={zones}
+        media={media}
+        zoneMediaIndices={{}}
+        playerContext={{} as any}
+        canvasGeometry={{ useOffset: false, canvasX: 0, canvasY: 0, canvasW: 0, canvasH: 0 }}
+        onFrameCommitted={(identity) => commits.push(identity)}
+        emptyAgendaPolicy="commit-no-content"
+        ZoneRendererComponent={Renderer}
+      />;
+    };
+
+    const view = render(scene("NOW-NEXT", "same-a", 0));
+    await waitFor(() => assert.deepEqual(commits, ["NOW-NEXT"]));
+    const authoritative = view.container.querySelector("video") as HTMLVideoElement;
+    Object.defineProperty(authoritative, "currentTime", {
+      configurable: true, writable: true, value: 37.25,
+    });
+
+    view.rerender(scene("FULL-AGENDA", "same-b", 11));
+    await waitFor(() => assert.deepEqual(commits, ["NOW-NEXT", "FULL-AGENDA"]));
+    const promoted = view.container.querySelector("video") as HTMLVideoElement;
+    assert.strictEqual(promoted, authoritative);
+    assert.equal(promoted.currentTime, 37.25);
+    assert.equal(view.getByTestId("non-video-zone").textContent, "11");
+
+    view.rerender(scene("CHANGED-SOURCE", "changed", 22));
+    const replacementCandidate = await waitFor(() => {
+      const element = view.getByTestId("screen-render-preparing-frame")
+        .querySelector("video") as HTMLVideoElement | null;
+      assert.ok(element);
+      return element;
+    });
+    assert.notStrictEqual(replacementCandidate, authoritative);
+    Object.defineProperty(replacementCandidate, "readyState", { configurable: true, value: 2 });
+    await act(async () => replacementCandidate.dispatchEvent(new Event("loadeddata")));
+    await waitFor(() => assert.deepEqual(
+      commits,
+      ["NOW-NEXT", "FULL-AGENDA", "CHANGED-SOURCE"],
+    ));
+    assert.strictEqual(view.container.querySelector("video"), replacementCandidate);
+    cleanup();
+  });
 });
 
 describe("Task404 Player and Monitor transition protocol", () => {

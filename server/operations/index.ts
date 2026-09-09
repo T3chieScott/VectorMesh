@@ -218,6 +218,7 @@ export function buildMonitorPresentationHandler(
       if (!session) {
         return res.status(401).type("application/json").send(MONITOR_401_JSON);
       }
+      res.set("Cache-Control", "private, no-store");
       return res.json({
         serverTime: Date.now(),
         playerPresentationState: readMonitorPresentation?.(screenId) ?? null,
@@ -1365,6 +1366,7 @@ export function mountOperationsRoutes(
         if (!session) {
           return res.status(401).type("application/json").send(MONITOR_401_JSON);
         }
+        res.set("Cache-Control", "private, no-store");
 
         // Preview-time support: ?at=YYYY-MM-DDTHH:mm:ss&elapsed_ms=N
         // atRaw is the naïve wall-clock anchor (no Z, no offset) interpreted in
