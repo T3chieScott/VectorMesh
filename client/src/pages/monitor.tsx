@@ -39,9 +39,19 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { MediaAsset, LayoutZone } from "@shared/schema";
-import { ZoneRenderer, getAspectRatioDimensions, getZoneFingerprint } from "@/components/zone-renderer";
+import { ZoneRenderer, getAspectRatioDimensions, getScreenRenderFingerprint, getZoneRenderFingerprint } from "@/components/zone-renderer";
 import { ScreenRenderSurface } from "@/components/screen-render-surface";
 import { committedIdentityAfterReport, observedRotationSelection } from "@/lib/frame-transition";
+import {
+  MONITOR_AUTHORITY_TTL_MS,
+  buildMonitorFrameIdentity,
+  createMonitorAuthorityState,
+  nextMonitorCandidateRetryKey,
+  observeMonitorAuthority,
+  readFreshMonitorAuthority,
+  type MonitorCandidateRetryKey,
+  type MonitorAuthorityState,
+} from "@/lib/monitor-authority";
 import { PlayerClockProvider, usePlayerClock } from "@/lib/playerClock";
 import { buildFontFaceCss } from "@/lib/fontFace";
 import { validatePreviewAtFormat } from "@shared/previewTime";
@@ -145,27 +155,30 @@ interface MonitorContentData {
     processGeneration: number; sequence: number; sceneGeneration: number;
     source?: string; playlistId?: string;
     agenda?: Array<{ zoneId: string; stage: string; page: number; cycle: number }>;
+    reportedAt: number;
   };
 }
-
-type MonitorPresentationState = NonNullable<
-  MonitorContentData["playerPresentationState"]
->;
 
 function MonitorContentInner({ screenId }: { screenId: string }) {
   const { feedSample, getSyncedNow } = usePlayerClock();
   const [content, setContent] = useState<MonitorContentData | null>(null);
-  const [presentationObservation, setPresentationObservation] = useState<{
-    state: MonitorPresentationState;
-    receivedAt: number;
-  } | null>(null);
+  const [monitorAuthority, setMonitorAuthority] = useState<MonitorAuthorityState>(
+    createMonitorAuthorityState,
+  );
+  const monitorAuthorityRef = useRef(monitorAuthority);
   const [authError, setAuthError] = useState(false);
   const [scale, setScale] = useState(1);
   const [zoneMediaIndices, setZoneMediaIndices] = useState<Record<string, number>>({});
   // Layout rotation: index into the zoneSources-driven rotation list
   const [layoutRotationIndex, setLayoutRotationIndex] = useState(0);
   const [weatherTimezone, setWeatherTimezone] = useState<string | undefined>(undefined);
+  // One bounded token for the currently unresolved preparation. It changes
+  // only when a newer physical report explicitly retries/supersedes that
+  // candidate; ordinary same-scene page heartbeats never touch it.
+  const [candidateRetryKey, setCandidateRetryKey] =
+    useState<MonitorCandidateRetryKey>("retry-a");
   const committedFrameIdentityRef = useRef<string | null>(null);
+  const desiredFrameIdentityRef = useRef<string | null>(null);
   const [, setCommittedFrameIdentity] = useState<string | null>(null);
   const layoutRotationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -202,22 +215,26 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
     [content, layoutRotationIndex],
   );
   const { rotationItems: layoutRotationItems, isLayoutRotation, layout, zones } = presentation;
-  const frameIdentity = JSON.stringify({
+  const freshAuthority = readFreshMonitorAuthority(monitorAuthority, Date.now());
+  const matchingPlayerScene = freshAuthority &&
+    freshAuthority.revision === presentation.revision &&
+    freshAuthority.activationEpoch === presentation.activationEpoch
+    ? freshAuthority
+    : undefined;
+  const frameSceneIdentity = JSON.stringify({
     revision: presentation.revision ?? null,
     activationEpoch: presentation.activationEpoch,
     rotationIndex: isLayoutRotation && layoutRotationItems.length
       ? layoutRotationIndex % layoutRotationItems.length : null,
     sceneId: layoutRotationItems[layoutRotationIndex % Math.max(1, layoutRotationItems.length)]?.layoutTemplateId || layout?.id || "__none__",
   });
+  const frameIdentity = buildMonitorFrameIdentity(frameSceneIdentity, candidateRetryKey);
+  desiredFrameIdentityRef.current = frameIdentity;
+  const renderFingerprint = getScreenRenderFingerprint(zones, content?.media || []);
   if (committedFrameIdentityRef.current === null) {
     committedFrameIdentityRef.current = frameIdentity;
   }
   const isFrameCommitted = committedFrameIdentityRef.current === frameIdentity;
-  const matchingPlayerScene = presentationObservation?.state &&
-    presentationObservation.state.revision === presentation.revision &&
-    presentationObservation.state.activationEpoch === presentation.activationEpoch
-    ? presentationObservation.state
-    : undefined;
   const freshPlayerScene = isFrameCommitted ? matchingPlayerScene : undefined;
   const observedRotationIndex = observedRotationSelection(
     matchingPlayerScene?.sceneId,
@@ -244,20 +261,12 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
       setLayoutRotationIndex(observedRotationIndex);
       return;
     }
-    if (!isFrameCommitted) return;
-    const reportedIndex = freshPlayerScene
-      ? layoutRotationItems.findIndex((item) =>
-          item.layoutTemplateId === freshPlayerScene.sceneId)
-      : -1;
-    // A fresh, server-verified physical report wins over clock estimation,
-    // which covers joins during an agenda-controlled scene. It cannot be
-    // cross-screen/revision state: the server filters those before exposure.
-    if (reportedIndex >= 0) {
-      setLayoutRotationIndex(reportedIndex);
-      // A physical player is the authority while its report is fresh. Do not
-      // arm a wall-clock timer that would snap an agenda scene back.
-      return;
-    }
+    // A matching fresh lease is the sole selection authority. In the unusual
+    // case its scene is not renderable from this content poll yet, retain the
+    // visible/preparing frame rather than letting the wall clock override it.
+    if (matchingPlayerScene) return;
+    // Lease expiry hands selection back immediately, independently of whether
+    // the physical candidate committed, resolved empty, or failed preparation.
     setLayoutRotationIndex(getPresentationRotationIndex(presentation, getSyncedNow()));
     const delay = getPresentationTransitionMs(presentation, getSyncedNow());
     if (delay === null) return;
@@ -269,8 +278,43 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
     };
   }, [presentation.revision, presentation.activationEpoch, layoutRotationItems, layoutRotationIndex,
     isFrameCommitted, observedRotationIndex,
-    freshPlayerScene?.processGeneration, freshPlayerScene?.processId,
-    freshPlayerScene?.sceneId, freshPlayerScene?.sequence, getSyncedNow]);
+    matchingPlayerScene?.processGeneration, matchingPlayerScene?.processId,
+    matchingPlayerScene?.sceneId, matchingPlayerScene?.sequence, getSyncedNow]);
+
+  // Expiry is an authority transition, not a failed poll. The timer ensures a
+  // monitor returns to the deterministic clock even while observation reads
+  // are unavailable; until that precise TTL boundary no local completion or
+  // wall-clock selection can override the physical Player.
+  useEffect(() => {
+    if (monitorAuthority.expiresAt === null) return;
+    const delay = Math.max(0, monitorAuthority.expiresAt - Date.now()) + 1;
+    const timer = setTimeout(() => {
+      const next = observeMonitorAuthority(monitorAuthorityRef.current, null, Date.now());
+      monitorAuthorityRef.current = next;
+      setMonitorAuthority(next);
+      if (committedFrameIdentityRef.current !== desiredFrameIdentityRef.current) {
+        setCandidateRetryKey(nextMonitorCandidateRetryKey);
+      }
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [monitorAuthority]);
+
+  const recordMonitorAuthority = useCallback((
+    observed: unknown,
+    receivedAt = Date.now(),
+    serverTime = receivedAt,
+  ) => {
+    const previous = monitorAuthorityRef.current;
+    const next = observeMonitorAuthority(previous, observed, receivedAt, serverTime);
+    monitorAuthorityRef.current = next;
+    setMonitorAuthority(next);
+    if (next.report !== previous.report &&
+        committedFrameIdentityRef.current !== desiredFrameIdentityRef.current) {
+      // Toggle one bounded supersession key. Report sequence remains ordering
+      // metadata only and never becomes a committed/preparation identity.
+      setCandidateRetryKey(nextMonitorCandidateRetryKey);
+    }
+  }, []);
 
   // ── Layout dimensions ─────────────────────────────────────────────────────
   const layoutAspect = useMemo(() => {
@@ -411,13 +455,14 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
       if (typeof data.previewAnchorEpoch === "number") {
         setPreviewAnchorEpoch(data.previewAnchorEpoch);
       }
+      recordMonitorAuthority(data.playerPresentationState, t2, data.serverTime);
       // playerCommandsEnabled = false: intentionally ignore refreshRequested,
       // screenshotRequested, etc.  Server also strips these fields.
       setContent(data);
     } catch {
       // Network error — keep last content on screen
     }
-  }, [screenId, feedSample, previewAtRaw]);
+  }, [screenId, feedSample, previewAtRaw, recordMonitorAuthority]);
 
   // Lightweight physical-Player observation. Full content remains on its 7s
   // cadence; this cookie-authenticated GET reads only process-local state.
@@ -443,22 +488,16 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
       }
       if (!res.ok) throw new Error(`Presentation observation failed: ${res.status}`);
       const data = await res.json();
-      const observed = data?.playerPresentationState;
-      setPresentationObservation(
-        observed ? { state: observed as MonitorPresentationState, receivedAt: Date.now() } : null,
-      );
+      const receivedAt = Date.now();
+      recordMonitorAuthority(data?.playerPresentationState, receivedAt, data?.serverTime);
     } catch {
-      // Retain the last authenticated observation only for a short network
-      // recovery window, then let one consistent deterministic state drive
-      // both Agenda rows and labels.
-      const now = Date.now();
-      setPresentationObservation((previous) =>
-        previous && now - previous.receivedAt <= 2_000 ? previous : null,
-      );
+      // A failed read is not authority to replace a fresh authenticated lease.
+      // The explicit lease timer is the sole fallback boundary.
+      recordMonitorAuthority(null, Date.now());
     } finally {
       presentationFetchInFlightRef.current = false;
     }
-  }, [screenId]);
+  }, [screenId, recordMonitorAuthority]);
 
   useEffect(() => {
     fetchContent();
@@ -579,6 +618,11 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
          */}
         <ScreenRenderSurface
           frameKey={frameIdentity}
+          renderKey={renderFingerprint}
+          // Ordinary scene changes with equivalent visuals reuse the committed
+          // subtree. Only an explicit unresolved-candidate retry toggles this
+          // bounded key and starts a fresh preparation lifecycle.
+          preparationKey={candidateRetryKey}
           onFrameCommitted={(identity) => {
             const nextIdentity = committedIdentityAfterReport(
               committedFrameIdentityRef.current,
@@ -592,7 +636,7 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
           emptyAgendaPolicy={isLayoutRotation ? "retain" : "commit-no-content"}
           ZoneRendererComponent={ZoneRenderer}
           zones={zones}
-          zoneKey={(zone) => isLayoutRotation ? getZoneFingerprint(zone) : zone.id}
+          zoneKey={(zone) => getZoneRenderFingerprint(zone, content?.media || [])}
           media={content.media || []}
           zoneMediaIndices={zoneMediaIndices}
           mediaBaseUrl="/api/monitor/media"

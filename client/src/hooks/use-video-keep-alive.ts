@@ -71,7 +71,7 @@ const STAT_KEY = "__vmPlayerVideoStats";
 // the pre-reload one, the server would never see the increase, and
 // neither the audit-log row nor the red badge would ever trigger.
 export const VIDEO_STATS_STORAGE_KEY = "vm:video-stats";
-export const VIDEO_STATS_STORAGE_VERSION = 2;
+export const VIDEO_STATS_STORAGE_VERSION = 3;
 export const FAILURE_WINDOW_MS = 60_000;
 export const MAX_CONSECUTIVE_FAILURES = 5;
 export const RESUME_DELAY_MS = 250;
@@ -246,7 +246,17 @@ export function attachVideoKeepAlive(
   // schedule a second retry.
   let episode: "idle" | "scheduled" | "playing" | "settled" = "idle";
   let stallRecorded = false;
+  // A lifecycle wake or a successful initial autoplay is never a recovery.
+  // Only pause/stalled/error on this attached, visible intended element opens
+  // an incident that a single retry is allowed to close.
+  let interruptionOpen = false;
+  let retryAttempted = false;
+  // A pause during mount/preload/handoff is not an interruption. Playback
+  // must first have been observed on this same attached, active element.
+  let hasPlayedSinceAttach = intendedPlaying &&
+    doc?.visibilityState !== "hidden" && !video.paused;
   let playPromise: Promise<boolean> | null = null;
+  let playAttemptGeneration = 0;
 
   // Task #199 — pin the element to its intended muted state. A muted
   // <video> never participates in Chromium's audio-focus arbitration,
@@ -275,27 +285,32 @@ export function attachVideoKeepAlive(
     video.paused &&
     !(video.ended && !video.loop);
 
-  const finishRecovery = (ok: boolean) => {
+  const finishRecovery = (ok: boolean, attemptGeneration: number) => {
+    if (cancelled || playAttemptGeneration !== attemptGeneration) return;
     playPromise = null;
-    if (cancelled) return;
-    if (ok) {
+    if (ok && interruptionOpen) {
       // Do not allow duplicate events between play() resolving and the DOM
       // `playing` event to produce a second recovery.
       episode = "settled";
       if (deps.bump) bump("recoveries");
       else recordRecoveryAt(now());
+      interruptionOpen = false;
     } else {
-      // The failed retry closes this recovery attempt. A later media incident
-      // can form a new episode and is the only route toward the existing
-      // failed-retry reload threshold.
+      // A rejected retry closes this incident. A later qualifying interruption
+      // is a distinct incident and may retry; duplicate pause/stall/error
+      // events while this attempt was scheduled/in-flight were already
+      // coalesced by `episode`.
       episode = "idle";
       stallRecorded = false;
+      interruptionOpen = false;
+      retryAttempted = false;
     }
   };
 
   const tryPlay = (): Promise<boolean> => {
     if (!isEligible() || playPromise) return playPromise ?? Promise.resolve(false);
     episode = "playing";
+    const attemptGeneration = ++playAttemptGeneration;
     const attempt = (async (): Promise<boolean> => {
     try {
       const promise = video.play();
@@ -311,19 +326,22 @@ export function attachVideoKeepAlive(
       // toward the reload threshold — a raw stalled/error event
       // followed by a successful retry is a clean recovery, not a
       // problem worth reloading the page over.
-      handleRetryFailure();
+      if (!cancelled && playAttemptGeneration === attemptGeneration) {
+        handleRetryFailure();
+      }
       return false;
     }
     })();
     playPromise = attempt;
-    void attempt.then(finishRecovery);
+    void attempt.then((ok) => finishRecovery(ok, attemptGeneration));
     return attempt;
   };
 
   const beginEpisode = (visibleIncident: boolean, immediate = false) => {
-    if (!visibleIncident || !isEligible() || episode !== "idle") return;
+    if (!visibleIncident || !interruptionOpen || retryAttempted || !isEligible() || episode !== "idle") return;
     episode = "scheduled";
     if (immediate) {
+      retryAttempted = true;
       void tryPlay();
       return;
     }
@@ -334,6 +352,7 @@ export function attachVideoKeepAlive(
         episode = "idle";
         return;
       }
+      retryAttempted = true;
       void tryPlay();
     }, RESUME_DELAY_MS);
   };
@@ -360,21 +379,31 @@ export function attachVideoKeepAlive(
     // up unmuted), re-mute before resuming so the next play() can't be
     // paused again for the same reason.
     assertMuted();
+    // A background-tab/lifecycle pause is expected. Do not leave an incident
+    // open for a later wake prompt to misreport as a foreground recovery.
+    if (doc?.visibilityState === "hidden") return;
+    if (!hasPlayedSinceAttach) return;
     if (episode === "settled") {
-      episode = "idle";
-      stallRecorded = false;
+      episode = "idle"; stallRecorded = false; interruptionOpen = false; retryAttempted = false;
+    }
+    if (!interruptionOpen) {
+      interruptionOpen = true;
+      retryAttempted = false;
     }
     beginEpisode(true);
   };
   const onStalled = () => {
     // Bump the operator-visible stat, but DO NOT touch the reload
     // threshold — that escalation only fires when retries fail.
-    if (!isEligible()) return;
+    if (!hasPlayedSinceAttach || !isEligible()) return;
     // Stalled/error are operator-visible only for a real foreground
     // incident; their common paired delivery counts once.
     if (episode === "settled") {
-      episode = "idle";
-      stallRecorded = false;
+      episode = "idle"; stallRecorded = false; interruptionOpen = false; retryAttempted = false;
+    }
+    if (!interruptionOpen) {
+      interruptionOpen = true;
+      retryAttempted = false;
     }
     if (!stallRecorded) {
       stallRecorded = true;
@@ -383,10 +412,13 @@ export function attachVideoKeepAlive(
     beginEpisode(true);
   };
   const onError = () => {
-    if (!isEligible()) return;
+    if (!hasPlayedSinceAttach || !isEligible()) return;
     if (episode === "settled") {
-      episode = "idle";
-      stallRecorded = false;
+      episode = "idle"; stallRecorded = false; interruptionOpen = false; retryAttempted = false;
+    }
+    if (!interruptionOpen) {
+      interruptionOpen = true;
+      retryAttempted = false;
     }
     if (!stallRecorded) {
       stallRecorded = true;
@@ -399,12 +431,20 @@ export function attachVideoKeepAlive(
   // we're still playing. If we are, scheduleResume short-circuits as
   // a no-op; if we silently stalled, this kicks us back to life.
   const onSuspend = () => {
-    beginEpisode(true);
+    // Suspend is normal buffering/lifecycle bookkeeping, not evidence that
+    // active playback was interrupted. It must not create an incident.
   };
   const onPlaying = () => {
+    if (intendedPlaying && doc?.visibilityState !== "hidden") {
+      hasPlayedSinceAttach = true;
+    }
     failures = 0;
-    episode = "idle";
-    stallRecorded = false;
+    if (episode !== "playing") {
+      episode = "idle";
+      stallRecorded = false;
+      interruptionOpen = false;
+      retryAttempted = false;
+    }
     // Re-assert at the moment playback (re)starts — the most likely
     // point at which a stale unmuted state would otherwise cause the
     // next audio-focus steal to pause us again.
@@ -421,17 +461,17 @@ export function attachVideoKeepAlive(
     if (doc.visibilityState !== "visible") return;
     // Visibility is a prompt, not initial autoplay. It merely starts the
     // deferred episode if this active video is unexpectedly still paused.
-    beginEpisode(true, true);
+    beginEpisode(interruptionOpen, true);
   };
   const onPageShow = () => {
-    beginEpisode(true, true);
+    beginEpisode(interruptionOpen, true);
   };
   // The player root broadcasts `vm:player-wake` whenever any
   // lifecycle thaw event lands (visibilitychange/focus/pageshow/
   // resume). Each video subscribes individually so they receive the
   // signal even if the root happens to walk a stale DOM snapshot.
   const onPlayerWake = () => {
-    beginEpisode(true, true);
+    beginEpisode(interruptionOpen, true);
   };
 
   video.addEventListener("pause", onPause);
@@ -450,6 +490,7 @@ export function attachVideoKeepAlive(
 
   return () => {
     cancelled = true;
+    playAttemptGeneration += 1;
     if (resumeTimer) clearTimer(resumeTimer);
     resumeTimer = null;
     playPromise = null;

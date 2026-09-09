@@ -300,7 +300,7 @@ describe("Shared logical screen surface", () => {
     );
     assert.match(
       monitorSrc,
-      /presentationObservation\.state\.revision === presentation\.revision[\s\S]*presentationObservation\.state\.activationEpoch === presentation\.activationEpoch/,
+      /freshAuthority\.revision === presentation\.revision[\s\S]*freshAuthority\.activationEpoch === presentation\.activationEpoch/,
       "stale canonical revisions must not control Monitor rendering",
     );
     assert.match(
@@ -310,8 +310,18 @@ describe("Shared logical screen surface", () => {
     );
     assert.match(
       monitorSrc,
-      /now - previous\.receivedAt <= 2_000 \? previous : null/,
-      "network failures retain observation only for a bounded recovery window",
+      /MONITOR_AUTHORITY_TTL_MS/,
+      "network failures retain a fresh authenticated lease until its explicit TTL boundary",
+    );
+    assert.match(
+      monitorSrc,
+      /preparationKey=\{candidateRetryKey\}/,
+      "Monitor preparation identity changes only for bounded unresolved-candidate retries",
+    );
+    assert.doesNotMatch(
+      monitorSrc,
+      /preparationKey=\{frameIdentity\}/,
+      "ordinary logical scene identities must not restart equivalent committed media",
     );
   });
 
@@ -426,8 +436,8 @@ describe("Shared logical screen surface", () => {
     assert.match(surfaceSrc, /function SurfaceFrameSlot/);
     assert.match(
       surfaceSrc,
-      /frames\.map\(\(frame\) => \(\s*<SurfaceFrameSlot key=\{frame\.identity\}/s,
-      "committed and candidate frames must be siblings in one semantic keyed list",
+      /frames\.map\(\(frame\) => \(\s*<SurfaceFrameSlot[\s\S]*key=\{frame\.instanceKey\}/s,
+      "a frame instance key must survive candidate promotion while superseding candidates allocate a fresh instance",
     );
     assert.match(
       surfaceSrc,

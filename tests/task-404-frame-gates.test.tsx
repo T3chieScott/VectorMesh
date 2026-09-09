@@ -6,6 +6,21 @@ import { act, cleanup, render, waitFor } from "@testing-library/react";
 import type { LayoutZone } from "../shared/schema";
 import { ScreenRenderSurface } from "../client/src/components/screen-render-surface";
 import {
+  StableMediaVideoRenderer,
+  StableResolvedMediaVideo,
+  canonicalPlaybackOrder,
+  getMediaPlaybackIdentity,
+  reconcileCanonicalPlaybackOrder,
+  pruneRetainedMediaAssets,
+  computeScreenRenderFingerprint,
+  resolveStableMediaUrl,
+} from "../client/src/components/stable-media-video";
+import {
+  buildMonitorFrameIdentity,
+  nextMonitorCandidateRetryKey,
+  type MonitorCandidateRetryKey,
+} from "../client/src/lib/monitor-authority";
+import {
   acceptsCommittedFrame,
   committedIdentityAfterReport,
   observedRotationSelection,
@@ -97,9 +112,33 @@ test("heartbeat emission preserves committed A through pending B and emits C onl
 type Outcome = "visible-ready" | "empty-ready" | "failed";
 type RenderedZone = {
   zone: LayoutZone;
+  media?: any[];
   agendaPreparing?: boolean;
   onAgendaPreparationOutcome?: (zoneId: string, outcome: Outcome) => void;
 };
+
+function SynchronousMediaPlayerRenderer({ zone, media = [] }: RenderedZone) {
+  const items = (zone as any).mediaPlayerItems as Array<{ mediaAssetId: string }> | undefined;
+  const assets = (items ?? [])
+    .map((item) => media.find((asset: any) => asset.id === item.mediaAssetId))
+    .filter(Boolean) as any[];
+  return (
+    <div data-testid="production-media-player-layers">
+      {assets.slice(0, 2).map((asset, index) => (
+        <StableResolvedMediaVideo
+          key={index}
+          asset={asset}
+          identityConfig={{ fitMode: "contain", muted: true }}
+          autoPlay={false}
+          intendedPlaying={false}
+          keepAliveEnabled={false}
+          data-active-layer={index === 0 ? "true" : "false"}
+          data-screen-render-readiness-exempt={index === 0 ? undefined : "true"}
+        />
+      ))}
+    </div>
+  );
+}
 
 const reports: RenderedZone[] = [];
 function ControlledZoneRenderer(props: RenderedZone) {
@@ -208,6 +247,72 @@ async function candidate(zoneId: string): Promise<RenderedZone> {
 }
 
 describe("Task404 ScreenRenderSurface real DOM frame gate", () => {
+  test("production MediaPlayer identity never becomes playback data", () => {
+    const assets = [
+      { id: "local-row", mediaType: "video", originalPath: "/uploads/local.webm", updatedAt: null },
+    ] as any;
+    const items = [{ id: "playlist-row", mediaAssetId: "local-row", duration: 9 }];
+    const identity = getMediaPlaybackIdentity(items, assets);
+    const order = canonicalPlaybackOrder(items);
+    assert.equal(order[0].mediaAssetId, "local-row");
+    assert.equal(order[0].id, "playlist-row");
+    assert.ok(resolveStableMediaUrl(assets[0], "/api/player/media", "token").includes("/local-row/file"));
+    assert.ok(!identity.includes("playlist-row"), "comparison identity excludes playlist row identity");
+  });
+
+  test("canonical refresh preserves shuffled source order and matching durations", () => {
+    const media = [
+      { id: "a1", mediaType: "video", originalPath: "/a.webm" },
+      { id: "b1", mediaType: "video", originalPath: "/b.webm" },
+      { id: "a2", mediaType: "video", originalPath: "/a.webm" },
+      { id: "b2", mediaType: "video", originalPath: "/b.webm" },
+    ] as any;
+    const shuffled = [
+      { id: "old-b", mediaAssetId: "b1", duration: 20 },
+      { id: "old-a", mediaAssetId: "a1", duration: 10 },
+    ];
+    const refreshed = [
+      { id: "new-a", mediaAssetId: "a2", duration: 10 },
+      { id: "new-b", mediaAssetId: "b2", duration: 20 },
+    ];
+    assert.deepEqual(
+      reconcileCanonicalPlaybackOrder(shuffled, refreshed, media)
+        .map(({ mediaAssetId, duration }) => [mediaAssetId, duration]),
+      [["b2", 20], ["a2", 10]],
+    );
+  });
+
+  test("retained MediaPlayer assets stay bounded across equivalent publications", () => {
+    const retained = new Map<string, any>();
+    let order = [
+      { id: "old-b", mediaAssetId: "b-0", duration: 20 },
+      { id: "old-a", mediaAssetId: "a-0", duration: 10 },
+    ];
+    retained.set("a-0", { id: "a-0", originalPath: "/a.webm", mediaType: "video" });
+    retained.set("b-0", { id: "b-0", originalPath: "/b.webm", mediaType: "video" });
+    for (let publication = 1; publication <= 50; publication++) {
+      const current = [
+        { id: `a-${publication}`, originalPath: "/a.webm", mediaType: "video" },
+        { id: `b-${publication}`, originalPath: "/b.webm", mediaType: "video" },
+      ] as any;
+      current.forEach((asset: any) => retained.set(asset.id, asset));
+      const canonical = [
+        { id: `item-a-${publication}`, mediaAssetId: `a-${publication}`, duration: 10 },
+        { id: `item-b-${publication}`, mediaAssetId: `b-${publication}`, duration: 20 },
+      ];
+      order = reconcileCanonicalPlaybackOrder(order, canonical, Array.from(retained.values()));
+      pruneRetainedMediaAssets(retained, current, order.map((item) => item.mediaAssetId));
+      assert.ok(retained.size <= current.length + order.length);
+    }
+    assert.deepEqual(order.map(({ mediaAssetId, duration }) => [mediaAssetId, duration]), [
+      ["b-50", 20],
+      ["a-50", 10],
+    ]);
+    assert.deepEqual(
+      order.map((item) => retained.get(item.mediaAssetId)?.originalPath),
+      ["/b.webm", "/a.webm"],
+    );
+  });
   test("initial populated Agenda stays hidden until ready and commits exactly once", async () => {
     reports.length = 0;
     const committed: string[] = [];
@@ -259,6 +364,223 @@ describe("Task404 ScreenRenderSurface real DOM frame gate", () => {
     assert.deepEqual(skipped, []);
     assert.ok(view.getByTestId("screen-render-committed-frame").textContent?.includes("message"));
     assert.equal(reports.find((entry) => entry.zone.id === "empty")?.agendaPreparing, false);
+    cleanup();
+  });
+
+  test("prepared candidate keeps its exact DOM instance when promoted", async () => {
+    const committed: string[] = [];
+    const MediaGateRenderer = ({ zone }: RenderedZone) =>
+      zone.id === "a" ? <div>A</div> : <video data-testid="prepared-node" />;
+    const props = (frameKey: string, zones: LayoutZone[]) => (
+      <ScreenRenderSurface
+        frameKey={frameKey}
+        renderKey={frameKey}
+        zones={zones}
+        media={[]}
+        zoneMediaIndices={{}}
+        playerContext={{} as any}
+        canvasGeometry={{ useOffset: false, canvasX: 0, canvasY: 0, canvasW: 0, canvasH: 0 }}
+        onFrameCommitted={(identity) => committed.push(identity)}
+        emptyAgendaPolicy="commit-no-content"
+        ZoneRendererComponent={MediaGateRenderer as any}
+      />
+    );
+    const view = render(props("A", [html("a")]));
+    view.rerender(props("B", [html("b")]));
+    const prepared = await view.findByTestId("prepared-node") as HTMLVideoElement;
+    assert.ok(prepared.closest("[data-testid='screen-render-preparing-frame']"));
+    Object.defineProperty(prepared, "readyState", { configurable: true, value: 2 });
+    await act(async () => prepared.dispatchEvent(new Event("loadeddata")));
+    await waitFor(() => assert.deepEqual(committed, ["A", "B"]));
+    const promoted = view.getByTestId("prepared-node");
+    assert.strictEqual(promoted, prepared, "promotion must not remount the prepared subtree");
+    assert.ok(promoted.closest("[data-testid='screen-render-committed-frame']"));
+    cleanup();
+  });
+
+  test("synchronous MediaPlayer active video and fonts both gate promotion", async () => {
+    const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+    let resolveFonts!: () => void;
+    const fontsReady = new Promise<void>((resolve) => { resolveFonts = resolve; });
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: { ready: fontsReady },
+    });
+    const commits: string[] = [];
+    const media = [
+      { id: "active", mediaType: "video", originalPath: "/active.webm" },
+      { id: "preload", mediaType: "video", originalPath: "/preload.webm" },
+    ] as any;
+    const mediaZone = {
+      ...html("player"),
+      type: "mediaPlayer",
+      mediaPlayerItems: [
+        { id: "active-item", mediaAssetId: "active" },
+        { id: "preload-item", mediaAssetId: "preload" },
+      ],
+    } as any;
+    const surface = (key: string, zones: LayoutZone[]) => <ScreenRenderSurface
+      frameKey={key}
+      renderKey={key}
+      zones={zones}
+      media={media}
+      zoneMediaIndices={{}}
+      playerContext={{} as any}
+      canvasGeometry={{ useOffset: false, canvasX: 0, canvasY: 0, canvasW: 0, canvasH: 0 }}
+      onFrameCommitted={(identity) => commits.push(identity)}
+      emptyAgendaPolicy="commit-no-content"
+      ZoneRendererComponent={SynchronousMediaPlayerRenderer as any}
+    />;
+    const view = render(surface("A", [html("a")]));
+    const committedA = view.getByTestId("screen-render-committed-frame");
+    view.rerender(surface("B", [mediaZone]));
+    const preparing = view.getByTestId("screen-render-preparing-frame");
+    const active = preparing.querySelector("[data-active-layer='true']") as HTMLVideoElement;
+    assert.ok(active, "the intended active video must exist during the mount scan");
+    assert.equal(active.readyState, 0);
+    assert.ok(preparing.querySelector("[data-active-layer='false']"));
+    resolveFonts();
+    await act(async () => { await fontsReady; });
+    assert.deepEqual(commits, ["A"], "fonts alone cannot bypass unresolved active media");
+    assert.strictEqual(view.getByTestId("screen-render-committed-frame"), committedA);
+    Object.defineProperty(active, "readyState", { configurable: true, value: 2 });
+    await act(async () => active.dispatchEvent(new Event("canplay")));
+    await waitFor(() => assert.deepEqual(commits, ["A", "B"]));
+    assert.strictEqual(view.container.querySelector("[data-active-layer='true']"), active);
+    cleanup();
+    if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
+    else delete (document as any).fonts;
+  });
+
+  test("MediaPlayer still waits for media when fonts are already ready", async () => {
+    const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: { ready: Promise.resolve() },
+    });
+    const commits: string[] = [];
+    const asset = { id: "active", mediaType: "video", originalPath: "/active.webm" } as any;
+    const playerZone = {
+      ...html("player"),
+      type: "mediaPlayer",
+      mediaPlayerItems: [{ id: "item", mediaAssetId: "active" }],
+    } as any;
+    const common = {
+      media: [asset],
+      zoneMediaIndices: {},
+      playerContext: {} as any,
+      canvasGeometry: { useOffset: false, canvasX: 0, canvasY: 0, canvasW: 0, canvasH: 0 },
+      onFrameCommitted: (identity: string) => commits.push(identity),
+      emptyAgendaPolicy: "commit-no-content" as const,
+      ZoneRendererComponent: SynchronousMediaPlayerRenderer as any,
+    };
+    const view = render(<ScreenRenderSurface {...common} frameKey="A" renderKey="A" zones={[html("a")]} />);
+    view.rerender(<ScreenRenderSurface {...common} frameKey="B" renderKey="B" zones={[playerZone]} />);
+    await act(async () => { await Promise.resolve(); });
+    assert.deepEqual(commits, ["A"]);
+    const active = view.getByTestId("screen-render-preparing-frame")
+      .querySelector("[data-active-layer='true']") as HTMLVideoElement;
+    Object.defineProperty(active, "readyState", { configurable: true, value: 2 });
+    await act(async () => active.dispatchEvent(new Event("loadeddata")));
+    await waitFor(() => assert.deepEqual(commits, ["A", "B"]));
+    assert.strictEqual(view.container.querySelector("[data-active-layer='true']"), active);
+    cleanup();
+    if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
+    else delete (document as any).fonts;
+  });
+
+  test("MediaPlayer empty and invalid collections terminate without a media deadlock", async () => {
+    const commits: string[] = [];
+    const common = {
+      media: [] as any[],
+      zoneMediaIndices: {},
+      playerContext: {} as any,
+      canvasGeometry: { useOffset: false, canvasX: 0, canvasY: 0, canvasW: 0, canvasH: 0 },
+      onFrameCommitted: (identity: string) => commits.push(identity),
+      emptyAgendaPolicy: "commit-no-content" as const,
+      ZoneRendererComponent: SynchronousMediaPlayerRenderer as any,
+    };
+    const empty = { ...html("empty"), type: "mediaPlayer", mediaPlayerItems: [] } as any;
+    const invalid = {
+      ...html("invalid"),
+      type: "mediaPlayer",
+      mediaPlayerItems: [{ id: "missing-item", mediaAssetId: "missing-asset" }],
+    } as any;
+    const view = render(<ScreenRenderSurface {...common} frameKey="empty" renderKey="empty" zones={[empty]} />);
+    await waitFor(() => assert.deepEqual(commits, ["empty"]));
+    view.rerender(<ScreenRenderSurface {...common} frameKey="invalid" renderKey="invalid" zones={[invalid]} />);
+    await waitFor(() => assert.deepEqual(commits, ["empty", "invalid"]));
+    assert.equal(view.container.querySelector("video"), null);
+    cleanup();
+  });
+
+  test("late readiness from replaced same-visual candidate cannot promote", async () => {
+    reports.length = 0;
+    const committed: string[] = [];
+    const renderSurface = (frameKey: string, preparationKey: string, zones: LayoutZone[]) => (
+      <ScreenRenderSurface
+        frameKey={frameKey}
+        renderKey={frameKey === "A" ? "visual-a" : "visual-b"}
+        preparationKey={preparationKey}
+        zones={zones}
+        media={[]}
+        zoneMediaIndices={{}}
+        playerContext={{} as any}
+        canvasGeometry={{ useOffset: false, canvasX: 0, canvasY: 0, canvasW: 0, canvasH: 0 }}
+        onFrameCommitted={(identity) => committed.push(identity)}
+        emptyAgendaPolicy="commit-no-content"
+        ZoneRendererComponent={ControlledZoneRenderer as any}
+      />
+    );
+    const view = render(renderSurface("A", "a", [html("a")]));
+    view.rerender(renderSurface("B", "b-v1", [agenda("b")]));
+    const stale = await candidate("b");
+    const staleSlot = view.getByTestId("screen-render-preparing-frame");
+    view.rerender(renderSurface("B", "b-v2", [agenda("b")]));
+    await waitFor(() => assert.notStrictEqual(
+      view.getByTestId("screen-render-preparing-frame"),
+      staleSlot,
+      "replacement must allocate and mount a fresh candidate instance",
+    ));
+    const current = reports.filter((entry) =>
+      entry.zone.id === "b" && entry.agendaPreparing).at(-1)!;
+    await act(async () => stale.onAgendaPreparationOutcome!("b", "visible-ready"));
+    assert.deepEqual(committed, ["A"], "replaced instance callback is inert");
+    assert.ok(view.getByTestId("screen-render-preparing-frame"));
+    await act(async () => current.onAgendaPreparationOutcome!("b", "visible-ready"));
+    await waitFor(() => assert.deepEqual(committed, ["A", "B"]));
+    cleanup();
+  });
+
+  test("late empty outcome cannot skip a replaced same-visual candidate", async () => {
+    reports.length = 0;
+    const skipped: string[] = [];
+    const renderSurface = (preparationKey: string) => (
+      <ScreenRenderSurface
+        frameKey="B"
+        renderKey="visual-b"
+        preparationKey={preparationKey}
+        zones={[agenda("b")]}
+        media={[]}
+        zoneMediaIndices={{}}
+        playerContext={{} as any}
+        canvasGeometry={{ useOffset: false, canvasX: 0, canvasY: 0, canvasW: 0, canvasH: 0 }}
+        onFrameSkipped={(identity) => skipped.push(identity)}
+        emptyAgendaPolicy="skip"
+        ZoneRendererComponent={ControlledZoneRenderer as any}
+      />
+    );
+    const view = render(renderSurface("b-v1"));
+    const stale = await candidate("b");
+    const staleSlot = view.getByTestId("screen-render-preparing-frame");
+    view.rerender(renderSurface("b-v2"));
+    await waitFor(() => assert.notStrictEqual(
+      view.getByTestId("screen-render-preparing-frame"),
+      staleSlot,
+    ));
+    await act(async () => stale.onAgendaPreparationOutcome!("b", "empty-ready"));
+    assert.deepEqual(skipped, []);
+    assert.ok(view.getByTestId("screen-render-preparing-frame"));
     cleanup();
   });
 
@@ -430,6 +752,98 @@ describe("Task404 ScreenRenderSurface real DOM frame gate", () => {
     await waitFor(() => assert.deepEqual(committed, ["A", "no-content"]));
     assert.equal(view.getByTestId("screen-render-committed-frame").querySelector("[data-testid='zone-a']"), null);
     assert.ok(view.getByTestId("screen-render-committed-frame").textContent?.includes("empty-fallback"));
+    cleanup();
+  });
+
+  test("equivalent A → B → A scenes retain one mounted video and its playback state", async () => {
+    const commits: string[] = [];
+    const media = [
+      { id: "row-a", name: "different persisted row A", mediaType: "video", originalPath: "/uploads/identical.webm", mimeType: "video/webm", updatedAt: null },
+      { id: "row-b", name: "different persisted row B", mediaType: "video", originalPath: "/uploads/identical.webm", mimeType: "video/webm", updatedAt: null },
+      { id: "row-c", name: "changed source", mediaType: "video", originalPath: "/uploads/changed.webm", mimeType: "video/webm", updatedAt: null },
+    ] as any;
+    const equivalent = (
+      logicalKey: string,
+      zoneId: string,
+      mediaId: string,
+      retryKey: MonitorCandidateRetryKey = "retry-a",
+      fit = "contain",
+    ) => {
+      const zones = [{ ...html(zoneId), type: "media", mediaId, mediaFitMode: fit } as LayoutZone];
+      return <ScreenRenderSurface
+        frameKey={buildMonitorFrameIdentity(logicalKey, retryKey)}
+        renderKey={computeScreenRenderFingerprint(zones, media)}
+        // Actual Monitor host contract: this bounded key is stable during
+        // ordinary physical A → B → A progression and only toggles to restart
+        // an unresolved same-scene candidate.
+        preparationKey={retryKey}
+        zones={zones}
+        zoneKey={() => "same-video-zone"}
+        media={media}
+        zoneMediaIndices={{}}
+        playerContext={{} as any}
+        canvasGeometry={{ useOffset: false, canvasX: 0, canvasY: 0, canvasW: 0, canvasH: 0 }}
+        onFrameCommitted={(identity) => commits.push(identity)}
+        emptyAgendaPolicy="commit-no-content"
+        ZoneRendererComponent={StableMediaVideoRenderer}
+      />;
+    };
+    assert.equal(nextMonitorCandidateRetryKey(nextMonitorCandidateRetryKey("retry-a")), "retry-a");
+    (window as any).__vmPlayerVideoStats = { stalls: 0, recoveries: 0, reloads: 0 };
+    const view = render(equivalent("A", "persisted-zone-a", "row-a"));
+    const video = view.container.querySelector("video") as HTMLVideoElement;
+    assert.ok(video, "production ZoneRenderer MediaWidget must mount a video");
+    const originalSrc = video.getAttribute("src");
+    let plays = 0;
+    let pauses = 0;
+    let loads = 0;
+    Object.defineProperties(video, {
+      currentTime: { configurable: true, writable: true, value: 12.5 },
+      play: { configurable: true, value: () => { plays += 1; return Promise.resolve(); } },
+      pause: { configurable: true, value: () => { pauses += 1; } },
+      load: { configurable: true, value: () => { loads += 1; } },
+    });
+
+    view.rerender(equivalent("B", "persisted-zone-b", "row-b"));
+    view.rerender(equivalent("A-again", "persisted-zone-a-again", "row-a"));
+    view.rerender(equivalent("B-again", "persisted-zone-b-again", "row-b"));
+    view.rerender(equivalent("A-third", "persisted-zone-a-third", "row-a"));
+    const after = view.container.querySelector("video") as HTMLVideoElement;
+    assert.strictEqual(after, video, "equivalent scenes must retain the exact video DOM node");
+    assert.equal(after.getAttribute("src"), originalSrc, "equivalent local rows retain canonical initial src");
+    assert.equal(after.currentTime, 12.5);
+    assert.deepEqual({ plays, pauses, loads }, { plays: 0, pauses: 0, loads: 0 });
+    assert.deepEqual((window as any).__vmPlayerVideoStats, { stalls: 0, recoveries: 0, reloads: 0 });
+    await waitFor(() => assert.deepEqual(
+      commits,
+      ["A:retry-a", "B:retry-a", "A-again:retry-a", "B-again:retry-a", "A-third:retry-a"],
+    ));
+
+    view.rerender(equivalent("changed-source", "changed-source-zone", "row-c"));
+    const preparingSource = view.getByTestId("screen-render-preparing-frame")
+      .querySelector("video") as HTMLVideoElement;
+    Object.defineProperty(preparingSource, "readyState", { configurable: true, value: 2 });
+    await act(async () => preparingSource.dispatchEvent(new Event("loadeddata")));
+    await waitFor(() => assert.equal(
+      view.queryByTestId("screen-render-preparing-frame"),
+      null,
+    ));
+    const changedSource = view.container.querySelector("video") as HTMLVideoElement;
+    assert.notStrictEqual(changedSource, video, "a changed resolved asset source replaces the video");
+    view.rerender(equivalent("changed-config", "changed-config-zone", "row-c", "retry-a", "cover"));
+    const preparingConfig = view.getByTestId("screen-render-preparing-frame")
+      .querySelector("video") as HTMLVideoElement;
+    Object.defineProperty(preparingConfig, "readyState", { configurable: true, value: 2 });
+    await act(async () => preparingConfig.dispatchEvent(new Event("loadeddata")));
+    await waitFor(() => assert.equal(
+      view.queryByTestId("screen-render-preparing-frame"),
+      null,
+    ));
+    assert.notStrictEqual(
+      view.container.querySelector("video"),
+      changedSource,
+      "changed render-significant playback/fit config replaces the video",
+    );
     cleanup();
   });
 });

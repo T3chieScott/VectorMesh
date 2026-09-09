@@ -3604,7 +3604,7 @@ export async function registerRoutes(
       // would look empty on every tile except the heartbeat sender.
       // Fire-and-forget so sample writes never block the heartbeat
       // response.
-      if (videoStats && videoHealthDecision) {
+      if (videoStats && videoHealthDecision && !videoHealthDecision.isBaselineReset) {
         const ts = videoHealthDecision.patch.videoStatsUpdatedAt;
         for (const sid of affectedScreenIds) {
           storage

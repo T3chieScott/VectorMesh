@@ -276,6 +276,18 @@ test.describe("Task #218: player <video> recovers after a brief network blip whi
         { timeout: 15_000 },
       );
 
+      // Establish the watchdog's qualifying same-element playback evidence
+      // explicitly. The production hook is attached by now and the element
+      // is visibly playing; this real event distinguishes the foreground
+      // incident below from a never-played/preparation video.
+      await page.evaluate(() => {
+        const v = document.querySelector<HTMLVideoElement>(
+          '[data-testid="media-player-widget"] video',
+        );
+        if (!v || v.paused) throw new Error("video must be visibly playing before baseline");
+        v.dispatchEvent(new Event("playing"));
+      });
+
       // Install a page-side loop observer so we can assert the clip
       // keeps wrapping (currentTime resets toward 0) both before and
       // after the blip. A backward jump of >0.3s on a ~1s clip is
@@ -356,15 +368,16 @@ test.describe("Task #218: player <video> recovers after a brief network blip whi
           '[data-testid="media-player-widget"] video',
         );
         if (!v) return { paused: false, visibility: document.visibilityState };
-        // Browser fires `waiting` first, then `stalled`, on a buffer
-        // underrun. The hook ignores `waiting` but handles `stalled`;
-        // dispatch both to faithfully mimic the real event sequence.
+         // Browser fires `waiting`/`stalled` as playback halts. Pause the
+         // same qualifying element first so the production hook observes a
+         // genuine visible interruption; then deliver stalled while paused
+         // so the incident is counted exactly once.
         v.dispatchEvent(new Event("waiting"));
-        v.dispatchEvent(new Event("stalled"));
         // Halt playback to model the stall actually stopping the clip
         // (Chromium pauses media it can't keep fed). This is what the
         // watchdog's resume path recovers from.
         if (!v.paused) v.pause();
+         v.dispatchEvent(new Event("stalled"));
         return { paused: v.paused, visibility: document.visibilityState };
       });
       expect(
