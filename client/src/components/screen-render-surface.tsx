@@ -238,16 +238,20 @@ function SurfaceFrame({
   useEffect(() => {
     if (!preparing) return;
     const root = frameRef.current;
-    const observed = new Set<HTMLImageElement | HTMLVideoElement>();
+    const observed = new Set<HTMLImageElement | HTMLVideoElement | HTMLIFrameElement>();
     const readMedia = () => root
-      ? Array.from(root.querySelectorAll<HTMLImageElement | HTMLVideoElement>("img,video"))
+      ? Array.from(root.querySelectorAll<HTMLImageElement | HTMLVideoElement | HTMLIFrameElement>(
+        "img,video,iframe[data-subframe-ready]",
+      ))
         .filter((element) => element.getAttribute("data-screen-render-readiness-exempt") !== "true")
       : [];
     const unresolved = () => {
       if (root?.querySelector("[data-stable-video-pending='true']:empty")) return true;
       return readMedia().some((element) =>
         element instanceof HTMLImageElement ? !element.complete :
-          element.readyState < HTMLMediaElement.HAVE_CURRENT_DATA);
+          element instanceof HTMLVideoElement
+            ? element.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+            : element.dataset.subframeReady !== "true");
     };
     const checkMedia = () => {
       readMedia().forEach((element) => {
@@ -262,7 +266,14 @@ function SurfaceFrame({
       markReady();
     };
     const mediaObserver = root ? new MutationObserver(checkMedia) : null;
-    if (root) mediaObserver?.observe(root, { childList: true, subtree: true });
+    if (root) {
+      mediaObserver?.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["data-subframe-ready"],
+      });
+    }
     checkMedia();
     // Font loading is part of frame preparation: promoting before custom faces
     // settle causes exactly the one-frame reflow this gate is intended to hide.
@@ -285,7 +296,7 @@ function SurfaceFrame({
         element.removeEventListener("error", checkMedia);
       });
     };
-  }, []);
+  }, [preparing]);
   const onAgendaRenderReady = (zoneId: string) => {
     pendingAgendaRef.current.delete(zoneId);
     if (pendingAgendaRef.current.size === 0) markReady();

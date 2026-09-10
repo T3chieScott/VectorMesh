@@ -15,6 +15,7 @@ import {
   computeScreenRenderFingerprint,
   computeZoneRenderFingerprint,
 } from "@/components/stable-media-video";
+import { HtmlWidgetSubframe } from "@/components/html-widget-subframe";
 import { getMediaPlayerVideoLoopProps } from "@/lib/media-player-loop";
 import { WORLD_MAP_PATHS, WORLD_MAP_VIEWBOX } from "./world-map-paths";
 import {
@@ -811,13 +812,14 @@ function TextWidget({
   );
 }
 
-function HtmlWidget({
+export function HtmlWidget({
   content,
   css,
   ctx,
   media,
   mediaBaseUrl,
   deviceToken,
+  preparing = false,
 }: {
   content?: string;
   css?: string;
@@ -825,6 +827,7 @@ function HtmlWidget({
   media?: MediaAsset[];
   mediaBaseUrl?: string;
   deviceToken?: string;
+  preparing?: boolean;
 }) {
   // Resolve {{player variables}} in the HTML body, then sanitise. The
   // sandboxed iframe (allow-same-origin only, NO allow-scripts) is the real
@@ -884,7 +887,6 @@ ${styles}
 </style></head><body>${html}</body></html>`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content, css, ctx, media, mediaBaseUrl, deviceToken, htmlTick]);
-
   // Render the widget on a fixed-WIDTH reference canvas (REFERENCE_WIDTH px
   // wide, height derived from the container's actual aspect ratio) and CSS-scale
   // it to fill the real container. Anchoring to width means the author designs
@@ -928,13 +930,11 @@ ${styles}
           transformOrigin: "top left",
         }}
       >
-        <iframe
-          title="HTML widget"
-          sandbox="allow-same-origin"
+        <HtmlWidgetSubframe
           srcDoc={srcDoc}
-          className="block border-0"
-          style={{ width: `${REFERENCE_WIDTH}px`, height: `${refHeight}px` }}
-          data-testid="iframe-html-widget"
+          width={REFERENCE_WIDTH}
+          height={refHeight}
+          preparing={preparing}
         />
       </div>
     </div>
@@ -5757,7 +5757,7 @@ export function ZoneRenderer({
       case "logo":
         return <LogoWidget />;
       case "html":
-        return <HtmlWidget content={zone.textContent} css={zone.htmlCss} ctx={ctx} media={media} mediaBaseUrl={mediaBaseUrl} deviceToken={deviceToken} />;
+        return <HtmlWidget content={zone.textContent} css={zone.htmlCss} ctx={ctx} media={media} mediaBaseUrl={mediaBaseUrl} deviceToken={deviceToken} preparing={agendaPreparing} />;
       case "weather":
         return (
           <WeatherWidget 
