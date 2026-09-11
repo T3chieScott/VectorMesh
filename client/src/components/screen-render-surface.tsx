@@ -136,6 +136,8 @@ export interface ScreenRenderSurfaceProps {
    * agenda zones see the same context on both hosts.
    */
   playerContext: PlayerVariableContext;
+  /** Authored 720px typography baseline expressed in this host's logical surface. */
+  sceneTextScale?: number;
   /**
    * Canvas zone-frame geometry.
    * For non-canvas screens pass:
@@ -348,6 +350,7 @@ function SurfaceFrame({
                 onAgendaRenderReady={undefined}
                 onAgendaPreparationOutcome={preparing ? onAgendaPreparationOutcome : undefined}
                 agendaPreparing={preparing}
+                sceneTextScale={props.sceneTextScale}
                 playerContext={props.playerContext} />
             </div>
           </div>
@@ -385,6 +388,7 @@ export function ScreenRenderSurface({
   onAgendaPresentationState,
   followedAgendaPresentationStates,
   playerContext,
+  sceneTextScale,
   canvasGeometry,
   liveBanner,
   zoneFrameTestId = "screen-render-zone-frame",
@@ -392,7 +396,7 @@ export function ScreenRenderSurface({
 }: ScreenRenderSurfaceProps) {
   const incoming: FrameProps = { emptyAgendaPolicy, zones, zoneKey, media, zoneMediaIndices, mediaBaseUrl, deviceToken,
     screenTimezone, weatherTimezone, agendaTestAt, agendaCompletionBindings, onAgendaPresentationState,
-    followedAgendaPresentationStates, playerContext, canvasGeometry, liveBanner, zoneFrameTestId,
+    followedAgendaPresentationStates, playerContext, sceneTextScale, canvasGeometry, liveBanner, zoneFrameTestId,
     ZoneRendererComponent };
   const identity = frameKey ?? JSON.stringify(zones.map((zone) => [zone.id, zone.type, zone.agendaConfigId]));
   const visualIdentity = renderKey ?? identity;

@@ -79,6 +79,10 @@ import {
 } from "@shared/html-widget-sanitize";
 import { resolveMediaRefs } from "@shared/media-refs";
 import { resolveFontStack } from "@shared/fonts";
+import {
+  resolveSceneFontSize,
+  scaleSceneFontSize,
+} from "@/lib/scene-render-geometry";
 
 export type { PlayerVariableContext } from "@/lib/player-variables";
 
@@ -759,7 +763,20 @@ function ShaderWidget({
   return <canvas ref={canvasRef} className="w-full h-full" />;
 }
 
-function TextWidget({ 
+const TEXT_LEGACY_FONT_SIZES = {
+  small: 14,
+  medium: 24,
+  large: 36,
+  xlarge: 48,
+} as const;
+
+const QR_LEGACY_FONT_SIZES = {
+  small: 12,
+  medium: 16,
+  large: 24,
+} as const;
+
+function TextWidget({
   content,
   fontSize = 24,
   align = "center",
@@ -774,14 +791,11 @@ function TextWidget({
   fontFamily?: string | null;
   ctx?: PlayerVariableContext;
 }) {
-  const legacySizeMap: Record<string, number> = {
-    small: 14,
-    medium: 24,
-    large: 36,
-    xlarge: 48,
-  };
-
-  const resolvedSize = typeof fontSize === 'number' ? fontSize : (legacySizeMap[fontSize] || 24);
+  const resolvedSize = resolveSceneFontSize(
+    fontSize,
+    TEXT_LEGACY_FONT_SIZES,
+    24,
+  );
 
   const alignMap: Record<string, string> = {
     left: "flex-start",
@@ -798,6 +812,7 @@ function TextWidget({
   return (
     <div 
       className="h-full w-full flex p-4"
+      data-testid="text-widget"
       style={{
         justifyContent: alignMap[align] || "center",
         alignItems: verticalAlignMap[verticalAlign] || "center",
@@ -4827,8 +4842,11 @@ function QRCodeWidget({
   }
 
   const effectiveBgColor = transparentBackground ? "transparent" : backgroundColor;
-  const legacyFontSizeMap: Record<string, number> = { small: 12, medium: 16, large: 24 };
-  const resolvedFontSize = typeof labelFontSize === 'number' ? labelFontSize : (legacyFontSizeMap[labelFontSize] || 16);
+  const resolvedFontSize = resolveSceneFontSize(
+    labelFontSize,
+    QR_LEGACY_FONT_SIZES,
+    16,
+  );
   const fontSize = `${resolvedFontSize}px`;
 
   const labelElement = resolvedLabel ? (
@@ -5671,6 +5689,12 @@ export interface ZoneRendererProps {
   onAgendaPreparationOutcome?: (zoneId: string, outcome: "visible-ready" | "empty-ready" | "failed") => void;
   /** Prepare agenda data while suppressing lifecycle/reporting side effects. */
   agendaPreparing?: boolean;
+  /**
+   * Ratio between the host's logical scene height and the 720px authoring
+   * surface. Applied only to configured pixel typography; outer scene and zone
+   * geometry remain owned by the host.
+   */
+  sceneTextScale?: number;
 }
 
 export function ZoneRenderer({
@@ -5694,6 +5718,7 @@ export function ZoneRenderer({
   onAgendaRenderReady,
   onAgendaPreparationOutcome,
   agendaPreparing = false,
+  sceneTextScale = 1,
 }: ZoneRendererProps) {
   const ZoneIcon = zoneTypeIcons[zone.type] || Layers;
   // Re-render every 30s so {{date}}/{{time}}/{{day}} stay current without reload
@@ -5709,6 +5734,8 @@ export function ZoneRenderer({
   const widgetBaseUrl = mediaBaseUrl
     ? mediaBaseUrl.replace(/\/media$/, "")
     : "/api";
+  const scaledFontSize = <T extends number | string | null | undefined>(value: T): T =>
+    scaleSceneFontSize(value, sceneTextScale);
 
   const renderContent = () => {
     switch (zone.type) {
@@ -5734,7 +5761,7 @@ export function ZoneRenderer({
         return <MediaWidget media={zoneMedia} mediaIndex={mediaIndex} isPlaying={isPlaying} mediaBaseUrl={mediaBaseUrl} deviceToken={deviceToken} />;
       }
       case "ticker":
-        return <TickerWidget content={zone.textContent} speed={zone.tickerScrollSpeed} animation={zone.tickerAnimation} fontSize={zone.tickerFontSize} ctx={ctx} />;
+        return <TickerWidget content={zone.textContent} speed={zone.tickerScrollSpeed} animation={zone.tickerAnimation} fontSize={scaledFontSize(zone.tickerFontSize ?? 24)} ctx={ctx} />;
       case "clock":
         return (
           <ClockWidget
@@ -5749,9 +5776,9 @@ export function ZoneRenderer({
             handColor={zone.clockHandColor}
             faceColor={zone.clockFaceColor}
             markerColor={zone.clockMarkerColor}
-            timeFontSize={zone.clockTimeFontSize}
-            labelFontSize={zone.clockLabelFontSize}
-            dateFontSize={zone.clockDateFontSize}
+            timeFontSize={scaledFontSize(zone.clockTimeFontSize)}
+            labelFontSize={scaledFontSize(zone.clockLabelFontSize)}
+            dateFontSize={scaledFontSize(zone.clockDateFontSize)}
           />
         );
       case "logo":
@@ -5765,7 +5792,7 @@ export function ZoneRenderer({
             lng={zone.weatherLng} 
             unit={zone.weatherUnit}
             location={zone.weatherLocation}
-            fontSize={zone.weatherFontSize}
+            fontSize={scaledFontSize(zone.weatherFontSize)}
             displayMode={zone.weatherDisplayMode}
           />
         );
@@ -5775,7 +5802,7 @@ export function ZoneRenderer({
             rssUrl={zone.newsRssUrl} 
             scrollSpeed={zone.newsScrollSpeed}
             itemCount={zone.newsItemCount}
-            textSize={zone.newsTextSize}
+            textSize={scaledFontSize(zone.newsTextSize)}
             showHeader={showBorder}
             deviceToken={deviceToken}
             widgetBaseUrl={widgetBaseUrl}
@@ -5785,7 +5812,11 @@ export function ZoneRenderer({
         return (
           <TextWidget 
             content={zone.textContent}
-            fontSize={zone.textFontSize}
+            fontSize={scaledFontSize(resolveSceneFontSize(
+              zone.textFontSize,
+              TEXT_LEGACY_FONT_SIZES,
+              24,
+            ))}
             align={zone.textAlign}
             verticalAlign={zone.textVerticalAlign}
             fontFamily={zone.fontFamily}
@@ -5840,7 +5871,11 @@ export function ZoneRenderer({
             vcardOrg={zone.qrVcardOrg}
             label={zone.qrLabel}
             labelPosition={zone.qrLabelPosition}
-            labelFontSize={zone.qrLabelFontSize}
+            labelFontSize={scaledFontSize(resolveSceneFontSize(
+              zone.qrLabelFontSize,
+              QR_LEGACY_FONT_SIZES,
+              16,
+            ))}
             labelColor={zone.qrLabelColor}
             ctx={ctx}
           />
@@ -5863,9 +5898,9 @@ export function ZoneRenderer({
             showLeadingZeros={zone.countdownShowLeadingZeros}
             numberColor={zone.countdownNumberColor}
             labelColor={zone.countdownLabelColor}
-            size={typeof zone.countdownSize === 'number' ? zone.countdownSize : 24}
-            titleSize={typeof zone.countdownTitleSize === 'number' ? zone.countdownTitleSize : undefined}
-            labelSize={zone.countdownLabelSize}
+            size={scaledFontSize(typeof zone.countdownSize === 'number' ? zone.countdownSize : 24)}
+            titleSize={scaledFontSize(typeof zone.countdownTitleSize === 'number' ? zone.countdownTitleSize : undefined)}
+            labelSize={scaledFontSize(zone.countdownLabelSize)}
             fontFamily={zone.countdownFontFamily}
             unitGap={zone.countdownUnitGap}
             timezone={zone.countdownTimezone}
@@ -5905,7 +5940,7 @@ export function ZoneRenderer({
             iconColor={zone.shapeIconColor}
             iconText={zone.shapeIconText}
             iconTextPosition={zone.shapeIconTextPosition}
-            iconTextSize={zone.shapeIconTextSize}
+            iconTextSize={scaledFontSize(zone.shapeIconTextSize)}
             iconTextColor={zone.shapeIconTextColor}
           />
         );
@@ -5933,7 +5968,7 @@ export function ZoneRenderer({
             league={zone.footballLeague}
             season={zone.footballSeason}
             refreshInterval={zone.footballRefreshInterval}
-            fontSize={zone.footballFontSize}
+            fontSize={scaledFontSize(zone.footballFontSize)}
             showBadges={zone.footballShowBadges}
             compactMode={zone.footballCompactMode}
             badgeFormat={zone.footballBadgeFormat}
@@ -5945,7 +5980,7 @@ export function ZoneRenderer({
           <PremierLeagueFixturesWidget
             daysAhead={zone.plFixturesDaysAhead}
             refreshInterval={zone.plFixturesRefreshInterval}
-            fontSize={zone.plFixturesFontSize}
+            fontSize={scaledFontSize(zone.plFixturesFontSize)}
             showBadges={zone.plFixturesShowBadges}
             showVenue={zone.plFixturesShowVenue}
             compactMode={zone.plFixturesCompactMode}
@@ -5965,7 +6000,7 @@ export function ZoneRenderer({
             airline={zone.heathrowAirline}
             refreshInterval={zone.heathrowRefreshInterval}
             pageInterval={zone.heathrowPageInterval}
-            fontSize={zone.heathrowFontSize}
+            fontSize={scaledFontSize(zone.heathrowFontSize)}
             showFilters={zone.heathrowShowFilters}
             visibleColumns={zone.heathrowColumns}
             deviceToken={deviceToken}
@@ -5980,7 +6015,7 @@ export function ZoneRenderer({
             airline={zone.heathrowAirline}
             refreshInterval={zone.heathrowRefreshInterval}
             pageInterval={zone.heathrowPageInterval}
-            fontSize={zone.heathrowFontSize}
+            fontSize={scaledFontSize(zone.heathrowFontSize)}
             showFilters={zone.heathrowShowFilters}
             visibleColumns={zone.heathrowColumns}
             deviceToken={deviceToken}
@@ -5996,7 +6031,7 @@ export function ZoneRenderer({
             unit={zone.weatherUnit || "celsius"}
             days={zone.forecastDays}
             refreshInterval={zone.forecastRefreshInterval}
-            fontSize={zone.forecastFontSize}
+            fontSize={scaledFontSize(zone.forecastFontSize)}
             showHourly={zone.forecastShowHourly}
             showCondition={zone.forecastShowCondition}
             showSunrise={zone.forecastShowSunrise}
@@ -6017,7 +6052,7 @@ export function ZoneRenderer({
             minMagnitude={zone.earthquakeMinMagnitude}
             limit={zone.earthquakeLimit}
             refreshInterval={zone.earthquakeRefreshInterval}
-            fontSize={zone.earthquakeFontSize}
+            fontSize={scaledFontSize(zone.earthquakeFontSize)}
             showDepth={zone.earthquakeShowDepth}
             showTsunami={zone.earthquakeShowTsunami}
             showAlert={zone.earthquakeShowAlert}
@@ -6034,7 +6069,7 @@ export function ZoneRenderer({
         return (
           <AircraftRadarWidget
             refreshInterval={zone.aircraftRefreshInterval}
-            fontSize={zone.aircraftFontSize}
+            fontSize={scaledFontSize(zone.aircraftFontSize)}
             boundsLamin={zone.aircraftBoundsLamin}
             boundsLomin={zone.aircraftBoundsLomin}
             boundsLamax={zone.aircraftBoundsLamax}
@@ -6058,7 +6093,7 @@ export function ZoneRenderer({
         return (
           <SpaceXLaunchWidget
             refreshInterval={zone.spacexRefreshInterval}
-            fontSize={zone.spacexFontSize}
+            fontSize={scaledFontSize(zone.spacexFontSize)}
             showDetails={zone.spacexShowDetails}
             showPatch={zone.spacexShowPatch}
             showLinks={zone.spacexShowLinks}

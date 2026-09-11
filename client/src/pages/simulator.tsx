@@ -38,6 +38,11 @@ import type { Screen, DisplayProfile, MediaAsset, LayoutTemplate, LiveOverride, 
 import { ZoneRenderer, zoneTypeIcons, getAspectRatioDimensions, getZoneFingerprint, type PlayerVariableContext } from "@/components/zone-renderer";
 import { useAgendaSceneCompletion } from "@/hooks/use-agenda-scene-completion";
 import type { AgendaZoneBinding } from "@/lib/agenda-scene-completion";
+import {
+  getAuthoredSceneAspect,
+  getSceneTextScale,
+  hasMaterialAspectRatioMismatch,
+} from "@/lib/scene-render-geometry";
 
 interface SimulatorState {
   isPlaying: boolean;
@@ -240,6 +245,7 @@ function PlayerDisplay({
                         playerContext={playerContext}
                         agendaTestAt={agendaTestAt}
                         agendaCompletionBinding={agendaCompletionBindings?.get(zone.id)}
+                        sceneTextScale={getSceneTextScale(trueHeight)}
                       />
                     </div>
                   </div>
@@ -287,6 +293,7 @@ function PlayerDisplay({
                 playerContext={playerContext}
                 agendaTestAt={agendaTestAt}
                 agendaCompletionBinding={agendaCompletionBindings?.get(zone.id)}
+                sceneTextScale={getSceneTextScale(trueHeight)}
               />
             </div>
           </div>
@@ -647,24 +654,12 @@ export default function SimulatorPage() {
     if (isPlaylistPreview) return null;
     if (!selectedLayout || !selectedScreen) return null;
 
-    let layoutW: number;
-    let layoutH: number;
-    if (
-      selectedLayout.aspectRatio === "custom" &&
-      selectedLayout.customWidth &&
-      selectedLayout.customHeight
-    ) {
-      layoutW = selectedLayout.customWidth;
-      layoutH = selectedLayout.customHeight;
-    } else {
-      const a = getAspectRatioDimensions(
-        selectedLayout.aspectRatio || "16:9",
-        selectedLayout.customWidth,
-        selectedLayout.customHeight,
-      );
-      layoutH = 1080;
-      layoutW = Math.round(1080 * (a.width / a.height));
-    }
+    const authored = getAuthoredSceneAspect(
+      selectedLayout.aspectRatio,
+      selectedLayout.customWidth,
+      selectedLayout.customHeight,
+    );
+    if (!authored) return null;
 
     let targetW: number | null = null;
     let targetH: number | null = null;
@@ -684,9 +679,9 @@ export default function SimulatorPage() {
     }
 
     if (!targetW || !targetH || !targetLabel) return null;
-    if (layoutW === targetW && layoutH === targetH) return null;
+    if (!hasMaterialAspectRatioMismatch(authored, targetW, targetH)) return null;
 
-    return { layoutW, layoutH, targetW, targetH, targetLabel };
+    return { layoutLabel: authored.label, targetW, targetH, targetLabel };
   }, [isPlaylistPreview, selectedLayout, selectedScreen, selectedProfile]);
 
   const getZoneMedia = (zoneId: string): MediaAsset[] => {
@@ -1073,10 +1068,10 @@ export default function SimulatorPage() {
               >
                 <AlertTriangle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
                 <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
-                  Scene {layoutSizeWarning.layoutW}×{layoutSizeWarning.layoutH}{" "}
+                  Scene {layoutSizeWarning.layoutLabel}{" "}
                   doesn't match {layoutSizeWarning.targetLabel}{" "}
-                  {layoutSizeWarning.targetW}×{layoutSizeWarning.targetH} —
-                  content will be scaled or cropped.
+                  {layoutSizeWarning.targetW}×{layoutSizeWarning.targetH} aspect
+                  ratio — content may be cropped or letterboxed.
                 </p>
               </div>
             )}
