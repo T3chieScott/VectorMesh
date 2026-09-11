@@ -39,6 +39,7 @@ const expected = [
 type Seed = {
   clientId: string; configId: string; sceneId: string; playlistId: string;
   screenId: string; token: string; assetId: string; sceneName: string;
+  mismatchSceneName: string;
 };
 
 async function cleanup() {
@@ -81,11 +82,19 @@ async function seed(): Promise<Seed> {
     endsAt: new Date(now.getTime() + (index + 1) * 3_600_000),
     status: "scheduled", sortOrder: index,
   })));
+  await db.insert(layoutTemplates).values({
+    clientId, name: `${PREFIX}landscape-mismatch`, aspectRatio: "16:9", zones: [],
+  });
   const [{ id: sceneId }] = await db.insert(layoutTemplates).values({
-    clientId, name: `${PREFIX}portrait-scene`, aspectRatio: "custom",
-    customWidth: 1080, customHeight: 1920,
-    zones: [{ id: "agenda", name: "Portrait Agenda", type: "agenda",
-      x: 0, y: 0, width: 100, height: 100, zIndex: 1, agendaConfigId: configId }],
+    clientId, name: `${PREFIX}portrait-scene`, aspectRatio: "9:16",
+    zones: [
+      { id: "agenda", name: "Portrait Agenda", type: "agenda",
+        x: 0, y: 0, width: 100, height: 100, zIndex: 1, agendaConfigId: configId },
+      { id: "text", name: "Scale Reference", type: "text",
+        x: 0, y: 0, width: 100, height: 8, zIndex: 2,
+        textContent: `${PREFIX}scale-reference`, textFontSize: 36,
+        textAlign: "center", textVerticalAlign: "middle" },
+    ],
   }).returning({ id: layoutTemplates.id });
   const [{ id: assetId }] = await db.insert(mediaAssets).values({
     clientId, name: `${PREFIX}video`, originalPath: `${PREFIX}.webm`,
@@ -121,7 +130,8 @@ async function seed(): Promise<Seed> {
     zoneSources: [],
   });
   return { clientId, configId, sceneId, playlistId, screenId, token, assetId,
-    sceneName: `${PREFIX}portrait-scene` };
+    sceneName: `${PREFIX}portrait-scene`,
+    mismatchSceneName: `${PREFIX}landscape-mismatch` };
 }
 
 async function login(page: Page) {
@@ -214,6 +224,54 @@ async function expectAuthoredPortraitSurface(page: Page, rootTestId: string) {
       .find((value) => value === "1080pxx1920px");
   });
   expect(dimensions, `${rootTestId} must retain authored 1080x1920 logical dimensions`).toBe("1080pxx1920px");
+}
+
+type TextScaleSnapshot = {
+  rawFontSize: number;
+  logicalHeight: number;
+  outerScale: number;
+  normalizedFontProportion: number;
+};
+
+async function captureTextScale(
+  page: Page,
+  label: string,
+  rootTestId: string,
+): Promise<TextScaleSnapshot> {
+  const snapshot = await page.getByTestId(rootTestId).evaluate((root) => {
+    const text = root.querySelector<HTMLElement>("[data-testid='text-widget']");
+    if (!text) throw new Error("text-widget not found");
+    let current: HTMLElement | null = text;
+    let logicalSurface: HTMLElement | null = null;
+    let depth = 0;
+    while (current && depth < 16) {
+      if (
+        /^\d+(?:\.\d+)?px$/.test(current.style.height) &&
+        current.style.transform.includes("scale(")
+      ) {
+        logicalSurface = current;
+        break;
+      }
+      current = current.parentElement;
+      depth += 1;
+    }
+    if (!logicalSurface || logicalSurface.offsetHeight <= 0) {
+      throw new Error("logical scene surface not found");
+    }
+    const rawFontSize = Number.parseFloat(getComputedStyle(text).fontSize);
+    const outerScale =
+      logicalSurface.getBoundingClientRect().height / logicalSurface.offsetHeight;
+    return {
+      rawFontSize,
+      logicalHeight: logicalSurface.offsetHeight,
+      outerScale,
+      normalizedFontProportion: rawFontSize / logicalSurface.offsetHeight,
+    };
+  });
+  console.log(`${label} text scale ${JSON.stringify(snapshot)}`);
+  expect(snapshot.normalizedFontProportion, `${label} normalized font proportion`)
+    .toBeCloseTo(36 / 720, 5);
+  return snapshot;
 }
 
 async function logSurfaceSnapshot(page: Page, label: string, rootTestId: string) {
@@ -374,6 +432,11 @@ test.describe("portrait Agenda pagination consistency", () => {
       .fill("2031-07-04T09:00");
     await expect(sceneBuilder.getByTestId("interactive-layout-preview")).toBeVisible({ timeout: 20_000 });
     await sceneBuilder.waitForTimeout(5_000);
+    const sceneBuilderText = await captureTextScale(
+      sceneBuilder, "Scene Builder", "interactive-layout-preview",
+    );
+    expect(sceneBuilderText.rawFontSize).toBe(36);
+    expect(sceneBuilderText.logicalHeight).toBe(720);
     await logSurfaceSnapshot(sceneBuilder, "Scene Builder", "interactive-layout-preview");
     const sceneBuilderBaseline = await capturePageModel(
       sceneBuilder, "Scene Builder", "interactive-layout-preview",
@@ -386,12 +449,18 @@ test.describe("portrait Agenda pagination consistency", () => {
     await login(simulator);
     await simulator.goto(`/simulator?at=2031-07-04T09:00:00Z`, { waitUntil: "commit" });
     await simulator.getByTestId("select-simulator-screen").click();
-    await simulator.getByRole("option", { name: "No screen (preview only)", exact: true }).click();
+    await simulator.getByRole("option", { name: `${PREFIX}screen`, exact: false }).click();
     await simulator.getByTestId("select-simulator-layout").click();
-    await simulator.getByRole("option", { name: `${s.sceneName} (1 zones)`, exact: true }).click();
+    await simulator.getByRole("option", { name: `${s.sceneName} (2 zones)`, exact: true }).click();
     await expect(simulator.getByTestId("player-display")).toBeVisible({ timeout: 20_000 });
     await expectAuthoredPortraitSurface(simulator, "player-display");
+    await expect(simulator.getByTestId("warning-layout-size-mismatch")).toHaveCount(0);
     await simulator.waitForTimeout(5_000);
+    const simulatorText = await captureTextScale(
+      simulator, "Simulator scene", "player-display",
+    );
+    expect(simulatorText.rawFontSize).toBe(96);
+    expect(simulatorText.logicalHeight).toBe(1920);
     console.log(`Fixture IDs ${JSON.stringify({ configId: s.configId, sceneId: s.sceneId })}`);
     await logSurfaceSnapshot(simulator, "Simulator scene", "player-display");
     const simulatorBaseline = await capturePageModel(
@@ -401,6 +470,12 @@ test.describe("portrait Agenda pagination consistency", () => {
       .toEqual(sceneBuilderBaseline);
     await simulator.setViewportSize({ width: 1_100, height: 800 });
     await simulator.waitForTimeout(2_000);
+    const resizedSimulatorText = await captureTextScale(
+      simulator, "Resized Simulator scene", "player-display",
+    );
+    expect(resizedSimulatorText.rawFontSize).toBe(simulatorText.rawFontSize);
+    expect(resizedSimulatorText.logicalHeight).toBe(simulatorText.logicalHeight);
+    expect(resizedSimulatorText.outerScale).not.toBeCloseTo(simulatorText.outerScale, 3);
     const resizedSimulatorBaseline = await capturePageModel(
       simulator, "Resized Simulator scene", "player-display",
     );
@@ -414,7 +489,11 @@ test.describe("portrait Agenda pagination consistency", () => {
     await login(playlist);
     await playlist.goto(`/simulator?playlistId=${s.playlistId}&at=2031-07-04T09:00:00Z`, { waitUntil: "commit" });
     await expect(playlist.getByTestId("player-display")).toBeVisible({ timeout: 20_000 });
-    await expectAuthoredPortraitSurface(playlist, "player-display");
+    const playlistText = await captureTextScale(
+      playlist, "Simulator playlist", "player-display",
+    );
+    expect(playlistText.normalizedFontProportion)
+      .toBeCloseTo(sceneBuilderText.normalizedFontProportion, 5);
     await observe(playlist, "Simulator playlist", "player-display");
 
     const player = await ctx.newPage();
@@ -427,6 +506,11 @@ test.describe("portrait Agenda pagination consistency", () => {
     await player.goto(`/player?at=2031-07-04T09:00:00Z`, { waitUntil: "commit" });
     await expect(player.getByTestId("screen-render-committed-frame")).toBeVisible({ timeout: 30_000 });
     await expectAuthoredPortraitSurface(player, "screen-render-committed-frame");
+    const playerText = await captureTextScale(
+      player, "Player", "screen-render-committed-frame",
+    );
+    expect(playerText.normalizedFontProportion)
+      .toBeCloseTo(sceneBuilderText.normalizedFontProportion, 5);
     const playerPages = await observe(player, "Player", "screen-render-committed-frame");
 
     const monitor = await ctx.newPage();
@@ -439,9 +523,25 @@ test.describe("portrait Agenda pagination consistency", () => {
     await monitor.goto(`${process.env.E2E_BASE_URL || "http://127.0.0.1:5000"}${monitorUrl.pathname}${monitorUrl.search}`, { waitUntil: "commit" });
     await expect(monitor.getByTestId("screen-render-committed-frame")).toBeVisible({ timeout: 30_000 });
     await expectAuthoredPortraitSurface(monitor, "screen-render-committed-frame");
+    const monitorText = await captureTextScale(
+      monitor, "Monitor", "screen-render-committed-frame",
+    );
+    expect(monitorText.normalizedFontProportion)
+      .toBeCloseTo(sceneBuilderText.normalizedFontProportion, 5);
     const monitorPages = await observe(monitor, "Monitor", "screen-render-committed-frame");
     expect(monitorPages, "Monitor must follow the Player's ordered page sequence").toEqual(playerPages);
     await expect(monitor.locator("body")).not.toContainText("Monitor session expired");
+
+    const warning = await ctx.newPage();
+    await login(warning);
+    await warning.goto(`/simulator?at=2031-07-04T09:00:00Z`, { waitUntil: "commit" });
+    await warning.getByTestId("select-simulator-screen").click();
+    await warning.getByRole("option", { name: `${PREFIX}screen`, exact: false }).click();
+    await warning.getByTestId("select-simulator-layout").click();
+    await warning.getByRole("option", { name: `${s.mismatchSceneName} (0 zones)`, exact: true }).click();
+    await expect(warning.getByTestId("warning-layout-size-mismatch")).toContainText(
+      "Scene 16:9 doesn't match screen 1080×1920 aspect ratio",
+    );
     await ctx.close();
   });
 });

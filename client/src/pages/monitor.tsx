@@ -53,6 +53,7 @@ import {
   type MonitorAuthorityState,
 } from "@/lib/monitor-authority";
 import { PlayerClockProvider, usePlayerClock } from "@/lib/playerClock";
+import { getSceneTextScale } from "@/lib/scene-render-geometry";
 import { buildFontFaceCss } from "@/lib/fontFace";
 import { validatePreviewAtFormat } from "@shared/previewTime";
 import { TestPattern } from "@/components/test-pattern";
@@ -643,6 +644,7 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
           screenTimezone={content.screen?.timezone ?? undefined}
           weatherTimezone={weatherTimezone}
           agendaTestAt={agendaTestAt}
+          sceneTextScale={getSceneTextScale(useCanvasMode ? canvasH : viewportH)}
           followedAgendaPresentationStates={followedAgendaPresentationStates}
           playerContext={{
             screenName: content.playerVars?.screenName ?? content.screen?.name,

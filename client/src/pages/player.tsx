@@ -42,6 +42,7 @@ import {
   shouldSchedulePresentationDwell,
 } from "@/lib/contentPresentation";
 import type { AgendaPresentationState } from "@/components/agenda/AgendaDisplayWidget";
+import { getSceneTextScale } from "@/lib/scene-render-geometry";
 
 const TOKEN_KEY = "signage_device_token";
 const SCREEN_KEY = "signage_screen_id";
@@ -1591,6 +1592,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
                     mediaBaseUrl="/api/player/media"
                     deviceToken={token}
                     agendaTestAt={agendaTestAt}
+                    sceneTextScale={getSceneTextScale(tileUseCanvasMode ? cwH : tile.height)}
                     playerContext={{
                       screenName: tile.name,
                       roomName:
@@ -1804,6 +1806,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       screenTimezone={content.screen?.timezone ?? undefined}
       weatherTimezone={weatherTimezone}
       agendaTestAt={agendaTestAt}
+      sceneTextScale={getSceneTextScale(useCanvasMode ? canvasH : playerScreenH)}
       agendaCompletionBindings={agendaCompletionBindings}
       onAgendaPresentationState={onAgendaPresentationState}
       playerContext={{
