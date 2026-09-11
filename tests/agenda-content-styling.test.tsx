@@ -599,3 +599,139 @@ test("Task #394 room remains visible when Track is disabled", () => {
   assert.ok(html.includes("Hall A"));
   assert.equal(html.includes("Design"), false);
 });
+
+test("Agenda customization keeps the Body text colour label", () => {
+  const editor = readFileSync("client/src/pages/agenda-configs.tsx", "utf8");
+  assert.match(editor, /label: "Body text colour"/);
+  assert.doesNotMatch(editor, /label: "Body colour"/);
+});
+
+test("Agenda customization applies the display colour beneath a background image", () => {
+  const html = render({
+    displayBackgroundColor: "#112233",
+    backgroundUrl: "https://example.test/background.jpg",
+  });
+  assert.match(
+    html,
+    /style="[^"]*background-image:url\(https:\/\/example\.test\/background\.jpg\)[^"]*background-color:#112233/,
+  );
+});
+
+test("Agenda customization applies card backgrounds in Full and NOW/NEXT", () => {
+  const full = render({ cardBackgroundColor: "#223344" });
+  assert.match(full, /style="[^"]*background:#223344[^"]*"[^>]*data-testid="agenda-row-item-1"/);
+
+  const nowNext = render(
+    { displayMode: "now_next", cardBackgroundColor: "#223344" },
+    [item(), item({
+      id: "next",
+      startsAt: new Date("2026-09-02T13:00:00Z"),
+      endsAt: new Date("2026-09-02T14:00:00Z"),
+      status: "scheduled",
+    })],
+  );
+  assert.match(nowNext, /style="[^"]*background:#223344[^"]*"[^>]*data-testid="agenda-row-item-1"/);
+  assert.ok((nowNext.match(/background:#223344/g) ?? []).length >= 1);
+});
+
+test("Agenda customization renders company between title and presenter, including company-only", () => {
+  const full = render({}, [item({ company: "Example Ltd" })]);
+  assert.match(full, /agenda-title-item-1[\s\S]*agenda-company-item-1[\s\S]*agenda-presenter-item-1/);
+  assert.match(full, /class="block min-w-0 break-words opacity-80"[^>]*style="[^"]*overflow-wrap:anywhere[^"]*"[^>]*data-testid="agenda-company-item-1"/);
+  assert.match(full, /agenda-presenter-item-1[\s\S]*agenda-room-item-1/);
+
+  const companyOnly = render({}, [item({ presenter: null, company: "Example Ltd" })]);
+  assert.match(companyOnly, /agenda-title-item-1[\s\S]*agenda-company-item-1[\s\S]*agenda-room-item-1/);
+  assert.doesNotMatch(companyOnly, /data-testid="agenda-presenter-item-1"/);
+
+  const blank = render({}, [item({ presenter: null, company: "   " })]);
+  assert.doesNotMatch(blank, /data-testid="agenda-company-item-1"/);
+
+  const nowNext = render(
+    { displayMode: "now_next" },
+    [item({ company: "Example Ltd" })],
+  );
+  assert.match(nowNext, /data-testid="agenda-company-item-1"/);
+});
+
+test("Agenda customization gives long company names an overflow-safe style", () => {
+  const html = render({}, [item({ presenter: null, company: "A".repeat(400) })]);
+  assert.match(html, /overflow-wrap:anywhere[^"]*"[^>]*data-testid="agenda-company-item-1"/);
+});
+
+test("Agenda customization uses dedicated text colours, then body colour fallback", () => {
+  const dedicated = render({
+    bodyColor: "#101010",
+    sessionTitleColor: "#202020",
+    descriptionColor: "#303030",
+    presenterColor: "#404040",
+    companyColor: "#505050",
+    roomColor: "#606060",
+    trackColor: "#707070",
+  }, [item({ company: "Example Ltd" })]);
+  for (const [testId, colour] of [
+    ["agenda-title-item-1", "#202020"],
+    ["agenda-description-item-1", "#303030"],
+    ["agenda-presenter-item-1", "#404040"],
+    ["agenda-company-item-1", "#505050"],
+    ["agenda-room-item-1", "#606060"],
+  ] as const) {
+    const tag = dedicated.slice(dedicated.lastIndexOf(`data-testid="${testId}"`) - 300, dedicated.lastIndexOf(`data-testid="${testId}"`) + 40);
+    assert.ok(tag.includes(`color:${colour}`), `${testId} should use ${colour}`);
+  }
+  assert.ok(dedicated.includes("color:#707070"), "track should use its dedicated colour");
+
+  const fallback = render({ bodyColor: "#abcdef" }, [item({ company: "Example Ltd" })]);
+  for (const testId of [
+    "agenda-title-item-1",
+    "agenda-description-item-1",
+    "agenda-presenter-item-1",
+    "agenda-company-item-1",
+    "agenda-room-item-1",
+  ]) {
+    assert.ok(fallback.includes(`data-testid="${testId}"`));
+  }
+  assert.ok(fallback.includes("color:#abcdef"));
+});
+
+test("Agenda customization null colour fields preserve the existing rendering", () => {
+  const explicitNulls = render({
+    displayBackgroundColor: null,
+    cardBackgroundColor: null,
+    sessionTitleColor: null,
+    descriptionColor: null,
+    presenterColor: null,
+    companyColor: null,
+    roomColor: null,
+    trackColor: null,
+  });
+  assert.equal(explicitNulls, render());
+});
+
+test("Agenda customization preserves Room Door legacy title and body colour fallbacks", () => {
+  const current = render({
+    displayMode: "now_next",
+    layoutMode: "room_door",
+    titleColor: "#112233",
+    bodyColor: "#445566",
+    roomColor: null,
+    sessionTitleColor: null,
+  });
+  assert.match(current, /style="[^"]*color:#112233[^"]*">Hall A<\/p>/);
+  assert.match(current, /<h1[^>]*style="[^"]*color:#112233[^"]*"[^>]*>Accessible agendas<\/h1>/);
+
+  const next = render({
+    displayMode: "now_next",
+    layoutMode: "room_door",
+    titleColor: "#112233",
+    bodyColor: "#445566",
+    roomColor: null,
+    sessionTitleColor: null,
+  }, [item({
+    startsAt: new Date("2026-09-02T13:00:00Z"),
+    endsAt: new Date("2026-09-02T14:00:00Z"),
+    status: "scheduled",
+  })]);
+  assert.match(next, /style="[^"]*color:#112233[^"]*">Hall A<\/p>/);
+  assert.match(next, /class="font-semibold mt-1" style="[^"]*color:#445566[^"]*"[^>]*>Accessible agendas<\/p>/);
+});

@@ -14,6 +14,37 @@ export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 export const db = drizzle(pool, { schema });
 
 const BOOKING_MIGRATION_LOCK_KEY = 715129_001n;
+const AGENDA_CUSTOMISATION_MIGRATION_LOCK_KEY = 715129_039n;
+
+/** Idempotent startup counterpart to migration 0039. */
+export async function ensureAgendaCustomisationMigration(): Promise<void> {
+  const client = await pool.connect();
+  let haveLock = false;
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [
+      AGENDA_CUSTOMISATION_MIGRATION_LOCK_KEY.toString(),
+    ]);
+    haveLock = true;
+    await client.query(`
+      ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS company TEXT;
+      ALTER TABLE agenda_widget_configs
+        ADD COLUMN IF NOT EXISTS display_background_color TEXT,
+        ADD COLUMN IF NOT EXISTS card_background_color TEXT,
+        ADD COLUMN IF NOT EXISTS session_title_color TEXT,
+        ADD COLUMN IF NOT EXISTS description_color TEXT,
+        ADD COLUMN IF NOT EXISTS presenter_color TEXT,
+        ADD COLUMN IF NOT EXISTS company_color TEXT,
+        ADD COLUMN IF NOT EXISTS room_color TEXT,
+        ADD COLUMN IF NOT EXISTS track_color TEXT;
+    `);
+    console.log("[ensureAgendaCustomisationMigration] agenda customisation columns ready");
+  } finally {
+    if (haveLock) await client.query("SELECT pg_advisory_unlock($1)", [
+      AGENDA_CUSTOMISATION_MIGRATION_LOCK_KEY.toString(),
+    ]);
+    client.release();
+  }
+}
 
 export async function ensureBookingMigration(): Promise<void> {
   const client = await pool.connect();

@@ -22,6 +22,7 @@ function item(o: Partial<AgendaItem> & { id: string; startsAt: Date; endsAt: Dat
     room: o.room ?? null,
     track: o.track ?? null,
     presenter: o.presenter ?? null,
+    company: o.company ?? null,
     startsAt: o.startsAt,
     endsAt: o.endsAt,
     status: (o.status as any) ?? "scheduled",
@@ -495,6 +496,36 @@ test("dedupeAgendaSessions collapses per-speaker rows into one session, merging 
   assert.equal(out.length, 2, "the two duplicate session rows collapse to one");
   const merged = out.find((i) => i.title === "Behind the Partnership")!;
   assert.equal(merged.presenter, "Moderator\nSpeaker");
+});
+
+test("dedupeAgendaSessions aggregates session companies independently in source order", () => {
+  const start = new Date("2026-06-01T10:45:00Z");
+  const end = new Date("2026-06-01T11:05:00Z");
+  const resolve = (companies: Array<string | null>) => {
+    const rows = companies.map((company, index) =>
+      item({
+        id: String(index),
+        title: "Partnership Panel",
+        room: "Main Stage",
+        presenter: index === 0 ? "Moderator" : "Speaker",
+        company,
+        startsAt: start,
+        endsAt: end,
+      }),
+    );
+    return resolveAgendaItems({
+      items: rows,
+      config: cfg(),
+      now: new Date("2026-06-01T10:50:00Z"),
+    })[0];
+  };
+
+  assert.equal(resolve(["Acme", "   "]).company, "Acme");
+  assert.equal(resolve(["Acme", "Acme"]).company, "Acme");
+  assert.equal(resolve([" Acme ", "Globex"]).company, "Acme, Globex");
+  assert.equal(resolve(["Acme", "acme"]).company, "Acme, acme");
+  assert.equal(resolve([null, "Globex"]).company, "Globex");
+  assert.equal(resolve(["Acme", "Globex"]).presenter, "Moderator\nSpeaker");
 });
 
 test("dedupeAgendaSessions dedupes identical presenter roles and surfaces an urgent status", () => {

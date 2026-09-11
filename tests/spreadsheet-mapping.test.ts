@@ -215,7 +215,7 @@ test("mapped statuses retain custom values, canonicalize built-ins, and default 
   assert.equal(withoutStatus[0].item!.status, "scheduled");
 });
 
-test("applyMapping composes presenter from first name, last name and company", () => {
+test("applyMapping keeps presenter name and company as separate fields", () => {
   const headers = ["Title", "Start", "End", "First", "Surname", "Company"];
   const mapping = {
     title: "Title",
@@ -231,9 +231,12 @@ test("applyMapping composes presenter from first name, last name and company", (
     ["Talk", "2026-06-02 13:00", "2026-06-02 14:00", "", "", "Globex"],
   ];
   const out = applyMapping(rows, { headers, mapping: { ...mapping }, timezone: TZ });
-  assert.equal(out[0].item!.presenter, "Jane Doe, Acme");
+  assert.equal(out[0].item!.presenter, "Jane Doe");
+  assert.equal(out[0].item!.company, "Acme");
   assert.equal(out[1].item!.presenter, "Sam Lee");
-  assert.equal(out[2].item!.presenter, "Globex");
+  assert.equal(out[1].item!.company, null);
+  assert.equal(out[2].item!.presenter, null);
+  assert.equal(out[2].item!.company, "Globex");
 });
 
 test("applyMapping skips fully-empty rows", () => {

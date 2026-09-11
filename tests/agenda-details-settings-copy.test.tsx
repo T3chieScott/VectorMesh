@@ -384,6 +384,65 @@ test("Task #397 malformed, incompatible, crafted, and invalid payloads are rejec
   }
 });
 
+test("Agenda customization clipboard round-trips all eight colour settings", () => {
+  const colours = {
+    displayBackgroundColor: "#102030",
+    cardBackgroundColor: "#203040",
+    sessionTitleColor: "#304050",
+    descriptionColor: "#405060",
+    presenterColor: "#506070",
+    companyColor: "#607080",
+    roomColor: "#708090",
+    trackColor: "#8090a0",
+  };
+  const payload = buildAgendaSettingsClipboardPayload({
+    ...clipboardValues(),
+    ...colours,
+  });
+  const parsed = parseAgendaSettingsClipboardPayload(JSON.stringify(payload));
+  assert.deepEqual(
+    Object.fromEntries(Object.keys(colours).map((key) => [key, parsed[key as keyof typeof parsed]])),
+    colours,
+  );
+  const merged = mergeAgendaSettingsClipboardValues(
+    Object.fromEntries(Object.keys(colours).map((key) => [key, "#ffffff"])),
+    parsed,
+  );
+  assert.deepEqual(
+    Object.fromEntries(Object.keys(colours).map((key) => [key, merged[key]])),
+    colours,
+  );
+});
+
+test("Agenda customization clipboard clear values preserve destination overrides", () => {
+  const settings = parseAgendaSettingsClipboardPayload(JSON.stringify({
+    type: AGENDA_SETTINGS_CLIPBOARD_TYPE,
+    version: AGENDA_SETTINGS_CLIPBOARD_VERSION,
+    settings: Object.fromEntries([
+      "displayBackgroundColor",
+      "cardBackgroundColor",
+      "sessionTitleColor",
+      "descriptionColor",
+      "presenterColor",
+      "companyColor",
+      "roomColor",
+      "trackColor",
+    ].map((key) => [key, ""])),
+  }));
+  const destination = Object.fromEntries([
+    "displayBackgroundColor",
+    "cardBackgroundColor",
+    "sessionTitleColor",
+    "descriptionColor",
+    "presenterColor",
+    "companyColor",
+    "roomColor",
+    "trackColor",
+  ].map((key) => [key, "#ffffff"]));
+  const merged = mergeAgendaSettingsClipboardValues(destination, settings);
+  for (const key of Object.keys(destination)) assert.equal(merged[key], "");
+});
+
 test("Task #397 editor, public payload, and migration carry both new settings", () => {
   const editor = readFileSync("client/src/pages/agenda-configs.tsx", "utf8");
   const routes = readFileSync("server/agendaRoutes.ts", "utf8");

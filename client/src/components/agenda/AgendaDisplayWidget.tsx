@@ -88,6 +88,12 @@ interface RoleColors {
   body?: string;
   time?: string;
   status?: string;
+  sessionTitle?: string;
+  description?: string;
+  presenter?: string;
+  company?: string;
+  room?: string;
+  track?: string;
 }
 
 function resolveRoleColors(config: AgendaWidgetConfig): RoleColors {
@@ -96,6 +102,12 @@ function resolveRoleColors(config: AgendaWidgetConfig): RoleColors {
     body: config.bodyColor ?? undefined,
     time: config.timeColor ?? undefined,
     status: config.statusColor ?? undefined,
+    sessionTitle: config.sessionTitleColor ?? config.bodyColor ?? undefined,
+    description: config.descriptionColor ?? config.bodyColor ?? undefined,
+    presenter: config.presenterColor ?? config.bodyColor ?? undefined,
+    company: config.companyColor ?? config.bodyColor ?? undefined,
+    room: config.roomColor ?? config.bodyColor ?? undefined,
+    track: config.trackColor ?? config.bodyColor ?? undefined,
   };
 }
 
@@ -1103,6 +1115,8 @@ function AgendaRow({
 }) {
   const timeStyle = timeRoleStyle(config, roleColors?.time);
   const bodyStyle = roleColors?.body ? { color: roleColors.body } : undefined;
+  const sessionTitleStyle = roleColors?.sessionTitle ? { color: roleColors.sessionTitle } : undefined;
+  const company = item.company?.trim() || null;
   const speakerMarker = resolveSpeakerMarker(config);
   const sessionDuration =
     config.showSessionDuration === true
@@ -1142,7 +1156,7 @@ function AgendaRow({
   // the left edge ties each card to the header accent bar; the currently
   // running session gets a thicker accent, brighter fill and a soft glow.
   const cardStyle: React.CSSProperties = {
-    background: isCurrent ? "var(--ag-card-bg-current)" : "var(--ag-card-bg)",
+    background: config.cardBackgroundColor ?? (isCurrent ? "var(--ag-card-bg-current)" : "var(--ag-card-bg)"),
     borderWidth: 1,
     borderStyle: "solid",
     borderColor: "var(--ag-border)",
@@ -1475,7 +1489,7 @@ function AgendaRow({
             className="font-semibold leading-tight break-words"
             style={{
               fontSize: scale * roleSizes.title,
-              ...bodyStyle,
+              ...sessionTitleStyle,
               overflowWrap: "anywhere",
             }}
             data-testid={tid(`agenda-title-${item.id}`)}
@@ -1490,23 +1504,24 @@ function AgendaRow({
             />
           )}
         </div>
-        {(config.showRoom && item.room) || (showTrack && item.track) || (config.showPresenter && item.presenter) ? (
+        {(config.showRoom && item.room) || (showTrack && item.track) || (config.showPresenter && (item.presenter || company)) ? (
           <div
             className={`mt-1 flex flex-col gap-1 opacity-80${scrollEnabled ? " shrink-0" : ""}`}
             style={{ fontSize: scale * roleSizes.body, ...bodyStyle }}
           >
-            {((config.showRoom && item.room) || (showTrack && item.track)) && (
-              <div className="flex flex-wrap gap-3">
-                {config.showRoom && item.room && (
-                  <span data-testid={tid(`agenda-room-${item.id}`)}>📍 {item.room}</span>
-                )}
-                {showTrack && item.track && <span>🏷 {item.track}</span>}
+            {config.showPresenter && company && (
+              <div
+                className="block min-w-0 break-words opacity-80"
+                style={{ color: roleColors?.company, overflowWrap: "anywhere" }}
+                data-testid={tid(`agenda-company-${item.id}`)}
+              >
+                {company}
               </div>
             )}
             {config.showPresenter && item.presenter && (
               <div
                 className="flex items-start break-words"
-                style={{ overflowWrap: "anywhere" }}
+                style={{ overflowWrap: "anywhere", ...(roleColors?.presenter ? { color: roleColors.presenter } : {}) }}
                 data-testid={tid(`agenda-presenter-${item.id}`)}
               >
                 {speakerMarker && (
@@ -1536,6 +1551,14 @@ function AgendaRow({
                   reducedMotion={prefersReducedMotion}
                   suppressTestId={suppressTestId}
                 />
+              </div>
+            )}
+            {((config.showRoom && item.room) || (showTrack && item.track)) && (
+              <div className="flex flex-wrap gap-3">
+                {config.showRoom && item.room && (
+                  <span style={roleColors?.room ? { color: roleColors.room } : undefined} data-testid={tid(`agenda-room-${item.id}`)}>📍 {item.room}</span>
+                )}
+                {showTrack && item.track && <span style={roleColors?.track ? { color: roleColors.track } : undefined}>🏷 {item.track}</span>}
               </div>
             )}
           </div>
@@ -1615,7 +1638,7 @@ function AgendaRow({
                   className="opacity-75 break-words"
                   style={{
                     fontSize: scale * descMult,
-                    ...bodyStyle,
+                    ...(roleColors?.description ? { color: roleColors.description } : {}),
                     textAlign: config.descriptionTextAlign === "justify" ? "justify" : "left",
                     overflowWrap: "anywhere",
                     paddingRight: DESCRIPTION_SCROLL_GUTTER_PX,
@@ -1637,7 +1660,7 @@ function AgendaRow({
                 className="mt-1 opacity-75 break-words"
                 style={{
                   fontSize: scale * descMult,
-                  ...bodyStyle,
+                  ...(roleColors?.description ? { color: roleColors.description } : bodyStyle),
                   textAlign: config.descriptionTextAlign === "justify" ? "justify" : "left",
                   overflowWrap: "anywhere",
                   ...resolveDescriptionClamp(config.descriptionLines),
@@ -2007,6 +2030,9 @@ function RoomDoor({
   const roomName = cur?.room || next?.room || config.roomFilter?.[0] || "Room";
   const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
   const bodyStyle = roleColors.body ? { color: roleColors.body } : undefined;
+  const roomStyle = config.roomColor ? { color: config.roomColor } : titleStyle;
+  const currentTitleStyle = config.sessionTitleColor ? { color: config.sessionTitleColor } : titleStyle;
+  const nextTitleStyle = config.sessionTitleColor ? { color: config.sessionTitleColor } : bodyStyle;
   const timeStyle = timeRoleStyle(config, roleColors.time);
   // RoomDoor uses its own (much larger) typography than the card layout, so
   // the per-role overrides are applied here as factors relative to each role's
@@ -2020,7 +2046,7 @@ function RoomDoor({
   return (
     <div className="flex-1 flex flex-col justify-center gap-8 text-center px-8">
       <div>
-        <p className="opacity-70 uppercase tracking-widest" style={{ fontSize: scale * titleFactor, ...titleStyle }}>
+        <p className="opacity-70 uppercase tracking-widest" style={{ fontSize: scale * titleFactor, ...roomStyle }}>
           {roomName}
         </p>
         {cur ? (
@@ -2038,11 +2064,16 @@ function RoomDoor({
                 {currentDuration}
               </p>
             )}
-            <h1 className="font-bold mt-3 leading-tight" style={{ fontSize: scale * 3 * titleFactor, ...titleStyle }}>
+            <h1 className="font-bold mt-3 leading-tight" style={{ fontSize: scale * 3 * titleFactor, ...currentTitleStyle }}>
               {cur.title}
             </h1>
+            {config.showPresenter && cur.company?.trim() && (
+              <div className="mt-3 break-words opacity-80" style={{ fontSize: scale * 1.3 * bodyFactor, color: roleColors.company, overflowWrap: "anywhere" }} data-testid={`agenda-company-${cur.id}`}>
+                {cur.company.trim()}
+              </div>
+            )}
             {config.showPresenter && cur.presenter && (
-              <div className="mt-3 opacity-80" style={{ fontSize: scale * 1.3 * bodyFactor, ...bodyStyle }}>
+              <div className="mt-3 opacity-80" style={{ fontSize: scale * 1.3 * bodyFactor, ...(roleColors.presenter ? { color: roleColors.presenter } : bodyStyle) }}>
                 <PresenterViewport id={cur.id} text={cur.presenter} lines={resolvePresenterVisibleLines(config.presenterVisibleLines)} fontSize={scale * 1.3 * bodyFactor} accentColor={config.accentColor} onOverflow={onScrollOverflow} resetTick={scrollResetTick} reducedMotion={prefersReducedMotion} />
               </div>
             )}
@@ -2083,9 +2114,10 @@ function RoomDoor({
               {nextDuration}
             </p>
           )}
-          <p className="font-semibold mt-1" style={{ fontSize: scale * 1.4 * titleFactor, ...bodyStyle }}>
+          <p className="font-semibold mt-1" style={{ fontSize: scale * 1.4 * titleFactor, ...nextTitleStyle }}>
             {next.title}
           </p>
+          {config.showPresenter && next.company?.trim() && <p className="break-words" style={{ fontSize: scale * 0.9 * bodyFactor, color: roleColors.company, overflowWrap: "anywhere" }} data-testid={`agenda-company-${next.id}`}>{next.company.trim()}</p>}
         </div>
       )}
     </div>
@@ -2822,6 +2854,9 @@ export function AgendaDisplayWidget({
         backgroundPosition: "center",
       }
     : {};
+  if (config.displayBackgroundColor) {
+    bgStyle.backgroundColor = config.displayBackgroundColor;
+  }
 
   const roleColors = resolveRoleColors(config);
   const presentationNow = controlledActivationId ? planNow : now;

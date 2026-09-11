@@ -1240,6 +1240,7 @@ export const agendaItems = pgTable("agenda_items", {
   room: text("room"),
   track: text("track"),
   presenter: text("presenter"),
+  company: text("company"),
   startsAt: timestamp("starts_at").notNull(),
   endsAt: timestamp("ends_at").notNull(),
   // scheduled | in_progress | delayed | cancelled | moved
@@ -1756,6 +1757,14 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   bodyColor: text("body_color"),
   timeColor: text("time_color"),
   statusColor: text("status_color"),
+  displayBackgroundColor: text("display_background_color"),
+  cardBackgroundColor: text("card_background_color"),
+  sessionTitleColor: text("session_title_color"),
+  descriptionColor: text("description_color"),
+  presenterColor: text("presenter_color"),
+  companyColor: text("company_color"),
+  roomColor: text("room_color"),
+  trackColor: text("track_color"),
   // Per-element text-size multipliers (relative to the responsive base
   // font scale). All nullable so existing rows render identically — the
   // renderer falls back to the built-in defaults (time 1.15, date 0.6,
@@ -1884,6 +1893,14 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
     bodyColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
     timeColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
     statusColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
+    displayBackgroundColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
+    cardBackgroundColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
+    sessionTitleColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
+    descriptionColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
+    presenterColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
+    companyColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
+    roomColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
+    trackColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
     // Per-element size multipliers. Bounded to keep text legible (and to
     // stay within the auto-fit packer's measured range). Null = use the
     // renderer's built-in default for that role.

@@ -46,6 +46,7 @@ const itemFormSchema = z.object({
   room: z.string().optional(),
   track: z.string().optional(),
   presenter: z.string().optional(),
+  company: z.string().optional(),
   startsAt: z.string().min(1, "Start time is required"),
   endsAt: z.string().min(1, "End time is required"),
   status: z.string().trim().min(1, "Status is required").max(AGENDA_FILTER_VALUE_MAX_LENGTH, `Status must be ${AGENDA_FILTER_VALUE_MAX_LENGTH} characters or fewer`),
@@ -65,6 +66,7 @@ function buildItemFormDefaults(
       room: initial.room ?? "",
       track: initial.track ?? "",
       presenter: initial.presenter ?? "",
+      company: initial.company ?? "",
       startsAt: toLocalInput(initial.startsAt),
       endsAt: toLocalInput(initial.endsAt),
       status: normalizeAgendaStatus(initial.status, AGENDA_STATUSES) ?? initial.status,
@@ -82,6 +84,7 @@ function buildItemFormDefaults(
     room: "",
     track: "",
     presenter: "",
+    company: "",
     startsAt: toLocalInput(now),
     endsAt: toLocalInput(new Date(now.getTime() + 60 * 60 * 1000)),
     status: siteStatuses.includes("scheduled")
@@ -143,6 +146,7 @@ function ItemDialog({
         room: values.room || null,
         track: values.track || null,
         presenter: values.presenter || null,
+        company: values.company || null,
         statusMessage: values.statusMessage || null,
         startsAt: new Date(values.startsAt).toISOString(),
         endsAt: new Date(values.endsAt).toISOString(),
@@ -192,6 +196,9 @@ function ItemDialog({
             </div>
             <FormField control={form.control} name="presenter" render={({ field }) => (
               <FormItem><FormLabel>Presenter</FormLabel><FormControl><Input {...field} data-testid="input-agenda-presenter" /></FormControl><FormMessage /></FormItem>
+            )} />
+            <FormField control={form.control} name="company" render={({ field }) => (
+              <FormItem><FormLabel>Company</FormLabel><FormControl><Input {...field} data-testid="input-agenda-company" /></FormControl><FormMessage /></FormItem>
             )} />
             <FormField control={form.control} name="description" render={({ field }) => (
               <FormItem><FormLabel>Description</FormLabel><FormControl><Textarea rows={3} {...field} data-testid="input-agenda-description" /></FormControl><FormMessage /></FormItem>
