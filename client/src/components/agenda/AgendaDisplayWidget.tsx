@@ -150,6 +150,8 @@ export interface AgendaDisplayWidgetProps {
   onPresentationState?: (state: AgendaPresentationState) => void;
   /** Read-only position supplied by a monitor following another surface. */
   followedPresentationState?: AgendaPresentationState | null;
+  /** Signals that fonts and variable-height card pagination have settled. */
+  onPaginationReady?: (snapshot: AgendaPaginationSnapshot) => void;
   /** Deterministic mounted timing seam; omitted in all production callers. */
   testPresentationTiming?: {
     metrics: Record<string, number>;
@@ -163,6 +165,25 @@ export interface AgendaPresentationState {
   stage: string;
   page: number;
   cycle: number;
+}
+
+export interface AgendaPaginationSnapshot {
+  pageItemIds: string[][];
+  totalPages: number;
+}
+
+export const AGENDA_PAGINATION_REFERENCE_HEIGHT = 720;
+
+export function getCanonicalAgendaPaginationDimensions(
+  authoredWidth: number,
+  authoredHeight: number,
+): { width: number; height: number } {
+  const safeWidth = Number.isFinite(authoredWidth) && authoredWidth > 0 ? authoredWidth : 16;
+  const safeHeight = Number.isFinite(authoredHeight) && authoredHeight > 0 ? authoredHeight : 9;
+  return {
+    width: AGENDA_PAGINATION_REFERENCE_HEIGHT * (safeWidth / safeHeight),
+    height: AGENDA_PAGINATION_REFERENCE_HEIGHT,
+  };
 }
 
 const nativePresentationSetTimeout = (callback: () => void, delayMs: number): unknown =>
@@ -541,6 +562,30 @@ export function buildControlledNowNextPages(
   // completes before any next card begins. Paginating each group preserves
   // that boundary for both controlled followers and normal rotation.
   const pages = [...paginate(current, pageSize), ...paginate(upcoming, pageSize)];
+  return pages.length ? pages : [[]];
+}
+
+/** Preserve the NOW/NEXT boundary while applying the measured card-fit model. */
+export function buildMeasuredNowNextPages(
+  items: AgendaItem[],
+  now: Date,
+  heightsById: Readonly<Record<string, number>>,
+  availableHeight: number,
+  numCols: number,
+  rowGap: number,
+  maxItemsPerPage: number,
+): AgendaItem[][] {
+  const current = items.filter((item) => isCurrentlyRunning(item, now));
+  const upcoming = items.filter((item) => !isCurrentlyRunning(item, now));
+  const pack = (group: AgendaItem[]) => packAgendaPages(
+    group,
+    group.map((item) => heightsById[item.id]),
+    availableHeight,
+    numCols,
+    rowGap,
+    maxItemsPerPage,
+  );
+  const pages = [...pack(current), ...pack(upcoming)];
   return pages.length ? pages : [[]];
 }
 
@@ -2060,10 +2105,15 @@ export function AgendaDisplayWidget({
   completionBinding,
   onPresentationState,
   followedPresentationState,
+  onPaginationReady,
   testPresentationTiming,
 }: AgendaDisplayWidgetProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [measured, setMeasured] = useState({ w: width ?? 1920, h: height ?? 1080 });
+  const [paginationViewport, setPaginationViewport] = useState({
+    w: width ?? 1920,
+    h: height ?? 1080,
+  });
   const [now, setNow] = useState(() => nowProp ?? new Date());
   const [pageIndex, setPageIndex] = useState(0);
   const [presentationCycle, setPresentationCycle] = useState(0);
@@ -2131,13 +2181,24 @@ export function AgendaDisplayWidget({
   useEffect(() => {
     if (width && height) {
       setMeasured({ w: width, h: height });
+      setPaginationViewport({ w: width, h: height });
       return;
     }
     if (!containerRef.current) return;
     const el = containerRef.current;
     const ro = new ResizeObserver((entries) => {
       const cr = entries[0]?.contentRect;
-      if (cr) setMeasured({ w: cr.width, h: cr.height });
+      if (cr) {
+        setMeasured({ w: cr.width, h: cr.height });
+        const borderWidth = el.offsetWidth || cr.width;
+        const borderHeight = el.offsetHeight || cr.height;
+        setPaginationViewport((previous) =>
+          Math.abs(previous.w - borderWidth) < 0.5 &&
+          Math.abs(previous.h - borderHeight) < 0.5
+            ? previous
+            : { w: borderWidth, h: borderHeight },
+        );
+      }
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -2180,6 +2241,32 @@ export function AgendaDisplayWidget({
 
   const scale = resolveAgendaFontPx(config.fontScale, measured.w, measured.h);
   const gap = resolveAgendaGapPx(config.density, measured.w, measured.h);
+  // Page membership is authored once in a shared, aspect-derived coordinate
+  // system. Visible surfaces may render at 405×720, 1080×1920, or any scaled
+  // equivalent, but fixed CSS pixels make those layouts non-equivalent for
+  // wrapping and card height. Keeping pagination at a canonical 720px height
+  // makes Scene Builder, Simulator, Player, and Monitor consume one geometry.
+  const canonicalPagination = useMemo(
+    () => getCanonicalAgendaPaginationDimensions(
+      paginationViewport.w,
+      paginationViewport.h,
+    ),
+    [paginationViewport.w, paginationViewport.h],
+  );
+  const paginationLayout = useMemo(
+    () => pickAgendaLayout(
+      config.layoutMode as AgendaLayoutMode,
+      canonicalPagination.width,
+      canonicalPagination.height,
+      config.displayMode as AgendaDisplayMode,
+    ),
+    [config.layoutMode, config.displayMode, canonicalPagination.width, canonicalPagination.height],
+  );
+  const paginationScale = resolveAgendaFontPx(
+    config.fontScale,
+    canonicalPagination.width,
+    canonicalPagination.height,
+  );
   // Item resolution, including effective-day roll-forward, is performed at
   // the tenant-scoped data boundary. The renderer must not filter a payload a
   // second time: a controlled plan can legitimately contain a frozen item
@@ -2199,7 +2286,9 @@ export function AgendaDisplayWidget({
   // rest. totem / room_door are single "now / next" panels (they consume
   // `items` directly, not pages) and keep their existing behaviour.
   const cardLayout =
-    layout === "portrait" || layout === "landscape" || layout === "ultrawide";
+    paginationLayout === "portrait" ||
+    paginationLayout === "landscape" ||
+    paginationLayout === "ultrawide";
   // The purpose-built Totem and Room Door surfaces own their established
   // current/up-next selection. Semantic NOW/NEXT pages are for the card
   // layouts, where showing a mixed card page is ambiguous.
@@ -2211,8 +2300,8 @@ export function AgendaDisplayWidget({
   // Column count must mirror the CSS in ColumnFlow / its callers so the
   // measured card width matches what actually renders.
   const numCols =
-    layout === "ultrawide" ? (measured.w >= 1280 ? 4 : 3)
-    : layout === "landscape" ? 2
+    paginationLayout === "ultrawide" ? (canonicalPagination.width >= 1280 ? 4 : 3)
+    : paginationLayout === "landscape" ? 2
     : 1;
   const COL_GAP = 12; // ColumnFlow columnGap (0.75rem)
   const ROW_GAP = 12; // portrait gap-3 / ColumnFlow card mb-3
@@ -2253,8 +2342,25 @@ export function AgendaDisplayWidget({
     return () => ro.disconnect();
   }, []);
 
+  const canonicalContentBox = useMemo(() => ({
+    w: paginationViewport.w > 0
+      ? contentBox.w * (canonicalPagination.width / paginationViewport.w)
+      : 0,
+    h: paginationViewport.h > 0
+      ? contentBox.h * (canonicalPagination.height / paginationViewport.h)
+      : 0,
+  }), [
+    canonicalPagination.height,
+    canonicalPagination.width,
+    contentBox.h,
+    contentBox.w,
+    paginationViewport.h,
+    paginationViewport.w,
+  ]);
   const cardWidth =
-    contentBox.w > 0 ? (contentBox.w - (numCols - 1) * COL_GAP) / numCols : 0;
+    canonicalContentBox.w > 0
+      ? (canonicalContentBox.w - (numCols - 1) * COL_GAP) / numCols
+      : 0;
 
   // Off-screen pass that renders every card at its real width and records
   // its rendered height. setState only fires when a height actually changes,
@@ -2270,20 +2376,33 @@ export function AgendaDisplayWidget({
   // tick once fonts are ready (and on every subsequent font load) to force a
   // fresh measurement pass.
   const [fontTick, setFontTick] = useState(0);
+  const [fontsSettled, setFontsSettled] = useState(false);
+  const [measuredFontTick, setMeasuredFontTick] = useState(-1);
   useEffect(() => {
     const fonts =
       typeof document !== "undefined"
         ? (document.fonts as FontFaceSet | undefined)
         : undefined;
-    if (!fonts) return;
+    if (!fonts) {
+      setFontsSettled(true);
+      return;
+    }
     let cancelled = false;
     const bump = () => {
-      if (!cancelled) setFontTick((t) => t + 1);
+      if (!cancelled) {
+        setFontsSettled(true);
+        setFontTick((t) => t + 1);
+      }
+    };
+    const loading = () => {
+      if (!cancelled) setFontsSettled(false);
     };
     fonts.ready.then(bump).catch(() => {});
+    fonts.addEventListener?.("loading", loading);
     fonts.addEventListener?.("loadingdone", bump);
     return () => {
       cancelled = true;
+      fonts.removeEventListener?.("loading", loading);
       fonts.removeEventListener?.("loadingdone", bump);
     };
   }, []);
@@ -2310,25 +2429,29 @@ export function AgendaDisplayWidget({
       }
       return next;
     });
+    if (Object.keys(next).length === displayItems.length) {
+      setMeasuredFontTick(fontTick);
+    }
     // Re-measure whenever any input that changes a card's height changes —
     // content, width, scale, config (font/flags), date display, and the
     // font-load tick above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayItems, cardWidth, scale, config, multiDay, timezone, cardLayout, fontTick]);
+  }, [displayItems, cardWidth, paginationScale, config, multiDay, timezone, cardLayout, fontTick]);
 
   // Greedily pack cards into pages so the last card on a page is never
   // clipped (see packAgendaPages). Returns null until every card has been
   // measured, so the fallback keeps rendering in the meantime.
   const autoPages = useMemo(() => {
-    if (!cardLayout || contentBox.h <= 0 || cardWidth <= 0) return null;
+    if (!cardLayout || canonicalContentBox.h <= 0 || cardWidth <= 0) return null;
     const heights = displayItems.map((it) => cardHeights[it.id]);
     if (heights.some((h) => h == null)) return null; // wait for measurement
     if (!groupFullPagesByDay) return packAgendaPages(
       displayItems,
       heights as number[],
-      contentBox.h,
+      canonicalContentBox.h,
       numCols,
       ROW_GAP,
+      config.maxItemsPerPage,
     );
     const pages: AgendaItem[][] = [];
     let day: string | undefined;
@@ -2338,7 +2461,7 @@ export function AgendaDisplayWidget({
       pages.push(...packAgendaPages(
         group,
         group.map((item) => cardHeights[item.id]) as number[],
-        contentBox.h, numCols, ROW_GAP,
+        canonicalContentBox.h, numCols, ROW_GAP, config.maxItemsPerPage,
       ));
     };
     for (const item of displayItems) {
@@ -2352,14 +2475,11 @@ export function AgendaDisplayWidget({
     }
     flush();
     return pages;
-  }, [cardLayout, contentBox.h, cardWidth, numCols, displayItems, cardHeights, groupFullPagesByDay, timezone]);
+  }, [cardLayout, canonicalContentBox.h, cardWidth, numCols, displayItems, cardHeights, groupFullPagesByDay, timezone, config.maxItemsPerPage]);
 
   // Until measurement is ready (or for non-card layouts) fall back to the
   // configured cap so something always renders.
-  const fallbackPageSize =
-    layout === "portrait" ? Math.min(config.maxItemsPerPage, 6)
-    : layout === "ultrawide" ? Math.max(config.maxItemsPerPage, 12)
-    : config.maxItemsPerPage;
+  const fallbackPageSize = Math.max(1, config.maxItemsPerPage);
 
   const standardPages = useMemo(
     () => autoPages ?? (groupFullPagesByDay
@@ -2370,11 +2490,23 @@ export function AgendaDisplayWidget({
   const pages = useMemo(
     () => {
       if (usesSemanticNowNextPages) {
-        return buildControlledNowNextPages(displayItems, now, fallbackPageSize);
+        const semanticNow = controlledActivationId ? planNow : now;
+        return autoPages !== null
+          ? buildMeasuredNowNextPages(
+              displayItems,
+              semanticNow,
+              cardHeights,
+              canonicalContentBox.h,
+              numCols,
+              ROW_GAP,
+              fallbackPageSize,
+            )
+          : buildControlledNowNextPages(displayItems, semanticNow, fallbackPageSize);
       }
       return standardPages;
     },
-    [standardPages, displayItems, fallbackPageSize, usesSemanticNowNextPages, now],
+    [standardPages, displayItems, fallbackPageSize, usesSemanticNowNextPages, now,
+      controlledActivationId, planNow, autoPages, cardHeights, canonicalContentBox.h, numCols],
   );
   const followedState = sanitizeAgendaPresentationState(
     followedPresentationState,
@@ -2426,13 +2558,15 @@ export function AgendaDisplayWidget({
       cancelAnimationFrame(frame);
     };
   }, [controlledActivationId, cardLayout, autoPages, displayItems]);
-  const planUsable = displayItems.length === 0 || !cardLayout || autoPages !== null;
+  const measuredPaginationReady =
+    fontsSettled &&
+    (displayItems.length === 0 || !cardLayout ||
+      (autoPages !== null && measuredFontTick === fontTick));
+  const planUsable = displayItems.length === 0 || !cardLayout || measuredPaginationReady;
   useEffect(() => {
     if (!controlledActivationId || !planUsable) return;
     if (controlledPlanActivationRef.current === controlledActivationId) return;
-    const plan = usesSemanticNowNextPages
-      ? buildControlledNowNextPages(displayItems, planNow, fallbackPageSize)
-      : pages;
+    const plan = pages;
     controlledPlanActivationRef.current = controlledActivationId;
     completedActivationRef.current = undefined;
     controlledPageDwellRef.current = {};
@@ -2444,7 +2578,7 @@ export function AgendaDisplayWidget({
     const configuredMs = Math.max(3, config.rotationIntervalSeconds) * 1_000;
     const readyTotal = plan.some((page) => page.length > 0) ? plan.length * configuredMs : 0;
     bindingRef.current?.ready(readyTotal);
-  }, [controlledActivationId, planUsable, usesSemanticNowNextPages, config.rotationIntervalSeconds, displayItems, planNow, pages, fallbackPageSize]);
+  }, [controlledActivationId, planUsable, config.rotationIntervalSeconds, pages]);
 
   // Do not retain a plan while switching out of playlist control.
   useEffect(() => {
@@ -2473,6 +2607,17 @@ export function AgendaDisplayWidget({
   const presentationPages = controlledActivationId
     ? (hasCurrentControlledPlan ? controlledPages : null)
     : pages;
+  const presentationPageCount = Math.max(1, presentationPages?.length ?? 0);
+
+  const paginationReadyRef = useRef(onPaginationReady);
+  paginationReadyRef.current = onPaginationReady;
+  useEffect(() => {
+    if (!measuredPaginationReady) return;
+    paginationReadyRef.current?.({
+      pageItemIds: pages.map((page) => page.map((item) => item.id)),
+      totalPages: Math.max(1, pages.length),
+    });
+  }, [measuredPaginationReady, pages]);
 
   // Reset page index and scroll state whenever the item set or page layout
   // changes (e.g. real-time agenda updates while the screen is showing).
@@ -2751,7 +2896,7 @@ export function AgendaDisplayWidget({
             <p className="opacity-60 mt-1" style={{ fontSize: scale * 0.8, ...bodyStyle }} data-testid="agenda-session-count">
               {layout === "room_door" || layout === "totem"
                 ? "Agenda"
-                : `${displayItems.length} session${displayItems.length === 1 ? "" : "s"}${pages.length > 1 ? ` · page ${safePageIndex + 1}/${pages.length}` : ""}`}
+                : `${displayItems.length} session${displayItems.length === 1 ? "" : "s"}${presentationPageCount > 1 ? ` · page ${safePageIndex + 1}/${presentationPageCount}` : ""}`}
             </p>
               )}
             </div>
@@ -2900,7 +3045,7 @@ export function AgendaDisplayWidget({
                 item={it}
                 config={config}
                 tz={timezone}
-                scale={scale}
+                scale={paginationScale}
                 accentColor={config.accentColor}
                 roleColors={roleColors}
                 showCardDate={multiDay}

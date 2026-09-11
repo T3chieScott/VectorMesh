@@ -1079,7 +1079,11 @@ test("StrictMode scaled production chain freezes intrinsic multi-page plan befor
     assert.deepEqual(visibleIds(), ["scaled-1", "scaled-2"]);
     seenIds.push(...visibleIds());
     const measureRoot = rendered.container.querySelector<HTMLElement>("[data-measure-id='scaled-1']")?.parentElement;
-    assert.equal(measureRoot?.style.width, "394px", "800px client width, not transformed 400px rect, must determine columns");
+    assert.equal(
+      measureRoot?.style.width,
+      "260.66666666666663px",
+      "the canonical 1280×720 geometry, not physical or transformed width, must determine columns",
+    );
     assert.equal(completed, 0);
     assert.equal(advances, 0);
 

@@ -102,8 +102,6 @@ function PlayerDisplay({
     }
   }, [zones]);
 
-  const REFERENCE_HEIGHT = 720;
-  
   const layoutAspect = layout 
     ? getAspectRatioDimensions(
         layout.aspectRatio || "16:9",
@@ -112,10 +110,6 @@ function PlayerDisplay({
       )
     : null;
   
-  const aspectRatio = layoutAspect 
-    ? layoutAspect.width / layoutAspect.height 
-    : (profile ? (profile.width || 1920) / (profile.height || 1080) : 16 / 9);
-
   const canvasEnabled = screen?.canvasEnabled ?? false;
   const canvasW = screen?.canvasWidth || 1920;
   const canvasH = screen?.canvasHeight || 1080;
@@ -143,16 +137,13 @@ function PlayerDisplay({
   }
 
   const isFullCanvasMode = canvasEnabled && state.canvasViewMode === "fullcanvas";
-  const isAoiMode = canvasEnabled && state.canvasViewMode === "aoi";
 
-  const displayAspect = isFullCanvasMode
-    ? canvasW / canvasH
-    : isAoiMode
-      ? screenW / screenH
-      : aspectRatio;
-
-  const trueWidth = Math.round(REFERENCE_HEIGHT * displayAspect);
-  const trueHeight = REFERENCE_HEIGHT;
+  // Render in the authored logical coordinate system, exactly like Player and
+  // Monitor, then scale that complete surface to the simulator panel. Using a
+  // fixed 720px-high intermediate surface changes text wrapping and therefore
+  // variable-height Agenda pagination on portrait displays.
+  const trueWidth = isFullCanvasMode ? canvasW : screenW;
+  const trueHeight = isFullCanvasMode ? canvasH : screenH;
 
   useEffect(() => {
     const updateScale = () => {
