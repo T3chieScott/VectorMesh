@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   AgendaDisplayWidget,
   type AgendaDisplayWidgetProps,
+  type AgendaPaginationSnapshot,
   type AgendaPresentationState,
 } from "./AgendaDisplayWidget";
 import { CustomFontFaces } from "@/lib/fontFace";
@@ -68,6 +69,7 @@ export function AgendaConfigZoneWidget({
 }) {
   const [data, setData] = useState<DisplayPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const paginationReadyPayloadRef = useRef<DisplayPayload | null>(null);
   // Effects clean up after commit. Track the requested config synchronously as
   // well, so an A response resolving in the A→B render/effect gap cannot put A
   // back on screen over B (or over B's valid empty response).
@@ -197,12 +199,18 @@ export function AgendaConfigZoneWidget({
       onPreparationOutcome?.("failed");
     } else if (displayData) {
       const outcome = displayData.items.length ? "visible-ready" : "empty-ready";
-      onPreparationOutcome?.(outcome);
-      if (displayData.items.length) onRenderReady?.();
+      if (outcome === "empty-ready") onPreparationOutcome?.(outcome);
     } else if (error) {
       onPreparationOutcome?.("failed");
     }
   }, [configId, displayData, error, onRenderReady, onPreparationOutcome]);
+
+  const handlePaginationReady = (_snapshot: AgendaPaginationSnapshot) => {
+    if (!displayData || paginationReadyPayloadRef.current === displayData) return;
+    paginationReadyPayloadRef.current = displayData;
+    onPreparationOutcome?.("visible-ready");
+    onRenderReady?.();
+  };
 
   if (!configId) {
     return (
@@ -238,6 +246,7 @@ export function AgendaConfigZoneWidget({
         completionBinding={agendaPreparing ? undefined : completionBinding}
         onPresentationState={agendaPreparing ? undefined : onPresentationState}
         followedPresentationState={followedPresentationState}
+        onPaginationReady={handlePaginationReady}
         testPresentationTiming={testPresentationTiming}
       />
     </>

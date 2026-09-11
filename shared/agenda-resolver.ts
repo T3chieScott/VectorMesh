@@ -447,8 +447,8 @@ export function paginate<T>(items: T[], pageSize: number): T[][] {
  * Given each card's measured height (in source order), the height available
  * for cards, the number of columns, and the vertical gap between cards, pack
  * as many cards as fully fit per page so the last card on a page is never
- * cut off. Columns are filled top-to-bottom, then left-to-right, then a new
- * page starts.
+ * cut off, without exceeding the authored maximum item count. Columns are
+ * filled top-to-bottom, then left-to-right, then a new page starts.
  *
  * The fit test reserves a trailing gap after every card (`h + rowGap`) so the
  * computed height never under-counts the real CSS spacing (flex `gap` between
@@ -466,6 +466,7 @@ export function packAgendaPages<T>(
   availableHeight: number,
   numCols: number,
   rowGap: number,
+  maxItemsPerPage = Number.POSITIVE_INFINITY,
 ): T[][] {
   const n = items.length;
   if (n === 0) return [];
@@ -475,12 +476,15 @@ export function packAgendaPages<T>(
   if (!(availableHeight > 0)) return [items.slice()];
 
   const out: T[][] = [];
+  const pageLimit = Number.isFinite(maxItemsPerPage)
+    ? Math.max(1, Math.floor(maxItemsPerPage))
+    : Number.POSITIVE_INFINITY;
   let i = 0;
   while (i < n) {
     const page: T[] = [];
-    for (let col = 0; col < cols && i < n; col++) {
+    for (let col = 0; col < cols && i < n && page.length < pageLimit; col++) {
       let colH = 0;
-      while (i < n) {
+      while (i < n && page.length < pageLimit) {
         const h = heights[i] ?? 0;
         const slot = h + rowGap; // reserve trailing gap, never under-count
         if (colH + slot <= availableHeight) {
