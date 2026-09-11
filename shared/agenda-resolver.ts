@@ -197,24 +197,35 @@ export function dedupeAgendaSessions(items: AgendaItem[]): AgendaItem[] {
       if (p > bp) base = it;
     }
 
-    // Combine distinct presenters in first-seen order. Each speaker
-    // (which may carry a trailing ", Company") goes on its own line so a
-    // multi-speaker session lists everyone vertically and the display
-    // card grows to fit. The widget renders this with whitespace-pre-line.
+    // Presenters and presenting organisations are independent session fields.
+    // Preserve first-seen source order for both. Presenter matching retains its
+    // established case-insensitive behaviour; company matching follows source
+    // value conventions and is intentionally case-sensitive.
     const seen = new Set<string>();
     const presenters: string[] = [];
+    const seenCompanies = new Set<string>();
+    const companies: string[] = [];
     for (const it of group) {
       const p = (it.presenter || "").trim();
-      if (!p) continue;
-      const dedupeKey = p.toLowerCase();
-      if (seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
-      presenters.push(p);
+      if (p) {
+        const dedupeKey = p.toLowerCase();
+        if (!seen.has(dedupeKey)) {
+          seen.add(dedupeKey);
+          presenters.push(p);
+        }
+      }
+
+      const company = (it.company || "").trim();
+      if (company && !seenCompanies.has(company)) {
+        seenCompanies.add(company);
+        companies.push(company);
+      }
     }
 
     out.push({
       ...base,
       presenter: presenters.length ? presenters.join("\n") : null,
+      company: companies.length ? companies.join(", ") : null,
       description: firstNonEmpty(group, (i) => i.description),
       track: firstNonEmpty(group, (i) => i.track),
       statusMessage: firstNonEmpty(group, (i) => i.statusMessage),

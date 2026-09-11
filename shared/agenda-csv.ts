@@ -2,7 +2,7 @@
 // Pure (no DB) so it can run in tests and in the browser preview of
 // the importer. Format:
 //
-//   title,description,room,track,presenter,startsAt,endsAt,status,statusMessage
+//   title,description,room,track,presenter,startsAt,endsAt,status,statusMessage,company
 //
 // startsAt / endsAt: ISO 8601 (e.g. "2026-06-01T09:30:00Z" or with
 // a numeric offset). Status defaults to "scheduled" when blank; custom
@@ -29,6 +29,7 @@ const HEADERS = [
   "endsAt",
   "status",
   "statusMessage",
+  "company",
 ] as const;
 
 export const AGENDA_CSV_HEADER = HEADERS.join(",");
@@ -70,14 +71,19 @@ export function parseAgendaCsv(text: string): AgendaCsvRowResult[] {
   const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length === 0) return [];
   let startIdx = 0;
+  let headerCompanyIndex = 9;
   const firstRow = splitCsvLine(lines[0]).map((c) => c.toLowerCase());
   const looksLikeHeader = firstRow.includes("title") && firstRow.includes("startsat");
-  if (looksLikeHeader) startIdx = 1;
+  if (looksLikeHeader) {
+    startIdx = 1;
+    headerCompanyIndex = firstRow.indexOf("company");
+  }
 
   const results: AgendaCsvRowResult[] = [];
   for (let i = startIdx; i < lines.length; i++) {
     const cols = splitCsvLine(lines[i]);
     const [title, description, room, track, presenter, startsAt, endsAt, statusRaw, statusMessage] = cols;
+    const company = cols[headerCompanyIndex] || null;
     if (!title || !startsAt || !endsAt) {
       results.push({
         index: i - startIdx,
@@ -142,6 +148,7 @@ export function parseAgendaCsv(text: string): AgendaCsvRowResult[] {
         room: room || null,
         track: track || null,
         presenter: presenter || null,
+        company,
         startsAt: start,
         endsAt: end,
         status,
@@ -236,6 +243,7 @@ export function serializeAgendaCsv(
     endsAt: Date | string;
     status: string;
     statusMessage: string | null;
+    company?: string | null;
   }>,
 ): string {
   const lines = [AGENDA_CSV_HEADER];
@@ -253,6 +261,7 @@ export function serializeAgendaCsv(
         endsAt,
         it.status,
         csvEscape(it.statusMessage),
+        csvEscape(it.company),
       ].join(","),
     );
   }

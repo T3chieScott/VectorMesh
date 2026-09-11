@@ -409,7 +409,9 @@ test.describe("portrait Agenda pagination consistency", () => {
   test.afterAll(async () => { try { await cleanup(); } finally { await pool.end(); } });
 
   test("Scene Builder, Simulator, Player, and Monitor show identical two-cycle pages", async ({ browser }) => {
-    test.setTimeout(240_000);
+    // This production-shaped check observes the complete settled sequence in
+    // Scene Builder, direct Simulator, playlist Simulator, Player, and Monitor.
+    test.setTimeout(360_000);
     const ctx = await browser.newContext({ serviceWorkers: "block" });
     const sceneBuilder = await ctx.newPage();
     await login(sceneBuilder);

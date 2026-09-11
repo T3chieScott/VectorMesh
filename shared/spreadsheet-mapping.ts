@@ -774,21 +774,15 @@ export function applyMapping(
     }
 
     const room = cellToString(get("room")).trim() || null;
-    // Build the speaker string from up to three columns: first name
-    // (presenter), last name (presenterLastName) and company. The full
-    // name joins first+last with a space; the company is appended after
-    // a comma ("Firstname Lastname, Company"). Each xlsx row is one
+    // Keep presenter and company as separate semantic fields. The full
+    // presenter name joins first+last with a space. Each xlsx row is one
     // speaker — the resolver later merges per-speaker rows of the same
     // session, listing each speaker on its own line.
     const firstName = cellToString(get("presenter")).trim();
     const lastName = cellToString(get("presenterLastName")).trim();
     const company = cellToString(get("company")).trim();
     const fullName = [firstName, lastName].filter(Boolean).join(" ");
-    const presenter = fullName
-      ? company
-        ? `${fullName}, ${company}`
-        : fullName
-      : company || null;
+    const presenter = fullName || null;
     const statusResult = agendaCustomStatusSchema.safeParse(normalizeStatus(get("status")));
     if (!statusResult.success) {
       results.push({
@@ -804,6 +798,7 @@ export function applyMapping(
       room,
       track: cellToString(get("track")).trim() || null,
       presenter,
+      company: company || null,
       startsAt,
       endsAt,
       status: statusResult.data,

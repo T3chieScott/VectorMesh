@@ -226,6 +226,14 @@ export const PUBLIC_AGENDA_CONFIG_FIELDS = [
   "bodyColor",
   "timeColor",
   "statusColor",
+  "displayBackgroundColor",
+  "cardBackgroundColor",
+  "sessionTitleColor",
+  "descriptionColor",
+  "presenterColor",
+  "companyColor",
+  "roomColor",
+  "trackColor",
   // Task #284 — per-element text-size multipliers (all nullable; widget
   // falls back to its built-in defaults when null so untouched displays
   // render identically).
@@ -244,6 +252,7 @@ export const PUBLIC_AGENDA_ITEM_FIELDS = [
   "room",
   "track",
   "presenter",
+  "company",
   "startsAt",
   "endsAt",
   "status",
@@ -448,6 +457,7 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         room: r.item!.room ?? null,
         track: r.item!.track ?? null,
         presenter: r.item!.presenter ?? null,
+        company: r.item!.company ?? null,
         startsAt: r.item!.startsAt,
         endsAt: r.item!.endsAt,
         status: r.item!.status ?? "scheduled",
@@ -1360,6 +1370,14 @@ async function buildAgendaDisplayPayload(
         bodyColor: config.bodyColor ?? null,
         timeColor: config.timeColor ?? null,
         statusColor: config.statusColor ?? null,
+         displayBackgroundColor: config.displayBackgroundColor ?? null,
+         cardBackgroundColor: config.cardBackgroundColor ?? null,
+         sessionTitleColor: config.sessionTitleColor ?? null,
+         descriptionColor: config.descriptionColor ?? null,
+         presenterColor: config.presenterColor ?? null,
+         companyColor: config.companyColor ?? null,
+         roomColor: config.roomColor ?? null,
+         trackColor: config.trackColor ?? null,
         // Task #284 — per-element text-size multipliers. Coerce undefined
         // → null so the keys are always present in the public payload,
         // matching PUBLIC_AGENDA_CONFIG_FIELDS exactly.
@@ -1377,6 +1395,7 @@ async function buildAgendaDisplayPayload(
         room: it.room,
         track: it.track,
         presenter: it.presenter,
+        company: it.company ?? null,
         startsAt: it.startsAt,
         endsAt: it.endsAt,
         status: it.status,

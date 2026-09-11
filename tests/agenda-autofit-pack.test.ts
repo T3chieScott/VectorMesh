@@ -44,6 +44,11 @@ test("canonical geometry is isolated to measurement and measured NOW/NEXT packin
     /data-measure-id=\{it\.id\}[\s\S]*?<AgendaRow[\s\S]*?scale=\{paginationScale\}/,
     "only the hidden Agenda card measurer must use canonical typography",
   );
+  assert.match(
+    source,
+    /data-measure-id=\{it\.id\}[\s\S]*?<AgendaRow[\s\S]*?item=\{it\}/,
+    "the hidden measurer must render the complete item, including company content",
+  );
 });
 
 // Helper: assert no page's column overflows the available height, using the
