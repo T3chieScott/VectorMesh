@@ -15,6 +15,32 @@ async function workbook(sheet: string, rows: Array<[string, string, string, stri
   return new Uint8Array(await wb.xlsx.writeBuffer());
 }
 
+async function workbookWithPresenterFields(rows: Array<{
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  presenter: string;
+  presenterCompany: string;
+  company: string;
+}>): Promise<Uint8Array> {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Agenda");
+  ws.addRow(["ID", "Title", "Start", "End", "Presenter", "Presenter Company", "Company"]);
+  for (const row of rows) {
+    ws.addRow([
+      row.id,
+      row.title,
+      new Date(row.start),
+      new Date(row.end),
+      row.presenter,
+      row.presenterCompany,
+      row.company,
+    ]);
+  }
+  return new Uint8Array(await wb.xlsx.writeBuffer());
+}
+
 function config(overrides: Partial<AgendaSyncConfig> = {}): AgendaSyncConfig {
   return {
     id: "reset-config", clientId: "site-a", name: "Source", sourceType: "excel_onedrive",
@@ -35,7 +61,7 @@ function config(overrides: Partial<AgendaSyncConfig> = {}): AgendaSyncConfig {
 
 function deps(cfg: AgendaSyncConfig, bytes: () => Uint8Array | Promise<Uint8Array>) {
   const items: AgendaItem[] = [];
-  const calls = { reset: 0 };
+  const calls: { reset: number; resetParams?: any } = { reset: 0 };
   const storage: any = {
     async getAgendaSyncConfig(id: string) { return id === cfg.id ? cfg : undefined; },
     async getAgendaItemsBySyncConfig(id: string) { return items.filter((row) => row.externalSyncConfigId === id); },
@@ -46,6 +72,7 @@ function deps(cfg: AgendaSyncConfig, bytes: () => Uint8Array | Promise<Uint8Arra
     async deleteAgendaItem(id: string) { const i = items.findIndex((row) => row.id === id); if (i < 0) return false; items.splice(i, 1); return true; },
     async atomicAgendaSourceReset(params: any) {
       calls.reset++;
+      calls.resetParams = params;
       if ((cfg.lastGoodSnapshotId ?? null) !== params.expectedSnapshotId || (cfg.lastSnapshotVersion ?? null) !== params.expectedSnapshotVersion) throw new Error("generation changed");
       cfg.lastGoodSnapshotId = "snapshot-1"; cfg.lastSnapshotVersion = 1;
       return { inserted: params.newItems.length, updated: 0, removed: 0, snapshotId: "snapshot-1", snapshotVersion: 1, preResetSnapshotId: "before-1", preResetSnapshotVersion: 0, preResetItemCount: 0, itemCount: params.newItems.length };
@@ -154,12 +181,50 @@ test("ordinary sync rejects missing worksheet rather than silently selecting fir
   assert.match(result.error ?? "", /Configured worksheet "Other"/);
 });
 
+test("hard reset passes sponsor and presenter-company fields into the replacement snapshot", async () => {
+  const bytes = await workbookWithPresenterFields([{
+    id: "row-1",
+    title: "Panel",
+    start: "2026-06-02T09:00:00Z",
+    end: "2026-06-02T10:00:00Z",
+    presenter: "Ada Lovelace",
+    presenterCompany: "Analytical Engines",
+    company: "Session Sponsor",
+  }]);
+  const cfg = config({
+    columnMapping: {
+      title: "Title",
+      startsAt: "Start",
+      endsAt: "End",
+      presenter: "Presenter",
+      presenterCompany: "Presenter Company",
+      company: "Company",
+    },
+  });
+  const d = deps(cfg, () => bytes);
+  const preflight = await preflightAgendaSourceReset(cfg, {
+    storage: d.storage,
+    graphFetch: d.graphFetch,
+  });
+  assert.equal(preflight.ok, true);
+  const result = await executeAgendaSourceReset(cfg.id, preflight.preflightToken!, {
+    storage: d.storage,
+    graphFetch: d.graphFetch,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(d.calls.resetParams?.newItems[0]?.presenter, "Ada Lovelace");
+  assert.equal(d.calls.resetParams?.newItems[0]?.presenterCompany, "Analytical Engines");
+  assert.equal(d.calls.resetParams?.newItems[0]?.company, "Session Sponsor");
+  assert.equal(d.calls.resetParams?.newItems[0]?.sourceOrdinal, 0);
+});
+
 test("storage transaction contract locks config/items before validation", () => {
   const source = readFileSync("server/storage.ts", "utf8");
   const reset = source.slice(source.indexOf("async atomicAgendaSourceReset"));
   const normal = source.slice(source.indexOf("async atomicMicrosoftSync"));
   assert.match(reset, /agendaSyncConfigs\)[\s\S]{0,240}\.for\("update"\)/);
   assert.match(reset, /agendaItems\)[\s\S]{0,240}\.for\("update"\)/);
+  assert.match(reset, /sourceOrdinal:\s*item\.sourceOrdinal\s*\?\?\s*null/);
   assert.match(reset, /expectedItemStateDigest/);
   assert.match(normal, /agendaSyncConfigs\)[\s\S]{0,240}\.for\("update"\)/);
 });

@@ -26,6 +26,7 @@ import { AGENDA_STATUSES, type AgendaStatus, type InsertAgendaItem } from "./sch
 
 export interface IcsParsedItem {
   externalId: string;
+  sourceOrdinal: number;
   item: Omit<InsertAgendaItem, "clientId" | "externalSyncConfigId">;
 }
 
@@ -107,6 +108,7 @@ export function parseIcs(text: string): IcsParseResult {
   let inEvent = false;
   let cur: Record<string, { value: string; params: Record<string, string> }> = {};
   let lineNo = 0;
+  let eventOrdinal = 0;
   for (const rawLine of lines) {
     lineNo++;
     const line = rawLine.trimEnd();
@@ -117,6 +119,7 @@ export function parseIcs(text: string): IcsParseResult {
     if (name === "BEGIN" && value.toUpperCase() === "VEVENT") {
       inEvent = true;
       cur = {};
+      eventOrdinal++;
       continue;
     }
     if (name === "END" && value.toUpperCase() === "VEVENT") {
@@ -153,6 +156,7 @@ export function parseIcs(text: string): IcsParseResult {
           : `${title}__${startsAt.toISOString()}`;
         result.items.push({
           externalId,
+          sourceOrdinal: eventOrdinal - 1,
           item: {
             title: unescapeIcsText(title),
             description: cur.DESCRIPTION ? unescapeIcsText(cur.DESCRIPTION.value) : null,

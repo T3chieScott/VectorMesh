@@ -96,6 +96,7 @@ const configFormSchema = z.object({
   sessionTitleColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
   descriptionColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
   presenterColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
+  presenterCompanyColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
   companyColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
   roomColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
   trackColor: z.string().regex(/^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})?$/, "Must be hex like #ffffff").optional(),
@@ -128,6 +129,8 @@ const configFormSchema = z.object({
   showDescriptionDivider: z.boolean(),
   descriptionTextAlign: z.enum(AGENDA_DESCRIPTION_TEXT_ALIGNS),
   showPresenter: z.boolean(),
+  showCompany: z.boolean(),
+  showPresenterCompany: z.boolean(),
   presenterVisibleLines: z.coerce.number().int().min(1).max(20),
   speakerMarkerStyle: z.enum(AGENDA_SPEAKER_MARKER_STYLES),
   speakerCustomMarker: z
@@ -175,6 +178,7 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     sessionTitleColor: c?.sessionTitleColor ?? "",
     descriptionColor: c?.descriptionColor ?? "",
     presenterColor: c?.presenterColor ?? "",
+    presenterCompanyColor: c?.presenterCompanyColor ?? "",
     companyColor: c?.companyColor ?? "",
     roomColor: c?.roomColor ?? "",
     trackColor: c?.trackColor ?? "",
@@ -207,6 +211,8 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
       (c?.descriptionTextAlign as ConfigFormValues["descriptionTextAlign"]) ??
       "left",
     showPresenter: c?.showPresenter ?? true,
+    showCompany: c?.showCompany ?? true,
+    showPresenterCompany: c?.showPresenterCompany ?? false,
     presenterVisibleLines: c?.presenterVisibleLines ?? 4,
     speakerMarkerStyle:
       (c?.speakerMarkerStyle as ConfigFormValues["speakerMarkerStyle"]) ??
@@ -249,6 +255,7 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     sessionTitleColor: values.sessionTitleColor ? values.sessionTitleColor : null,
     descriptionColor: values.descriptionColor ? values.descriptionColor : null,
     presenterColor: values.presenterColor ? values.presenterColor : null,
+    presenterCompanyColor: values.presenterCompanyColor ? values.presenterCompanyColor : null,
     companyColor: values.companyColor ? values.companyColor : null,
     roomColor: values.roomColor ? values.roomColor : null,
     trackColor: values.trackColor ? values.trackColor : null,
@@ -284,6 +291,8 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     showDescriptionDivider: values.showDescriptionDivider,
     descriptionTextAlign: values.descriptionTextAlign,
     showPresenter: values.showPresenter,
+    showCompany: values.showCompany,
+    showPresenterCompany: values.showPresenterCompany,
     presenterVisibleLines: values.presenterVisibleLines,
     speakerMarkerStyle: values.speakerMarkerStyle,
     speakerCustomMarker:
@@ -517,16 +526,17 @@ function ConfigEditor({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] max-w-6xl flex-col overflow-hidden sm:max-h-[calc(100dvh-4rem)]">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{initial ? "Edit Widget Config" : "New Widget Config"}</DialogTitle>
           <DialogDescription>
             Choose which agenda sessions to show and how they should appear.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid lg:grid-cols-2 gap-6">
+        <div className="grid min-h-0 flex-1 gap-6 overflow-hidden lg:grid-cols-2">
           <Form {...form}>
-            <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-3">
+            <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="flex min-h-0 flex-col">
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1">
               <div className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2">
                 <p className="mr-auto text-xs text-muted-foreground">
                   Reuse presentation settings between Agenda Displays.
@@ -642,7 +652,8 @@ function ConfigEditor({
                     { key: "sessionTitleColor", label: "Session title colour", help: "Overrides body text colour for session titles" },
                     { key: "descriptionColor", label: "Description colour", help: "Overrides body text colour for descriptions" },
                     { key: "presenterColor", label: "Presenter colour", help: "Overrides body text colour for presenters" },
-                    { key: "companyColor", label: "Company colour", help: "Overrides body text colour for companies" },
+                    { key: "presenterCompanyColor", label: "Presenter company colour", help: "Overrides body text colour for presenter affiliations" },
+                    { key: "companyColor", label: "Sponsor colour", help: "Overrides body text colour for session sponsors / presenting organisations" },
                     { key: "roomColor", label: "Room colour", help: "Overrides body text colour for rooms" },
                     { key: "trackColor", label: "Track colour", help: "Overrides body text colour for tracks" },
                     { key: "timeColor", label: "Time colour", help: "Times and the wall clock" },
@@ -832,6 +843,8 @@ function ConfigEditor({
                   ["showRoom", "Room"],
                   ["showTrack", "Track"],
                   ["showPresenter", "Presenter"],
+                  ["showCompany", "Show session sponsor"],
+                  ["showPresenterCompany", "Show presenter company"],
                   ["showSessionCount", "Session count"],
                   ["showDescription", "Description"],
                   ["showStatus", "Status"],
@@ -1064,7 +1077,8 @@ function ConfigEditor({
                 )} />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              </div>
+              <div className="flex shrink-0 justify-end gap-2 border-t bg-background pt-3">
                 <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
                 <Button type="submit" disabled={mutation.isPending || !globalNowNextValidation.valid} data-testid="button-save-config">
                   {mutation.isPending ? "Saving…" : "Save"}

@@ -37,6 +37,7 @@ export const AGENDA_SETTINGS_CLIPBOARD_KEYS = [
   "sessionTitleColor",
   "descriptionColor",
   "presenterColor",
+  "presenterCompanyColor",
   "companyColor",
   "roomColor",
   "trackColor",
@@ -65,6 +66,8 @@ export const AGENDA_SETTINGS_CLIPBOARD_KEYS = [
   "showDescriptionDivider",
   "descriptionTextAlign",
   "showPresenter",
+  "showCompany",
+  "showPresenterCompany",
   "presenterVisibleLines",
   "speakerMarkerStyle",
   "speakerCustomMarker",
@@ -139,6 +142,7 @@ const agendaClipboardSettingsSchema = z
     sessionTitleColor: optionalColor,
     descriptionColor: optionalColor,
     presenterColor: optionalColor,
+    presenterCompanyColor: optionalColor,
     companyColor: optionalColor,
     roomColor: optionalColor,
     trackColor: optionalColor,
@@ -167,6 +171,8 @@ const agendaClipboardSettingsSchema = z
     showDescriptionDivider: z.boolean().optional(),
     descriptionTextAlign: z.enum(AGENDA_DESCRIPTION_TEXT_ALIGNS).optional(),
     showPresenter: z.boolean().optional(),
+    showCompany: z.boolean().optional(),
+    showPresenterCompany: z.boolean().optional(),
     // Older clipboard payloads were produced directly from form controls and
     // therefore stored this numeric input as a string.
     presenterVisibleLines: z.coerce.number().int().min(1).max(20).optional(),

@@ -18,6 +18,7 @@ import {
   ensureAgendaDayHeadingNowNextColourMigration,
   ensureAgendaCustomisationMigration,
   ensureAgendaGlobalNowNextMigration,
+  ensureAgendaPresenterCompanyMigration,
 } from "./db";
 import { storage } from "./storage";
 import { warnIfHealthTokenUnavailable } from "./health/deepHealth";
@@ -90,6 +91,7 @@ app.use((req, res, next) => {
   await ensureAgendaDayHeadingNowNextColourMigration();
   await ensureAgendaCustomisationMigration();
   await ensureAgendaGlobalNowNextMigration();
+  await ensureAgendaPresenterCompanyMigration();
   // Pairing-code dedupe (Task #180): pre-#180 walls fanned the same
   // pairingCode to every tile in a wall, so an upgrading deployment
   // may carry duplicate pairing_code rows. The new schema-level

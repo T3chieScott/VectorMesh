@@ -47,6 +47,7 @@ const itemFormSchema = z.object({
   room: z.string().optional(),
   track: z.string().optional(),
   presenter: z.string().optional(),
+  presenterCompany: z.string().optional(),
   company: z.string().optional(),
   startsAt: z.string().min(1, "Start time is required"),
   endsAt: z.string().min(1, "End time is required"),
@@ -67,6 +68,7 @@ function buildItemFormDefaults(
       room: initial.room ?? "",
       track: initial.track ?? "",
       presenter: initial.presenter ?? "",
+      presenterCompany: initial.presenterCompany ?? "",
       company: initial.company ?? "",
       startsAt: toLocalInput(initial.startsAt),
       endsAt: toLocalInput(initial.endsAt),
@@ -85,6 +87,7 @@ function buildItemFormDefaults(
     room: "",
     track: "",
     presenter: "",
+    presenterCompany: "",
     company: "",
     startsAt: toLocalInput(now),
     endsAt: toLocalInput(new Date(now.getTime() + 60 * 60 * 1000)),
@@ -147,6 +150,7 @@ function ItemDialog({
         room: values.room || null,
         track: values.track || null,
         presenter: values.presenter || null,
+        presenterCompany: values.presenterCompany || null,
         company: values.company || null,
         statusMessage: values.statusMessage || null,
         startsAt: new Date(values.startsAt).toISOString(),
@@ -167,15 +171,16 @@ function ItemDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] max-w-xl flex-col overflow-hidden sm:max-h-[calc(100dvh-4rem)]">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{initial ? "Edit Agenda Item" : "Add Agenda Item"}</DialogTitle>
           <DialogDescription>
             Set the session details shown on Agenda displays.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
+          <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="flex min-h-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pr-1">
             <FormField control={form.control} name="title" render={({ field }) => (
               <FormItem><FormLabel>Title</FormLabel><FormControl><Input {...field} data-testid="input-agenda-title" /></FormControl><FormMessage /></FormItem>
             )} />
@@ -198,8 +203,15 @@ function ItemDialog({
             <FormField control={form.control} name="presenter" render={({ field }) => (
               <FormItem><FormLabel>Presenter</FormLabel><FormControl><Input {...field} data-testid="input-agenda-presenter" /></FormControl><FormMessage /></FormItem>
             )} />
+            <FormField control={form.control} name="presenterCompany" render={({ field }) => (
+              <FormItem><FormLabel>Presenter company</FormLabel><FormControl><Input {...field} data-testid="input-agenda-presenter-company" /></FormControl><FormMessage /></FormItem>
+            )} />
             <FormField control={form.control} name="company" render={({ field }) => (
-              <FormItem><FormLabel>Company</FormLabel><FormControl><Input {...field} data-testid="input-agenda-company" /></FormControl><FormMessage /></FormItem>
+              <FormItem>
+                <FormLabel>Session sponsor / presenting organisation</FormLabel>
+                <FormControl><Input {...field} data-testid="input-agenda-company" /></FormControl>
+                <FormMessage />
+              </FormItem>
             )} />
             <FormField control={form.control} name="description" render={({ field }) => (
               <FormItem><FormLabel>Description</FormLabel><FormControl><Textarea rows={3} {...field} data-testid="input-agenda-description" /></FormControl><FormMessage /></FormItem>
@@ -256,7 +268,8 @@ function ItemDialog({
                 <FormItem><FormLabel>Status message</FormLabel><FormControl><Input placeholder="e.g. delayed 30 min" {...field} data-testid="input-agenda-status-msg" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
-            <div className="flex justify-end gap-2">
+            </div>
+            <div className="flex shrink-0 justify-end gap-2 border-t bg-background pt-3">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
               <Button type="submit" disabled={mutation.isPending} data-testid="button-agenda-save">
                 {mutation.isPending ? "Saving…" : "Save"}
@@ -310,6 +323,11 @@ function CsvImportDialog({ open, onOpenChange, clientId }: { open: boolean; onOp
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
           One row per item. Header line: <code className="text-xs">{AGENDA_CSV_HEADER}</code>
+        </p>
+        <p className="text-xs text-muted-foreground">
+          The <code>company</code> column is the session sponsor / presenting
+          organisation. Use <code>presenterCompany</code> for each presenter&apos;s
+          company.
         </p>
         <p className="text-xs text-muted-foreground" data-testid="text-sample-hint">
           New to the format? Download a sample to use as a starting point.
@@ -416,7 +434,8 @@ const FIELD_LABELS: Record<AgendaMappableField, string> = {
   track: "Track",
   presenter: "Presenter / first name",
   presenterLastName: "Presenter last name",
-  company: "Company",
+  presenterCompany: "Presenter company",
+  company: "Session sponsor / presenting organisation",
   startsAt: "Start time",
   endsAt: "End time",
   status: "Status",
@@ -2362,8 +2381,13 @@ export default function AgendaItemsPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={downloadCsv} data-testid="button-export-csv">
-            <Download className="h-4 w-4 mr-2" /> Export CSV{filtersActive ? " (filtered)" : ""}
+          <Button
+            variant="outline"
+            onClick={downloadCsv}
+            title="Export session sponsor and presenter company columns"
+            data-testid="button-export-csv"
+          >
+            <Download className="h-4 w-4 mr-2" /> Export CSV (sponsor + presenter company){filtersActive ? " (filtered)" : ""}
           </Button>
           <Button variant="outline" onClick={() => setImportOpen(true)} data-testid="button-import-csv">
             <Upload className="h-4 w-4 mr-2" /> Import CSV
@@ -2463,7 +2487,9 @@ export default function AgendaItemsPage() {
                   </div>
                   <p className="text-sm text-muted-foreground mt-1">
                     {new Date(item.startsAt).toLocaleString()} → {new Date(item.endsAt).toLocaleString()}
-                    {item.presenter && <> · {item.presenter}</>}
+                    {item.company && <> · Sponsor: {item.company}</>}
+                    {item.presenter && <> · Presenter: {item.presenter}</>}
+                    {item.presenterCompany && <> · Presenter company: {item.presenterCompany}</>}
                   </p>
                   {item.statusMessage && (
                     <p className="text-sm italic mt-1">{item.statusMessage}</p>

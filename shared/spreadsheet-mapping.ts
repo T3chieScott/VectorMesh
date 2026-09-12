@@ -126,7 +126,10 @@ const FIELD_SYNONYMS: Record<AgendaMappableField, string[]> = {
   track: ["track", "category", "stream", "theme", "strand", "type"],
   presenter: ["presenter", "speaker", "speakers", "host", "facilitator", "author", "presented by", "chair", "first name", "firstname", "given name", "forename"],
   presenterLastName: ["surname", "last name", "lastname", "family name", "second name"],
-  company: ["company", "organisation", "organization", "org", "employer", "affiliation", "business"],
+  presenterCompany: ["presenter company", "speaker company", "speaker organisation", "speaker organization", "presenter organisation", "presenter organization", "presenter org", "speaker org"],
+  // `company` is the persisted session-sponsor field. Keep the storage key
+  // stable while making source spreadsheets' sponsor wording explicit.
+  company: ["company", "session sponsor", "sponsor", "presenting organisation", "presenting organization", "organisation", "organization", "org", "employer", "affiliation", "business"],
   startsAt: ["start time", "start date", "start datetime", "starts", "start", "begin", "from", "date", "time"],
   endsAt: ["end time", "end date", "end datetime", "ends", "end", "finish", "until", "to"],
   status: ["status", "session status", "state"],
@@ -172,6 +175,7 @@ export function suggestColumnMapping(headers: string[]): AgendaColumnMapping {
     "track",
     "presenter",
     "presenterLastName",
+    "presenterCompany",
     "company",
     "status",
     "statusMessage",
@@ -774,12 +778,14 @@ export function applyMapping(
     }
 
     const room = cellToString(get("room")).trim() || null;
-    // Keep presenter and company as separate semantic fields. The full
+    // Keep presenter, presenter affiliation, and session sponsor as separate
+    // semantic fields. The full
     // presenter name joins first+last with a space. Each xlsx row is one
     // speaker — the resolver later merges per-speaker rows of the same
     // session, listing each speaker on its own line.
     const firstName = cellToString(get("presenter")).trim();
     const lastName = cellToString(get("presenterLastName")).trim();
+    const presenterCompany = cellToString(get("presenterCompany")).trim();
     const company = cellToString(get("company")).trim();
     const fullName = [firstName, lastName].filter(Boolean).join(" ");
     const presenter = fullName || null;
@@ -798,6 +804,7 @@ export function applyMapping(
       room,
       track: cellToString(get("track")).trim() || null,
       presenter,
+      presenterCompany: presenterCompany || null,
       company: company || null,
       startsAt,
       endsAt,

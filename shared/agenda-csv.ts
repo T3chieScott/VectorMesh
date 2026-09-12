@@ -2,7 +2,7 @@
 // Pure (no DB) so it can run in tests and in the browser preview of
 // the importer. Format:
 //
-//   title,description,room,track,presenter,startsAt,endsAt,status,statusMessage,company
+//   title,description,room,track,presenter,startsAt,endsAt,status,statusMessage,company,presenterCompany
 //
 // startsAt / endsAt: ISO 8601 (e.g. "2026-06-01T09:30:00Z" or with
 // a numeric offset). Status defaults to "scheduled" when blank; custom
@@ -30,6 +30,7 @@ const HEADERS = [
   "status",
   "statusMessage",
   "company",
+  "presenterCompany",
 ] as const;
 
 export const AGENDA_CSV_HEADER = HEADERS.join(",");
@@ -72,18 +73,25 @@ export function parseAgendaCsv(text: string): AgendaCsvRowResult[] {
   if (lines.length === 0) return [];
   let startIdx = 0;
   let headerCompanyIndex = 9;
+  let headerPresenterCompanyIndex = 10;
   const firstRow = splitCsvLine(lines[0]).map((c) => c.toLowerCase());
   const looksLikeHeader = firstRow.includes("title") && firstRow.includes("startsat");
   if (looksLikeHeader) {
     startIdx = 1;
+    // `company` remains the stable wire key for backwards compatibility,
+    // while accepting the clearer sponsor label in hand-authored exports.
     headerCompanyIndex = firstRow.indexOf("company");
+    if (headerCompanyIndex < 0) headerCompanyIndex = firstRow.indexOf("sponsor");
+    headerPresenterCompanyIndex = firstRow.indexOf("presentercompany");
   }
 
   const results: AgendaCsvRowResult[] = [];
   for (let i = startIdx; i < lines.length; i++) {
     const cols = splitCsvLine(lines[i]);
     const [title, description, room, track, presenter, startsAt, endsAt, statusRaw, statusMessage] = cols;
-    const company = cols[headerCompanyIndex] || null;
+    const company = headerCompanyIndex >= 0 ? cols[headerCompanyIndex] || null : null;
+    const presenterCompany =
+      headerPresenterCompanyIndex >= 0 ? cols[headerPresenterCompanyIndex] || null : null;
     if (!title || !startsAt || !endsAt) {
       results.push({
         index: i - startIdx,
@@ -148,6 +156,7 @@ export function parseAgendaCsv(text: string): AgendaCsvRowResult[] {
         room: room || null,
         track: track || null,
         presenter: presenter || null,
+        presenterCompany,
         company,
         startsAt: start,
         endsAt: end,
@@ -244,6 +253,7 @@ export function serializeAgendaCsv(
     status: string;
     statusMessage: string | null;
     company?: string | null;
+    presenterCompany?: string | null;
   }>,
 ): string {
   const lines = [AGENDA_CSV_HEADER];
@@ -262,6 +272,7 @@ export function serializeAgendaCsv(
         it.status,
         csvEscape(it.statusMessage),
         csvEscape(it.company),
+        csvEscape(it.presenterCompany),
       ].join(","),
     );
   }
