@@ -5681,6 +5681,8 @@ export interface ZoneRendererProps {
   // moment. Other zone types ignore it.
   agendaTestAt?: string;
   agendaCompletionBinding?: AgendaZoneBinding;
+  /** Host scene identity for Agenda refresh parity when no lifecycle binding exists. */
+  agendaPresentationActivationKey?: string;
   /** Passive agenda position reporting/following, keyed by the host per zone. */
   onAgendaPresentationState?: (zoneId: string, state: AgendaPresentationState) => void;
   followedAgendaPresentationState?: AgendaPresentationState | null;
@@ -5713,6 +5715,7 @@ export function ZoneRenderer({
   playerContext,
   agendaTestAt,
   agendaCompletionBinding,
+  agendaPresentationActivationKey,
   onAgendaPresentationState,
   followedAgendaPresentationState,
   onAgendaRenderReady,
@@ -6112,7 +6115,7 @@ export function ZoneRenderer({
         );
       case "agenda":
         return (
-          <AgendaConfigZoneWidget configId={zone.agendaConfigId || ""} atIso={agendaTestAt} completionBinding={agendaCompletionBinding} onPresentationState={onAgendaPresentationState ? (state) => onAgendaPresentationState(zone.id, state) : undefined} followedPresentationState={followedAgendaPresentationState} onRenderReady={onAgendaRenderReady ? () => onAgendaRenderReady(zone.id) : undefined} onPreparationOutcome={onAgendaPreparationOutcome ? (outcome) => onAgendaPreparationOutcome(zone.id, outcome) : undefined} agendaPreparing={agendaPreparing} />
+          <AgendaConfigZoneWidget configId={zone.agendaConfigId || ""} atIso={agendaTestAt} completionBinding={agendaCompletionBinding} presentationActivationKey={agendaPresentationActivationKey} onPresentationState={onAgendaPresentationState ? (state) => onAgendaPresentationState(zone.id, state) : undefined} followedPresentationState={followedAgendaPresentationState} onRenderReady={onAgendaRenderReady ? () => onAgendaRenderReady(zone.id) : undefined} onPreparationOutcome={onAgendaPreparationOutcome ? (outcome) => onAgendaPreparationOutcome(zone.id, outcome) : undefined} agendaPreparing={agendaPreparing} />
         );
       case "sweepstake":
         return (

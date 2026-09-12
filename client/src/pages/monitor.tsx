@@ -644,6 +644,7 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
           screenTimezone={content.screen?.timezone ?? undefined}
           weatherTimezone={weatherTimezone}
           agendaTestAt={agendaTestAt}
+          agendaPresentationActivationKey={frameSceneIdentity}
           sceneTextScale={getSceneTextScale(useCanvasMode ? canvasH : viewportH)}
           followedAgendaPresentationStates={followedAgendaPresentationStates}
           playerContext={{
