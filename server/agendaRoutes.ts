@@ -1,4 +1,5 @@
 import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   insertAgendaItemSchema,
@@ -1436,6 +1437,18 @@ async function buildAgendaDisplayPayload(
         status: it.status,
         statusMessage: it.statusMessage,
       }));
+       const effectiveDay = config.showAgendaDayHeading === true
+         ? (publicItems[0]
+           ? tzCalendarDayKey(new Date(publicItems[0].startsAt), client?.timezone)
+           : null)
+         : undefined;
+       // Player and Monitor poll independently, so expose an identity for the
+       // canonical, already-filtered result. Controlled Player plans can then
+       // refresh only when membership/configuration actually changes, while a
+       // Monitor follows the page selected from that same result.
+       const payloadRevision = createHash("sha256")
+         .update(JSON.stringify({ config: publicConfig, items: publicItems, effectiveDay }))
+         .digest("hex");
       // Task #281: include the site's custom fonts so the chromeless
       // display page (and agenda zones inside layouts) can inject the
       // @font-face needed to render a `custom:<id>` fontFamily.
@@ -1443,15 +1456,12 @@ async function buildAgendaDisplayPayload(
       return {
         config: publicConfig,
         items: publicItems,
+         payloadRevision,
         // Additive and default-off: legacy public payloads keep their shape.
         // This is calculated from the resolver's already-selected bucket,
         // rather than reinterpreting an instant in the browser.
-        ...(config.showAgendaDayHeading === true
-          ? {
-              effectiveDay: publicItems[0]
-                ? tzCalendarDayKey(new Date(publicItems[0].startsAt), client?.timezone)
-                : null,
-            }
+         ...(config.showAgendaDayHeading === true
+           ? { effectiveDay }
           : {}),
         client: client ? { name: client.name, timezone: client.timezone } : null,
         fonts: fonts.map((f) => ({ id: f.id, familyId: f.familyId, name: f.name, weight: f.weight, style: f.style, format: f.format })),

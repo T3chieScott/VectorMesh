@@ -835,6 +835,7 @@ test("GET /api/agenda/display/:configId — public payload never leaks internal 
       items: Array<Record<string, unknown>>;
       client: { name: string; timezone: string } | null;
       effectiveDay?: string | null;
+      payloadRevision: string;
       serverTime: number;
     };
 
@@ -851,6 +852,7 @@ test("GET /api/agenda/display/:configId — public payload never leaks internal 
     assert.equal(body.config.overrideNowNextColor, true);
     assert.equal(body.config.nowNextColor, "#0ea5e9");
     assert.equal(body.effectiveDay, "2026-06-01");
+    assert.match(body.payloadRevision, /^[a-f0-9]{64}$/);
 
     // Spot-check that the obviously-sensitive fields are absent.
     for (const banned of ["clientId", "createdAt", "updatedAt", "timeWindowMinutes", "folderId"]) {

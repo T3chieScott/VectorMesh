@@ -125,6 +125,8 @@ export interface ScreenRenderSurfaceProps {
   agendaTestAt?: string;
   /** Per-zone lifecycle bindings for completion-aware playlist layouts. */
   agendaCompletionBindings?: ReadonlyMap<string, AgendaZoneBinding>;
+  /** Shared semantic scene identity forwarded to Agenda widgets (Monitor). */
+  agendaPresentationActivationKey?: string;
   /** Passive per-zone presentation reports (Player collector). */
   onAgendaPresentationState?: (zoneId: string, state: AgendaPresentationState) => void;
   /** Read-only per-zone follower states (Monitor). */
@@ -345,6 +347,7 @@ function SurfaceFrame({
                 timezone={props.weatherTimezone} screenTimezone={props.screenTimezone} fillContainer={true}
                 mediaBaseUrl={props.mediaBaseUrl} deviceToken={props.deviceToken} agendaTestAt={props.agendaTestAt}
                 agendaCompletionBinding={props.agendaCompletionBindings?.get(zone.id)}
+                agendaPresentationActivationKey={props.agendaPresentationActivationKey}
                 onAgendaPresentationState={props.onAgendaPresentationState}
                 followedAgendaPresentationState={props.followedAgendaPresentationStates?.get(zone.id)}
                 onAgendaRenderReady={undefined}
@@ -385,6 +388,7 @@ export function ScreenRenderSurface({
   weatherTimezone,
   agendaTestAt,
   agendaCompletionBindings,
+  agendaPresentationActivationKey,
   onAgendaPresentationState,
   followedAgendaPresentationStates,
   playerContext,
@@ -395,7 +399,7 @@ export function ScreenRenderSurface({
   ZoneRendererComponent,
 }: ScreenRenderSurfaceProps) {
   const incoming: FrameProps = { emptyAgendaPolicy, zones, zoneKey, media, zoneMediaIndices, mediaBaseUrl, deviceToken,
-    screenTimezone, weatherTimezone, agendaTestAt, agendaCompletionBindings, onAgendaPresentationState,
+    screenTimezone, weatherTimezone, agendaTestAt, agendaCompletionBindings, agendaPresentationActivationKey, onAgendaPresentationState,
     followedAgendaPresentationStates, playerContext, sceneTextScale, canvasGeometry, liveBanner, zoneFrameTestId,
     ZoneRendererComponent };
   const identity = frameKey ?? JSON.stringify(zones.map((zone) => [zone.id, zone.type, zone.agendaConfigId]));

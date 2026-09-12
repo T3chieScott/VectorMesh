@@ -8,7 +8,10 @@ import {
 import { CustomFontFaces } from "@/lib/fontFace";
 import type { AgendaItem, AgendaWidgetConfig } from "@shared/schema";
 import type { CustomFontRef } from "@shared/fonts";
-import type { AgendaZoneBinding } from "@/lib/agenda-scene-completion";
+import {
+  activationId,
+  type AgendaZoneBinding,
+} from "@/lib/agenda-scene-completion";
 import {
   agendaPollDelayMs,
   buildAgendaDisplayPollUrl,
@@ -28,6 +31,7 @@ import {
 interface DisplayPayload {
   config: AgendaWidgetConfig;
   items: AgendaItem[];
+  payloadRevision: string;
   effectiveDay?: string | null;
   client: { id: string; name: string; timezone: string } | null;
   fonts?: CustomFontRef[];
@@ -40,6 +44,7 @@ export function AgendaConfigZoneWidget({
   completionBinding,
   onPresentationState,
   followedPresentationState,
+  presentationActivationKey,
   onRenderReady,
   onPreparationOutcome,
   agendaPreparing = false,
@@ -54,6 +59,8 @@ export function AgendaConfigZoneWidget({
   completionBinding?: AgendaZoneBinding;
   onPresentationState?: (state: AgendaPresentationState) => void;
   followedPresentationState?: AgendaPresentationState | null;
+  /** Shared host scene identity used by Monitor when no Player binding exists. */
+  presentationActivationKey?: string;
   /**
    * Signals that this activation has a usable agenda snapshot.  In particular,
    * an empty items array is a valid, transparent-complete agenda and must not
@@ -84,7 +91,7 @@ export function AgendaConfigZoneWidget({
   // the latest callbacks without making the polling lifecycle restart.
   const bindingRef = useRef(completionBinding);
   bindingRef.current = completionBinding;
-  const activationKey = completionBinding?.activationId ?? "";
+  const activationKey = completionBinding?.activationId ?? presentationActivationKey ?? "";
   const frozenActivationRef = useRef<string | null>(null);
   const observedActivationRef = useRef(activationKey);
   // Do this synchronously, rather than waiting for the clearing effect below:
@@ -134,12 +141,12 @@ export function AgendaConfigZoneWidget({
         } else {
           const payload: DisplayPayload = await res.json();
           if (!cancelled && requestGeneration === requestGenerationRef.current) {
-            // Playlist-controlled scenes deliberately present one immutable
-            // payload. Polling remains useful for the following activation,
-            // but must not move the current scene back to page one.
-            if (!bindingRef.current || frozenActivationRef.current !== activationKey) {
-              setData(payload);
-              if (bindingRef.current) frozenActivationRef.current = activationKey;
+            // Accept refreshed canonical data on the current activation. The
+            // payload revision below gives controlled pagination a new plan
+            // identity only when config/session membership actually changed.
+            setData(payload);
+            if (bindingRef.current && frozenActivationRef.current !== activationKey) {
+              frozenActivationRef.current = activationKey;
             }
             setError(null);
             intervalSec = payload.config?.refreshIntervalSeconds ?? 30;
@@ -233,6 +240,14 @@ export function AgendaConfigZoneWidget({
       </div>
     );
   }
+  const effectiveCompletionBinding = completionBinding
+    ? {
+        ...completionBinding,
+        activationId: activationId(
+          `${completionBinding.activationId}:${displayData.payloadRevision}`,
+        ),
+      }
+    : undefined;
   return (
     <>
       <CustomFontFaces fonts={displayData.fonts} />
@@ -243,7 +258,7 @@ export function AgendaConfigZoneWidget({
         effectiveDay={displayData.effectiveDay}
         timezone={displayData.client?.timezone || null}
         now={testNow}
-        completionBinding={agendaPreparing ? undefined : completionBinding}
+        completionBinding={agendaPreparing ? undefined : effectiveCompletionBinding}
         onPresentationState={agendaPreparing ? undefined : onPresentationState}
         followedPresentationState={followedPresentationState}
         onPaginationReady={handlePaginationReady}
