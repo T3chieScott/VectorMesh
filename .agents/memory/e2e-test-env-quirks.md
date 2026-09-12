@@ -20,6 +20,22 @@ under full-suite load the `load` event can lag past the 15s navigationTimeout.
 Assertions only need React mounted, so `page.goto(url, { waitUntil: "domcontentloaded" })`
 is the correct wait — the sibling `display-agenda-flow.spec.ts` already does this.
 
+## Cross-surface Agenda assertions must account for rotation and preview clocks
+Agenda cards selected by one resolver result may still appear on separate
+auto-fit pages. Wait until the session-count indicator reflects the new config,
+then collect visible IDs across a complete rotation instead of expecting every
+selected ID in one frame. Monitor can use a different authenticated preview
+clock from Player/Simulator, so assert the correct NOW/NEXT result for each
+surface's effective instant unless the fixture explicitly synchronizes them.
+
+**Why:** exact-frame assertions captured stale full-agenda pages or only the
+current Now/Next page, and Monitor legitimately had no current session while
+the other surfaces were pinned to a future test instant.
+
+**How to apply:** production-shaped Agenda E2E tests should gate on settled
+session count, observe at least one rotation, and make the effective clock
+explicit for every surface.
+
 ## Drizzle: don't hand-write `sql\`col = ANY(${jsArray})\``
 Interpolating a JS string[] into a raw `sql\`... = ANY(${arr})\`` template
 mis-serializes and throws Postgres `22P02 malformed array literal` (the array is

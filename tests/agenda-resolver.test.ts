@@ -4,6 +4,7 @@ import {
   paginateAgendaItemsByLocalDay,
   resolveAgendaItems,
   splitCurrentNext,
+  validateGlobalNowNextSequence,
   pickAgendaLayout,
   paginate,
   tzCalendarDayKey,
@@ -200,6 +201,159 @@ test("resolveAgendaItems now_next mode keeps current + one upcoming per room", (
   ];
   const got = resolveAgendaItems({ items, config: cfg({ displayMode: "now_next" }), now: NOW });
   assert.deepEqual(got.map((i) => i.id), ["live_main", "live_b", "next_main", "next_b"]);
+});
+
+test("global now_next produces one current and one next across selected rooms", () => {
+  const items = [
+    item({ id: "live-a", room: "A", startsAt: new Date("2026-06-01T11:30:00Z"), endsAt: new Date("2026-06-01T12:30:00Z") }),
+    item({ id: "next-b", room: "B", startsAt: new Date("2026-06-01T12:30:00Z"), endsAt: new Date("2026-06-01T13:00:00Z") }),
+    item({ id: "later-a", room: "A", startsAt: new Date("2026-06-01T13:00:00Z"), endsAt: new Date("2026-06-01T14:00:00Z") }),
+  ];
+  const config = cfg({ displayMode: "now_next", singleGlobalNowNext: true });
+  assert.deepEqual(resolveAgendaItems({ items, config, now: NOW }).map((i) => i.id), ["live-a", "next-b"]);
+  assert.equal(validateGlobalNowNextSequence({ items, config, now: NOW }).valid, true);
+});
+
+test("global now_next uses earliest future session as NEXT when nothing is running", () => {
+  const items = [
+    item({ id: "later-a", room: "A", startsAt: new Date("2026-06-01T14:00:00Z"), endsAt: new Date("2026-06-01T15:00:00Z") }),
+    item({ id: "next-b", room: "B", startsAt: new Date("2026-06-01T13:00:00Z"), endsAt: new Date("2026-06-01T14:00:00Z") }),
+  ];
+  const got = resolveAgendaItems({
+    items,
+    config: cfg({ displayMode: "now_next", singleGlobalNowNext: true }),
+    now: NOW,
+  });
+  assert.deepEqual(got.map((i) => i.id), ["next-b"]);
+});
+
+test("global now_next permits adjacent cross-room sessions", () => {
+  const items = [
+    item({ id: "a", room: "A", startsAt: new Date("2026-06-01T12:00:00Z"), endsAt: new Date("2026-06-01T13:00:00Z") }),
+    item({ id: "b", room: "B", startsAt: new Date("2026-06-01T13:00:00Z"), endsAt: new Date("2026-06-01T14:00:00Z") }),
+  ];
+  const validation = validateGlobalNowNextSequence({
+    items,
+    config: cfg({ displayMode: "now_next", singleGlobalNowNext: true }),
+    now: NOW,
+  });
+  assert.equal(validation.valid, true);
+});
+
+for (const [name, secondStart, secondEnd, playbackIds] of [
+  ["partial overlap", "2026-06-01T12:30:00Z", "2026-06-01T14:00:00Z", ["outer", "second"]],
+  ["identical start", "2026-06-01T12:00:00Z", "2026-06-01T12:30:00Z", ["outer"]],
+  ["complete containment", "2026-06-01T12:15:00Z", "2026-06-01T12:45:00Z", ["outer", "second"]],
+] as const) {
+  test(`global now_next rejects ${name}`, () => {
+    const items = [
+      item({ id: "outer", room: "A", startsAt: new Date("2026-06-01T12:00:00Z"), endsAt: new Date("2026-06-01T13:00:00Z") }),
+      item({ id: "second", room: "B", startsAt: new Date(secondStart), endsAt: new Date(secondEnd) }),
+    ];
+    const validation = validateGlobalNowNextSequence({
+      items,
+      config: cfg({ displayMode: "now_next", singleGlobalNowNext: true }),
+      now: NOW,
+    });
+    assert.equal(validation.valid, false);
+    assert.equal(validation.conflicts.length, 1);
+    // Playback remains bounded even if source data changes after save.
+    assert.deepEqual(
+      resolveAgendaItems({
+        items,
+        config: cfg({ displayMode: "now_next", singleGlobalNowNext: true }),
+        now: NOW,
+      }).map((i) => i.id),
+      playbackIds,
+    );
+  });
+}
+
+test("later-invalid global now_next emits one stable NOW and the first genuinely future NEXT", () => {
+  const items = [
+    item({ id: "live-b", title: "Beta", room: "B", startsAt: new Date("2026-06-01T11:30:00Z"), endsAt: new Date("2026-06-01T12:45:00Z") }),
+    item({ id: "live-a-z", title: "Zulu", room: "A", startsAt: new Date("2026-06-01T11:30:00Z"), endsAt: new Date("2026-06-01T12:30:00Z") }),
+    item({ id: "live-a-a", title: "Alpha", room: "A", startsAt: new Date("2026-06-01T11:30:00Z"), endsAt: new Date("2026-06-01T12:15:00Z") }),
+    item({ id: "future", room: "C", startsAt: new Date("2026-06-01T12:05:00Z"), endsAt: new Date("2026-06-01T13:00:00Z") }),
+    item({ id: "later", room: "D", startsAt: new Date("2026-06-01T13:00:00Z"), endsAt: new Date("2026-06-01T14:00:00Z") }),
+  ];
+  const config = cfg({ displayMode: "now_next", singleGlobalNowNext: true });
+
+  assert.deepEqual(
+    resolveAgendaItems({ items, config, now: NOW }).map((entry) => entry.id),
+    ["live-a-a", "future"],
+  );
+  const validation = validateGlobalNowNextSequence({ items, config, now: NOW });
+  assert.equal(validation.valid, false);
+  assert.equal(validation.conflicts.length, 6);
+});
+
+test("later-invalid global now_next omits malformed timing from playback but diagnoses it", () => {
+  const items = [
+    item({ id: "invalid-active", room: "A", startsAt: new Date("invalid"), endsAt: new Date("2026-06-01T13:00:00Z") }),
+    item({ id: "zero-duration", room: "B", startsAt: NOW, endsAt: NOW }),
+    item({ id: "live", room: "C", startsAt: new Date("2026-06-01T11:30:00Z"), endsAt: new Date("2026-06-01T12:30:00Z") }),
+    item({ id: "future", room: "D", startsAt: new Date("2026-06-01T12:30:00Z"), endsAt: new Date("2026-06-01T13:00:00Z") }),
+  ];
+  const config = cfg({ displayMode: "now_next", singleGlobalNowNext: true });
+
+  assert.deepEqual(
+    resolveAgendaItems({ items, config, now: NOW }).map((entry) => entry.id),
+    ["live", "future"],
+  );
+  const validation = validateGlobalNowNextSequence({ items, config, now: NOW });
+  assert.equal(validation.valid, false);
+  assert.deepEqual(
+    validation.invalidTiming.map((entry) => entry.id).sort(),
+    ["invalid-active", "zero-duration"],
+  );
+});
+
+test("global now_next ignores conflicts excluded by room and status filters", () => {
+  const items = [
+    item({ id: "selected", room: "A", status: "scheduled", startsAt: new Date("2026-06-01T12:00:00Z"), endsAt: new Date("2026-06-01T13:00:00Z") }),
+    item({ id: "other-room", room: "B", status: "scheduled", startsAt: new Date("2026-06-01T12:15:00Z"), endsAt: new Date("2026-06-01T12:45:00Z") }),
+    item({ id: "cancelled", room: "A", status: "cancelled", startsAt: new Date("2026-06-01T12:15:00Z"), endsAt: new Date("2026-06-01T12:45:00Z") }),
+  ];
+  const validation = validateGlobalNowNextSequence({
+    items,
+    config: cfg({
+      displayMode: "now_next",
+      singleGlobalNowNext: true,
+      roomFilter: ["A"],
+      statusFilter: ["scheduled"],
+    }),
+    now: NOW,
+  });
+  assert.equal(validation.valid, true);
+});
+
+test("changing selected rooms immediately clears a global now_next conflict", () => {
+  const items = [
+    item({ id: "a", room: "A", startsAt: new Date("2026-06-01T12:00:00Z"), endsAt: new Date("2026-06-01T13:00:00Z") }),
+    item({ id: "b", room: "B", startsAt: new Date("2026-06-01T12:15:00Z"), endsAt: new Date("2026-06-01T12:45:00Z") }),
+  ];
+  const base = cfg({ displayMode: "now_next", singleGlobalNowNext: true });
+  assert.equal(validateGlobalNowNextSequence({ items, config: base, now: NOW }).valid, false);
+  assert.equal(
+    validateGlobalNowNextSequence({
+      items,
+      config: { ...base, roomFilter: ["A"] },
+      now: NOW,
+    }).valid,
+    true,
+  );
+});
+
+test("global now_next rejects selected sessions with invalid timing", () => {
+  const bad = item({ id: "bad", room: "A", startsAt: new Date("invalid"), endsAt: new Date("2026-06-01T13:00:00Z") });
+  const validation = validateGlobalNowNextSequence({
+    items: [bad],
+    config: cfg({ displayMode: "now_next", singleGlobalNowNext: true }),
+    now: NOW,
+  });
+  assert.equal(validation.valid, false);
+  assert.deepEqual(validation.invalidTiming.map((i) => i.id), ["bad"]);
 });
 
 test("today_tomorrow keeps only today's items while today still has live/upcoming", () => {

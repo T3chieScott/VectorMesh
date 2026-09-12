@@ -167,6 +167,7 @@ function clipboardValues(): Record<string, unknown> {
     showDate: true,
     showAgendaDayHeading: true,
     showNowNextLabel: true,
+    singleGlobalNowNext: true,
     overrideNowNextColor: true,
     nowNextColor: "#0ea5e9",
     name: "Must not copy",
@@ -183,6 +184,7 @@ test("Task #397 schema defaults preserve visible end times and no duration prefi
   });
   assert.equal(parsed.showSessionEndTime, true);
   assert.equal(parsed.sessionDurationPrefix, "");
+  assert.equal(parsed.singleGlobalNowNext, false);
 });
 
 test("Task #397 schema trims duration prefix and enforces its limit", () => {

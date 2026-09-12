@@ -81,6 +81,7 @@ export const AGENDA_SETTINGS_CLIPBOARD_KEYS = [
   "showDate",
   "showAgendaDayHeading",
   "showNowNextLabel",
+  "singleGlobalNowNext",
   "overrideNowNextColor",
   "nowNextColor",
 ] as const;
@@ -191,6 +192,7 @@ const agendaClipboardSettingsSchema = z
     showDate: z.boolean().optional(),
     showAgendaDayHeading: optionalTask404Boolean,
     showNowNextLabel: z.boolean().optional(),
+    singleGlobalNowNext: z.boolean().optional(),
     overrideNowNextColor: optionalTask404Boolean,
     nowNextColor: optionalTask404Color,
   })

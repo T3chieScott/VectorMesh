@@ -15,6 +15,29 @@ export const db = drizzle(pool, { schema });
 
 const BOOKING_MIGRATION_LOCK_KEY = 715129_001n;
 const AGENDA_CUSTOMISATION_MIGRATION_LOCK_KEY = 715129_039n;
+const AGENDA_GLOBAL_NOW_NEXT_MIGRATION_LOCK_KEY = 715129_040n;
+
+/** Idempotent startup counterpart to migration 0040. */
+export async function ensureAgendaGlobalNowNextMigration(): Promise<void> {
+  const client = await pool.connect();
+  let haveLock = false;
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [
+      AGENDA_GLOBAL_NOW_NEXT_MIGRATION_LOCK_KEY.toString(),
+    ]);
+    haveLock = true;
+    await client.query(`
+      ALTER TABLE agenda_widget_configs
+        ADD COLUMN IF NOT EXISTS single_global_now_next boolean NOT NULL DEFAULT false;
+    `);
+    console.log("[ensureAgendaGlobalNowNextMigration] agenda global Now/Next column ready");
+  } finally {
+    if (haveLock) await client.query("SELECT pg_advisory_unlock($1)", [
+      AGENDA_GLOBAL_NOW_NEXT_MIGRATION_LOCK_KEY.toString(),
+    ]);
+    client.release();
+  }
+}
 
 /** Idempotent startup counterpart to migration 0039. */
 export async function ensureAgendaCustomisationMigration(): Promise<void> {

@@ -23,3 +23,4 @@
 - [Monitor widget auth](monitor-widget-auth.md) — Monitor has no deviceToken; widgets must use /api/monitor/widgets/… (cookie auth), not /api/widgets/… (requireAuth); widgetBaseUrl derived from mediaBaseUrl in ZoneRenderer.
 - [Monitor preview-time](monitor-preview-time.md) — ?at=naïve+elapsed_ms protocol; server owns TZ conversion; cache bypass; auth runs before ?at= is read.
 - [Deep health capabilities](deep-health-capability-checks.md) — report safe prerequisite readiness for mutating flows; never probe login or screen creation, and destroy timed-out DB clients.
+- [Global Agenda NOW/NEXT](global-agenda-now-next.md) — diagnostics retain invalid source rows, but playback always emits at most one valid NOW and one genuinely future NEXT.

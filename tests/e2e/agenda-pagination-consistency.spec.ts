@@ -35,6 +35,7 @@ const expected = [
   ["portrait-5", "portrait-6"], ["portrait-7", "portrait-8"],
   ["portrait-9", "portrait-10", "portrait-11"],
 ];
+const globalPhaseOnly = process.env.AGENDA_GLOBAL_PHASE_ONLY === "1";
 
 type Seed = {
   clientId: string; configId: string; sceneId: string; playlistId: string;
@@ -208,6 +209,48 @@ async function observe(page: Page, label: string, rootTestId: string): Promise<s
   expect(indicators.some((text) => /8\/5|0\/5|6\/5|7\/5/.test(text)), `${label} invalid indicators`).toBe(false);
   expect(await page.locator("body").innerText()).not.toMatch(/fallback|invalid|error/i);
   return seen;
+}
+
+async function visibleAgendaIds(page: Page, rootTestId?: string): Promise<string[]> {
+  const root = rootTestId ? page.getByTestId(rootTestId) : page;
+  return root.locator("[data-testid^='agenda-title-']").evaluateAll((nodes) =>
+    Array.from(new Set(nodes.flatMap((node) => {
+      const element = node as HTMLElement;
+      const style = getComputedStyle(element);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        element.getClientRects().length === 0
+      ) return [];
+      return [element.dataset.testid!.replace("agenda-title-", "")];
+    }))),
+  );
+}
+
+async function collectAgendaIds(
+  page: Page,
+  rootTestId: string | undefined,
+): Promise<string[]> {
+  const seen = new Set<string>();
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    for (const id of await visibleAgendaIds(page, rootTestId)) seen.add(id);
+    await page.waitForTimeout(250);
+  }
+  return [...seen].sort();
+}
+
+async function waitForAgendaCount(
+  label: string,
+  page: Page,
+  rootTestId: string | undefined,
+  count: number,
+): Promise<void> {
+  const root = rootTestId ? page.getByTestId(rootTestId) : page;
+  await expect.poll(
+    () => root.getByTestId("agenda-session-count").textContent().catch(() => null),
+    { timeout: 20_000, message: `${label} must report ${count} resolved sessions` },
+  ).toMatch(new RegExp(`^${count} session(?:s)?`));
 }
 
 async function expectAuthoredPortraitSurface(page: Page, rootTestId: string) {
@@ -445,7 +488,9 @@ test.describe("portrait Agenda pagination consistency", () => {
     );
     expect(sceneBuilderBaseline, "Scene Builder must establish the canonical fixture")
       .toEqual(expected);
-    await observe(sceneBuilder, "Scene Builder", "interactive-layout-preview");
+    if (!globalPhaseOnly) {
+      await observe(sceneBuilder, "Scene Builder", "interactive-layout-preview");
+    }
 
     const simulator = await ctx.newPage();
     await login(simulator);
@@ -485,7 +530,9 @@ test.describe("portrait Agenda pagination consistency", () => {
       resizedSimulatorBaseline,
       "resizing the Simulator panel must not change canonical page membership",
     ).toEqual(sceneBuilderBaseline);
-    await observe(simulator, "Simulator scene", "player-display");
+    if (!globalPhaseOnly) {
+      await observe(simulator, "Simulator scene", "player-display");
+    }
 
     const playlist = await ctx.newPage();
     await login(playlist);
@@ -496,7 +543,9 @@ test.describe("portrait Agenda pagination consistency", () => {
     );
     expect(playlistText.normalizedFontProportion)
       .toBeCloseTo(sceneBuilderText.normalizedFontProportion, 5);
-    await observe(playlist, "Simulator playlist", "player-display");
+    if (!globalPhaseOnly) {
+      await observe(playlist, "Simulator playlist", "player-display");
+    }
 
     const player = await ctx.newPage();
     await player.addInitScript(({ token, screenId }) => {
@@ -513,7 +562,9 @@ test.describe("portrait Agenda pagination consistency", () => {
     );
     expect(playerText.normalizedFontProportion)
       .toBeCloseTo(sceneBuilderText.normalizedFontProportion, 5);
-    const playerPages = await observe(player, "Player", "screen-render-committed-frame");
+    const playerPages = globalPhaseOnly
+      ? []
+      : await observe(player, "Player", "screen-render-committed-frame");
 
     const monitor = await ctx.newPage();
     await login(monitor);
@@ -522,6 +573,7 @@ test.describe("portrait Agenda pagination consistency", () => {
     });
     expect(create.status(), await create.text()).toBe(201);
     const monitorUrl = new URL((await create.json()).monitorUrl);
+    monitorUrl.searchParams.set("at", "2031-07-04T09:00");
     await monitor.goto(`${process.env.E2E_BASE_URL || "http://127.0.0.1:5000"}${monitorUrl.pathname}${monitorUrl.search}`, { waitUntil: "commit" });
     await expect(monitor.getByTestId("screen-render-committed-frame")).toBeVisible({ timeout: 30_000 });
     await expectAuthoredPortraitSurface(monitor, "screen-render-committed-frame");
@@ -530,9 +582,98 @@ test.describe("portrait Agenda pagination consistency", () => {
     );
     expect(monitorText.normalizedFontProportion)
       .toBeCloseTo(sceneBuilderText.normalizedFontProportion, 5);
-    const monitorPages = await observe(monitor, "Monitor", "screen-render-committed-frame");
-    expect(monitorPages, "Monitor must follow the Player's ordered page sequence").toEqual(playerPages);
+    const monitorPages = globalPhaseOnly
+      ? []
+      : await observe(monitor, "Monitor", "screen-render-committed-frame");
+    if (!globalPhaseOnly) {
+      expect(monitorPages, "Monitor must follow the Player's ordered page sequence").toEqual(playerPages);
+    }
     await expect(monitor.locator("body")).not.toContainText("Monitor session expired");
+
+    // Reuse the same production surfaces for the optional cross-room mode.
+    // The first three adjacent sessions alternate rooms, so legacy mode keeps
+    // one current plus one upcoming per room, while global mode keeps one of
+    // each across the combined sequence.
+    await pool.query(
+      `UPDATE agenda_items
+       SET room = CASE WHEN id = ANY($2::text[]) THEN 'Room A' ELSE 'Room B' END,
+           title = CASE WHEN id = ANY($3::text[]) THEN id ELSE title END
+       WHERE client_id = $1`,
+      [
+        s.clientId,
+        titleWordCounts.flatMap((_, index) =>
+          index % 2 === 0 ? [`${PREFIX}portrait-${index + 1}`] : []),
+        [`${PREFIX}portrait-1`, `${PREFIX}portrait-2`, `${PREFIX}portrait-3`],
+      ],
+    );
+    const setLegacy = await sceneBuilder.request.patch(`/api/agenda/configs/${s.configId}`, {
+      data: {
+        displayMode: "now_next",
+        roomFilter: ["Room A", "Room B"],
+        singleGlobalNowNext: false,
+        showPresenter: false,
+      },
+    });
+    expect(setLegacy.status(), await setLegacy.text()).toBe(200);
+
+    const standalone = await ctx.newPage();
+    await standalone.goto(`/display/agenda/${s.configId}?at=2031-07-04T09:00:00Z`, { waitUntil: "commit" });
+    await expect(standalone.getByTestId("agenda-display-root")).toBeVisible({ timeout: 20_000 });
+    const surfaces: Array<[string, Page, string | undefined]> = [
+      ["Scene Builder", sceneBuilder, "interactive-layout-preview"],
+      ["Direct Simulator", simulator, "player-display"],
+      ["Playlist Simulator", playlist, "player-display"],
+      ["Player", player, "screen-render-committed-frame"],
+      ["Standalone Agenda", standalone, undefined],
+    ];
+    const monitorSurface: [string, Page, string] = [
+      "Monitor",
+      monitor,
+      "screen-render-committed-frame",
+    ];
+    const legacyIds = [
+      `${PREFIX}portrait-1`,
+      `${PREFIX}portrait-2`,
+      `${PREFIX}portrait-3`,
+    ];
+    await Promise.all(
+      surfaces.map(([label, surface, root]) =>
+        waitForAgendaCount(label, surface, root, legacyIds.length)),
+    );
+    const legacySurfaceIds = await Promise.all(
+      surfaces.map(([, surface, root]) => collectAgendaIds(surface, root)),
+    );
+    for (let index = 0; index < surfaces.length; index++) {
+      expect(
+        legacySurfaceIds[index],
+        `${surfaces[index][0]} must preserve per-room Now/Next`,
+      ).toEqual(legacyIds);
+    }
+    await waitForAgendaCount(...monitorSurface, 2);
+    expect(await collectAgendaIds(monitorSurface[1], monitorSurface[2]))
+      .toEqual([`${PREFIX}portrait-1`, `${PREFIX}portrait-2`]);
+
+    const setGlobal = await sceneBuilder.request.patch(`/api/agenda/configs/${s.configId}`, {
+      data: { singleGlobalNowNext: true },
+    });
+    expect(setGlobal.status(), await setGlobal.text()).toBe(200);
+    const globalIds = [`${PREFIX}portrait-1`, `${PREFIX}portrait-2`];
+    await Promise.all(
+      surfaces.map(([label, surface, root]) =>
+        waitForAgendaCount(label, surface, root, globalIds.length)),
+    );
+    const globalSurfaceIds = await Promise.all(
+      surfaces.map(([, surface, root]) => collectAgendaIds(surface, root)),
+    );
+    for (let index = 0; index < surfaces.length; index++) {
+      expect(
+        globalSurfaceIds[index],
+        `${surfaces[index][0]} must use one global Now and Next`,
+      ).toEqual(globalIds);
+    }
+    await waitForAgendaCount(...monitorSurface, 1);
+    expect(await collectAgendaIds(monitorSurface[1], monitorSurface[2]))
+      .toEqual([`${PREFIX}portrait-1`]);
 
     const warning = await ctx.newPage();
     await login(warning);
