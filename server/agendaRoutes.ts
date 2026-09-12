@@ -33,6 +33,8 @@ import {
   getConfigSyncPhase,
   manualRunCooldownRemainingMs,
   recordManualRun,
+  preflightAgendaSourceReset,
+  executeAgendaSourceReset,
   type AgendaSyncStorage,
 } from "./agendaSync";
 import {
@@ -108,6 +110,7 @@ export interface AgendaRoutesStorage {
   updateAgendaSyncConfig(id: string, data: Partial<AgendaSyncConfig>): Promise<AgendaSyncConfig | undefined>;
   deleteAgendaSyncConfig(id: string): Promise<boolean>;
   getAgendaItemsBySyncConfig(syncConfigId: string): Promise<AgendaItem[]>;
+  atomicAgendaSourceReset?: AgendaSyncStorage["atomicAgendaSourceReset"];
   getAgendaWidgetConfigs(clientId?: string): Promise<AgendaWidgetConfig[]>;
   getAgendaWidgetConfig(id: string): Promise<AgendaWidgetConfig | undefined>;
   createAgendaWidgetConfig(
@@ -364,6 +367,9 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
   app.post("/api/agenda", requireAuth, loadUserContext, async (req, res) => {
     try {
       const data = insertAgendaItemSchema.parse(req.body);
+      if (Object.prototype.hasOwnProperty.call(data, "externalSyncConfigId")) {
+        return res.status(400).json({ error: "externalSyncConfigId is managed by the source importer" });
+      }
       if (!auth.canAccessClient(req, data.clientId)) {
         return res.status(403).json({ error: "Access denied to requested site" });
       }
@@ -393,6 +399,9 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
         return res.status(403).json({ error: "Access denied to this site" });
       }
       const data = insertAgendaItemSchema.partial().parse(req.body);
+      if (Object.prototype.hasOwnProperty.call(data, "externalSyncConfigId")) {
+        return res.status(400).json({ error: "externalSyncConfigId is managed by the source importer" });
+      }
       if (data.clientId && data.clientId !== existing.clientId && !auth.canAccessClient(req, data.clientId)) {
         return res.status(403).json({ error: "Access denied to target site" });
       }
@@ -654,6 +663,68 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
     } catch (error) {
       console.error("Error running agenda sync:", error);
       res.status(500).json({ error: "Failed to run agenda sync" });
+    }
+  });
+
+  const resetPaths = [
+    "/api/agenda/sync-configs/:id/reset/preflight",
+    "/api/agenda/sync-configs/:id/hard-reset/preflight",
+    "/api/agenda/sync-configs/:id/reimport/preflight",
+  ];
+  app.post(resetPaths, requireAuth, requireAdmin, loadUserContext, async (req, res) => {
+    const id = getPathParam(req, "id");
+    try {
+      const config = await storage.getAgendaSyncConfig(id);
+      if (!config) return res.status(404).json({ error: "Sync config not found" });
+      if (!auth.canAccessClient(req, config.clientId)) return res.status(403).json({ error: "Access denied to this site" });
+      const preflight = await preflightAgendaSourceReset(config, {
+        storage: storage as AgendaSyncStorage,
+        now, resolveStoredPath, graphFetch, graphCTagFetch,
+      });
+      audit(req, preflight.ok ? "agenda_source_reset_preflight" : "agenda_source_reset_failed", "agenda_sync_config", id, {
+        clientId: config.clientId, ok: preflight.ok, phase: "preflight",
+        remoteRowsRead: preflight.counts.remoteRowsRead, validSessions: preflight.counts.validSessions,
+        invalidSkippedRows: preflight.counts.invalidSkippedRows, duplicateSourceIds: preflight.counts.duplicateSourceIds,
+      });
+      res.json(preflight);
+    } catch (error) {
+      audit(req, "agenda_source_reset_failed", "agenda_sync_config", id, { phase: "preflight", reason: "validation_failed" });
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+  const executeResetPaths = [
+    "/api/agenda/sync-configs/:id/reset",
+    "/api/agenda/sync-configs/:id/reset/execute",
+    "/api/agenda/sync-configs/:id/hard-reset",
+    "/api/agenda/sync-configs/:id/hard-reset/execute",
+    "/api/agenda/sync-configs/:id/reimport",
+    "/api/agenda/sync-configs/:id/reimport/execute",
+  ];
+  app.post(executeResetPaths, requireAuth, requireAdmin, loadUserContext, async (req, res) => {
+    const id = getPathParam(req, "id");
+    try {
+      const body = z.object({ preflightToken: z.string().min(1), confirmation: z.literal("RESET") }).strict().parse(req.body);
+      const config = await storage.getAgendaSyncConfig(id);
+      if (!config) return res.status(404).json({ error: "Sync config not found" });
+      if (!auth.canAccessClient(req, config.clientId)) return res.status(403).json({ error: "Access denied to this site" });
+      const result = await executeAgendaSourceReset(id, body.preflightToken, {
+        storage: storage as AgendaSyncStorage,
+        now, resolveStoredPath, graphFetch, graphCTagFetch,
+      });
+      await invalidateAgendaDisplayForClient(config.clientId);
+      audit(req, "agenda_source_reset_completed", "agenda_sync_config", id, {
+        clientId: config.clientId, imported: result.imported, replaced: result.replaced,
+        removed: result.removed, manualOverridesDiscarded: result.manualOverridesDiscarded,
+        preResetSnapshotId: result.preResetSnapshot?.id ?? null,
+        snapshotVersion: result.snapshotVersion ?? null,
+      });
+      res.json(result);
+    } catch (error) {
+      audit(req, "agenda_source_reset_failed", "agenda_sync_config", id, { phase: "execute", reason: "token_or_commit_failed" });
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      const message = error instanceof Error ? error.message : String(error);
+      const status = /not found/i.test(message) ? 404 : /token|changed|stale|generation|expired|preflight/i.test(message) ? 409 : 400;
+      res.status(status).json({ error: message });
     }
   });
 

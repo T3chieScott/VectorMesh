@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { digestAgendaConnectionItems } from "./agendaItemDigest";
 import { log } from "./log";
 import { eq, and, asc, desc, gte, lte, lt, inArray, isNotNull, sql, count } from "drizzle-orm";
 import {
@@ -3180,6 +3181,10 @@ export class DatabaseStorage implements IStorage {
     lastPublishedAt?: Date | null;
     /** Task #362 health contract — when the cTag last changed (null = skip update). */
     lastCTagChangedAt?: Date | null;
+    expectedSnapshotId?: string | null;
+    expectedSnapshotVersion?: number | null;
+    expectedConfigUpdatedAt?: Date | null;
+    expectedItemStateDigest?: string | null;
   }): Promise<{ inserted: number; updated: number; skippedManual: number; removed: number; snapshotId: string; snapshotVersion: number }> {
     const { configId, clientId, newItems, existingItems, removeMissingItems, seenExternalIds, newCTag } = params;
 
@@ -3196,6 +3201,36 @@ export class DatabaseStorage implements IStorage {
     let snapshotVersion = 0;
 
     await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${configId}, 0))`);
+      const [currentGeneration] = await tx
+        .select({
+          clientId: agendaSyncConfigs.clientId,
+          snapshotId: agendaSyncConfigs.lastGoodSnapshotId,
+          snapshotVersion: agendaSyncConfigs.lastSnapshotVersion,
+          updatedAt: agendaSyncConfigs.updatedAt,
+        })
+        .from(agendaSyncConfigs)
+        .where(eq(agendaSyncConfigs.id, configId))
+        .for("update");
+      const lockedItems = await tx
+        .select()
+        .from(agendaItems)
+        .where(eq(agendaItems.externalSyncConfigId, configId))
+        .for("update");
+      if (
+        currentGeneration?.clientId !== clientId ||
+        (params.expectedSnapshotId !== undefined &&
+          (currentGeneration?.snapshotId ?? null) !== (params.expectedSnapshotId ?? null)) ||
+        (params.expectedSnapshotVersion !== undefined &&
+          (currentGeneration?.snapshotVersion ?? null) !== (params.expectedSnapshotVersion ?? null)) ||
+        (params.expectedConfigUpdatedAt !== undefined &&
+          (currentGeneration?.updatedAt?.toISOString() ?? null) !==
+            (params.expectedConfigUpdatedAt?.toISOString() ?? null)) ||
+        (params.expectedItemStateDigest !== undefined &&
+          digestAgendaConnectionItems(lockedItems) !== (params.expectedItemStateDigest ?? null))
+      ) {
+        throw new Error("Stale sync rejected: connection configuration, generation, or owned items changed while fetched.");
+      }
       // Determine the next snapshot version for this config.
       const versionResult = await tx
         .select({ maxVersion: sql<number>`COALESCE(MAX(snapshot_version), 0)` })
@@ -3328,6 +3363,171 @@ export class DatabaseStorage implements IStorage {
     });
 
     return { inserted, updated, skippedManual, removed, snapshotId, snapshotVersion };
+  }
+
+  async atomicAgendaSourceReset(params: {
+    configId: string;
+    clientId: string;
+    newItems: InsertAgendaItem[];
+    configFingerprint: string;
+    publishedAt: Date;
+    expectedConfigUpdatedAt: Date | null;
+    expectedSnapshotId: string | null;
+    expectedSnapshotVersion: number | null;
+    expectedItemStateDigest: string;
+  }): Promise<{
+    inserted: number;
+    updated: number;
+    removed: number;
+    snapshotId: string;
+    snapshotVersion: number;
+    preResetSnapshotId: string;
+    preResetSnapshotVersion: number;
+    preResetItemCount: number;
+    itemCount: number;
+  }> {
+    let inserted = 0;
+    let updated = 0;
+    let removed = 0;
+    let snapshotId = "";
+    let snapshotVersion = 0;
+    let preResetSnapshotId = "";
+    let preResetSnapshotVersion = 0;
+    let preResetItemCount = 0;
+    let itemCount = 0;
+
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${params.configId}, 0))`);
+      const [currentConfig] = await tx
+        .select()
+        .from(agendaSyncConfigs)
+        .where(eq(agendaSyncConfigs.id, params.configId))
+        .for("update");
+      const existing = await tx
+        .select()
+        .from(agendaItems)
+        .where(eq(agendaItems.externalSyncConfigId, params.configId))
+        .for("update");
+      // external_sync_config_id is intentionally not a database FK, so the
+      // parent lock alone cannot prevent a phantom ownership insert. API
+      // create/patch routes reject caller-supplied ownership; importer
+      // writes use this same advisory lock.
+      if (
+        !currentConfig ||
+        currentConfig.clientId !== params.clientId ||
+        (currentConfig.updatedAt?.toISOString() ?? null) !==
+          (params.expectedConfigUpdatedAt?.toISOString() ?? null) ||
+        (currentConfig.lastGoodSnapshotId ?? null) !== params.expectedSnapshotId ||
+        (currentConfig.lastSnapshotVersion ?? null) !== params.expectedSnapshotVersion ||
+        digestAgendaConnectionItems(existing) !== params.expectedItemStateDigest
+      ) {
+        throw new Error("Reset rejected: the connection configuration, generation, or owned items changed after preflight.");
+      }
+
+      const [versionRow] = await tx
+        .select({ maxVersion: sql<number>`COALESCE(MAX(${agendaItemSnapshots.snapshotVersion}), 0)` })
+        .from(agendaItemSnapshots)
+        .where(eq(agendaItemSnapshots.syncConfigId, params.configId));
+      preResetSnapshotVersion = Number(versionRow?.maxVersion ?? 0) + 1;
+      preResetItemCount = existing.length;
+      const [before] = await tx
+        .insert(agendaItemSnapshots)
+        .values({
+          syncConfigId: params.configId,
+          snapshotVersion: preResetSnapshotVersion,
+          items: existing,
+          itemCount: existing.length,
+          createdAt: params.publishedAt,
+        })
+        .returning({ id: agendaItemSnapshots.id });
+      preResetSnapshotId = before.id;
+
+      const byExternalId = new Map(existing.filter((row) => row.externalId).map((row) => [row.externalId!, row]));
+      const seen = new Set<string>();
+      for (const item of params.newItems) {
+        const externalId = item.externalId ?? "";
+        seen.add(externalId);
+        const old = byExternalId.get(externalId);
+        const values = {
+          clientId: params.clientId,
+          title: item.title,
+          description: item.description ?? null,
+          room: item.room ?? null,
+          track: item.track ?? null,
+          presenter: item.presenter ?? null,
+          company: item.company ?? null,
+          startsAt: item.startsAt,
+          endsAt: item.endsAt,
+          status: (item.status ?? "scheduled") as AgendaItem["status"],
+          statusMessage: item.statusMessage ?? null,
+          externalSyncConfigId: params.configId,
+          externalId,
+          manualOverride: false,
+          updatedAt: params.publishedAt,
+        };
+        if (old) {
+          await tx.update(agendaItems).set(values).where(eq(agendaItems.id, old.id));
+          updated++;
+        } else {
+          await tx.insert(agendaItems).values(values);
+          inserted++;
+        }
+      }
+      for (const old of existing) {
+        if (!old.externalId || !seen.has(old.externalId)) {
+          const deleted = await tx.delete(agendaItems).where(eq(agendaItems.id, old.id)).returning({ id: agendaItems.id });
+          if (deleted.length) removed++;
+        }
+      }
+
+      snapshotVersion = preResetSnapshotVersion + 1;
+      const effectiveRows = await tx
+        .select()
+        .from(agendaItems)
+        .where(eq(agendaItems.externalSyncConfigId, params.configId))
+        .orderBy(asc(agendaItems.startsAt));
+      itemCount = effectiveRows.length;
+      const [canonical] = await tx
+        .insert(agendaItemSnapshots)
+        .values({
+          syncConfigId: params.configId,
+          snapshotVersion,
+          items: effectiveRows,
+          itemCount,
+          createdAt: params.publishedAt,
+        })
+        .returning({ id: agendaItemSnapshots.id });
+      snapshotId = canonical.id;
+      await tx
+        .update(agendaSyncConfigs)
+        .set({
+          lastGoodSnapshotId: snapshotId,
+          lastSnapshotVersion: snapshotVersion,
+          lastProcessedConfigFingerprint: params.configFingerprint,
+          lastPublishedAt: params.publishedAt,
+          lastItemCount: itemCount,
+          lastSyncAt: params.publishedAt,
+          lastSyncOk: true,
+          lastError: null,
+          lastErrorAt: null,
+          lastSyncWarnings: null,
+          consecutiveFailureCount: 0,
+          failureAlertSent: false,
+          updatedAt: params.publishedAt,
+        })
+        .where(eq(agendaSyncConfigs.id, params.configId));
+    });
+    return {
+      inserted,
+      updated,
+      removed,
+      snapshotId,
+      snapshotVersion,
+      preResetSnapshotId,
+      preResetSnapshotVersion,
+      preResetItemCount,
+      itemCount,
+    };
   }
 
   async getAgendaSnapshot(snapshotId: string): Promise<AgendaItemSnapshot | undefined> {
