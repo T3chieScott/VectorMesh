@@ -5,6 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { useSiteContext, useSiteFilteredQuery } from "@/hooks/use-site-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1473,6 +1474,17 @@ function isMsReadOnly(cfg: AgendaSyncConfig): boolean {
   );
 }
 
+function isSpreadsheetSource(cfg: AgendaSyncConfig): boolean {
+  return (
+    cfg.sourceType === "google_sheets_csv" ||
+    cfg.sourceType === "google_sheets" ||
+    cfg.sourceType === "csv_url" ||
+    cfg.sourceType === "excel_onedrive" ||
+    cfg.sourceType === "sharepoint_excel" ||
+    cfg.sourceType === "uploaded_xlsx"
+  );
+}
+
 /**
  * Task #362 — Inline source-health and display-continuity badges for a
  * Microsoft-backed sync config.  Fetches the /errors endpoint once per
@@ -1665,10 +1677,333 @@ function SyncHealthBadges({ configId }: { configId: string }) {
   );
 }
 
+/**
+ * The response mirrors the two-phase re-import endpoint contract. The token
+ * is only accepted after an `ok` preflight and all impact counts are shown
+ * before the destructive action is enabled.
+ */
+interface ReimportPreflightResponse {
+  ok: boolean;
+  preflightToken: string | null;
+  counts: Record<string, number | null | undefined>;
+  currentCounts: Record<string, number | null | undefined>;
+  plannedCounts: Record<string, number | null | undefined>;
+  workbook: {
+    version: string | null;
+    modifiedAt: string | null;
+  };
+  stableExplicitId: {
+    enabled: boolean;
+    column: string | null;
+  };
+  blockers: string[];
+  warnings: string[];
+  diagnostics: {
+    lastChecked: string | null;
+    lastDownloaded: string | null;
+    lastValidated: string | null;
+    lastSuccessfullyPublished: string | null;
+    rows?: Array<{ rowNumber: number; field?: string; reason: string }>;
+  };
+}
+
+interface ReimportCompletionResponse {
+  ok: boolean;
+  counts: {
+    imported: number;
+    updatedReplaced: number;
+    removed: number;
+    manualOverridesDiscarded: number;
+    skipped: number;
+    errors: number;
+  };
+  snapshotVersion: string | number | null;
+  completedAt: string | null;
+}
+
+const REIMPORT_DESCRIPTION =
+  "Discard local changes to items imported by this connection and rebuild them from the current spreadsheet.";
+const REIMPORT_NO_STABLE_ID_WARNING =
+  "This connection identifies rows by spreadsheet position. Inserting, deleting, moving or sorting rows can change session identities. Configure a stable unique ID column for reliable synchronisation.";
+
+function reimportBlockerMessages(data: ReimportPreflightResponse | null): string[] {
+  if (!data) return [];
+  return data.blockers;
+}
+
+function reimportCountSections(
+  data: ReimportPreflightResponse,
+): Array<[string, Record<string, number | null | undefined>]> {
+  return [
+    ["Source counts", data.counts],
+    ["Current imported items", data.currentCounts],
+    ["Planned changes", data.plannedCounts],
+  ];
+}
+
+function reimportEntryLabel(key: string): string {
+  return key
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function ReimportDialog({
+  config,
+  open,
+  onOpenChange,
+}: {
+  config: AgendaSyncConfig;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const [preflight, setPreflight] = useState<ReimportPreflightResponse | null>(null);
+  const [completion, setCompletion] = useState<ReimportCompletionResponse | null>(null);
+  const [confirmation, setConfirmation] = useState("");
+  const preflightStarted = useRef(false);
+
+  const preflightMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest(
+        "POST",
+        `/api/agenda/sync-configs/${config.id}/reimport/preflight`,
+      );
+      return (await response.json()) as ReimportPreflightResponse;
+    },
+    onSuccess: (data) => {
+      setPreflight(data);
+      setCompletion(null);
+      setConfirmation("");
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Re-import preflight failed",
+        description: error instanceof Error ? error.message : String(error),
+        variant: "destructive",
+      });
+    },
+  });
+
+  const reimportMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest(
+        "POST",
+        `/api/agenda/sync-configs/${config.id}/reimport`,
+        { preflightToken: preflight?.preflightToken, confirmation: "RESET" },
+      );
+      return (await response.json()) as ReimportCompletionResponse;
+    },
+    onSuccess: (data) => {
+      setCompletion(data);
+      queryClient.invalidateQueries({ queryKey: ["/api/agenda/sync-configs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agenda"] });
+      toast({ title: "Re-import complete" });
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Re-import failed",
+        description: error instanceof Error ? error.message : String(error),
+        variant: "destructive",
+      });
+    },
+  });
+
+  useEffect(() => {
+    if (open && !preflightStarted.current) {
+      preflightStarted.current = true;
+      setPreflight(null);
+      setCompletion(null);
+      setConfirmation("");
+      preflightMutation.mutate();
+    } else if (!open) {
+      preflightStarted.current = false;
+    }
+  }, [open, config.id]);
+
+  const blockers = reimportBlockerMessages(preflight);
+  const stableIdPresent = preflight?.stableExplicitId.enabled ?? true;
+  const preflightHasBlockers = blockers.length > 0;
+  const canConfirm =
+    !!preflight &&
+    preflight.ok === true &&
+    !!preflight.preflightToken &&
+    !preflightMutation.isPending &&
+    !preflightHasBlockers &&
+    confirmation === "RESET" &&
+    !reimportMutation.isPending;
+  const finalConfirmationSentence = `This will permanently discard all VectorMesh edits to items imported by ${config.name} and replace them with the current spreadsheet data. It will not modify the spreadsheet.`;
+
+  const renderRecord = (record: Record<string, unknown>, testId: string) => (
+    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm" data-testid={testId}>
+      {Object.entries(record).map(([key, value]) => (
+        <div key={key} className="contents">
+          <span className="text-muted-foreground">{reimportEntryLabel(key)}</span>
+          <span className="break-words">{value == null || value === "" ? "—" : String(value)}</span>
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain sm:max-h-[calc(100dvh-4rem)]"
+        data-testid={`dialog-reimport-${config.id}`}
+      >
+        <DialogHeader>
+          <DialogTitle>Re-import from source</DialogTitle>
+          <DialogDescription>{REIMPORT_DESCRIPTION}</DialogDescription>
+        </DialogHeader>
+
+        {completion ? (
+          <div className="space-y-4" data-testid="reimport-completion">
+            <div className="rounded-md border border-emerald-300 bg-emerald-50 p-4 text-sm dark:border-emerald-800 dark:bg-emerald-950/30">
+              <div className="font-semibold">Re-import complete</div>
+              <p className="mt-1">The current spreadsheet has rebuilt the items imported by {config.name}.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm" data-testid="reimport-completion-counts">
+              <span className="text-muted-foreground">Imported</span><span>{completion.counts.imported}</span>
+              <span className="text-muted-foreground">Updated/replaced</span><span>{completion.counts.updatedReplaced}</span>
+              <span className="text-muted-foreground">Removed</span><span>{completion.counts.removed}</span>
+              <span className="text-muted-foreground">Manual overrides discarded</span><span>{completion.counts.manualOverridesDiscarded}</span>
+              <span className="text-muted-foreground">Skipped</span><span>{completion.counts.skipped}</span>
+              <span className="text-muted-foreground">Errors</span><span>{completion.counts.errors}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm" data-testid="reimport-completion-snapshot">
+              <span className="text-muted-foreground">New snapshot/version</span>
+              <span>{completion.snapshotVersion ?? "—"}</span>
+              <span className="text-muted-foreground">Completion timestamp</span>
+              <span>{fmt(completion.completedAt)}</span>
+            </div>
+            <div className="flex justify-end">
+              <Button onClick={() => onOpenChange(false)} data-testid="button-reimport-done">Done</Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {preflightMutation.isPending && (
+              <p className="text-sm text-muted-foreground" data-testid="reimport-preflight-loading">
+                Checking the current spreadsheet before re-import…
+              </p>
+            )}
+            {preflightMutation.isError && (
+              <div className="space-y-3" data-testid="reimport-preflight-error">
+                <p className="text-sm text-destructive">
+                  Preflight failed. No items have been changed.
+                </p>
+                <Button variant="outline" onClick={() => preflightMutation.mutate()} data-testid="button-reimport-retry">
+                  Try preflight again
+                </Button>
+              </div>
+            )}
+            {preflight && !preflightMutation.isPending && (
+              <div className="space-y-4" data-testid="reimport-preflight">
+                {reimportCountSections(preflight).map(([title, counts], index) => (
+                  <section key={`${title}-${index}`} className="rounded-md border p-3 space-y-2" data-testid={`reimport-preflight-counts-${index}`}>
+                    <h3 className="font-medium">{title}</h3>
+                    {renderRecord(counts, index === 0 ? "reimport-preflight-counts" : `reimport-preflight-counts-${index}-details`)}
+                  </section>
+                ))}
+
+                <section className="rounded-md border p-3 space-y-2" data-testid="reimport-workbook-info">
+                  <h3 className="font-medium">Workbook version and modification</h3>
+                  {renderRecord(preflight.workbook, "reimport-workbook-details")}
+                </section>
+
+                <section className="rounded-md border p-3 space-y-2" data-testid="reimport-diagnostics">
+                  <h3 className="font-medium">Diagnostics</h3>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                    <span className="text-muted-foreground">Last checked</span>
+                    <span>{fmt(preflight.diagnostics.lastChecked)}</span>
+                    <span className="text-muted-foreground">Last downloaded</span>
+                    <span>{fmt(preflight.diagnostics.lastDownloaded)}</span>
+                    <span className="text-muted-foreground">Last validated</span>
+                    <span>{fmt(preflight.diagnostics.lastValidated)}</span>
+                    <span className="text-muted-foreground">Last successfully published</span>
+                    <span>{fmt(preflight.diagnostics.lastSuccessfullyPublished)}</span>
+                  </div>
+                  {preflight.diagnostics.rows && preflight.diagnostics.rows.length > 0 && (
+                    <ul className="list-disc pl-5 text-sm text-amber-700 dark:text-amber-400" data-testid="reimport-diagnostic-rows">
+                      {preflight.diagnostics.rows.map((row, index) => (
+                        <li key={`${row.rowNumber}-${index}`}>
+                          Row {row.rowNumber}{row.field ? ` · ${row.field}` : ""}: {row.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                <section className="rounded-md border p-3 space-y-2" data-testid="reimport-stable-id">
+                  <h3 className="font-medium">Stable explicit ID</h3>
+                  <p className={stableIdPresent ? "text-sm text-emerald-700 dark:text-emerald-400" : "text-sm font-semibold text-destructive"}>
+                    {stableIdPresent
+                      ? `Configured${preflight.stableExplicitId.column ? ` · ${preflight.stableExplicitId.column}` : ""}`
+                      : "Absent"}
+                  </p>
+                  {!stableIdPresent && (
+                    <p className="rounded-md border-2 border-destructive bg-destructive/10 p-3 text-sm font-semibold text-destructive" role="alert" data-testid="reimport-no-stable-id-warning">
+                      {REIMPORT_NO_STABLE_ID_WARNING}
+                    </p>
+                  )}
+                </section>
+
+                {preflight.warnings?.map((warning, index) => (
+                  <p key={index} className="text-sm text-amber-700 dark:text-amber-400" data-testid={`reimport-warning-${index}`}>
+                    {warning}
+                  </p>
+                ))}
+
+                {preflightHasBlockers && (
+                  <div className="rounded-md border-2 border-destructive p-3 text-sm text-destructive" role="alert" data-testid="reimport-blockers">
+                    <div className="font-semibold">Re-import is blocked</div>
+                    <ul className="list-disc pl-5">
+                      {blockers.map((blocker, index) => <li key={index}>{blocker}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="rounded-md bg-muted/50 p-3 text-sm" data-testid="reimport-confirmation-copy">
+                  <p>{finalConfirmationSentence}</p>
+                  <Label htmlFor={`reimport-confirmation-${config.id}`} className="mt-3 block">
+                    Type RESET to confirm
+                  </Label>
+                  <Input
+                    id={`reimport-confirmation-${config.id}`}
+                    value={confirmation}
+                    onChange={(event) => setConfirmation(event.target.value)}
+                    placeholder="RESET"
+                    autoComplete="off"
+                    data-testid="input-reimport-confirmation"
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+                  <Button
+                    variant="destructive"
+                    disabled={!canConfirm}
+                    onClick={() => reimportMutation.mutate()}
+                    data-testid="button-confirm-reimport"
+                  >
+                    {reimportMutation.isPending ? "Re-importing…" : "Re-import from source"}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function SyncSourcesSection({ clientId }: { clientId: string }) {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<AgendaSyncConfig | null>(null);
+  const [reimporting, setReimporting] = useState<AgendaSyncConfig | null>(null);
   const { data: configs = [], isLoading } = useQuery<AgendaSyncConfig[]>({
     queryKey: ["/api/agenda/sync-configs", clientId],
     queryFn: async () => {
@@ -1825,6 +2160,17 @@ function SyncSourcesSection({ clientId }: { clientId: string }) {
                       {/* Task #362 — "Refresh now" for read-only sources; "Sync now" otherwise */}
                       {isMsReadOnly(cfg) ? "Refresh now" : "Sync now"}
                     </Button>
+                    {isAdmin && isSpreadsheetSource(cfg) && (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => setReimporting(cfg)}
+                        data-testid={`button-reimport-source-${cfg.id}`}
+                        title={REIMPORT_DESCRIPTION}
+                      >
+                        Re-import from source
+                      </Button>
+                    )}
                     {/* Task #362 — Reconnect: opens the edit dialog to repair the MS connection */}
                     {isMsReadOnly(cfg) && (
                       <Button
@@ -1899,6 +2245,13 @@ function SyncSourcesSection({ clientId }: { clientId: string }) {
           onOpenChange={(o) => { setOpen(o); if (!o) setEditing(null); }}
           initial={editing ?? undefined}
           clientId={clientId}
+        />
+      )}
+      {reimporting && (
+        <ReimportDialog
+          config={reimporting}
+          open={!!reimporting}
+          onOpenChange={(isOpen) => { if (!isOpen) setReimporting(null); }}
         />
       )}
     </Card>

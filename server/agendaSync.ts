@@ -12,7 +12,7 @@
 // instead of being silently swallowed, so the UI can surface them.
 
 import { readFile } from "fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { parseIcs } from "@shared/agenda-ics";
 import { parseAgendaCsv } from "@shared/agenda-csv";
 import {
@@ -27,6 +27,7 @@ import {
 import { DEFAULT_SCHEDULE_TIMEZONE_FALLBACK } from "@shared/timezone-utils";
 import { parseWorkbookBuffer, readSheetSample } from "./spreadsheetParse";
 import { safeFetch, type SafeFetchOptions } from "./safeFetch";
+import { digestAgendaConnectionItems } from "./agendaItemDigest";
 import type {
   AgendaItem,
   AgendaSyncConfig,
@@ -63,6 +64,10 @@ export interface AtomicMicrosoftSyncParams {
   lastPublishedAt?: Date | null;
   /** Task #362 health contract — when the cTag last changed; null = no update. */
   lastCTagChangedAt?: Date | null;
+  expectedSnapshotId?: string | null;
+  expectedSnapshotVersion?: number | null;
+  expectedConfigUpdatedAt?: Date | null;
+  expectedItemStateDigest?: string | null;
 }
 
 export interface AtomicMicrosoftSyncResult {
@@ -74,6 +79,30 @@ export interface AtomicMicrosoftSyncResult {
   snapshotId: string;
   /** Snapshot version number (1-based, increments per successful sync). */
   snapshotVersion: number;
+}
+
+export interface AtomicAgendaSourceResetParams {
+  configId: string;
+  clientId: string;
+  newItems: InsertAgendaItem[];
+  configFingerprint: string;
+  publishedAt: Date;
+  expectedConfigUpdatedAt: Date | null;
+  expectedSnapshotId: string | null;
+  expectedSnapshotVersion: number | null;
+  expectedItemStateDigest: string;
+}
+
+export interface AtomicAgendaSourceResetResult {
+  inserted: number;
+  updated: number;
+  removed: number;
+  snapshotId: string;
+  snapshotVersion: number;
+  preResetSnapshotId: string;
+  preResetSnapshotVersion: number;
+  preResetItemCount: number;
+  itemCount: number;
 }
 
 export interface AgendaSyncStorage {
@@ -102,6 +131,7 @@ export interface AgendaSyncStorage {
   atomicMicrosoftSync?(
     params: AtomicMicrosoftSyncParams,
   ): Promise<AtomicMicrosoftSyncResult>;
+  atomicAgendaSourceReset?(params: AtomicAgendaSourceResetParams): Promise<AtomicAgendaSourceResetResult>;
   // Optional: prune old snapshots for a config after a successful sync.
   pruneOldAgendaSnapshots?(configId: string, keepLast: number): Promise<void>;
 }
@@ -456,6 +486,7 @@ export interface AgendaSyncDeps {
 // Multi-process deployments should use pg_try_advisory_xact_lock instead.
 const IN_FLIGHT_SYNCS = new Set<string>();
 const IN_FLIGHT_SYNC_COMPLETIONS = new Map<string, Promise<void>>();
+const RESET_IN_FLIGHT = new Set<string>();
 // Rate-limit map for manual /run requests (production only, per config).
 // Prevents an operator from hammering Refresh Now faster than the cooldown.
 export const MANUAL_RUN_COOLDOWN_MS = 30_000;
@@ -693,6 +724,9 @@ async function loadGridForConfig(
   if (XLSX_SOURCE_SET.has(config.sourceType)) {
     if (!content.bytes) throw new Error("No spreadsheet data was fetched.");
     const wb = await parseWorkbookBuffer(content.bytes);
+    if (config.sheetName && !wb.sheetNames.includes(config.sheetName)) {
+      throw new Error(`Configured worksheet "${config.sheetName}" was not found in the workbook. Available worksheets: ${wb.sheetNames.join(", ") || "(none)"}.`);
+    }
     return { grid: wb.getGrid(config.sheetName), sheetNames: wb.sheetNames };
   }
   return { grid: parseCsvToGrid(content.text ?? ""), sheetNames: [] };
@@ -715,6 +749,9 @@ async function loadPreviewGrid(
       sheetName: config.sheetName,
       maxRows,
     });
+    if (config.sheetName && !sample.sheetNames.includes(config.sheetName)) {
+      throw new Error(`Configured worksheet "${config.sheetName}" was not found in the workbook. Available worksheets: ${sample.sheetNames.join(", ") || "(none)"}.`);
+    }
     return {
       grid: sample.grid,
       sheetNames: sample.sheetNames,
@@ -1004,33 +1041,38 @@ export async function runAgendaSync(
   // in test-controlled environments.
   const trackPhase = isMsBacked && !deps.inFlightLock;
   let completeInFlight: (() => void) | undefined;
-  if (isMsBacked) {
-    if (lockSet.has(config.id)) {
-      // A manual request must be serialized after (not coalesced into) a
-      // background run so it can perform corrective reprocessing of an
-      // unchanged cTag. There is no durable "force" flag: if this process
-      // dies, the request fails and retrying it safely creates a new run.
-      if (forceRefresh) {
-        const completion = IN_FLIGHT_SYNC_COMPLETIONS.get(config.id);
-        if (!completion) {
-          result.error = "A sync is already in progress; retry the manual refresh.";
-          return result;
-        }
-        await completion;
-        return runAgendaSync(config, deps, options);
-      }
-      result.ok = true;
-      result.noChange = true;
-      return result;
+  const usesProcessGlobalLock = lockSet === IN_FLIGHT_SYNCS;
+  if (RESET_IN_FLIGHT.has(config.id)) {
+    const completion = IN_FLIGHT_SYNC_COMPLETIONS.get(config.id);
+    if (completion) {
+      await completion;
+      return runAgendaSync(config, deps, options);
     }
-    lockSet.add(config.id);
-    IN_FLIGHT_SYNC_COMPLETIONS.set(
-      config.id,
-      new Promise<void>((resolve) => {
-        completeInFlight = resolve;
-      }),
-    );
   }
+  if (lockSet.has(config.id)) {
+    // A manual request must be serialized after (not coalesced into) a
+    // background run so it can perform corrective reprocessing.
+    if (forceRefresh) {
+      const completion = IN_FLIGHT_SYNC_COMPLETIONS.get(config.id);
+      if (!completion) {
+        result.error = "A sync is already in progress; retry the manual refresh.";
+        return result;
+      }
+      await completion;
+      return runAgendaSync(config, deps, options);
+    }
+    result.ok = true;
+    result.noChange = true;
+    return result;
+  }
+  lockSet.add(config.id);
+  if (!usesProcessGlobalLock) IN_FLIGHT_SYNCS.add(config.id);
+  IN_FLIGHT_SYNC_COMPLETIONS.set(
+    config.id,
+    new Promise<void>((resolve) => {
+      completeInFlight = resolve;
+    }),
+  );
   if (trackPhase) IN_FLIGHT_PHASES.set(config.id, "checking");
 
   try {
@@ -1112,7 +1154,7 @@ export async function runAgendaSync(
     // tombstone + snapshot write + cTag record happens in one DB
     // transaction. A failure leaves the previous snapshot serving players
     // untouched. When not provided, fall back to the legacy per-row path.
-    if (isMsBacked && deps.storage.atomicMicrosoftSync) {
+    if (deps.storage.atomicMicrosoftSync) {
       const seenExternalIds = new Set(upstream.map((u) => u.externalId));
       const newItems: InsertAgendaItem[] = upstream.map((up) => ({
         clientId: config.clientId,
@@ -1165,6 +1207,10 @@ export async function runAgendaSync(
         configFingerprint,
         lastPublishedAt: now,
         lastCTagChangedAt: cTagChanged ? now : null,
+        expectedSnapshotId: config.lastGoodSnapshotId ?? null,
+        expectedSnapshotVersion: config.lastSnapshotVersion ?? null,
+        expectedConfigUpdatedAt: config.updatedAt ?? null,
+        expectedItemStateDigest: digestAgendaConnectionItems(existing),
       });
       result.inserted = atomicResult.inserted;
       result.updated = atomicResult.updated;
@@ -1304,12 +1350,252 @@ export async function runAgendaSync(
     return result;
   } finally {
     // Release in-process lock and clear phase so the next scheduler tick can run.
-    if (isMsBacked) {
-      lockSet.delete(config.id);
-      IN_FLIGHT_SYNC_COMPLETIONS.delete(config.id);
-      completeInFlight?.();
-    }
+    lockSet.delete(config.id);
+    if (!usesProcessGlobalLock) IN_FLIGHT_SYNCS.delete(config.id);
+    IN_FLIGHT_SYNC_COMPLETIONS.delete(config.id);
+    completeInFlight?.();
     if (trackPhase) IN_FLIGHT_PHASES.delete(config.id);
+  }
+}
+
+// ===== Source re-import / hard reset (two-phase replacement) =============
+const RESET_TOKEN_TTL_MS = 10 * 60_000;
+interface ResetTokenBinding {
+  configId: string;
+  clientId: string;
+  sourceDigest: string;
+  configFingerprint: string;
+  binding: string;
+  configUpdatedAt: string;
+  snapshotId: string | null;
+  snapshotVersion: number | null;
+  itemStateDigest: string;
+  expiresAt: number;
+}
+function resetSecret(): string {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) throw new Error("Reset preflight is unavailable: SESSION_SECRET is not configured.");
+  return secret;
+}
+function digestSource(content: FetchedContent): string {
+  const hash = createHash("sha256");
+  if (content.bytes) hash.update(content.bytes);
+  else hash.update(content.text ?? "", "utf8");
+  return hash.digest("hex");
+}
+function resetBinding(config: AgendaSyncConfig, timezone?: string): string {
+  return createHash("sha256").update(JSON.stringify({
+    id: config.id, clientId: config.clientId, sourceType: config.sourceType,
+    sourceUrl: config.sourceUrl ?? null, storedFilePath: config.storedFilePath ?? null,
+    microsoftAuth: config.microsoftAuth ?? false, msDriveId: config.msDriveId ?? null,
+    msItemId: config.msItemId ?? null, msSiteId: config.msSiteId ?? null,
+    parsing: computeAgendaParsingConfigFingerprint(config, timezone),
+  })).digest("hex");
+}
+function makeResetToken(config: AgendaSyncConfig, sourceDigest: string, fingerprint: string, rows: AgendaItem[], expiresAt: number): string {
+  const payload = Buffer.from(JSON.stringify({
+    v: 2, configId: config.id, clientId: config.clientId, sourceDigest,
+    configFingerprint: fingerprint, binding: resetBinding(config),
+    configUpdatedAt: (config.updatedAt ?? new Date(0)).toISOString(),
+    snapshotId: config.lastGoodSnapshotId ?? null,
+    snapshotVersion: config.lastSnapshotVersion ?? null,
+    itemStateDigest: digestAgendaConnectionItems(rows), expiresAt,
+  })).toString("base64url");
+  return `${payload}.${createHmac("sha256", resetSecret()).update(payload).digest("base64url")}`;
+}
+function readResetToken(token: string): ResetTokenBinding {
+  const [payload, signature] = String(token).split(".");
+  if (!payload || !signature) throw new Error("Invalid or expired reset preflight token.");
+  const expected = createHmac("sha256", resetSecret()).update(payload).digest("base64url");
+  const a = Buffer.from(signature), b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) throw new Error("Invalid or expired reset preflight token.");
+  let parsed: ResetTokenBinding & { v?: number };
+  try { parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")); }
+  catch { throw new Error("Invalid or expired reset preflight token."); }
+  if (parsed.v !== 2 || !parsed.configId || !parsed.clientId || !parsed.sourceDigest ||
+      !parsed.configFingerprint || !parsed.binding || !parsed.configUpdatedAt ||
+      !parsed.itemStateDigest || !Number.isFinite(parsed.expiresAt) || Date.now() > parsed.expiresAt) {
+    throw new Error("Invalid or expired reset preflight token.");
+  }
+  return parsed;
+}
+interface ResetParse {
+  content: FetchedContent;
+  upstream: ParsedUpstream[];
+  totalRows: number;
+  invalidRows: number;
+  skippedRows: number;
+  duplicateSourceIds: number;
+  timezone?: string;
+}
+class ResetValidationError extends Error {
+  constructor(message: string, readonly rows: Array<{ rowNumber: number; field?: string; reason: string }> = [], readonly duplicateSourceIds = 0, readonly totalRows = 0, readonly invalidSkippedRows = 0) {
+    super(message);
+  }
+}
+async function parseResetSource(config: AgendaSyncConfig, deps: AgendaSyncDeps): Promise<ResetParse> {
+  const content = await loadSourceContent(config, deps.fetchImpl ?? fetch, deps.safeFetchOptions, deps.resolveStoredPath, deps.graphFetch);
+  const timezone = await resolveTimezone(config, deps.storage);
+  if (config.sourceType === "ics" || config.sourceType === "google_sheets_csv") {
+    const parsed = await parseUpstreamForConfig(config, content, deps.storage);
+    if (parsed.warnings.length) throw new ResetValidationError(`Preflight rejected ${parsed.warnings.length} invalid source row(s).`, parsed.warnings.slice(0, 100).map((reason, i) => ({ rowNumber: i + 1, field: "session", reason: /date|time/i.test(reason) ? "invalid date/time" : "invalid source row" })), 0, parsed.items.length, parsed.warnings.length);
+    if (!parsed.items.length) throw new ResetValidationError("Preflight rejected a source with zero valid rows.");
+    const ids = new Set<string>();
+    for (const row of parsed.items) {
+      if (!row.externalId.trim()) throw new ResetValidationError("Preflight rejected a blank source ID.", [{ rowNumber: 1, field: "sourceId", reason: "blank source ID" }]);
+      if (ids.has(row.externalId)) throw new ResetValidationError("Preflight rejected duplicate source IDs.", [{ rowNumber: 1, field: "sourceId", reason: "duplicate source ID" }], 1, parsed.items.length);
+      ids.add(row.externalId);
+    }
+    return { content, upstream: parsed.items, totalRows: parsed.items.length, invalidRows: 0, skippedRows: 0, duplicateSourceIds: 0, timezone };
+  }
+  if (!config.columnMapping) throw new Error("Column mapping is required for this source.");
+  const missing = missingRequiredMappings(config.columnMapping);
+  if (missing.length) throw new Error(`Column mapping is incomplete — unmapped required fields: ${missing.join(", ")}.`);
+  const { grid } = await loadGridForConfig(config, content);
+  const { headers, dataRows } = extractGrid(grid, config.headerRowIndex ?? 0, config.firstDataRowIndex);
+  for (const [field, header] of Object.entries(config.columnMapping)) {
+    if (header && !headers.includes(header)) throw new Error(`Mapped column "${header}" for ${field} was not found in the configured worksheet.`);
+  }
+  const idIndex = config.externalIdColumn ? headers.indexOf(config.externalIdColumn) : -1;
+  if (config.externalIdColumn && idIndex < 0) throw new Error(`Configured source ID column "${config.externalIdColumn}" was not found.`);
+  if (config.startTimeColumn && !headers.includes(config.startTimeColumn)) throw new Error(`Configured start-time column "${config.startTimeColumn}" was not found.`);
+  if (config.endTimeColumn && !headers.includes(config.endTimeColumn)) throw new Error(`Configured end-time column "${config.endTimeColumn}" was not found.`);
+  const mapped = applyMapping(dataRows, { headers, mapping: config.columnMapping, externalIdColumn: config.externalIdColumn, timezone, dateFormatHint: config.dateFormatHint, startTimeColumn: config.startTimeColumn, endTimeColumn: config.endTimeColumn, dateBaseYear: config.dateBaseYear, dateBaseMonth: config.dateBaseMonth });
+  const upstream: ParsedUpstream[] = [];
+  const ids = new Set<string>();
+  let invalidRows = 0, skippedRows = 0;
+  const firstRow = (config.firstDataRowIndex ?? (config.headerRowIndex ?? 0) + 1) + 1;
+  const safeReason = (error?: string) => !error ? "invalid mapped row" : /start\/end|date/i.test(error) ? "invalid start/end date" : /status/i.test(error) ? "invalid status" : /title/i.test(error) ? "missing title" : "invalid mapped row";
+  for (let i = 0; i < mapped.length; i++) {
+    const row = mapped[i], rowNumber = firstRow + i;
+    if (row.status === "skipped") { skippedRows++; continue; }
+    if (idIndex >= 0) {
+      const id = cellToString(dataRows[i]?.[idIndex]).trim();
+      if (!id) throw new ResetValidationError(`Preflight rejected a blank source ID on row ${rowNumber}.`, [{ rowNumber, field: config.externalIdColumn ?? "sourceId", reason: "blank source ID" }]);
+      if (ids.has(id)) throw new ResetValidationError(`Preflight rejected duplicate source ID on row ${rowNumber}.`, [{ rowNumber, field: config.externalIdColumn ?? "sourceId", reason: "duplicate source ID" }], 1, mapped.length);
+      ids.add(id);
+    }
+    if (row.status === "error" || !row.item || !row.externalId) { invalidRows++; continue; }
+    if (idIndex >= 0) row.externalId = cellToString(dataRows[i]?.[idIndex]).trim();
+    else if (ids.has(row.externalId)) throw new ResetValidationError("Preflight rejected duplicate source ID.", [{ rowNumber, field: "sourceId", reason: "duplicate source ID" }], 1, mapped.length);
+    else ids.add(row.externalId);
+    upstream.push({ externalId: row.externalId, data: row.item });
+  }
+  if (invalidRows) {
+    const rows = mapped.map((row, i) => row.status === "error" ? { rowNumber: firstRow + i, field: "session", reason: safeReason(row.error) } : null).filter((row): row is { rowNumber: number; field: string; reason: string } => row !== null);
+    throw new ResetValidationError(`Preflight rejected ${invalidRows} invalid source row(s).`, rows, 0, mapped.length, invalidRows + skippedRows);
+  }
+  if (!upstream.length) throw new ResetValidationError("Preflight rejected a source with zero valid rows.");
+  return { content, upstream, totalRows: mapped.length, invalidRows, skippedRows, duplicateSourceIds: 0, timezone };
+}
+
+export interface AgendaSourceResetPreflight {
+  ok: boolean; preflightToken: string | null; configId: string; clientId: string; connectionName: string; expiresAt: string;
+  counts: { remoteRowsRead: number; validSessions: number; invalidSkippedRows: number; duplicateSourceIds: number };
+  currentCounts: { existingConnectionItems: number; manualOverridesToDiscard: number };
+  plannedCounts: { toInsert: number; toUpdate: number; toRemove: number };
+  workbook: { version: string | null; modifiedAt: string | null; lastCTagChangedAt: string | null };
+  stableExplicitId: { enabled: boolean; column: string | null };
+  blockers: string[]; warnings: string[];
+  diagnostics: { lastChecked: string | null; lastDownloaded: string | null; lastValidated: string | null; lastSuccessfullyPublished: string | null; rows: Array<{ rowNumber: number; field?: string; reason: string }> };
+}
+export interface AgendaSourceResetResult {
+  ok: boolean; inserted: number; updated: number; removed: number; imported: number; replaced: number; skippedErrors: number; manualOverridesDiscarded: number; skippedOrErrorRows: number;
+  counts: { imported: number; updatedReplaced: number; removed: number; manualOverridesDiscarded: number; skipped: number; errors: number };
+  preResetSnapshot?: { id: string; version: number; itemCount: number }; snapshot?: { id: string; version: number; itemCount: number }; newSnapshot?: { id: string; version: number; itemCount: number };
+  completedAt: string; snapshotId?: string; snapshotVersion?: number; error?: string;
+}
+export async function preflightAgendaSourceReset(config: AgendaSyncConfig, deps: AgendaSyncDeps): Promise<AgendaSourceResetPreflight> {
+  const checkedAt = deps.now ? deps.now() : new Date();
+  const expiresAt = checkedAt.getTime() + RESET_TOKEN_TTL_MS;
+  const existing = await deps.storage.getAgendaItemsBySyncConfig(config.id);
+  const version = deps.graphCTagFetch ? await deps.graphCTagFetch(config).catch(() => null) : null;
+  const base: AgendaSourceResetPreflight = {
+    ok: false, preflightToken: null, configId: config.id, clientId: config.clientId, connectionName: config.name,
+    expiresAt: new Date(expiresAt).toISOString(),
+    counts: { remoteRowsRead: 0, validSessions: 0, invalidSkippedRows: 0, duplicateSourceIds: 0 },
+    currentCounts: { existingConnectionItems: existing.length, manualOverridesToDiscard: existing.filter((row) => row.manualOverride).length },
+    plannedCounts: { toInsert: 0, toUpdate: 0, toRemove: 0 },
+    workbook: { version, modifiedAt: null, lastCTagChangedAt: config.lastCTagChangedAt?.toISOString?.() ?? null },
+    stableExplicitId: { enabled: !!config.externalIdColumn, column: config.externalIdColumn ?? null },
+    blockers: [], warnings: config.externalIdColumn ? [] : ["No stable explicit ID column is configured; row positions determine source identity."],
+    diagnostics: { lastChecked: config.lastSyncAt?.toISOString?.() ?? null, lastDownloaded: null, lastValidated: null, lastSuccessfullyPublished: config.lastPublishedAt?.toISOString?.() ?? null, rows: [] },
+  };
+  try {
+    const parsed = await parseResetSource(config, deps);
+    const fingerprint = computeAgendaParsingConfigFingerprint(config, parsed.timezone);
+    const sourceDigest = digestSource(parsed.content);
+    const seen = new Set(parsed.upstream.map((row) => row.externalId));
+    const ids = new Set(existing.map((row) => row.externalId).filter((id): id is string => !!id));
+    base.ok = true;
+    base.counts = { remoteRowsRead: parsed.totalRows, validSessions: parsed.upstream.length, invalidSkippedRows: parsed.invalidRows + parsed.skippedRows, duplicateSourceIds: parsed.duplicateSourceIds };
+    base.plannedCounts = { toInsert: parsed.upstream.filter((row) => !ids.has(row.externalId)).length, toUpdate: parsed.upstream.filter((row) => ids.has(row.externalId)).length, toRemove: existing.filter((row) => !row.externalId || !seen.has(row.externalId)).length };
+    base.diagnostics.lastDownloaded = checkedAt.toISOString();
+    base.diagnostics.lastValidated = checkedAt.toISOString();
+    base.preflightToken = makeResetToken(config, sourceDigest, fingerprint, existing, expiresAt);
+  } catch (error) {
+    const validation = error instanceof ResetValidationError ? error : null;
+    base.blockers.push((error instanceof Error ? error.message : String(error)).slice(0, 500));
+    if (validation) {
+      base.counts.remoteRowsRead = validation.totalRows;
+      base.counts.invalidSkippedRows = validation.invalidSkippedRows;
+      base.counts.duplicateSourceIds = validation.duplicateSourceIds;
+      base.diagnostics.rows = validation.rows.slice(0, 100);
+    }
+  }
+  return base;
+}
+async function executeAgendaSourceResetUnlocked(configId: string, token: string, deps: AgendaSyncDeps): Promise<AgendaSourceResetResult> {
+  const binding = readResetToken(token);
+  if (binding.configId !== configId) throw new Error("Reset preflight token does not match this source.");
+  const config = await deps.storage.getAgendaSyncConfig(configId);
+  if (!config) throw new Error("Sync config not found.");
+  if (config.clientId !== binding.clientId) throw new Error("Reset preflight token does not match this tenant.");
+  if (resetBinding(config) !== binding.binding) throw new Error("The sync configuration changed after preflight; run preflight again.");
+  const parsed = await parseResetSource(config, deps);
+  const sourceDigest = digestSource(parsed.content);
+  const fingerprint = computeAgendaParsingConfigFingerprint(config, parsed.timezone);
+  if (sourceDigest !== binding.sourceDigest || fingerprint !== binding.configFingerprint) throw new Error("The workbook or sync configuration changed after preflight; run preflight again.");
+  const newItems: InsertAgendaItem[] = parsed.upstream.map((row) => ({ clientId: config.clientId, ...row.data, externalSyncConfigId: config.id, externalId: row.externalId, manualOverride: false }));
+  const before = await deps.storage.getAgendaItemsBySyncConfig(config.id);
+  const manualOverridesDiscarded = before.filter((row) => row.manualOverride).length;
+  if (!deps.storage.atomicAgendaSourceReset) throw new Error("Transactional source reset storage is unavailable; no items were changed.");
+  const publishedAt = deps.now ? deps.now() : new Date();
+  const committed = await deps.storage.atomicAgendaSourceReset({
+    configId: config.id, clientId: config.clientId, newItems, configFingerprint: fingerprint, publishedAt,
+    expectedConfigUpdatedAt: new Date(binding.configUpdatedAt), expectedSnapshotId: binding.snapshotId,
+    expectedSnapshotVersion: binding.snapshotVersion, expectedItemStateDigest: binding.itemStateDigest,
+  });
+  const counts = { imported: committed.inserted, updatedReplaced: committed.updated, removed: committed.removed, manualOverridesDiscarded, skipped: parsed.skippedRows, errors: parsed.invalidRows };
+  return { ok: true, ...committed, imported: committed.inserted, replaced: committed.updated, skippedErrors: parsed.invalidRows + parsed.skippedRows, manualOverridesDiscarded, skippedOrErrorRows: parsed.invalidRows + parsed.skippedRows, counts,
+    preResetSnapshot: { id: committed.preResetSnapshotId, version: committed.preResetSnapshotVersion, itemCount: committed.preResetItemCount },
+    snapshot: { id: committed.snapshotId, version: committed.snapshotVersion, itemCount: committed.itemCount },
+    newSnapshot: { id: committed.snapshotId, version: committed.snapshotVersion, itemCount: committed.itemCount }, completedAt: publishedAt.toISOString() };
+}
+export async function executeAgendaSourceReset(configId: string, token: string, deps: AgendaSyncDeps): Promise<AgendaSourceResetResult> {
+  if (RESET_IN_FLIGHT.has(configId)) {
+    const completion = IN_FLIGHT_SYNC_COMPLETIONS.get(configId);
+    if (completion) await completion;
+    return executeAgendaSourceReset(configId, token, deps);
+  }
+  const lockSet = deps.inFlightLock ?? IN_FLIGHT_SYNCS;
+  if (lockSet.has(configId)) {
+    const completion = IN_FLIGHT_SYNC_COMPLETIONS.get(configId);
+    if (completion) { await completion; return executeAgendaSourceReset(configId, token, deps); }
+    throw new Error("A sync is already in progress; retry the reset.");
+  }
+  let complete!: () => void;
+  const completion = new Promise<void>((resolve) => { complete = resolve; });
+  const global = lockSet === IN_FLIGHT_SYNCS;
+  lockSet.add(configId);
+  if (!global) IN_FLIGHT_SYNCS.add(configId);
+  RESET_IN_FLIGHT.add(configId);
+  IN_FLIGHT_SYNC_COMPLETIONS.set(configId, completion);
+  try { return await executeAgendaSourceResetUnlocked(configId, token, deps); }
+  finally {
+    RESET_IN_FLIGHT.delete(configId); lockSet.delete(configId);
+    if (!global) IN_FLIGHT_SYNCS.delete(configId);
+    IN_FLIGHT_SYNC_COMPLETIONS.delete(configId); complete();
   }
 }
 
