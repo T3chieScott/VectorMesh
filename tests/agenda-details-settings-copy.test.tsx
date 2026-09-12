@@ -152,6 +152,8 @@ function clipboardValues(): Record<string, unknown> {
     showDescriptionDivider: true,
     descriptionTextAlign: "left",
     showPresenter: true,
+    showCompany: true,
+    showPresenterCompany: false,
     presenterVisibleLines: 4,
     speakerMarkerStyle: "square",
     showRoom: true,

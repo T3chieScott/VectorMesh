@@ -1240,9 +1240,14 @@ export const agendaItems = pgTable("agenda_items", {
   room: text("room"),
   track: text("track"),
   presenter: text("presenter"),
+  // Presenter affiliation is distinct from the session sponsor/company.
+  presenterCompany: text("presenter_company"),
   company: text("company"),
   startsAt: timestamp("starts_at").notNull(),
   endsAt: timestamp("ends_at").notNull(),
+  // Zero-based position in the upstream source. Nullable for manually-created
+  // rows; source rows use it to retain ordering when timestamps tie.
+  sourceOrdinal: integer("source_ordinal"),
   // scheduled | in_progress | delayed | cancelled | moved
   status: text("status").notNull().default("scheduled"),
   statusMessage: text("status_message"),
@@ -1287,7 +1292,12 @@ export const insertAgendaItemSchema = createInsertSchema(agendaItems)
     status: createAgendaStatusSchema(AGENDA_STATUSES).default("scheduled"),
   });
 export type InsertAgendaItem = z.infer<typeof insertAgendaItemSchema>;
-export type AgendaItem = typeof agendaItems.$inferSelect;
+// Keep the additive presenter-company field optional at the application
+// boundary while older fixtures and clients roll forward. Database rows
+// return it as nullable once migration 0041 is applied.
+export type AgendaItem = Omit<typeof agendaItems.$inferSelect, "presenterCompany"> & {
+  presenterCompany?: string | null;
+};
 
 // Task #210 — external agenda sync. Each row defines one upstream
 // source feeding agenda_items for a single site. The sync engine
@@ -1348,8 +1358,9 @@ export const AGENDA_MAPPABLE_FIELDS = [
   // Optional second name column. When mapped, it is combined with
   // `presenter` (first name) to form the speaker's full name.
   "presenterLastName",
-  // Optional company/organisation column, appended after the name
-  // ("Firstname Lastname, Company") so the display can show affiliation.
+  // Optional presenter affiliation/organisation column.
+  "presenterCompany",
+  // Optional session sponsor/company column.
   "company",
   "startsAt",
   "endsAt",
@@ -1717,7 +1728,7 @@ export const AGENDA_FONT_FAMILY_LABELS: Record<AgendaFontFamily, string> = {
 // (preserves the original hardcoded look).
 export const AGENDA_DEFAULT_FONT_STACK = AGENDA_FONT_FAMILY_STACKS.inter;
 
-// Hex-colour validator reused by all four nullable role colours.
+// Hex-colour validator reused by all nullable role colours.
 // Accepts `#rgb` or `#rrggbb`, case-insensitive.
 const HEX_COLOUR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
@@ -1762,6 +1773,7 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   sessionTitleColor: text("session_title_color"),
   descriptionColor: text("description_color"),
   presenterColor: text("presenter_color"),
+  presenterCompanyColor: text("presenter_company_color"),
   companyColor: text("company_color"),
   roomColor: text("room_color"),
   trackColor: text("track_color"),
@@ -1783,6 +1795,12 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   eventName: text("event_name"),
   showDescription: boolean("show_description").notNull().default(true),
   showPresenter: boolean("show_presenter").notNull().default(true),
+  // Session sponsor visibility is explicit. Existing rows are backfilled from
+  // showPresenter by migration 0041; new configs retain the historical
+  // sponsor-visible behaviour.
+  showCompany: boolean("show_company").notNull().default(true),
+  // Presenter affiliation is opt-in and independent of sponsor visibility.
+  showPresenterCompany: boolean("show_presenter_company").notNull().default(false),
   // Task #403 — keep the session summary independently configurable and bound
   // the rendered speaker viewport when presenter text is enabled.
   showSessionCount: boolean("show_session_count").notNull().default(true),
@@ -1901,6 +1919,7 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
     sessionTitleColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
     descriptionColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
     presenterColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
+    presenterCompanyColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
     companyColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
     roomColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
     trackColor: z.string().regex(HEX_COLOUR_RE, "Must be a hex colour like #ffffff").nullable().optional(),
@@ -1921,6 +1940,8 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
     // false is the default; missing/undefined preserves the DB DEFAULT FALSE.
     descriptionAutoScroll: z.boolean().optional(),
     showSessionCount: z.boolean().default(true),
+    showCompany: z.boolean().default(true),
+    showPresenterCompany: z.boolean().default(false),
     presenterVisibleLines: z.number().int().min(1).max(20).default(4),
     showDescriptionDivider: z.boolean().default(false),
     speakerMarkerStyle: z.enum(AGENDA_SPEAKER_MARKER_STYLES).default("microphone"),
@@ -1953,8 +1974,14 @@ export type InsertAgendaWidgetConfig = z.infer<typeof insertAgendaWidgetConfigSc
 // Keep this optional at the application boundary while additive migrations
 // roll out: pre-Task #398 fixtures and callers do not yet carry folderId.
 // Database rows always return `string | null` once 0035 is applied.
-export type AgendaWidgetConfig = Omit<typeof agendaWidgetConfigs.$inferSelect, "folderId"> & {
+export type AgendaWidgetConfig = Omit<
+  typeof agendaWidgetConfigs.$inferSelect,
+  "folderId" | "showCompany" | "showPresenterCompany" | "presenterCompanyColor"
+> & {
   folderId?: string | null;
+  showCompany?: boolean;
+  showPresenterCompany?: boolean;
+  presenterCompanyColor?: string | null;
 };
 
 // ============ WORLD FOOTBALL SWEEPSTAKE WALL (Task #286) ============

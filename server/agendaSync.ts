@@ -530,6 +530,7 @@ export const AGENDA_FAILURE_ALERT_THRESHOLD = 3;
 
 interface ParsedUpstream {
   externalId: string;
+  sourceOrdinal: number;
   data: Omit<InsertAgendaItem, "clientId" | "externalSyncConfigId">;
 }
 
@@ -931,7 +932,7 @@ async function parseUpstreamForConfig(
   if (sourceType === "ics") {
     const { items, errors } = parseIcs(content.text ?? "");
     return {
-      items: items.map((i) => ({ externalId: i.externalId, data: i.item })),
+      items: items.map((i) => ({ externalId: i.externalId, sourceOrdinal: i.sourceOrdinal, data: i.item })),
       warnings: errors,
     };
   }
@@ -949,7 +950,7 @@ async function parseUpstreamForConfig(
       // Synthesise a stable id from title+startsAt when the CSV doesn't
       // carry one (Google Sheets exports rarely include a UID column).
       const externalId = `${row.item.title}__${row.item.startsAt.toISOString()}`;
-      items.push({ externalId, data: row.item });
+      items.push({ externalId, sourceOrdinal: row.index, data: row.item });
     }
     return { items, warnings };
   }
@@ -993,7 +994,7 @@ async function parseUpstreamForConfig(
   const warnings: string[] = [];
   for (const r of mapped) {
     if (r.status === "ok" && r.item && r.externalId) {
-      items.push({ externalId: r.externalId, data: r.item });
+      items.push({ externalId: r.externalId, sourceOrdinal: r.rowNumber, data: r.item });
     } else if (r.status === "error") {
       warnings.push(`Row ${r.rowNumber + 1}: ${r.error}`);
     }
@@ -1163,9 +1164,11 @@ export async function runAgendaSync(
         room: up.data.room ?? null,
         track: up.data.track ?? null,
         presenter: up.data.presenter ?? null,
-         company: up.data.company ?? null,
+        presenterCompany: up.data.presenterCompany ?? null,
+        company: up.data.company ?? null,
         startsAt: up.data.startsAt,
         endsAt: up.data.endsAt,
+          sourceOrdinal: up.sourceOrdinal,
         status: up.data.status ?? "scheduled",
         statusMessage: up.data.statusMessage ?? null,
         externalSyncConfigId: config.id,
@@ -1245,9 +1248,11 @@ export async function runAgendaSync(
             room: up.data.room ?? null,
             track: up.data.track ?? null,
             presenter: up.data.presenter ?? null,
+            presenterCompany: up.data.presenterCompany ?? null,
             company: up.data.company ?? null,
             startsAt: up.data.startsAt,
             endsAt: up.data.endsAt,
+            sourceOrdinal: up.sourceOrdinal,
             status: up.data.status ?? "scheduled",
             statusMessage: up.data.statusMessage ?? null,
           });
@@ -1260,6 +1265,7 @@ export async function runAgendaSync(
             room: up.data.room ?? null,
             track: up.data.track ?? null,
             presenter: up.data.presenter ?? null,
+            presenterCompany: up.data.presenterCompany ?? null,
             company: up.data.company ?? null,
             startsAt: up.data.startsAt,
             endsAt: up.data.endsAt,
@@ -1267,6 +1273,7 @@ export async function runAgendaSync(
             statusMessage: up.data.statusMessage ?? null,
             externalSyncConfigId: config.id,
             externalId: up.externalId,
+            sourceOrdinal: up.sourceOrdinal,
             manualOverride: false,
           });
           result.inserted++;
@@ -1479,7 +1486,7 @@ async function parseResetSource(config: AgendaSyncConfig, deps: AgendaSyncDeps):
     if (idIndex >= 0) row.externalId = cellToString(dataRows[i]?.[idIndex]).trim();
     else if (ids.has(row.externalId)) throw new ResetValidationError("Preflight rejected duplicate source ID.", [{ rowNumber, field: "sourceId", reason: "duplicate source ID" }], 1, mapped.length);
     else ids.add(row.externalId);
-    upstream.push({ externalId: row.externalId, data: row.item });
+    upstream.push({ externalId: row.externalId, sourceOrdinal: row.rowNumber ?? i, data: row.item });
   }
   if (invalidRows) {
     const rows = mapped.map((row, i) => row.status === "error" ? { rowNumber: firstRow + i, field: "session", reason: safeReason(row.error) } : null).filter((row): row is { rowNumber: number; field: string; reason: string } => row !== null);
@@ -1556,7 +1563,7 @@ async function executeAgendaSourceResetUnlocked(configId: string, token: string,
   const sourceDigest = digestSource(parsed.content);
   const fingerprint = computeAgendaParsingConfigFingerprint(config, parsed.timezone);
   if (sourceDigest !== binding.sourceDigest || fingerprint !== binding.configFingerprint) throw new Error("The workbook or sync configuration changed after preflight; run preflight again.");
-  const newItems: InsertAgendaItem[] = parsed.upstream.map((row) => ({ clientId: config.clientId, ...row.data, externalSyncConfigId: config.id, externalId: row.externalId, manualOverride: false }));
+  const newItems: InsertAgendaItem[] = parsed.upstream.map((row) => ({ clientId: config.clientId, ...row.data, sourceOrdinal: row.sourceOrdinal, externalSyncConfigId: config.id, externalId: row.externalId, manualOverride: false }));
   const before = await deps.storage.getAgendaItemsBySyncConfig(config.id);
   const manualOverridesDiscarded = before.filter((row) => row.manualOverride).length;
   if (!deps.storage.atomicAgendaSourceReset) throw new Error("Transactional source reset storage is unavailable; no items were changed.");

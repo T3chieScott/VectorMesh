@@ -198,21 +198,25 @@ export function dedupeAgendaSessions(items: AgendaItem[]): AgendaItem[] {
       if (p > bp) base = it;
     }
 
-    // Presenters and presenting organisations are independent session fields.
-    // Preserve first-seen source order for both. Presenter matching retains its
-    // established case-insensitive behaviour; company matching follows source
-    // value conventions and is intentionally case-sensitive.
-    const seen = new Set<string>();
+    // Presenters and their affiliations are source-ordered pairs. Only an
+    // exact duplicate pair is removed. Matching is intentionally
+    // case-sensitive: `Ada` and `ada` are distinct source values.
+    const seenPairs = new Set<string>();
     const presenters: string[] = [];
+    const presenterCompanies: string[] = [];
     const seenCompanies = new Set<string>();
     const companies: string[] = [];
     for (const it of group) {
       const p = (it.presenter || "").trim();
-      if (p) {
-        const dedupeKey = p.toLowerCase();
-        if (!seen.has(dedupeKey)) {
-          seen.add(dedupeKey);
+      const presenterCompany = (it.presenterCompany || "").trim();
+      const pairKey = `${p}\u0000${presenterCompany}`;
+      if (p || presenterCompany) {
+        if (!seenPairs.has(pairKey)) {
+          seenPairs.add(pairKey);
+          // Keep empty slots so an affiliation-only source row remains
+          // aligned with its presenter when the values are joined below.
           presenters.push(p);
+          presenterCompanies.push(presenterCompany);
         }
       }
 
@@ -225,7 +229,8 @@ export function dedupeAgendaSessions(items: AgendaItem[]): AgendaItem[] {
 
     out.push({
       ...base,
-      presenter: presenters.length ? presenters.join("\n") : null,
+      presenter: presenters.some(Boolean) ? presenters.join("\n") : null,
+      presenterCompany: presenterCompanies.some(Boolean) ? presenterCompanies.join("\n") : null,
       company: companies.length ? companies.join(", ") : null,
       description: firstNonEmpty(group, (i) => i.description),
       track: firstNonEmpty(group, (i) => i.track),
@@ -233,6 +238,34 @@ export function dedupeAgendaSessions(items: AgendaItem[]): AgendaItem[] {
     });
   }
   return out;
+}
+
+/**
+ * Return the presenter/affiliation lines as deterministic pairs.
+ *
+ * Spreadsheet feeds can produce one row per speaker and the deduper stores
+ * those values as newline-separated strings. Keeping the two arrays aligned
+ * here prevents renderers from displaying all presenters followed by all
+ * affiliations. A missing value occupies its position in the pair, so a
+ * presenter-only or affiliation-only line never shifts the following line.
+ */
+export interface AgendaPresenterPair {
+  presenter: string | null;
+  presenterCompany: string | null;
+}
+
+export function resolveAgendaPresenterPairs(
+  item: Pick<AgendaItem, "presenter" | "presenterCompany">,
+): AgendaPresenterPair[] {
+  const splitLines = (value: string | null | undefined): string[] =>
+    value == null ? [] : value.split(/\r?\n/).map((line) => line.trim());
+  const presenters = splitLines(item.presenter);
+  const companies = splitLines(item.presenterCompany);
+  const count = Math.max(presenters.length, companies.length);
+  return Array.from({ length: count }, (_, index) => ({
+    presenter: presenters[index] || null,
+    presenterCompany: companies[index] || null,
+  })).filter((pair) => pair.presenter || pair.presenterCompany);
 }
 
 /**
@@ -248,6 +281,13 @@ export function dedupeAgendaSessions(items: AgendaItem[]): AgendaItem[] {
 function compareAgendaItems(a: AgendaItem, b: AgendaItem): number {
   const start = new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime();
   if (start !== 0) return start;
+  const aOrdinal = a.sourceOrdinal;
+  const bOrdinal = b.sourceOrdinal;
+  if (aOrdinal != null || bOrdinal != null) {
+    if (aOrdinal == null) return 1;
+    if (bOrdinal == null) return -1;
+    if (aOrdinal !== bOrdinal) return aOrdinal - bOrdinal;
+  }
   const room = (a.room || "").localeCompare(b.room || "");
   if (room !== 0) return room;
   const title = a.title.localeCompare(b.title);
@@ -257,7 +297,9 @@ function compareAgendaItems(a: AgendaItem, b: AgendaItem): number {
 
 export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
   const { config, now } = input;
-  const items = dedupeAgendaSessions(input.items);
+  // Sort before deduplication so merged presenter pairs retain upstream order
+  // even when a caller supplies rows from a non-ordered storage adapter.
+  const items = dedupeAgendaSessions([...input.items].sort(compareAgendaItems));
   const nowMs = now.getTime();
   const trailingMs =
     config.displayMode === "alert" ? 2 * 60 * 60 * 1000 : 15 * 60 * 1000;

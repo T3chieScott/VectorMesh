@@ -16,6 +16,70 @@ export const db = drizzle(pool, { schema });
 const BOOKING_MIGRATION_LOCK_KEY = 715129_001n;
 const AGENDA_CUSTOMISATION_MIGRATION_LOCK_KEY = 715129_039n;
 const AGENDA_GLOBAL_NOW_NEXT_MIGRATION_LOCK_KEY = 715129_040n;
+const AGENDA_PRESENTER_COMPANY_MIGRATION_LOCK_KEY = 715129_041n;
+
+/** Idempotent startup counterpart to migration 0041. */
+export async function ensureAgendaPresenterCompanyMigration(
+  migrationPool = pool,
+): Promise<void> {
+  const client = await migrationPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock($1)", [
+      AGENDA_PRESENTER_COMPANY_MIGRATION_LOCK_KEY.toString(),
+    ]);
+    const { rows: existingShowCompany } = await client.query<{ exists: boolean }>(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'agenda_widget_configs'
+          AND column_name = 'show_company'
+      ) AS exists
+    `);
+    const needsSponsorBackfill = !existingShowCompany[0]?.exists;
+    await client.query(`
+      ALTER TABLE agenda_items
+        ADD COLUMN IF NOT EXISTS presenter_company TEXT,
+        ADD COLUMN IF NOT EXISTS source_ordinal INTEGER;
+      ALTER TABLE agenda_widget_configs
+        ADD COLUMN IF NOT EXISTS show_company BOOLEAN NOT NULL DEFAULT TRUE,
+        ADD COLUMN IF NOT EXISTS show_presenter_company BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS presenter_company_color TEXT;
+    `);
+    // Only backfill on the transition where show_company is first added.
+    // Repeating this UPDATE on every boot would overwrite an operator's
+    // explicit sponsor-visibility choice.
+    if (needsSponsorBackfill) {
+      await client.query(`
+        UPDATE agenda_widget_configs
+          SET show_company = COALESCE(show_presenter, TRUE)
+      `);
+    }
+    await client.query(`
+      WITH ranked AS (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY external_sync_config_id
+                 ORDER BY starts_at ASC, id ASC
+               ) - 1 AS ordinal
+        FROM agenda_items
+        WHERE external_sync_config_id IS NOT NULL
+          AND source_ordinal IS NULL
+      )
+      UPDATE agenda_items a
+         SET source_ordinal = ranked.ordinal
+        FROM ranked
+       WHERE a.id = ranked.id
+    `);
+    await client.query("COMMIT");
+    console.log("[ensureAgendaPresenterCompanyMigration] agenda presenter/company columns ready");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 
 /** Idempotent startup counterpart to migration 0040. */
 export async function ensureAgendaGlobalNowNextMigration(): Promise<void> {

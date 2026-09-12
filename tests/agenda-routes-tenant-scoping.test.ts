@@ -78,6 +78,8 @@ function makeFakeStorage(initial: {
         room: data.room ?? null,
         track: data.track ?? null,
         presenter: data.presenter ?? null,
+        presenterCompany: data.presenterCompany ?? null,
+        company: data.company ?? null,
         startsAt: data.startsAt,
         endsAt: data.endsAt,
         status: (data.status ?? "scheduled") as AgendaItem["status"],
@@ -335,6 +337,8 @@ function makeItem(over: Partial<AgendaItem> & { id: string; clientId: string; st
     room: over.room ?? null,
     track: over.track ?? null,
     presenter: over.presenter ?? null,
+    presenterCompany: over.presenterCompany ?? null,
+    company: over.company ?? null,
     startsAt: over.startsAt,
     endsAt: over.endsAt,
     status: (over.status ?? "scheduled") as AgendaItem["status"],
@@ -1700,6 +1704,78 @@ test("account_manager — cannot move a sync config from an allowed site to a di
     const body = (await move.json()) as { error: string };
     assert.match(body.error, /target site/i);
     assert.equal(storage.syncConfigs.find((c) => c.id === "syncA")?.clientId, "siteA");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("agenda item create/edit and public fields preserve sponsor and presenter-company semantics", async () => {
+  const existing = makeItem({
+    id: "item-a",
+    clientId: "siteA",
+    title: "Existing",
+    room: "Hall",
+    presenter: "Ada Lovelace",
+    presenterCompany: "Analytical Engines",
+    company: "Session Sponsor",
+    startsAt: new Date("2026-06-01T10:00:00Z"),
+    endsAt: new Date("2026-06-01T11:00:00Z"),
+  });
+  const storage = makeFakeStorage({ items: [existing] });
+  const srv = await startTestServer({
+    storage,
+    user: { role: "site_user", allowedClientIds: ["siteA"] },
+  });
+  try {
+    const createdResponse = await fetch(`${srv.base}/api/agenda`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: "siteA",
+        title: "Created",
+        room: "Hall",
+        presenter: "Grace Hopper",
+        presenterCompany: "Compilers Inc.",
+        company: "Created Sponsor",
+        startsAt: "2026-06-01T12:00:00Z",
+        endsAt: "2026-06-01T13:00:00Z",
+      }),
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = (await createdResponse.json()) as Record<string, unknown>;
+    assert.equal(created.presenterCompany, "Compilers Inc.");
+    assert.equal(created.company, "Created Sponsor");
+
+    const editedResponse = await fetch(`${srv.base}/api/agenda/item-a`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        presenter: "Ada Lovelace",
+        presenterCompany: "Analytical Engines Research",
+        company: "Updated Sponsor",
+      }),
+    });
+    assert.equal(editedResponse.status, 200);
+    const edited = (await editedResponse.json()) as Record<string, unknown>;
+    assert.equal(edited.presenterCompany, "Analytical Engines Research");
+    assert.equal(edited.company, "Updated Sponsor");
+    assert.equal(edited.manualOverride, true);
+
+    const forbidden = await fetch(`${srv.base}/api/agenda`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: "siteB",
+        title: "Cross-tenant",
+        room: "Hall",
+        presenterCompany: "Do not persist",
+        company: "Do not persist",
+        startsAt: "2026-06-01T12:00:00Z",
+        endsAt: "2026-06-01T13:00:00Z",
+      }),
+    });
+    assert.equal(forbidden.status, 403);
+    assert.equal(storage.items.some((item) => item.title === "Cross-tenant"), false);
   } finally {
     await srv.close();
   }

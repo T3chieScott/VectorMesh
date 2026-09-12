@@ -3077,14 +3077,19 @@ export class DatabaseStorage implements IStorage {
 
   // Agenda Items (Task #208)
   async getAgendaItems(clientId?: string): Promise<AgendaItem[]> {
+    const agendaOrder = [
+      asc(agendaItems.startsAt),
+      sql`${agendaItems.sourceOrdinal} ASC NULLS LAST`,
+      asc(agendaItems.id),
+    ];
     if (clientId) {
       return db
         .select()
         .from(agendaItems)
         .where(eq(agendaItems.clientId, clientId))
-        .orderBy(asc(agendaItems.startsAt));
+        .orderBy(...agendaOrder);
     }
-    return db.select().from(agendaItems).orderBy(asc(agendaItems.startsAt));
+    return db.select().from(agendaItems).orderBy(...agendaOrder);
   }
 
   async getAgendaItem(id: string): Promise<AgendaItem | undefined> {
@@ -3259,9 +3264,11 @@ export class DatabaseStorage implements IStorage {
               room: item.room ?? null,
               track: item.track ?? null,
               presenter: item.presenter ?? null,
+              presenterCompany: item.presenterCompany ?? null,
               company: item.company ?? null,
               startsAt: item.startsAt,
               endsAt: item.endsAt,
+               sourceOrdinal: item.sourceOrdinal ?? null,
               status: (item.status ?? "scheduled") as AgendaItem["status"],
               statusMessage: item.statusMessage ?? null,
               updatedAt: new Date(),
@@ -3282,9 +3289,11 @@ export class DatabaseStorage implements IStorage {
             room: item.room ?? null,
             track: item.track ?? null,
             presenter: item.presenter ?? null,
+            presenterCompany: item.presenterCompany ?? null,
             company: item.company ?? null,
             startsAt: item.startsAt,
             endsAt: item.endsAt,
+            sourceOrdinal: item.sourceOrdinal ?? null,
             status: (item.status ?? "scheduled") as AgendaItem["status"],
             statusMessage: item.statusMessage ?? null,
             externalSyncConfigId: configId,
@@ -3320,7 +3329,11 @@ export class DatabaseStorage implements IStorage {
         .select()
         .from(agendaItems)
         .where(eq(agendaItems.externalSyncConfigId, configId))
-        .orderBy(asc(agendaItems.startsAt));
+        .orderBy(
+          asc(agendaItems.startsAt),
+          sql`${agendaItems.sourceOrdinal} ASC NULLS LAST`,
+          asc(agendaItems.id),
+        );
 
       // ── Step 4: Write snapshot with the authoritative effective payload. ──
       const [snap] = await tx
@@ -3455,9 +3468,11 @@ export class DatabaseStorage implements IStorage {
           room: item.room ?? null,
           track: item.track ?? null,
           presenter: item.presenter ?? null,
+          presenterCompany: item.presenterCompany ?? null,
           company: item.company ?? null,
           startsAt: item.startsAt,
           endsAt: item.endsAt,
+          sourceOrdinal: item.sourceOrdinal ?? null,
           status: (item.status ?? "scheduled") as AgendaItem["status"],
           statusMessage: item.statusMessage ?? null,
           externalSyncConfigId: params.configId,
@@ -3485,7 +3500,11 @@ export class DatabaseStorage implements IStorage {
         .select()
         .from(agendaItems)
         .where(eq(agendaItems.externalSyncConfigId, params.configId))
-        .orderBy(asc(agendaItems.startsAt));
+        .orderBy(
+          asc(agendaItems.startsAt),
+          sql`${agendaItems.sourceOrdinal} ASC NULLS LAST`,
+          asc(agendaItems.id),
+        );
       itemCount = effectiveRows.length;
       const [canonical] = await tx
         .insert(agendaItemSnapshots)
@@ -3561,7 +3580,11 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(agendaItems)
       .where(eq(agendaItems.externalSyncConfigId, syncConfigId))
-      .orderBy(asc(agendaItems.startsAt));
+      .orderBy(
+        asc(agendaItems.startsAt),
+        sql`${agendaItems.sourceOrdinal} ASC NULLS LAST`,
+        asc(agendaItems.id),
+      );
   }
 
   // Agenda Widget Configs (Task #208)
