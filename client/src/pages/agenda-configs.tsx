@@ -39,7 +39,7 @@ import {
    type AgendaFolder,
   type AgendaWidgetConfig,
 } from "@shared/schema";
-import { resolveAgendaItems } from "@shared/agenda-resolver";
+import { resolveAgendaItems, validateGlobalNowNextSequence } from "@shared/agenda-resolver";
 import { FontFamilySelect } from "@/components/font-family-select";
 import {
   buildAgendaSettingsClipboardPayload,
@@ -152,6 +152,7 @@ const configFormSchema = z.object({
   showDate: z.boolean(),
   showAgendaDayHeading: z.boolean(),
   showNowNextLabel: z.boolean(),
+  singleGlobalNowNext: z.boolean(),
   overrideNowNextColor: z.boolean(),
   nowNextColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Must be hex like #ffffff").or(z.literal("")),
 });
@@ -224,6 +225,7 @@ function defaultForm(c?: AgendaWidgetConfig): ConfigFormValues {
     showDate: c?.showDate ?? false,
     showAgendaDayHeading: c?.showAgendaDayHeading ?? false,
     showNowNextLabel: c?.showNowNextLabel ?? false,
+    singleGlobalNowNext: c?.singleGlobalNowNext ?? false,
     overrideNowNextColor: c?.overrideNowNextColor ?? false,
     nowNextColor: c?.nowNextColor ?? "",
   };
@@ -301,6 +303,7 @@ function toApiPayload(values: ConfigFormValues, clientId: string) {
     showDate: values.showDate,
     showAgendaDayHeading: values.showAgendaDayHeading,
     showNowNextLabel: values.showNowNextLabel,
+    singleGlobalNowNext: values.singleGlobalNowNext,
     overrideNowNextColor: values.overrideNowNextColor,
     nowNextColor: values.overrideNowNextColor && values.nowNextColor ? values.nowNextColor : null,
   };
@@ -420,6 +423,15 @@ function ConfigEditor({
   const previewItems = useMemo(
     () => resolveAgendaItems({ items: items.length ? items : buildSampleAgendaItems(clientId), config: previewConfig, now: testNow ?? new Date(), tz: clientTimezone }),
     [items, clientId, previewConfig, clientTimezone, testNow],
+  );
+  const globalNowNextValidation = useMemo(
+    () => validateGlobalNowNextSequence({
+      items,
+      config: previewConfig,
+      now: testNow ?? new Date(),
+      tz: clientTimezone,
+    }),
+    [items, previewConfig, clientTimezone, testNow],
   );
 
   const mutation = useMutation({
@@ -757,6 +769,44 @@ function ConfigEditor({
               <FormField control={form.control} name="statusFilter" render={({ field }) => (
                 <AgendaFilterMultiSelect label="Status filter" value={field.value} persistedValues={items.map((item) => item.status)} onChange={field.onChange} testId="button-status-filter" optionTestIdPrefix="status" />
               )} />
+              {watched.displayMode === "now_next" && (
+                <FormField control={form.control} name="singleGlobalNowNext" render={({ field }) => (
+                  <FormItem className="flex items-center justify-between gap-4 rounded-md border px-3 py-2">
+                    <div className="space-y-0.5">
+                      <FormLabel className="m-0">Single Now &amp; Next across selected rooms</FormLabel>
+                      <p className="text-xs text-muted-foreground">
+                        Combines sessions from all selected rooms into one chronological sequence, showing only one current session and one next session.
+                      </p>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        data-testid="switch-single-global-now-next"
+                      />
+                    </FormControl>
+                  </FormItem>
+                )} />
+              )}
+              {!globalNowNextValidation.valid && (
+                <div
+                  role="alert"
+                  className="rounded-md border border-destructive bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                  data-testid="warning-global-now-next-conflict"
+                >
+                  <p className="font-semibold">Overlapping sessions cannot be used with “Single Now &amp; Next across selected rooms”.</p>
+                  {globalNowNextValidation.invalidTiming.length > 0 && (
+                    <p className="mt-1">Some selected sessions have missing or invalid start/end times, so a reliable global sequence cannot be formed.</p>
+                  )}
+                  {globalNowNextValidation.conflicts.slice(0, 3).map(({ first, second }) => (
+                    <p key={`${first.id}-${second.id}`} className="mt-1 text-xs">
+                      {first.title} ({first.room || "No room"}, {new Date(first.startsAt).toLocaleTimeString()}–{new Date(first.endsAt).toLocaleTimeString()})
+                      {" overlaps "}
+                      {second.title} ({second.room || "No room"}, {new Date(second.startsAt).toLocaleTimeString()}–{new Date(second.endsAt).toLocaleTimeString()})
+                    </p>
+                  ))}
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-3">
                 <FormField control={form.control} name="timeWindowMinutes" render={({ field }) => (
                   <FormItem><FormLabel>Window (min)</FormLabel><FormControl><Input type="number" placeholder="∞" {...field} /></FormControl></FormItem>
@@ -1016,7 +1066,7 @@ function ConfigEditor({
 
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-                <Button type="submit" disabled={mutation.isPending} data-testid="button-save-config">
+                <Button type="submit" disabled={mutation.isPending || !globalNowNextValidation.valid} data-testid="button-save-config">
                   {mutation.isPending ? "Saving…" : "Save"}
                 </Button>
               </div>

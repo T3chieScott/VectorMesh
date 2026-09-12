@@ -20,6 +20,7 @@ import {
   type InsertAgendaSyncConfig,
 } from "@shared/schema";
 import { parseAgendaCsv } from "@shared/agenda-csv";
+import { validateGlobalNowNextSequence } from "@shared/agenda-resolver";
 import {
   runAgendaSync,
   previewAgendaSource,
@@ -213,6 +214,7 @@ export const PUBLIC_AGENDA_CONFIG_FIELDS = [
   "speakerCustomMarker",
   "descriptionTextAlign",
   "showNowNextLabel",
+  "singleGlobalNowNext",
   "overrideNowNextColor",
   "nowNextColor",
   "showSessionDuration",
@@ -1158,6 +1160,24 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
           return res.status(400).json({ error: "Folder does not belong to the specified site" });
         }
       }
+      const validation = validateGlobalNowNextSequence({
+        items: await storage.getAgendaItems(data.clientId),
+        config: {
+          ...data,
+          dayFilterDate: data.dayFilterDate ?? null,
+          timeWindowMinutes: data.timeWindowMinutes ?? null,
+          singleGlobalNowNext: data.singleGlobalNowNext ?? false,
+        },
+        now: now(),
+        tz: (await storage.getClient(data.clientId))?.timezone,
+      });
+      if (!validation.valid) {
+        return res.status(400).json({
+          error: "Overlapping or invalid session times cannot be used with Single Now & Next across selected rooms.",
+          conflicts: validation.conflicts,
+          invalidTiming: validation.invalidTiming,
+        });
+      }
       const config = await storage.createAgendaWidgetConfig(data);
       audit(req, "create", "agenda_widget_config", config.id, { name: config.name });
       res.status(201).json({ ...config, folderId: config.folderId ?? null });
@@ -1189,6 +1209,20 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
       } else if (data.folderId === undefined && data.clientId && data.clientId !== existing.clientId && existing.folderId) {
         // A folder never crosses a site boundary with its config.
         (data as Partial<typeof data> & { folderId: string | null }).folderId = null;
+      }
+      const effectiveConfig = { ...existing, ...data, clientId: effectiveClientId };
+      const validation = validateGlobalNowNextSequence({
+        items: await storage.getAgendaItems(effectiveClientId),
+        config: effectiveConfig,
+        now: now(),
+        tz: (await storage.getClient(effectiveClientId))?.timezone,
+      });
+      if (!validation.valid) {
+        return res.status(400).json({
+          error: "Overlapping or invalid session times cannot be used with Single Now & Next across selected rooms.",
+          conflicts: validation.conflicts,
+          invalidTiming: validation.invalidTiming,
+        });
       }
       const config = await storage.updateAgendaWidgetConfig(id, data);
       await invalidateAgendaDisplayCache(existing.clientId, id);
@@ -1356,6 +1390,7 @@ async function buildAgendaDisplayPayload(
         speakerCustomMarker: config.speakerCustomMarker ?? null,
         descriptionTextAlign: config.descriptionTextAlign ?? "left",
         showNowNextLabel: config.showNowNextLabel ?? false,
+        singleGlobalNowNext: config.singleGlobalNowNext ?? false,
         overrideNowNextColor: config.overrideNowNextColor ?? false,
         nowNextColor: config.nowNextColor ?? null,
         showSessionDuration: config.showSessionDuration ?? false,

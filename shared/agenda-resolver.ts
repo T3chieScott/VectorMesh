@@ -27,6 +27,7 @@ export interface AgendaResolveInput {
     | "timeWindowMinutes"
     | "dayFilter"
     | "dayFilterDate"
+    | "singleGlobalNowNext"
   >;
   now: Date;
   /**
@@ -244,6 +245,16 @@ export function dedupeAgendaSessions(items: AgendaItem[]): AgendaItem[] {
  * Per-speaker duplicate rows are collapsed up-front via
  * dedupeAgendaSessions so each session renders once.
  */
+function compareAgendaItems(a: AgendaItem, b: AgendaItem): number {
+  const start = new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime();
+  if (start !== 0) return start;
+  const room = (a.room || "").localeCompare(b.room || "");
+  if (room !== 0) return room;
+  const title = a.title.localeCompare(b.title);
+  if (title !== 0) return title;
+  return a.id.localeCompare(b.id);
+}
+
 export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
   const { config, now } = input;
   const items = dedupeAgendaSessions(input.items);
@@ -308,13 +319,7 @@ export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
   });
 
   // Sort by start asc, then by room, then by title for stable order.
-  filtered.sort((a, b) => {
-    const da = new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime();
-    if (da !== 0) return da;
-    const ra = (a.room || "").localeCompare(b.room || "");
-    if (ra !== 0) return ra;
-    return a.title.localeCompare(b.title);
-  });
+  filtered.sort(compareAgendaItems);
 
   // Day selection is deliberately last.  The candidate pool above has
   // already enforced every tenant-owned room/track/status/time facet, so a
@@ -370,6 +375,18 @@ export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
   // layout) so landscape / portrait / ultrawide renders honour the
   // operator's display-mode choice too.
   if (input.config.displayMode === "now_next") {
+    if (input.config.singleGlobalNowNext === true) {
+      // Validation retains malformed and overlapping candidates for operator
+      // diagnostics, but playback must remain bounded even when source data
+      // changes after a valid config was saved.
+      const playable = filtered.filter((item) => {
+        const start = new Date(item.startsAt).getTime();
+        const end = new Date(item.endsAt).getTime();
+        return Number.isFinite(start) && Number.isFinite(end) && end > start;
+      });
+      const { current, upcoming } = splitCurrentNext(playable, now);
+      return [...current.slice(0, 1), ...upcoming.slice(0, 1)].sort(compareAgendaItems);
+    }
     const { current, upcoming } = splitCurrentNext(filtered, now);
     const nextByRoom = new Map<string, AgendaItem>();
     for (const it of upcoming) {
@@ -379,14 +396,96 @@ export function resolveAgendaItems(input: AgendaResolveInput): AgendaItem[] {
     }
     const merged = [...current, ...Array.from(nextByRoom.values())];
     // Preserve start-asc order for the merged set.
-    merged.sort(
-      (a, b) =>
-        new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
-    );
+    merged.sort(compareAgendaItems);
     return merged;
   }
 
   return filtered;
+}
+
+export interface AgendaGlobalNowNextConflict {
+  first: AgendaItem;
+  second: AgendaItem;
+}
+
+export type AgendaGlobalNowNextValidation =
+  | { valid: true; conflicts: []; invalidTiming: [] }
+  | {
+      valid: false;
+      conflicts: AgendaGlobalNowNextConflict[];
+      invalidTiming: AgendaItem[];
+    };
+
+/**
+ * Validate the single cross-room Now/Next sequence after the config's existing
+ * filters. Adjacent sessions are valid; identical starts and containment are
+ * overlaps because startA < endB && startB < endA.
+ */
+export function validateGlobalNowNextSequence(
+  input: AgendaResolveInput,
+): AgendaGlobalNowNextValidation {
+  if (
+    input.config.displayMode !== "now_next" ||
+    input.config.singleGlobalNowNext !== true
+  ) {
+    return { valid: true, conflicts: [], invalidTiming: [] };
+  }
+
+  const filterKeys = (values: readonly unknown[]) =>
+    new Set(values.flatMap((value) => {
+      const normalized = normalizeAgendaFilterValue(value);
+      return normalized ? [agendaFilterValueKey(normalized)] : [];
+    }));
+  const rooms = filterKeys(input.config.roomFilter || []);
+  const tracks = filterKeys(input.config.trackFilter || []);
+  const statuses = filterKeys(input.config.statusFilter || []);
+  const matches = (value: unknown, filter: Set<string>) => {
+    if (!filter.size) return true;
+    const normalized = normalizeAgendaFilterValue(value);
+    return !!normalized && filter.has(agendaFilterValueKey(normalized));
+  };
+  const invalidTiming = dedupeAgendaSessions(input.items).filter((item) => {
+    if (
+      !matches(item.room, rooms) ||
+      !matches(item.track, tracks) ||
+      !matches(item.status, statuses)
+    ) return false;
+    const start = new Date(item.startsAt).getTime();
+    const end = new Date(item.endsAt).getTime();
+    return !Number.isFinite(start) || !Number.isFinite(end) || end <= start;
+  });
+
+  const candidates = resolveAgendaItems({
+    ...input,
+    config: {
+      ...input.config,
+      displayMode: "full",
+      singleGlobalNowNext: false,
+    },
+  }).sort(compareAgendaItems);
+  const validCandidates = candidates.filter((item) => {
+    const start = new Date(item.startsAt).getTime();
+    const end = new Date(item.endsAt).getTime();
+    return Number.isFinite(start) && Number.isFinite(end) && end > start;
+  });
+  const conflicts: AgendaGlobalNowNextConflict[] = [];
+  for (let firstIndex = 0; firstIndex < validCandidates.length; firstIndex++) {
+    const first = validCandidates[firstIndex];
+    const firstEnd = new Date(first.endsAt).getTime();
+    for (let secondIndex = firstIndex + 1; secondIndex < validCandidates.length; secondIndex++) {
+      const second = validCandidates[secondIndex];
+      const secondStart = new Date(second.startsAt).getTime();
+      if (secondStart >= firstEnd) break;
+      const secondEnd = new Date(second.endsAt).getTime();
+      const firstStart = new Date(first.startsAt).getTime();
+      if (firstStart < secondEnd && secondStart < firstEnd) {
+        conflicts.push({ first, second });
+      }
+    }
+  }
+  return conflicts.length || invalidTiming.length
+    ? { valid: false, conflicts, invalidTiming }
+    : { valid: true, conflicts: [], invalidTiming: [] };
 }
 
 /**

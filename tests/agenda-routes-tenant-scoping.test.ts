@@ -265,6 +265,7 @@ function makeConfig(over: Partial<AgendaWidgetConfig> & { id: string; clientId: 
     showCurrentTime: over.showCurrentTime ?? true,
     showEventName: over.showEventName ?? true,
     showAgendaDayHeading: over.showAgendaDayHeading ?? false,
+    singleGlobalNowNext: over.singleGlobalNowNext ?? false,
     overrideNowNextColor: over.overrideNowNextColor ?? false,
     nowNextColor: over.nowNextColor ?? null,
     createdAt: over.createdAt ?? new Date("2026-05-01T00:00:00Z"),
@@ -469,6 +470,69 @@ test("PATCH /api/agenda/configs/:id — site A user cannot reassign config to si
     assert.match(body.error, /target site/i);
     // Row was not moved.
     assert.equal(storage.configs[0].clientId, "siteA");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("agenda config API rejects overlapping global Now/Next on create and update", async () => {
+  const items = [
+    makeItem({
+      id: "room-a",
+      clientId: "siteA",
+      title: "Room A session",
+      room: "A",
+      startsAt: new Date("2026-06-01T10:00:00Z"),
+      endsAt: new Date("2026-06-01T11:00:00Z"),
+    }),
+    makeItem({
+      id: "room-b",
+      clientId: "siteA",
+      title: "Room B session",
+      room: "B",
+      startsAt: new Date("2026-06-01T10:30:00Z"),
+      endsAt: new Date("2026-06-01T11:30:00Z"),
+    }),
+  ];
+  const existing = makeConfig({
+    id: "existing",
+    clientId: "siteA",
+    displayMode: "now_next",
+    singleGlobalNowNext: false,
+  });
+  const storage = makeFakeStorage({
+    items,
+    configs: [existing],
+    clients: [{ id: "siteA", name: "Site A", timezone: "UTC" } as Client],
+  });
+  const srv = await startTestServer({
+    storage,
+    user: { role: "site_user", allowedClientIds: ["siteA"] },
+    now: () => new Date("2026-06-01T10:45:00Z"),
+  });
+  try {
+    const create = await fetch(`${srv.base}/api/agenda/configs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: "siteA",
+        name: "Invalid global",
+        displayMode: "now_next",
+        singleGlobalNowNext: true,
+      }),
+    });
+    assert.equal(create.status, 400);
+    assert.match(JSON.stringify(await create.json()), /overlapping or invalid session times/i);
+    assert.equal(storage.configs.length, 1);
+
+    const update = await fetch(`${srv.base}/api/agenda/configs/existing`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ singleGlobalNowNext: true }),
+    });
+    assert.equal(update.status, 400);
+    assert.match(JSON.stringify(await update.json()), /overlapping or invalid session times/i);
+    assert.equal(storage.configs[0].singleGlobalNowNext, false);
   } finally {
     await srv.close();
   }
@@ -734,6 +798,7 @@ test("GET /api/agenda/display/:configId — public payload never leaks internal 
     folderId: "admin-only-folder",
     timeWindowMinutes: 60, // an internal/admin-only filter — must NOT leak
     showAgendaDayHeading: true,
+    singleGlobalNowNext: true,
     overrideNowNextColor: true,
     nowNextColor: "#0ea5e9",
   });
@@ -782,6 +847,7 @@ test("GET /api/agenda/display/:configId — public payload never leaks internal 
       `public config payload drift — got ${JSON.stringify(cfgKeys)}`,
     );
     assert.equal(body.config.showAgendaDayHeading, true);
+    assert.equal(body.config.singleGlobalNowNext, true);
     assert.equal(body.config.overrideNowNextColor, true);
     assert.equal(body.config.nowNextColor, "#0ea5e9");
     assert.equal(body.effectiveDay, "2026-06-01");

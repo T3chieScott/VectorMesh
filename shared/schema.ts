@@ -1824,6 +1824,9 @@ export const agendaWidgetConfigs = pgTable("agenda_widget_configs", {
   // Task #394 — card-layout NOW/NEXT labels are opt-in. Totem and room-door
   // layouts retain their purpose-built headings instead.
   showNowNextLabel: boolean("show_now_next_label").notNull().default(false),
+  // Optional cross-room Now/Next sequence. FALSE preserves the established
+  // per-room selection for every existing configuration.
+  singleGlobalNowNext: boolean("single_global_now_next").notNull().default(false),
   // Task #404 — an explicitly opt-in colour for Now/Next labels. NULL means
   // the renderer uses its existing theme colour.
   overrideNowNextColor: boolean("override_now_next_color").notNull().default(false),
@@ -1934,6 +1937,7 @@ export const insertAgendaWidgetConfigSchema = createInsertSchema(agendaWidgetCon
       .optional(),
     descriptionTextAlign: z.enum(AGENDA_DESCRIPTION_TEXT_ALIGNS).default("left"),
     showNowNextLabel: z.boolean().default(false),
+    singleGlobalNowNext: z.boolean().default(false),
     showAgendaDayHeading: z.boolean().default(false),
     overrideNowNextColor: z.boolean().default(false),
     nowNextColor: z
