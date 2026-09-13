@@ -169,6 +169,18 @@ async function buildWorkbook(
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
+async function buildInvalidWorkbook(): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Agenda");
+  sheet.addRow(["ID", "Title", "Start", "End"]);
+  sheet.addRow(["malicious", "<script>alert(1)</script>", "not-a-date", "2026-06-02T10:00:00Z"]);
+  sheet.addRow(["formula", "=HYPERLINK(\"javascript:alert(1)\")", "not-a-date", "2026-06-02T10:00:00Z"]);
+  for (let index = 0; index < 30; index++) {
+    sheet.addRow([`invalid-${index}`, "", "not-a-date", "2026-06-02T10:00:00Z"]);
+  }
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+
 async function createUploadedSource(
   page: Page,
   clientId: string,
@@ -573,5 +585,62 @@ test.describe("Agenda source hard reset", () => {
       if (previousIdentity === undefined) delete process.env.REPLIT_IDENTITY;
       else process.env.REPLIT_IDENTITY = previousIdentity;
     }
+  });
+
+  test("invalid rows open a paged spreadsheet inspector at 1280x720 without enabling reset", async ({ page }) => {
+    test.setTimeout(120_000);
+    await cleanup();
+    const { email: adminEmail } = await admin();
+    await login(page, adminEmail);
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    const [{ id: clientId }] = await db.insert(clients).values({
+      name: `${PREFIX}invalid-site`,
+      timezone: "UTC",
+    }).returning({ id: clients.id });
+    await page.addInitScript((id) => {
+      localStorage.setItem("vectormesh_selected_client_id", id);
+    }, clientId);
+    const source = await createUploadedSource(
+      page,
+      clientId,
+      await buildInvalidWorkbook(),
+      `${PREFIX}invalid-workbook`,
+    );
+    await gotoWithColdViteTimeout(page, "/agenda", "domcontentloaded");
+    await expect(page.getByTestId(`sync-row-${source.id}`)).toBeVisible();
+    await page.getByTestId(`button-reimport-source-${source.id}`).click();
+    await expect(page.getByTestId("reimport-preflight")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("button-invalid-row-details")).toContainText(/invalid\/skipped rows/i);
+    await expect(page.getByTestId("button-confirm-reimport")).toBeDisabled();
+
+    await page.getByTestId("button-invalid-row-details").click();
+    const details = page.getByTestId(`dialog-invalid-rows-${source.id}`);
+    await expect(details).toBeVisible();
+    await expect(details.getByRole("grid")).toBeVisible();
+    await expect(details.locator("td.bg-red-50, td.dark\\:bg-red-950\\/40").first()).toBeVisible();
+    await expect(details.getByLabel("Invalid cell").first()).toBeVisible();
+    await expect(details.getByText(/&lt;script&gt;/)).toBeVisible();
+    expect(await details.locator("script").count()).toBe(0);
+
+    const scrollPanel = details.locator(".overflow-auto").first();
+    await scrollPanel.hover();
+    await page.mouse.wheel(0, 800);
+    await expect.poll(() => scrollPanel.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    const footerClose = details.getByRole("button", { name: "Close" }).first();
+    await expect(footerClose).toBeVisible();
+    await expect(footerClose).toBeInViewport();
+    await details.getByTestId("input-invalid-row-search").fill("not-a-date");
+    await expect(details).toContainText(/rows/i);
+    const next = details.getByRole("button", { name: "Next page" });
+    await expect(next).toBeEnabled();
+    await next.click();
+    await expect(details).toContainText(/Page 2/);
+    await footerClose.click();
+    await expect(details).toBeHidden();
+
+    const rowsResponse = await page.request.get(`/api/agenda?clientId=${clientId}`);
+    expect(rowsResponse.status()).toBe(200);
+    expect(await rowsResponse.json()).toEqual([]);
   });
 });
