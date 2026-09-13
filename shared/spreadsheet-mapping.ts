@@ -43,6 +43,11 @@ export interface MappedRowResult {
   item?: MappedAgendaItem;
   externalId?: string;
   error?: string;
+  /** Canonical, field-level validation failures for inspection surfaces. */
+  diagnostics?: Array<{
+    field: AgendaMappableField | "startTime" | "endTime";
+    message: string;
+  }>;
 }
 
 // ============ Cell helpers ============
@@ -319,6 +324,12 @@ const ISO_LOCAL = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2
 const SLASH_DATE =
   /^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})(?:[T ,]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?\s*([aApP][mM])?$/;
 
+function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (!Number.isInteger(year) || month < 1 || month > 12 || day < 1) return false;
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return day <= daysInMonth;
+}
+
 // Parse a single cell into an absolute Date, or null if unparseable.
 // Handles: JS Date cells, Excel serial numbers, ISO-8601 (with or
 // without offset), and slash/dot/dash dates (UK d/m/y by default, US
@@ -363,6 +374,14 @@ export function parseAgendaDate(value: Cell, opts: DateParseOptions): Date | nul
   }
 
   if (ISO_WITH_TZ.test(raw)) {
+    const tzParts = /^(\d{4})-(\d{1,2})-(\d{1,2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(raw);
+    if (
+      !tzParts ||
+      !isValidCalendarDate(+tzParts[1], +tzParts[2], +tzParts[3]) ||
+      +tzParts[4] > 23 ||
+      +tzParts[5] > 59 ||
+      +(tzParts[6] || 0) > 59
+    ) return null;
     const d = new Date(raw.replace(" ", "T"));
     return Number.isNaN(d.getTime()) ? null : d;
   }
@@ -372,7 +391,8 @@ export function parseAgendaDate(value: Cell, opts: DateParseOptions): Date | nul
     const [, y, mo, d, h, mi, s] = iso;
     const month = +mo;
     const day = +d;
-    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    if (!isValidCalendarDate(+y, month, day)) return null;
+    if (h != null && (+h > 23 || +mi > 59 || +(s || 0) > 59)) return null;
     return new Date(wallPartsToUtcMs(+y, month, day, +(h || 0), +(mi || 0), +(s || 0), tz));
   }
 
@@ -408,7 +428,7 @@ export function parseAgendaDate(value: Cell, opts: DateParseOptions): Date | nul
       if (pm && hour < 12) hour += 12;
       if (!pm && hour === 12) hour = 0;
     }
-    if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) {
+    if (!isValidCalendarDate(year, month, day) || hour > 23 || minute > 59 || second > 59) {
       return null;
     }
     return new Date(wallPartsToUtcMs(year, month, day, hour, minute, second, tz));
@@ -525,7 +545,7 @@ export function extractDateParts(
     const [, y, mo, d] = iso;
     const month = +mo;
     const day = +d;
-    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    if (!isValidCalendarDate(+y, month, day)) return null;
     return { year: +y, month, day };
   }
 
@@ -552,7 +572,7 @@ export function extractDateParts(
     }
     let year = +yrStr;
     if (year < 100) year += 2000;
-    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    if (!isValidCalendarDate(year, month, day)) return null;
     return { year, month, day };
   }
 
@@ -640,7 +660,11 @@ export function combineDateAndTime(
 ): Date | null {
   const dp = extractDateParts(dateCell, opts, base);
   if (!dp) return null;
-  const tp = parseTimeOfDay(timeCell) ?? { hour: 0, minute: 0, second: 0 };
+  const parsedTime = parseTimeOfDay(timeCell);
+  // A genuinely blank optional clock cell means midnight for backwards
+  // compatibility; a non-empty value that cannot be parsed is invalid.
+  if (!isCellEmpty(timeCell) && !parsedTime) return null;
+  const tp = parsedTime ?? { hour: 0, minute: 0, second: 0 };
   const tz =
     opts.timezone && isValidTimezone(opts.timezone)
       ? opts.timezone
@@ -734,47 +758,89 @@ export function applyMapping(
     const title = cellToString(get("title")).trim();
     const startCell = get("startsAt");
     const endCell = get("endsAt");
+    // Split date/time mode: combine the date cell with a separate time
+    // column. Keep these raw cells available to canonical diagnostics too.
+    const startTimeCell = startTimeIdx >= 0 ? row[startTimeIdx] : undefined;
+    const endTimeCell = endTimeIdx >= 0 ? row[endTimeIdx] : undefined;
 
-    if (!title || isCellEmpty(startCell) || isCellEmpty(endCell)) {
-      results.push({
-        rowNumber: r,
-        status: "error",
-        error: "title, startsAt and endsAt are required",
-      });
-      continue;
+    const diagnostics: Array<{
+      field: AgendaMappableField | "startTime" | "endTime";
+      message: string;
+    }> = [];
+    if (!title) diagnostics.push({ field: "title", message: "Title is required." });
+    if (isCellEmpty(startCell)) diagnostics.push({ field: "startsAt", message: "Start date/time is required." });
+    if (isCellEmpty(endCell)) diagnostics.push({ field: "endsAt", message: "End date/time is required." });
+    // In split date/time mode a blank clock column is not distinguishable from
+    // an intentional midnight in the source parser. For preflight inspection,
+    // however, a configured start/end time is an explicit required input.
+    if (startTimeIdx >= 0 && isCellEmpty(startTimeCell)) {
+      diagnostics.push({ field: "startTime", message: "Start time is required." });
+    }
+    if (endTimeIdx >= 0 && isCellEmpty(endTimeCell)) {
+      diagnostics.push({ field: "endTime", message: "End time is required." });
     }
 
     // Split date/time mode: combine the date cell with a separate time
     // cell. Otherwise parse a single date+time cell as before.
-    const startTimeCell = startTimeIdx >= 0 ? row[startTimeIdx] : undefined;
-    const endTimeCell = endTimeIdx >= 0 ? row[endTimeIdx] : undefined;
-    const startsAt =
+    const startsAt: Date | null =
       startTimeIdx >= 0
         ? combineDateAndTime(startCell, startTimeCell, dateOpts, base)
         : parseAgendaDate(startCell, dateOpts);
-    const endsAt =
+    const endsAt: Date | null =
       endTimeIdx >= 0
         ? combineDateAndTime(endCell, endTimeCell, dateOpts, base)
         : parseAgendaDate(endCell, dateOpts);
-    if (!startsAt || !endsAt) {
+    const invalidStartClock =
+      startTimeIdx >= 0 && !isCellEmpty(startTimeCell) && !parseTimeOfDay(startTimeCell);
+    const invalidEndClock =
+      endTimeIdx >= 0 && !isCellEmpty(endTimeCell) && !parseTimeOfDay(endTimeCell);
+    const invalidStartDate = !extractDateParts(startCell, dateOpts, base);
+    const invalidEndDate = !extractDateParts(endCell, dateOpts, base);
+    if (!startsAt && !isCellEmpty(startCell)) {
+      if (invalidStartClock) {
+        diagnostics.push({ field: "startTime", message: "Start time is invalid." });
+      }
+      if (!invalidStartClock || invalidStartDate) {
+        diagnostics.push({
+          field: "startsAt",
+          message: startTimeIdx >= 0 ? "Start date/time could not be parsed." : "Start date/time is invalid.",
+        });
+      }
+    }
+    if (!endsAt && !isCellEmpty(endCell)) {
+      if (invalidEndClock) {
+        diagnostics.push({ field: "endTime", message: "End time is invalid." });
+      }
+      if (!invalidEndClock || invalidEndDate) {
+        diagnostics.push({
+          field: "endsAt",
+          message: endTimeIdx >= 0 ? "End date/time could not be parsed." : "End date/time is invalid.",
+        });
+      }
+    }
+    if (
+      (!startsAt && !isCellEmpty(startCell)) ||
+      (!endsAt && !isCellEmpty(endCell))
+    ) {
       const shown = (dateCell: Cell, timeIdx: number, timeCell: Cell): string =>
         timeIdx >= 0
           ? `${cellToString(dateCell)} ${cellToString(timeCell)}`.trim()
           : cellToString(dateCell);
-      results.push({
-        rowNumber: r,
-        status: "error",
-        error: `Could not parse start/end date (got "${shown(startCell, startTimeIdx, startTimeCell)}" / "${shown(endCell, endTimeIdx, endTimeCell)}")`,
-      });
-      continue;
-    }
-    if (!(endsAt.getTime() > startsAt.getTime())) {
-      results.push({
-        rowNumber: r,
-        status: "error",
-        error: "endsAt must be after startsAt",
-      });
-      continue;
+      // Keep the raw values in the canonical human-readable error while
+      // allowing the status validator below to contribute another cell.
+      const startDateNeedsMessage = !startsAt && (!invalidStartClock || invalidStartDate);
+      const endDateNeedsMessage = !endsAt && (!invalidEndClock || invalidEndDate);
+      if (startDateNeedsMessage || endDateNeedsMessage) {
+        const useStart = startDateNeedsMessage;
+        diagnostics.push({
+          field: useStart ? "startsAt" : "endsAt",
+          message: `Could not parse start/end date (got "${shown(useStart ? startCell : endCell, useStart ? startTimeIdx : endTimeIdx, useStart ? startTimeCell : endTimeCell)}").`,
+        });
+      }
+    } else if (startsAt && endsAt && !(endsAt.getTime() > startsAt.getTime())) {
+      const orderMessage = "End date/time must be after start date/time.";
+      diagnostics.push({ field: "startsAt", message: orderMessage });
+      diagnostics.push({ field: "endsAt", message: orderMessage });
     }
 
     const room = cellToString(get("room")).trim() || null;
@@ -791,13 +857,19 @@ export function applyMapping(
     const presenter = fullName || null;
     const statusResult = agendaCustomStatusSchema.safeParse(normalizeStatus(get("status")));
     if (!statusResult.success) {
+      const statusMessage = `Invalid status: ${statusResult.error.issues[0]?.message ?? "must be valid"}`;
+      diagnostics.push({ field: "status", message: statusMessage });
+    }
+    if (diagnostics.length > 0) {
       results.push({
         rowNumber: r,
         status: "error",
-        error: `Invalid status: ${statusResult.error.issues[0]?.message ?? "must be valid"}`,
+        error: diagnostics.map((diagnostic) => diagnostic.message).join(" "),
+        diagnostics,
       });
       continue;
     }
+    if (!startsAt || !endsAt || !statusResult.success) continue;
     const item: MappedAgendaItem = {
       title,
       description: cellToString(get("description")).trim() || null,

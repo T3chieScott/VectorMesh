@@ -34,6 +34,7 @@ import {
   manualRunCooldownRemainingMs,
   recordManualRun,
   preflightAgendaSourceReset,
+  getAgendaSourceResetDiagnostics,
   executeAgendaSourceReset,
   type AgendaSyncStorage,
 } from "./agendaSync";
@@ -696,6 +697,43 @@ export function mountAgendaRoutes(app: Express, deps: AgendaRoutesDeps) {
     } catch (error) {
       audit(req, "agenda_source_reset_failed", "agenda_sync_config", id, { phase: "preflight", reason: "validation_failed" });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+  const resetDiagnosticPaths = [
+    "/api/agenda/sync-configs/:id/reset/preflight/diagnostics",
+    "/api/agenda/sync-configs/:id/hard-reset/preflight/diagnostics",
+    "/api/agenda/sync-configs/:id/reimport/preflight/diagnostics",
+  ];
+  app.get(resetDiagnosticPaths, requireAuth, requireAdmin, loadUserContext, async (req, res) => {
+    const id = getPathParam(req, "id");
+    try {
+      const config = await storage.getAgendaSyncConfig(id);
+      if (!config) return res.status(404).json({ error: "Sync config not found" });
+      if (!auth.canAccessClient(req, config.clientId)) {
+        return res.status(403).json({ error: "Access denied to this site" });
+      }
+      const token = getQueryString(req, "preflightToken", res);
+      if (token === null) return;
+      const search = getQueryString(req, "search", res);
+      if (search === null) return;
+      const pageRaw = getQueryString(req, "page", res);
+      if (pageRaw === null) return;
+      const pageSizeRaw = getQueryString(req, "pageSize", res);
+      if (pageSizeRaw === null) return;
+      const page = pageRaw ? Number(pageRaw) : undefined;
+      const pageSize = pageSizeRaw ? Number(pageSizeRaw) : undefined;
+      if ((page != null && !Number.isFinite(page)) || (pageSize != null && !Number.isFinite(pageSize))) {
+        return res.status(400).json({ error: "page and pageSize must be numbers" });
+      }
+      const result = await getAgendaSourceResetDiagnostics(id, token ?? "", {
+        storage: storage as AgendaSyncStorage,
+        now, resolveStoredPath, graphFetch, graphCTagFetch,
+      }, { page, pageSize, search: search ?? "" });
+      res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const status = /not found/i.test(message) ? 404 : /token|changed|stale|generation|expired|preflight/i.test(message) ? 409 : 400;
+      res.status(status).json({ error: message });
     }
   });
   const executeResetPaths = [

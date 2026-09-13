@@ -18,7 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Pencil, Trash2, Upload, Download, Calendar, FileText, RefreshCw, AlertTriangle, CheckCircle2, Link2, Lock, WifiOff, Archive } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, Download, Calendar, FileText, RefreshCw, AlertTriangle, CheckCircle2, Link2, Lock, WifiOff, Archive, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   AGENDA_STATUSES,
   AGENDA_SYNC_SOURCE_TYPES,
@@ -1722,7 +1722,19 @@ interface ReimportPreflightResponse {
     lastDownloaded: string | null;
     lastValidated: string | null;
     lastSuccessfullyPublished: string | null;
-    rows?: Array<{ rowNumber: number; field?: string; reason: string }>;
+    columns?: string[];
+    rows?: Array<{
+      rowNumber: number;
+      status: "error" | "skipped";
+      cells: Array<{ column: string; value: string; messages: string[] }>;
+      errors: string[];
+    }>;
+    totalRows?: number;
+    page?: number;
+    pageSize?: number;
+    pageCount?: number;
+    hasMore?: boolean;
+    search?: string;
   };
 }
 
@@ -1767,6 +1779,152 @@ function reimportEntryLabel(key: string): string {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function InvalidRowsDialog({
+  configId,
+  token,
+  initial,
+  open,
+  onOpenChange,
+}: {
+  configId: string;
+  token: string;
+  initial: ReimportPreflightResponse["diagnostics"];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [page, setPage] = useState(initial.page ?? 1);
+  const [search, setSearch] = useState("");
+  const [result, setResult] = useState(initial);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+    const params = new URLSearchParams({
+      preflightToken: token,
+      page: String(page),
+      pageSize: "25",
+      ...(search.trim() ? { search: search.trim() } : {}),
+    });
+    fetch(`/api/agenda/sync-configs/${encodeURIComponent(configId)}/reimport/preflight/diagnostics?${params}`, {
+      credentials: "include",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || "Could not load diagnostics");
+        }
+        return response.json();
+      })
+      .then((data: { columns: string[]; diagnostics: ReimportPreflightResponse["diagnostics"] }) => {
+        setResult({ ...data.diagnostics, columns: data.columns });
+      })
+      .catch((reason: unknown) => {
+        if ((reason as { name?: string })?.name !== "AbortError") {
+          setError(reason instanceof Error ? reason.message : String(reason));
+        }
+      })
+      .finally(() => setLoading(false));
+    return () => controller.abort();
+  }, [configId, token, page, search, open]);
+
+  const columns = result.columns ?? initial.columns ?? [];
+  const rows = result.rows ?? [];
+  const total = result.totalRows ?? initial.totalRows ?? rows.length;
+  const pageSize = result.pageSize ?? 25;
+  const pageCount = result.pageCount ?? initial.pageCount ?? Math.max(1, Math.ceil(total / pageSize));
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="flex h-[min(680px,calc(100dvh-2rem))] max-w-[min(1100px,calc(100vw-2rem))] flex-col gap-0 overflow-hidden p-0 sm:h-[min(680px,calc(100dvh-4rem))]"
+        data-testid={`dialog-invalid-rows-${configId}`}
+      >
+        <DialogHeader className="shrink-0 border-b px-5 py-4">
+          <DialogTitle>Invalid and skipped source rows</DialogTitle>
+          <DialogDescription>
+            Inspect mapped spreadsheet values that prevented this preflight from being confirmed. Values are shown as plain text.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex shrink-0 items-center gap-2 border-b px-5 py-3">
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <Input
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+              placeholder="Search rows, values, or errors"
+              aria-label="Search invalid rows"
+              data-testid="input-invalid-row-search"
+            />
+            <span className="shrink-0 text-sm text-muted-foreground" aria-live="polite">
+              {total} row{total === 1 ? "" : "s"}
+            </span>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto overscroll-contain px-5 py-3">
+            {loading && <p className="py-6 text-center text-sm text-muted-foreground">Loading rows…</p>}
+            {error && <p className="py-6 text-center text-sm text-destructive" role="alert">{error}</p>}
+            {!loading && !error && rows.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">No matching rows.</p>}
+            {!loading && !error && rows.length > 0 && (
+              <div className="overflow-x-auto rounded-md border">
+                <table className="min-w-full border-collapse text-sm" role="grid" aria-label="Invalid source rows">
+                  <thead className="sticky top-0 z-10 bg-muted">
+                    <tr>
+                      <th scope="col" className="whitespace-nowrap border-b px-3 py-2 text-left font-medium">Worksheet row</th>
+                      {columns.map((column) => <th scope="col" key={column} className="min-w-[180px] whitespace-nowrap border-b px-3 py-2 text-left font-medium">{column}</th>)}
+                      <th scope="col" className="min-w-[240px] whitespace-nowrap border-b px-3 py-2 text-left font-medium">Row errors</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row) => (
+                      <tr key={`${row.rowNumber}-${row.status}`} className="border-b align-top last:border-b-0">
+                        <th scope="row" className="whitespace-nowrap px-3 py-2 text-left font-medium">
+                          {row.rowNumber}
+                          {row.status === "skipped" && <span className="ml-1 text-xs font-normal text-muted-foreground">(skipped)</span>}
+                        </th>
+                        {columns.map((column) => {
+                          const cell = row.cells.find((candidate) => candidate.column === column);
+                          const invalid = !!cell?.messages.length;
+                          return (
+                            <td key={`${row.rowNumber}-${column}`} className={`max-w-[360px] whitespace-pre-wrap break-words px-3 py-2 ${invalid ? "bg-red-50 text-red-950 dark:bg-red-950/40 dark:text-red-100" : ""}`} title={cell?.value ?? ""}>
+                              <div className="flex items-start gap-1">
+                                {invalid && <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-label="Invalid cell" />}
+                                <span>{cell?.value || "—"}</span>
+                              </div>
+                              {invalid && <ul className="mt-1 list-disc pl-5 text-xs text-destructive">{cell.messages.map((message) => <li key={message}>{message}</li>)}</ul>}
+                            </td>
+                          );
+                        })}
+                        <td className="max-w-[360px] whitespace-pre-wrap break-words px-3 py-2 text-destructive">
+                          {row.errors.length ? <ul className="list-disc pl-5">{row.errors.map((message) => <li key={message}>{message}</li>)}</ul> : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-background px-5 py-3">
+            <span className="text-sm text-muted-foreground" aria-live="polite">Page {page} of {pageCount}</span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page <= 1 || loading} aria-label="Previous page"><ChevronLeft className="h-4 w-4" aria-hidden="true" />Previous</Button>
+              <Button variant="outline" size="sm" onClick={() => setPage((current) => current + 1)} disabled={!result.hasMore || loading} aria-label="Next page">Next<ChevronRight className="h-4 w-4" aria-hidden="true" /></Button>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ReimportDialog({
   config,
   open,
@@ -1780,6 +1938,7 @@ function ReimportDialog({
   const [preflight, setPreflight] = useState<ReimportPreflightResponse | null>(null);
   const [completion, setCompletion] = useState<ReimportCompletionResponse | null>(null);
   const [confirmation, setConfirmation] = useState("");
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const preflightStarted = useRef(false);
 
   const preflightMutation = useMutation({
@@ -1942,14 +2101,17 @@ function ReimportDialog({
                     <span className="text-muted-foreground">Last successfully published</span>
                     <span>{fmt(preflight.diagnostics.lastSuccessfullyPublished)}</span>
                   </div>
-                  {preflight.diagnostics.rows && preflight.diagnostics.rows.length > 0 && (
-                    <ul className="list-disc pl-5 text-sm text-amber-700 dark:text-amber-400" data-testid="reimport-diagnostic-rows">
-                      {preflight.diagnostics.rows.map((row, index) => (
-                        <li key={`${row.rowNumber}-${index}`}>
-                          Row {row.rowNumber}{row.field ? ` · ${row.field}` : ""}: {row.reason}
-                        </li>
-                      ))}
-                    </ul>
+                  {(preflight.counts.invalidSkippedRows ?? 0) > 0 && !!preflight.preflightToken && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="border-destructive text-destructive hover:bg-destructive/10"
+                      onClick={() => setDiagnosticsOpen(true)}
+                      data-testid="button-invalid-row-details"
+                    >
+                      <AlertTriangle className="mr-2 h-4 w-4" aria-hidden="true" />
+                      Inspect {preflight.counts.invalidSkippedRows} invalid/skipped row{preflight.counts.invalidSkippedRows === 1 ? "" : "s"}
+                    </Button>
                   )}
                 </section>
 
@@ -2010,6 +2172,15 @@ function ReimportDialog({
               </div>
             )}
           </>
+        )}
+        {preflight?.preflightToken && (preflight.counts.invalidSkippedRows ?? 0) > 0 && (
+          <InvalidRowsDialog
+            configId={config.id}
+            token={preflight.preflightToken}
+            initial={preflight.diagnostics}
+            open={diagnosticsOpen}
+            onOpenChange={setDiagnosticsOpen}
+          />
         )}
       </DialogContent>
     </Dialog>

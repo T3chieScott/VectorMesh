@@ -251,6 +251,47 @@ test("applyMapping errors when a required field is missing", () => {
   assert.equal(out[0].status, "error");
 });
 
+test("applyMapping returns canonical diagnostics for one and several invalid mapped cells", () => {
+  const headers = ["Title", "Start", "End", "Start clock", "End clock", "Status"];
+  const mapping = { title: "Title", startsAt: "Start", endsAt: "End", status: "Status" } as const;
+  const out = applyMapping([
+    ["", "not-a-date", "2026-06-02", "", "", "x".repeat(101)],
+    ["Talk", "2026-06-02", "2026-06-02", "12:00", "11:00", "scheduled"],
+  ], {
+    headers,
+    mapping,
+    timezone: TZ,
+    startTimeColumn: "Start clock",
+    endTimeColumn: "End clock",
+  });
+  assert.equal(out[0].status, "error");
+  const firstFields = out[0].diagnostics?.map((diagnostic) => diagnostic.field) ?? [];
+  assert.ok(firstFields.includes("title"));
+  assert.ok(firstFields.includes("startsAt"));
+  assert.ok(firstFields.includes("startTime"));
+  assert.ok(firstFields.includes("endTime"));
+  assert.ok(firstFields.includes("status"));
+  assert.ok(out[0].diagnostics?.some((diagnostic) => /invalid status/i.test(diagnostic.message)));
+  assert.equal(out[1].status, "error");
+  assert.deepEqual(
+    out[1].diagnostics?.filter((diagnostic) => /after/i.test(diagnostic.message)).map((diagnostic) => diagnostic.field),
+    ["startsAt", "endsAt"],
+  );
+});
+
+test("applyMapping reports invalid configured split clock values instead of treating them as midnight", () => {
+  const out = applyMapping([["Talk", "2026-06-02", "2026-06-02", "25:99", "10:00"]], {
+    headers: ["Title", "Start", "End", "Start clock", "End clock"],
+    mapping: { title: "Title", startsAt: "Start", endsAt: "End" },
+    timezone: TZ,
+    startTimeColumn: "Start clock",
+    endTimeColumn: "End clock",
+  });
+  assert.equal(out[0].status, "error");
+  assert.ok(out[0].diagnostics?.some((diagnostic) => diagnostic.field === "startTime"));
+  assert.equal(out[0].diagnostics?.some((diagnostic) => diagnostic.field === "startsAt"), false);
+});
+
 test("applyMapping errors when end is not after start", () => {
   const rows: Grid = [["Talk", "2026-06-02 10:00", "2026-06-02 09:00", "Hall A", ""]];
   const out = applyMapping(rows, { headers: HEADERS, mapping: { ...MAPPING }, timezone: TZ });

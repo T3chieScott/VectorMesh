@@ -33,6 +33,7 @@ import type {
   AgendaSyncConfig,
   Client,
   InsertAgendaItem,
+  AgendaMappableField,
 } from "@shared/schema";
 import { AGENDA_XLSX_SOURCE_TYPES } from "@shared/schema";
 
@@ -1434,6 +1435,22 @@ interface ResetParse {
   skippedRows: number;
   duplicateSourceIds: number;
   timezone?: string;
+  diagnostics: AgendaResetDiagnosticRow[];
+  diagnosticColumns: string[];
+}
+export interface AgendaResetDiagnosticCell {
+  column: string;
+  value: string;
+  messages: string[];
+}
+export interface AgendaResetDiagnosticRow {
+  rowNumber: number;
+  status: "error" | "skipped";
+  cells: AgendaResetDiagnosticCell[];
+  errors: string[];
+  /** Legacy summary retained for consumers that only rendered one reason. */
+  reason?: string;
+  field?: string;
 }
 class ResetValidationError extends Error {
   constructor(message: string, readonly rows: Array<{ rowNumber: number; field?: string; reason: string }> = [], readonly duplicateSourceIds = 0, readonly totalRows = 0, readonly invalidSkippedRows = 0) {
@@ -1453,47 +1470,139 @@ async function parseResetSource(config: AgendaSyncConfig, deps: AgendaSyncDeps):
       if (ids.has(row.externalId)) throw new ResetValidationError("Preflight rejected duplicate source IDs.", [{ rowNumber: 1, field: "sourceId", reason: "duplicate source ID" }], 1, parsed.items.length);
       ids.add(row.externalId);
     }
-    return { content, upstream: parsed.items, totalRows: parsed.items.length, invalidRows: 0, skippedRows: 0, duplicateSourceIds: 0, timezone };
+    return { content, upstream: parsed.items, totalRows: parsed.items.length, invalidRows: 0, skippedRows: 0, duplicateSourceIds: 0, timezone, diagnostics: [], diagnosticColumns: [] };
   }
-  if (!config.columnMapping) throw new Error("Column mapping is required for this source.");
-  const missing = missingRequiredMappings(config.columnMapping);
+  const columnMapping = config.columnMapping;
+  if (!columnMapping) throw new Error("Column mapping is required for this source.");
+  const missing = missingRequiredMappings(columnMapping);
   if (missing.length) throw new Error(`Column mapping is incomplete — unmapped required fields: ${missing.join(", ")}.`);
   const { grid } = await loadGridForConfig(config, content);
   const { headers, dataRows } = extractGrid(grid, config.headerRowIndex ?? 0, config.firstDataRowIndex);
-  for (const [field, header] of Object.entries(config.columnMapping)) {
+  for (const [field, header] of Object.entries(columnMapping)) {
     if (header && !headers.includes(header)) throw new Error(`Mapped column "${header}" for ${field} was not found in the configured worksheet.`);
   }
   const idIndex = config.externalIdColumn ? headers.indexOf(config.externalIdColumn) : -1;
   if (config.externalIdColumn && idIndex < 0) throw new Error(`Configured source ID column "${config.externalIdColumn}" was not found.`);
   if (config.startTimeColumn && !headers.includes(config.startTimeColumn)) throw new Error(`Configured start-time column "${config.startTimeColumn}" was not found.`);
   if (config.endTimeColumn && !headers.includes(config.endTimeColumn)) throw new Error(`Configured end-time column "${config.endTimeColumn}" was not found.`);
-  const mapped = applyMapping(dataRows, { headers, mapping: config.columnMapping, externalIdColumn: config.externalIdColumn, timezone, dateFormatHint: config.dateFormatHint, startTimeColumn: config.startTimeColumn, endTimeColumn: config.endTimeColumn, dateBaseYear: config.dateBaseYear, dateBaseMonth: config.dateBaseMonth });
+  const mapped = applyMapping(dataRows, { headers, mapping: columnMapping, externalIdColumn: config.externalIdColumn, timezone, dateFormatHint: config.dateFormatHint, startTimeColumn: config.startTimeColumn, endTimeColumn: config.endTimeColumn, dateBaseYear: config.dateBaseYear, dateBaseMonth: config.dateBaseMonth });
   const upstream: ParsedUpstream[] = [];
-  const ids = new Set<string>();
+  const ids = new Map<string, number[]>();
+  const diagnosticRows = new Map<number, AgendaResetDiagnosticRow>();
   let invalidRows = 0, skippedRows = 0;
   const firstRow = (config.firstDataRowIndex ?? (config.headerRowIndex ?? 0) + 1) + 1;
-  const safeReason = (error?: string) => !error ? "invalid mapped row" : /start\/end|date/i.test(error) ? "invalid start/end date" : /status/i.test(error) ? "invalid status" : /title/i.test(error) ? "missing title" : "invalid mapped row";
+  const diagnosticColumns = [...new Set([
+    ...Object.values(columnMapping),
+    config.startTimeColumn ?? "",
+    config.endTimeColumn ?? "",
+    config.externalIdColumn ?? "",
+  ].filter((column): column is string => !!column))];
+  const addDiagnostic = (
+    index: number,
+    status: "error" | "skipped",
+    errors: string[],
+    fieldMessages: Array<{ field: AgendaMappableField | "startTime" | "endTime" | "sourceId"; message: string }>,
+  ) => {
+    const sourceRow = dataRows[index] ?? [];
+    const cells = diagnosticColumns.map((column) => {
+      const sourceIndex = headers.indexOf(column);
+      const messages = fieldMessages
+        .filter((entry) => {
+          let mappedColumns: Array<string | null | undefined>;
+          if (entry.field === "sourceId") mappedColumns = [config.externalIdColumn];
+          else if (entry.field === "startTime") mappedColumns = [config.startTimeColumn];
+          else if (entry.field === "endTime") mappedColumns = [config.endTimeColumn];
+          else if (entry.message === "End date/time must be after start date/time.") {
+            mappedColumns = entry.field === "startsAt"
+              ? [columnMapping.startsAt, config.startTimeColumn]
+              : entry.field === "endsAt"
+                ? [columnMapping.endsAt, config.endTimeColumn]
+                : [columnMapping[entry.field as AgendaMappableField]];
+          } else {
+            mappedColumns = [columnMapping[entry.field as AgendaMappableField]];
+          }
+          return mappedColumns.includes(column);
+        })
+        .map((entry) => entry.message);
+      return {
+        column,
+        value: cellToString(sourceIndex >= 0 ? sourceRow[sourceIndex] : ""),
+        messages,
+      };
+    });
+    diagnosticRows.set(index, {
+      rowNumber: firstRow + index,
+      status,
+      cells,
+      errors,
+      reason: errors[0],
+    });
+  };
   for (let i = 0; i < mapped.length; i++) {
     const row = mapped[i], rowNumber = firstRow + i;
-    if (row.status === "skipped") { skippedRows++; continue; }
+    if (row.status === "skipped") {
+      skippedRows++;
+      addDiagnostic(i, "skipped", ["Blank mapped row was skipped."], []);
+      continue;
+    }
+    const fieldMessages: Array<{ field: AgendaMappableField | "startTime" | "endTime" | "sourceId"; message: string }> = (row.diagnostics ?? []).map((diagnostic) => ({
+      field: diagnostic.field,
+      message: diagnostic.message,
+    }));
     if (idIndex >= 0) {
       const id = cellToString(dataRows[i]?.[idIndex]).trim();
-      if (!id) throw new ResetValidationError(`Preflight rejected a blank source ID on row ${rowNumber}.`, [{ rowNumber, field: config.externalIdColumn ?? "sourceId", reason: "blank source ID" }]);
-      if (ids.has(id)) throw new ResetValidationError(`Preflight rejected duplicate source ID on row ${rowNumber}.`, [{ rowNumber, field: config.externalIdColumn ?? "sourceId", reason: "duplicate source ID" }], 1, mapped.length);
-      ids.add(id);
+      if (!id) fieldMessages.push({ field: "sourceId", message: "Configured source ID is blank." });
+      else ids.set(id, [...(ids.get(id) ?? []), i]);
     }
-    if (row.status === "error" || !row.item || !row.externalId) { invalidRows++; continue; }
+    if (row.status === "error" || !row.item || !row.externalId || fieldMessages.length > 0) {
+      invalidRows++;
+      addDiagnostic(i, "error", [
+        ...fieldMessages.map((entry) => entry.message),
+      ], fieldMessages);
+      continue;
+    }
     if (idIndex >= 0) row.externalId = cellToString(dataRows[i]?.[idIndex]).trim();
-    else if (ids.has(row.externalId)) throw new ResetValidationError("Preflight rejected duplicate source ID.", [{ rowNumber, field: "sourceId", reason: "duplicate source ID" }], 1, mapped.length);
-    else ids.add(row.externalId);
     upstream.push({ externalId: row.externalId, sourceOrdinal: row.rowNumber ?? i, data: row.item });
   }
-  if (invalidRows) {
-    const rows = mapped.map((row, i) => row.status === "error" ? { rowNumber: firstRow + i, field: "session", reason: safeReason(row.error) } : null).filter((row): row is { rowNumber: number; field: string; reason: string } => row !== null);
-    throw new ResetValidationError(`Preflight rejected ${invalidRows} invalid source row(s).`, rows, 0, mapped.length, invalidRows + skippedRows);
+  let duplicateSourceIds = 0;
+  for (const [id, indexes] of ids) {
+    if (indexes.length < 2) continue;
+    duplicateSourceIds++;
+    for (const index of indexes) {
+      const diagnostic = diagnosticRows.get(index);
+      const message = "Source ID is duplicated in this source.";
+      if (diagnostic) {
+        diagnostic.errors.push(message);
+        const cell = diagnostic.cells.find((entry) => entry.column === config.externalIdColumn);
+        if (cell && !cell.messages.includes(message)) cell.messages.push(message);
+      } else {
+        addDiagnostic(index, "error", [message], [{ field: "sourceId", message }]);
+      }
+    }
   }
-  if (!upstream.length) throw new ResetValidationError("Preflight rejected a source with zero valid rows.");
-  return { content, upstream, totalRows: mapped.length, invalidRows, skippedRows, duplicateSourceIds: 0, timezone };
+  // Duplicate IDs can invalidate rows that were otherwise valid. Remove them
+  // from the import set after collecting every implicated row for inspection.
+  if (duplicateSourceIds > 0) {
+    const duplicateIndexes = new Set([...ids.values()].filter((indexes) => indexes.length > 1).flat());
+    for (let i = upstream.length - 1; i >= 0; i--) {
+      if (duplicateIndexes.has(upstream[i].sourceOrdinal)) {
+        upstream.splice(i, 1);
+        invalidRows++;
+      }
+    }
+  }
+  if (!upstream.length && !invalidRows) throw new ResetValidationError("Preflight rejected a source with zero valid rows.");
+  return {
+    content,
+    upstream,
+    totalRows: mapped.length,
+    invalidRows,
+    skippedRows,
+    duplicateSourceIds,
+    timezone,
+    diagnostics: [...diagnosticRows.values()].sort((a, b) => a.rowNumber - b.rowNumber),
+    diagnosticColumns,
+  };
 }
 
 export interface AgendaSourceResetPreflight {
@@ -1504,7 +1613,20 @@ export interface AgendaSourceResetPreflight {
   workbook: { version: string | null; modifiedAt: string | null; lastCTagChangedAt: string | null };
   stableExplicitId: { enabled: boolean; column: string | null };
   blockers: string[]; warnings: string[];
-  diagnostics: { lastChecked: string | null; lastDownloaded: string | null; lastValidated: string | null; lastSuccessfullyPublished: string | null; rows: Array<{ rowNumber: number; field?: string; reason: string }> };
+  diagnostics: {
+    lastChecked: string | null;
+    lastDownloaded: string | null;
+    lastValidated: string | null;
+    lastSuccessfullyPublished: string | null;
+    columns: string[];
+    rows: AgendaResetDiagnosticRow[];
+    totalRows: number;
+    page: number;
+    pageSize: number;
+    pageCount?: number;
+    hasMore: boolean;
+    search: string;
+  };
 }
 export interface AgendaSourceResetResult {
   ok: boolean; inserted: number; updated: number; removed: number; imported: number; replaced: number; skippedErrors: number; manualOverridesDiscarded: number; skippedOrErrorRows: number;
@@ -1512,6 +1634,123 @@ export interface AgendaSourceResetResult {
   preResetSnapshot?: { id: string; version: number; itemCount: number }; snapshot?: { id: string; version: number; itemCount: number }; newSnapshot?: { id: string; version: number; itemCount: number };
   completedAt: string; snapshotId?: string; snapshotVersion?: number; error?: string;
 }
+const RESET_DIAGNOSTIC_PAGE_SIZE = 25;
+const RESET_DIAGNOSTIC_MAX_PAGE_SIZE = 100;
+const RESET_DIAGNOSTIC_MAX_CELL_BYTES = 512;
+const RESET_DIAGNOSTIC_MAX_MESSAGE_BYTES = 256;
+const RESET_DIAGNOSTIC_MAX_RESPONSE_BYTES = 100_000;
+
+/** Keep source values inert when they cross the JSON/UI diagnostic boundary. */
+export function sanitizeAgendaResetDiagnosticText(value: unknown, maxBytes = RESET_DIAGNOSTIC_MAX_CELL_BYTES): string {
+  let text = String(value ?? "")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  // A diagnostic value is rendered as text, but may also be copied by an
+  // operator. Escape markup and formula prefixes so it cannot become active
+  // in an HTML/CSV consumer.
+  text = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  while (Buffer.byteLength(text, "utf8") > maxBytes) text = text.slice(0, -1);
+  return text;
+}
+
+function sanitizeResetDiagnosticRow(row: AgendaResetDiagnosticRow): AgendaResetDiagnosticRow {
+  return {
+    rowNumber: row.rowNumber,
+    status: row.status,
+    errors: row.errors.map((error) => sanitizeAgendaResetDiagnosticText(error, RESET_DIAGNOSTIC_MAX_MESSAGE_BYTES)),
+    reason: row.reason ? sanitizeAgendaResetDiagnosticText(row.reason, RESET_DIAGNOSTIC_MAX_MESSAGE_BYTES) : undefined,
+    field: row.field ? sanitizeAgendaResetDiagnosticText(row.field, RESET_DIAGNOSTIC_MAX_CELL_BYTES) : undefined,
+    cells: row.cells.map((cell) => ({
+      column: sanitizeAgendaResetDiagnosticText(cell.column, RESET_DIAGNOSTIC_MAX_CELL_BYTES),
+      value: sanitizeAgendaResetDiagnosticText(cell.value),
+      messages: cell.messages.map((message) => sanitizeAgendaResetDiagnosticText(message, RESET_DIAGNOSTIC_MAX_MESSAGE_BYTES)),
+    })),
+  };
+}
+
+interface AgendaResetDiagnosticPage {
+  rows: AgendaResetDiagnosticRow[];
+  totalRows: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+  hasMore: boolean;
+  search: string;
+}
+
+export function paginateAgendaResetDiagnostics(
+  sourceRows: AgendaResetDiagnosticRow[],
+  options: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    /** Build the complete API/preflight envelope for byte-budget accounting. */
+    pageEnvelope?: (page: AgendaResetDiagnosticPage) => unknown;
+  } = {},
+): AgendaResetDiagnosticPage {
+  const search = String(options.search ?? "").trim().slice(0, 100).toLocaleLowerCase("en-US");
+  const pageSize = Math.min(
+    RESET_DIAGNOSTIC_MAX_PAGE_SIZE,
+    Math.max(1, Math.floor(Number(options.pageSize) || RESET_DIAGNOSTIC_PAGE_SIZE)),
+  );
+  const page = Math.max(1, Math.floor(Number(options.page) || 1));
+  const filtered = search
+    ? sourceRows.filter((row) => JSON.stringify(row).toLocaleLowerCase("en-US").includes(search))
+    : sourceRows;
+  // Build deterministic byte-safe pages from the complete filtered sequence.
+  // A previous implementation selected page * requestedPageSize first and
+  // then removed oversized tail rows, which made those rows unreachable:
+  // page 2 skipped the rows removed from page 1. Packing all pages first is a
+  // cursor-like contract with stable boundaries for the same search/result.
+  const sanitizedRows = filtered.map(sanitizeResetDiagnosticRow);
+  const pages: AgendaResetDiagnosticRow[][] = [];
+  let currentPage: AgendaResetDiagnosticRow[] = [];
+  // This upper bound is intentionally used while packing so the eventual
+  // pageCount metadata can only shrink. It reserves bytes for the complete
+  // envelope, not just the rows array.
+  const pageCountUpperBound = Math.max(1, filtered.length);
+  const measure = (rows: AgendaResetDiagnosticRow[]): number => {
+    const pageResult: AgendaResetDiagnosticPage = {
+      rows,
+      totalRows: filtered.length,
+      // Use the widest possible metadata representation while packing.
+      // Otherwise page 10 could be one byte larger than page 9 and cause a
+      // different boundary when requested independently.
+      page: pageCountUpperBound,
+      pageSize,
+      pageCount: pageCountUpperBound,
+      hasMore: true,
+      search,
+    };
+    const envelope = options.pageEnvelope ? options.pageEnvelope(pageResult) : { rows };
+    return Buffer.byteLength(JSON.stringify(envelope), "utf8");
+  };
+  for (const row of sanitizedRows) {
+    const candidate = [...currentPage, row];
+    const exceedsBytes = measure(candidate) > RESET_DIAGNOSTIC_MAX_RESPONSE_BYTES;
+    if (currentPage.length > 0 && (currentPage.length >= pageSize || exceedsBytes)) {
+      pages.push(currentPage);
+      currentPage = [row];
+    } else {
+      currentPage = candidate;
+    }
+  }
+  if (currentPage.length > 0) pages.push(currentPage);
+  const pageRows = pages[page - 1] ?? [];
+  return {
+    rows: pageRows,
+    totalRows: filtered.length,
+    page,
+    pageSize,
+    pageCount: Math.max(1, pages.length),
+    hasMore: page < pages.length,
+    search,
+  };
+}
+
 export async function preflightAgendaSourceReset(config: AgendaSyncConfig, deps: AgendaSyncDeps): Promise<AgendaSourceResetPreflight> {
   const checkedAt = deps.now ? deps.now() : new Date();
   const expiresAt = checkedAt.getTime() + RESET_TOKEN_TTL_MS;
@@ -1526,7 +1765,19 @@ export async function preflightAgendaSourceReset(config: AgendaSyncConfig, deps:
     workbook: { version, modifiedAt: null, lastCTagChangedAt: config.lastCTagChangedAt?.toISOString?.() ?? null },
     stableExplicitId: { enabled: !!config.externalIdColumn, column: config.externalIdColumn ?? null },
     blockers: [], warnings: config.externalIdColumn ? [] : ["No stable explicit ID column is configured; row positions determine source identity."],
-    diagnostics: { lastChecked: config.lastSyncAt?.toISOString?.() ?? null, lastDownloaded: null, lastValidated: null, lastSuccessfullyPublished: config.lastPublishedAt?.toISOString?.() ?? null, rows: [] },
+    diagnostics: {
+      lastChecked: config.lastSyncAt?.toISOString?.() ?? null,
+      lastDownloaded: null,
+      lastValidated: null,
+      lastSuccessfullyPublished: config.lastPublishedAt?.toISOString?.() ?? null,
+      columns: [],
+      rows: [],
+      totalRows: 0,
+      page: 1,
+      pageSize: RESET_DIAGNOSTIC_PAGE_SIZE,
+      hasMore: false,
+      search: "",
+    },
   };
   try {
     const parsed = await parseResetSource(config, deps);
@@ -1534,12 +1785,30 @@ export async function preflightAgendaSourceReset(config: AgendaSyncConfig, deps:
     const sourceDigest = digestSource(parsed.content);
     const seen = new Set(parsed.upstream.map((row) => row.externalId));
     const ids = new Set(existing.map((row) => row.externalId).filter((id): id is string => !!id));
-    base.ok = true;
+    const blockingDiagnostics = parsed.diagnostics.filter((row) => row.status === "error");
+    base.ok = blockingDiagnostics.length === 0;
     base.counts = { remoteRowsRead: parsed.totalRows, validSessions: parsed.upstream.length, invalidSkippedRows: parsed.invalidRows + parsed.skippedRows, duplicateSourceIds: parsed.duplicateSourceIds };
     base.plannedCounts = { toInsert: parsed.upstream.filter((row) => !ids.has(row.externalId)).length, toUpdate: parsed.upstream.filter((row) => ids.has(row.externalId)).length, toRemove: existing.filter((row) => !row.externalId || !seen.has(row.externalId)).length };
     base.diagnostics.lastDownloaded = checkedAt.toISOString();
     base.diagnostics.lastValidated = checkedAt.toISOString();
+    base.diagnostics.columns = parsed.diagnosticColumns.map((column) => sanitizeAgendaResetDiagnosticText(column));
+    if (blockingDiagnostics.length > 0) {
+      base.blockers.push(`Preflight rejected ${parsed.invalidRows} invalid source row(s).`);
+      if (parsed.duplicateSourceIds > 0) {
+        base.blockers.push(`Preflight found ${parsed.duplicateSourceIds} duplicated source ID value(s).`);
+      }
+    }
+    // The signed identity is intentionally issued even for row-level
+    // validation failures. It authorizes read-only diagnostic pages while the
+    // execute path remains disabled and revalidates before any write.
     base.preflightToken = makeResetToken(config, sourceDigest, fingerprint, existing, expiresAt);
+    const diagnosticPage = paginateAgendaResetDiagnostics(parsed.diagnostics, {
+      pageEnvelope: (page) => ({
+        ...base,
+        diagnostics: { ...base.diagnostics, ...page },
+      }),
+    });
+    base.diagnostics = { ...base.diagnostics, ...diagnosticPage };
   } catch (error) {
     const validation = error instanceof ResetValidationError ? error : null;
     base.blockers.push((error instanceof Error ? error.message : String(error)).slice(0, 500));
@@ -1547,11 +1816,74 @@ export async function preflightAgendaSourceReset(config: AgendaSyncConfig, deps:
       base.counts.remoteRowsRead = validation.totalRows;
       base.counts.invalidSkippedRows = validation.invalidSkippedRows;
       base.counts.duplicateSourceIds = validation.duplicateSourceIds;
-      base.diagnostics.rows = validation.rows.slice(0, 100);
+      base.diagnostics.rows = validation.rows.slice(0, RESET_DIAGNOSTIC_PAGE_SIZE).map((row) => ({
+        rowNumber: row.rowNumber,
+        status: "error",
+        errors: [sanitizeAgendaResetDiagnosticText(row.reason, RESET_DIAGNOSTIC_MAX_MESSAGE_BYTES)],
+        cells: [],
+        reason: sanitizeAgendaResetDiagnosticText(row.reason, RESET_DIAGNOSTIC_MAX_MESSAGE_BYTES),
+        field: row.field,
+      }));
+      base.diagnostics.totalRows = validation.rows.length;
+      base.diagnostics.hasMore = validation.rows.length > RESET_DIAGNOSTIC_PAGE_SIZE;
     }
   }
   return base;
 }
+
+/**
+ * Read one deterministic diagnostics page for a preflight. The opaque HMAC
+ * token is both the authorization and the source/config revision binding:
+ * the source is fetched and parsed again, and a changed digest/fingerprint
+ * invalidates the page rather than serving stale workbook values.
+ */
+export async function getAgendaSourceResetDiagnostics(
+  configId: string,
+  token: string,
+  deps: AgendaSyncDeps,
+  options: { page?: number; pageSize?: number; search?: string } = {},
+): Promise<{
+  columns: string[];
+  diagnostics: ReturnType<typeof paginateAgendaResetDiagnostics>;
+}> {
+  const binding = readResetToken(token);
+  if (binding.configId !== configId) throw new Error("Reset preflight token does not match this source.");
+  const config = await deps.storage.getAgendaSyncConfig(configId);
+  if (!config) throw new Error("Sync config not found.");
+  if (config.clientId !== binding.clientId) throw new Error("Reset preflight token does not match this tenant.");
+  if (resetBinding(config) !== binding.binding) {
+    throw new Error("The sync configuration changed after preflight; run preflight again.");
+  }
+  const currentUpdatedAt = (config.updatedAt ?? new Date(0)).toISOString();
+  if (currentUpdatedAt !== binding.configUpdatedAt) {
+    throw new Error("The sync configuration changed after preflight; run preflight again.");
+  }
+  if (
+    (config.lastGoodSnapshotId ?? null) !== binding.snapshotId ||
+    (config.lastSnapshotVersion ?? null) !== binding.snapshotVersion
+  ) {
+    throw new Error("The source snapshot changed after preflight; run preflight again.");
+  }
+  const currentItems = await deps.storage.getAgendaItemsBySyncConfig(configId);
+  if (digestAgendaConnectionItems(currentItems) !== binding.itemStateDigest) {
+    throw new Error("The Agenda items changed after preflight; run preflight again.");
+  }
+  const parsed = await parseResetSource(config, deps);
+  const sourceDigest = digestSource(parsed.content);
+  const fingerprint = computeAgendaParsingConfigFingerprint(config, parsed.timezone);
+  if (sourceDigest !== binding.sourceDigest || fingerprint !== binding.configFingerprint) {
+    throw new Error("The workbook or sync configuration changed after preflight; run preflight again.");
+  }
+  const columns = parsed.diagnosticColumns.map((column) => sanitizeAgendaResetDiagnosticText(column));
+  return {
+    columns,
+    diagnostics: paginateAgendaResetDiagnostics(parsed.diagnostics, {
+      ...options,
+      pageEnvelope: (page) => ({ columns, diagnostics: page }),
+    }),
+  };
+}
+
 async function executeAgendaSourceResetUnlocked(configId: string, token: string, deps: AgendaSyncDeps): Promise<AgendaSourceResetResult> {
   const binding = readResetToken(token);
   if (binding.configId !== configId) throw new Error("Reset preflight token does not match this source.");
@@ -1563,6 +1895,9 @@ async function executeAgendaSourceResetUnlocked(configId: string, token: string,
   const sourceDigest = digestSource(parsed.content);
   const fingerprint = computeAgendaParsingConfigFingerprint(config, parsed.timezone);
   if (sourceDigest !== binding.sourceDigest || fingerprint !== binding.configFingerprint) throw new Error("The workbook or sync configuration changed after preflight; run preflight again.");
+  if (parsed.diagnostics.some((row) => row.status === "error")) {
+    throw new Error("The source still contains invalid rows; resolve them and run preflight again.");
+  }
   const newItems: InsertAgendaItem[] = parsed.upstream.map((row) => ({ clientId: config.clientId, ...row.data, sourceOrdinal: row.sourceOrdinal, externalSyncConfigId: config.id, externalId: row.externalId, manualOverride: false }));
   const before = await deps.storage.getAgendaItemsBySyncConfig(config.id);
   const manualOverridesDiscarded = before.filter((row) => row.manualOverride).length;
