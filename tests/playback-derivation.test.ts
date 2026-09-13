@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   derivePlaybackStatus,
+  derivePlaybackSchedule,
   blockFiringWindowForDay,
   ruleAdmitsDay,
+  timeRuleWindowAt,
   type PlaybackBlock,
 } from "../shared/playback-derivation";
 import type { TimeRule } from "../shared/schema";
@@ -66,9 +68,12 @@ test("blockFiringWindowForDay returns null for a block with no time rules", () =
   assert.equal(blockFiringWindowForDay(b, FRIDAY_2PM, TZ), null);
 });
 
-test("blockFiringWindowForDay returns null when end <= start (invalid)", () => {
+test("blockFiringWindowForDay resolves an overnight window when end is before start", () => {
   const b = block("a", { startTime: "17:00", endTime: "09:00" });
-  assert.equal(blockFiringWindowForDay(b, FRIDAY_2PM, TZ), null);
+  const window = blockFiringWindowForDay(b, new Date("2026-04-24T18:00:00Z"), TZ);
+  assert.ok(window);
+  assert.equal(window!.start.toISOString(), "2026-04-24T17:00:00.000Z");
+  assert.equal(window!.end.toISOString(), "2026-04-25T09:00:00.000Z");
 });
 
 test("blockFiringWindowForDay returns the parsed [start,end) window on a matching day", () => {
@@ -137,6 +142,46 @@ test("derivePlaybackStatus picks the higher-priority block even if its window is
   if (status.kind === "playing") {
     assert.equal(status.blockId, "short");
   }
+});
+
+test("derivePlaybackSchedule keeps the resolver winner and a future block simultaneously", () => {
+  const current = {
+    ...block("current", { daysOfWeek: [5], startTime: "09:00", endTime: "17:00" }),
+    priority: 10,
+  };
+  const next = {
+    ...block("next", { daysOfWeek: [5], startTime: "18:00", endTime: "20:00" }),
+    priority: 1,
+  };
+  const schedule = derivePlaybackSchedule(
+    [current, next],
+    FRIDAY_2PM,
+    TZ,
+    "current",
+  );
+  assert.equal(schedule.current?.block.id, "current");
+  assert.equal(schedule.next?.block.id, "next");
+});
+
+test("derivePlaybackSchedule resolves equal-start future blocks by priority then storage order", () => {
+  const lower = {
+    ...block("lower", { daysOfWeek: [5], startTime: "18:00", endTime: "19:00" }),
+    priority: 1,
+  };
+  const higher = {
+    ...block("higher", { daysOfWeek: [5], startTime: "18:00", endTime: "20:00" }),
+    priority: 5,
+  };
+  const equalLater = {
+    ...block("equal-later", { daysOfWeek: [5], startTime: "18:00", endTime: "21:00" }),
+    priority: 5,
+  };
+  const schedule = derivePlaybackSchedule(
+    [lower, higher, equalLater],
+    FRIDAY_2PM,
+    TZ,
+  );
+  assert.equal(schedule.next?.block.id, "higher");
 });
 
 test("derivePlaybackStatus treats missing priority as zero", () => {
@@ -212,4 +257,192 @@ test("derivePlaybackStatus ignores blocks whose endDate has already passed", () 
   });
   const status = derivePlaybackStatus([past], true, FRIDAY_2PM, TZ);
   assert.equal(status.kind, "noBlockToday");
+});
+
+test("canonical windows cover overnight, partial, and unbounded rules", () => {
+  const cases = [
+    {
+      name: "overnight before midnight",
+      rule: { startTime: "22:00", endTime: "02:00" } as TimeRule,
+      now: new Date("2026-04-24T23:30:00Z"),
+      start: "2026-04-24T22:00:00.000Z",
+      end: "2026-04-25T02:00:00.000Z",
+    },
+    {
+      name: "overnight after midnight",
+      rule: { startTime: "22:00", endTime: "02:00" } as TimeRule,
+      now: new Date("2026-04-25T01:30:00Z"),
+      start: "2026-04-24T22:00:00.000Z",
+      end: "2026-04-25T02:00:00.000Z",
+    },
+    {
+      name: "start only",
+      rule: { startTime: "09:00" } as TimeRule,
+      now: new Date("2026-04-24T14:00:00Z"),
+      start: "2026-04-24T09:00:00.000Z",
+      end: "2026-04-25T00:00:00.000Z",
+    },
+    {
+      name: "end only",
+      rule: { endTime: "17:00" } as TimeRule,
+      now: new Date("2026-04-24T14:00:00Z"),
+      start: "2026-04-24T00:00:00.000Z",
+      end: "2026-04-24T17:00:00.000Z",
+    },
+  ];
+
+  for (const item of cases) {
+    const window = timeRuleWindowAt(item.rule, item.now, TZ);
+    assert.ok(window, item.name);
+    assert.equal(window!.start?.toISOString(), item.start, item.name);
+    assert.equal(window!.end?.toISOString(), item.end, item.name);
+  }
+  const unbounded = timeRuleWindowAt({} as TimeRule, FRIDAY_2PM, TZ);
+  assert.deepEqual(unbounded, { start: null, end: null });
+});
+
+test("canonical schedule reports an overnight end and finds an independent next block", () => {
+  const overnight = {
+    ...block("overnight", { startTime: "22:00", endTime: "02:00" }),
+    priority: 10,
+  };
+  const afterMidnight = {
+    ...block("next", { startTime: "01:00", endTime: "03:00" }),
+    priority: 1,
+  };
+  const schedule = derivePlaybackSchedule(
+    [overnight, afterMidnight],
+    new Date("2026-04-24T21:00:00Z"),
+    TZ,
+    null,
+  );
+  assert.equal(schedule.current, null);
+  assert.equal(schedule.next?.block.id, "overnight");
+  assert.equal(schedule.next?.startsAt.toISOString(), "2026-04-24T22:00:00.000Z");
+
+  const during = derivePlaybackSchedule(
+    [overnight, afterMidnight],
+    new Date("2026-04-24T23:00:00Z"),
+    TZ,
+    "overnight",
+  );
+  assert.equal(during.current?.block.id, "overnight");
+  assert.equal(during.current?.endsAt?.toISOString(), "2026-04-25T02:00:00.000Z");
+  assert.equal(during.next?.block.id, "next");
+  assert.equal(during.next?.startsAt.toISOString(), "2026-04-25T01:00:00.000Z");
+});
+
+test("date-only rules have one start, while weekday-only rules recur", () => {
+  const dateRange = {
+    id: "date-range",
+    name: "Date range",
+    timeRules: [{
+      startDate: "2026-04-25",
+      endDate: "2026-04-26",
+    }] as TimeRule[],
+  };
+  const before = derivePlaybackSchedule(
+    [dateRange],
+    new Date("2026-04-24T23:59:00Z"),
+    TZ,
+  );
+  assert.equal(before.next?.block.id, "date-range");
+  assert.equal(before.next?.startsAt.toISOString(), "2026-04-25T00:00:00.000Z");
+
+  const during = derivePlaybackSchedule(
+    [dateRange],
+    new Date("2026-04-25T23:59:00Z"),
+    TZ,
+    "date-range",
+  );
+  assert.equal(during.current?.block.id, "date-range");
+  assert.equal(during.next, null, "the same date-only block must not recur at midnight");
+
+  const afterMidnight = derivePlaybackSchedule(
+    [dateRange],
+    new Date("2026-04-26T00:01:00Z"),
+    TZ,
+    "date-range",
+  );
+  assert.equal(afterMidnight.current?.block.id, "date-range");
+  assert.equal(afterMidnight.next, null, "date-only range remains one interval across midnight");
+
+  const after = derivePlaybackSchedule(
+    [dateRange],
+    new Date("2026-04-27T00:01:00Z"),
+    TZ,
+  );
+  assert.equal(after.current, null);
+  assert.equal(after.next, null);
+
+  const endOnly = {
+    id: "end-only-date",
+    name: "End only",
+    timeRules: [{ endDate: "2026-04-26" }] as TimeRule[],
+  };
+  assert.equal(
+    derivePlaybackSchedule([endOnly], new Date("2026-04-24T23:59:00Z"), TZ).next,
+    null,
+  );
+
+  const recurring = {
+    id: "weekday",
+    name: "Saturday recurrence",
+    timeRules: [{ daysOfWeek: [6] }] as TimeRule[],
+  };
+  const friday = derivePlaybackSchedule(
+    [recurring],
+    new Date("2026-04-24T23:59:00Z"),
+    TZ,
+  );
+  assert.equal(friday.next?.startsAt.toISOString(), "2026-04-25T00:00:00.000Z");
+  const saturday = derivePlaybackSchedule(
+    [recurring],
+    new Date("2026-04-25T12:00:00Z"),
+    TZ,
+    "weekday",
+  );
+  assert.equal(saturday.current?.block.id, "weekday");
+  assert.equal(saturday.next?.startsAt.toISOString(), "2026-05-02T00:00:00.000Z");
+});
+
+test("bounded weekday recurrence ends at midnight and exhausts at endDate", () => {
+  const recurring = {
+    id: "bounded-weekday",
+    name: "Friday and Sunday",
+    timeRules: [{
+      startDate: "2026-04-24",
+      endDate: "2026-04-26",
+      daysOfWeek: [5, 0],
+    }] as TimeRule[],
+  };
+
+  const friday = derivePlaybackSchedule(
+    [recurring],
+    new Date("2026-04-24T12:00:00Z"),
+    TZ,
+    "bounded-weekday",
+  );
+  assert.equal(friday.current?.endsAt?.toISOString(), "2026-04-25T00:00:00.000Z");
+  assert.equal(friday.next?.startsAt.toISOString(), "2026-04-26T00:00:00.000Z");
+  const fridayEnd = friday.current?.endsAt;
+  const nextStart = friday.next?.startsAt;
+  assert.ok(fridayEnd && nextStart && fridayEnd <= nextStart);
+
+  const finalDay = derivePlaybackSchedule(
+    [recurring],
+    new Date("2026-04-26T12:00:00Z"),
+    TZ,
+    "bounded-weekday",
+  );
+  assert.equal(finalDay.current?.endsAt?.toISOString(), "2026-04-27T00:00:00.000Z");
+  assert.equal(finalDay.next, null);
+
+  const exhausted = derivePlaybackSchedule(
+    [recurring],
+    new Date("2026-04-27T00:01:00Z"),
+    TZ,
+  );
+  assert.equal(exhausted.current, null);
+  assert.equal(exhausted.next, null);
 });

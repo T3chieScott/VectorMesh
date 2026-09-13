@@ -7,15 +7,17 @@ import type {
   ProgrammeVersion,
   ScheduleBlock,
   Screen,
+  TimeRule,
 } from "@shared/schema";
 import {
   DEFAULT_SCHEDULE_TIMEZONE_FALLBACK,
   describeTzOffset,
   getWallPartsInTz,
-  parseHHMMString,
-  startOfDayInTz,
-  endOfDayInTz,
 } from "@shared/timezone-utils";
+import {
+  evaluateTimeRule as evaluateSharedTimeRule,
+  type TimeRuleMatch,
+} from "@shared/playback-derivation";
 
 export type ContentResolveOutcomeSource =
   | "live-override"
@@ -127,6 +129,14 @@ export interface ResolveResult {
    *  Exposed so callers (player endpoint) can compute next-session info
    *  without re-fetching. Empty array when no event matched. */
   eventBlocks: ScheduleBlock[];
+  /** Published blocks which target this screen (or all screens). */
+  applicableBlocks: ScheduleBlock[];
+  /** Programme/version metadata for the published blocks above. */
+  eventProgrammeVersions: Array<{
+    programme: Programme;
+    version: ProgrammeVersion;
+  }>;
+  resolvedPlaylist: Playlist | null;
   trace: ContentResolveStep[];
 }
 
@@ -135,119 +145,57 @@ interface BlockTarget {
   id: string;
 }
 
-interface BlockTimeRule {
-  startDate?: string;
-  endDate?: string;
-  startTime?: string;
-  endTime?: string;
-  daysOfWeek?: number[];
-}
-
+type BlockTimeRule = TimeRule;
 type TimeMatch =
   | { ok: true }
   | { ok: false; decision: BlockDecision; detail: string };
-
-function evaluateTimeRule(
-  rule: BlockTimeRule | undefined,
-  now: Date,
-  tz: string,
-): TimeMatch {
-  if (!rule) return { ok: true };
-
-  const wall = getWallPartsInTz(now, tz);
-
-  if (rule.startDate) {
-    const sd = startOfDayInTz(rule.startDate, tz);
-    if (sd && now < sd) {
-      return {
-        ok: false,
-        decision: "outside-date-range",
-        detail: `Block starts on ${rule.startDate}, which is in the future (${tz}).`,
-      };
-    }
-  }
-  if (rule.endDate) {
-    const ed = endOfDayInTz(rule.endDate, tz);
-    if (ed && now > ed) {
-      return {
-        ok: false,
-        decision: "outside-date-range",
-        detail: `Block ended on ${rule.endDate} (${tz}).`,
-      };
-    }
-  }
-  if (rule.daysOfWeek && rule.daysOfWeek.length > 0) {
-    if (!rule.daysOfWeek.includes(wall.dayOfWeek)) {
-      return {
-        ok: false,
-        decision: "wrong-day-of-week",
-        detail: `Block only plays on days ${rule.daysOfWeek.join(", ")} (0=Sun); today in ${tz} is ${wall.dayOfWeek}.`,
-      };
-    }
-  }
-  if (rule.startTime && rule.endTime) {
-    const startHM = parseHHMMString(rule.startTime);
-    const endHM = parseHHMMString(rule.endTime);
-    if (startHM && endHM) {
-      const startMins = startHM.hours * 60 + startHM.minutes;
-      const endMins = endHM.hours * 60 + endHM.minutes;
-      const nowMins = wall.minuteOfDay;
-      // Window is [startMins, endMins) — end is exclusive at minute
-      // granularity so adjacent blocks (A 10:00–10:05, B 10:05–10:10)
-      // hand off cleanly at 10:05:00 instead of overlapping for the
-      // entire 10:05 minute. This matches the convention already used
-      // by `derivePlaybackStatus` in `shared/playback-derivation.ts`.
-      let inside = true;
-      if (endMins <= startMins) {
-        // Overnight wrap: [startMins, 24:00) ∪ [00:00, endMins).
-        if (nowMins < startMins && nowMins >= endMins) inside = false;
-      } else {
-        if (nowMins < startMins || nowMins >= endMins) inside = false;
-      }
-      if (!inside) {
-        return {
-          ok: false,
-          decision: "outside-time-of-day",
-          detail: `Block plays ${rule.startTime}-${rule.endTime} (${tz}); current wall time is ${formatWallHHMM(wall)}.`,
-        };
-      }
-    }
-  } else {
-    if (rule.startTime) {
-      const hm = parseHHMMString(rule.startTime);
-      if (hm) {
-        const startMins = hm.hours * 60 + hm.minutes;
-        if (wall.minuteOfDay < startMins) {
-          return {
-            ok: false,
-            decision: "outside-time-of-day",
-            detail: `Block starts at ${rule.startTime} (${tz}); current wall time is ${formatWallHHMM(wall)}.`,
-          };
-        }
-      }
-    }
-    if (rule.endTime) {
-      const hm = parseHHMMString(rule.endTime);
-      if (hm) {
-        const endMins = hm.hours * 60 + hm.minutes;
-        // End is exclusive at minute granularity (see comment above).
-        if (wall.minuteOfDay >= endMins) {
-          return {
-            ok: false,
-            decision: "outside-time-of-day",
-            detail: `Block ended at ${rule.endTime} (${tz}); current wall time is ${formatWallHHMM(wall)}.`,
-          };
-        }
-      }
-    }
-  }
-  return { ok: true };
-}
 
 function formatWallHHMM(wall: { hour: number; minute: number }): string {
   const h = String(wall.hour).padStart(2, "0");
   const m = String(wall.minute).padStart(2, "0");
   return `${h}:${m}`;
+}
+
+function timeMatchDecision(
+  match: TimeRuleMatch,
+  rule: BlockTimeRule | undefined,
+  now: Date,
+  tz: string,
+): TimeMatch {
+  if (match.ok) return match;
+  const wall = getWallPartsInTz(now, tz);
+  switch (match.failure) {
+    case "start-date":
+      return {
+        ok: false,
+        decision: "outside-date-range",
+        detail: `Block starts on ${rule?.startDate}, which is in the future (${tz}).`,
+      };
+    case "end-date":
+      return {
+        ok: false,
+        decision: "outside-date-range",
+        detail: `Block ended on ${rule?.endDate} (${tz}).`,
+      };
+    case "day-of-week":
+      return {
+        ok: false,
+        decision: "wrong-day-of-week",
+        detail: `Block only plays on days ${(rule?.daysOfWeek ?? []).join(", ")} (0=Sun); today in ${tz} is ${wall.dayOfWeek}.`,
+      };
+    default: {
+      const detail = rule?.startTime && !rule.endTime
+        ? `Block starts at ${rule.startTime} (${tz}); current wall time is ${formatWallHHMM(wall)}.`
+        : rule?.endTime && !rule.startTime
+          ? `Block ended at ${rule.endTime} (${tz}); current wall time is ${formatWallHHMM(wall)}.`
+          : `Block plays ${rule?.startTime ?? "(any)"}-${rule?.endTime ?? "(any)"} (${tz}); current wall time is ${formatWallHHMM(wall)}.`;
+      return {
+        ok: false,
+        decision: "outside-time-of-day",
+        detail,
+      };
+    }
+  }
 }
 
 function describeTargets(targets: BlockTarget[]): string {
@@ -269,6 +217,11 @@ export async function resolveScreenContent(
   let activeZoneSources: any[] = [];
   let outcomeSource: ContentResolveOutcomeSource = "nothing";
   let outcomeBlock: { id: string; name: string } | null = null;
+  let resolvedPlaylist: Playlist | null = null;
+  let eventProgrammeVersions: Array<{
+    programme: Programme;
+    version: ProgrammeVersion;
+  }> = [];
 
   trace.push({
     kind: "screen-info",
@@ -413,10 +366,25 @@ export async function resolveScreenContent(
       publishedVersions.map((v) => deps.getScheduleBlocks(v.id)),
     );
     eventBlocks = blocksByVersion.flat();
+    eventProgrammeVersions = publishedVersions.flatMap((version) => {
+      const programme = programmeById.get(version.programmeId);
+      return programme ? [{ programme, version }] : [];
+    });
   }
 
   const screenGroupIds = await deps.getScreenGroupIds(screen.id);
   const screenGroupSet = new Set(screenGroupIds);
+  const applicableBlocks = eventBlocks.filter((block) => {
+    const targets = (block.targets as BlockTarget[]) || [];
+    return (
+      targets.length === 0 ||
+      targets.some(
+        (t) =>
+          (t.type === "screen" && t.id === screen.id) ||
+          (t.type === "group" && screenGroupSet.has(t.id)),
+      )
+    );
+  });
 
   if (!layout && activeEvent) {
     const flatBlocks = [...eventBlocks].sort(
@@ -466,7 +434,12 @@ export async function resolveScreenContent(
       }
 
       const rule = ((block.timeRules as BlockTimeRule[]) || [])[0];
-      const timeMatch = evaluateTimeRule(rule, now, tz);
+      const timeMatch = timeMatchDecision(
+        evaluateSharedTimeRule(rule, now, tz),
+        rule,
+        now,
+        tz,
+      );
       if (!timeMatch.ok) {
         trace.push({
           kind: "block-evaluated",
@@ -545,6 +518,7 @@ export async function resolveScreenContent(
           continue;
         }
         activeZoneSources = [fallbackSource];
+        resolvedPlaylist = scheduledPlaylist;
         outcomeSource = "block";
         outcomeBlock = { id: block.id, name: block.name };
         chosen = true;
@@ -652,6 +626,7 @@ export async function resolveScreenContent(
           playlistId: screen.fallbackPlaylistId,
         },
       ];
+      resolvedPlaylist = fbPlaylist;
       outcomeSource = "fallback-playlist";
       trace.push({
         kind: "fallback-playlist",
@@ -694,6 +669,9 @@ export async function resolveScreenContent(
     liveOverride,
     activeEvent,
     eventBlocks,
+    applicableBlocks,
+    eventProgrammeVersions,
+    resolvedPlaylist,
     trace,
   };
 }

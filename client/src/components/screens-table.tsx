@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueries } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import {
   ArrowUp,
@@ -10,7 +10,6 @@ import {
   MoreHorizontal,
   Settings2,
   GripVertical,
-  Zap,
   Activity,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -37,10 +36,16 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import type { Screen, LayoutTemplate, LiveOverride, Event } from "@shared/schema";
-import { ScreenBookingStatus } from "@/components/screen-booking-status";
 import { ScreenBookingsContextMenu } from "@/components/screen-bookings-context-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { deriveVideoHealth, type VideoHealthStatus } from "@shared/video-health";
+import {
+  ScreenBookingStatus,
+  getScreenPlaybackDisplay,
+  screenPlaybackQueryOptions,
+  type ScreenPlaybackResponse,
+  type ScreenPlaybackQueryState,
+} from "@/components/screen-booking-status";
 
 type ColumnId =
   | "name"
@@ -156,27 +161,6 @@ function saveConfig(userId: string | null | undefined, config: PersistedConfig) 
   }
 }
 
-interface NowDisplayingInfo {
-  label: string;
-  kind: "override" | "fallback" | "none";
-}
-
-function getNowDisplaying(
-  screen: Screen,
-  layouts: LayoutTemplate[],
-  activeOverride: LiveOverride | null,
-): NowDisplayingInfo {
-  const overrideLayout = activeOverride?.layoutTemplateId
-    ? layouts.find((l) => l.id === activeOverride.layoutTemplateId)
-    : null;
-  if (overrideLayout) return { label: overrideLayout.name, kind: "override" };
-  const fallbackLayout = screen.fallbackLayoutId
-    ? layouts.find((l) => l.id === screen.fallbackLayoutId)
-    : null;
-  if (fallbackLayout) return { label: fallbackLayout.name, kind: "fallback" };
-  return { label: "—", kind: "none" };
-}
-
 interface ScreensTableProps {
   screens: Screen[];
   layouts: LayoutTemplate[];
@@ -225,6 +209,25 @@ export function ScreensTable({
   const visibleColumns = useMemo(
     () => config.order.filter((id) => config.visibility[id]),
     [config],
+  );
+  const playbackQueries = useQueries({
+    queries: screens.map((screen) => screenPlaybackQueryOptions(screen.id)),
+  });
+  const playbackStateById = useMemo(
+    () =>
+      new Map(
+        screens.map((screen, index) => {
+          const query = playbackQueries[index];
+          return [
+            screen.id,
+            {
+              data: query?.data as ScreenPlaybackResponse | undefined,
+              state: (query?.isError ? "error" : query?.isPending ? "loading" : "ready") as ScreenPlaybackQueryState,
+            },
+          ] as const;
+        }),
+      ),
+    [screens, playbackQueries],
   );
 
   const toggleSort = (column: ColumnId) => {
@@ -283,16 +286,22 @@ export function ScreensTable({
     const arr = [...screens];
     const dir = sort.dir === "asc" ? 1 : -1;
     arr.sort((a, b) => {
-      const av = sortValue(a, column, layouts, getActiveOverrideForScreen);
-      const bv = sortValue(b, column, layouts, getActiveOverrideForScreen);
-      if (av == null && bv == null) return 0;
+      const av = sortValue(a, column, playbackStateById);
+      const bv = sortValue(b, column, playbackStateById);
+      const tieBreak = () =>
+        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }) ||
+        a.id.localeCompare(b.id);
+      if (av == null && bv == null) return tieBreak();
       if (av == null) return 1;
       if (bv == null) return -1;
-      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
-      return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" }) * dir;
+      const primary = typeof av === "number" && typeof bv === "number"
+        ? (av - bv) * dir
+        : String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" }) * dir;
+      if (primary !== 0) return primary;
+      return tieBreak();
     });
     return arr;
-  }, [screens, sort, layouts, getActiveOverrideForScreen]);
+  }, [screens, sort, playbackStateById]);
 
   const copyPairingCode = (code: string | null | undefined) => {
     if (!code) return;
@@ -377,8 +386,6 @@ export function ScreensTable({
         </TableHeader>
         <TableBody>
           {sortedScreens.map((screen) => {
-            const activeOverride = getActiveOverrideForScreen(screen.id);
-            const nowDisplaying = getNowDisplaying(screen, layouts, activeOverride);
             return (
               <ScreenBookingsContextMenu
                 key={screen.id}
@@ -390,8 +397,6 @@ export function ScreensTable({
                   <TableCell key={id}>
                     {renderCell(id, {
                       screen,
-                      activeOverride,
-                      nowDisplaying,
                       onOpenScreen,
                       copyPairingCode,
                     })}
@@ -448,8 +453,10 @@ export function ScreensTable({
 function sortValue(
   screen: Screen,
   column: ColumnId,
-  layouts: LayoutTemplate[],
-  getActiveOverrideForScreen: (id: string) => LiveOverride | null,
+  playbackStateById: Map<string, {
+    data: ScreenPlaybackResponse | undefined;
+    state: ScreenPlaybackQueryState;
+  }>,
 ): string | number | null {
   switch (column) {
     case "name":
@@ -461,8 +468,13 @@ function sortValue(
     case "testPattern":
       return screen.testPatternEnabled ? 0 : 1;
     case "nowDisplaying": {
-      const info = getNowDisplaying(screen, layouts, getActiveOverrideForScreen(screen.id));
-      return info.label === "—" ? "" : info.label.toLowerCase();
+      const query = playbackStateById.get(screen.id);
+      const display = getScreenPlaybackDisplay(query?.data, query?.state ?? "loading");
+      const rank =
+        display.state === "resolved" ? "0" :
+        display.state === "loading" ? "1" :
+        display.state === "error" ? "2" : "3";
+      return `${rank}:${display.label.toLowerCase()}`;
     }
     case "videoHealth": {
       // Sort red first, then amber, then green, then unknown — so a
@@ -486,14 +498,12 @@ function sortValue(
 
 interface CellContext {
   screen: Screen;
-  activeOverride: LiveOverride | null;
-  nowDisplaying: NowDisplayingInfo;
   onOpenScreen: (screen: Screen) => void;
   copyPairingCode: (code: string | null | undefined) => void;
 }
 
 function renderCell(id: ColumnId, ctx: CellContext) {
-  const { screen, activeOverride, nowDisplaying, onOpenScreen, copyPairingCode } = ctx;
+  const { screen, onOpenScreen, copyPairingCode } = ctx;
   switch (id) {
     case "name": {
       const dotClass = screen.isOnline
@@ -543,26 +553,9 @@ function renderCell(id: ColumnId, ctx: CellContext) {
     case "testPattern":
       return <TestPatternToggle screen={screen} />;
     case "nowDisplaying":
-      if (nowDisplaying.kind === "none") {
-        return <span className="text-muted-foreground">—</span>;
-      }
-      return (
-        <div className="flex items-center gap-1.5">
-          <span data-testid={`text-now-displaying-${screen.id}`}>{nowDisplaying.label}</span>
-          {nowDisplaying.kind === "override" ? (
-            <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 text-amber-600 border-amber-600/30 gap-0.5">
-              <Zap className="h-2.5 w-2.5" />
-              Override
-            </Badge>
-          ) : (
-            <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">
-              Fallback
-            </Badge>
-          )}
-        </div>
-      );
+      return <ScreenBookingStatus screenId={screen.id} variant="table" section="now" />;
     case "playback":
-      return <ScreenBookingStatus screenId={screen.id} variant="table" />;
+      return <ScreenBookingStatus screenId={screen.id} variant="table" section="schedule" />;
     case "videoHealth":
       return <VideoHealthCell screen={screen} />;
     case "location":
