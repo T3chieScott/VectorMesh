@@ -7,10 +7,9 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
-import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema, insertCanvasGroupSchema, insertAgendaItemSchema, insertAgendaWidgetConfigSchema, type InsertScreenEventBooking, type TimeRule, type ScheduleTarget, type InsertAgendaItem, type InsertLayoutTemplate, type AgendaSyncConfig } from "@shared/schema";
+import { insertClientSchema, insertEventSchema, insertScreenSchema, insertDisplayProfileSchema, insertScreenGroupSchema, insertMediaAssetSchema, insertLayoutTemplateSchema, insertProgrammeSchema, insertPlaylistSchema, insertPlaylistItemSchema, updatePlaylistItemSchema, insertScheduleBlockSchema, insertScreenPresetSchema, insertLiveOverrideSchema, insertPlayerHeartbeatSchema, insertBrandPackSchema, insertScreenEventBookingSchema, insertCanvasGroupSchema, insertAgendaItemSchema, insertAgendaWidgetConfigSchema, type InsertScreenEventBooking, type TimeRule, type InsertAgendaItem, type InsertLayoutTemplate, type AgendaSyncConfig } from "@shared/schema";
 import { parseAgendaCsv } from "@shared/agenda-csv";
 import { resolveAgendaItems } from "@shared/agenda-resolver";
-import { derivePlaybackStatus } from "@shared/playback-derivation";
 import { canAccessBooking } from "@shared/booking-utils";
 import {
   DEFAULT_SCHEDULE_TIMEZONE_FALLBACK,
@@ -78,6 +77,7 @@ import { buildScreenPatchHandler } from "./screenPatchHandler";
 import { buildScreenCreateHandler } from "./screenCreateHandler";
 import { buildScreenRegeneratePairingHandler } from "./screenRegeneratePairingHandler";
 import { buildPlayerPairHandler } from "./playerPairHandler";
+import { buildScreenPlaybackHandler } from "./screenPlaybackHandler";
 import {
   mountOperationsRoutes,
   startMonitorSessionCleanup,
@@ -3067,108 +3067,17 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/screens/:id/playback", requireAuth, loadUserContext, async (req, res) => {
-    try {
-      const screen = await storage.getScreen(getPathParam(req, "id"));
-      if (!screen) return res.status(404).json({ error: "Screen not found" });
-      if (screen.clientId && !canAccessClient(req, screen.clientId)) {
-        return res.status(403).json({ error: "Access denied" });
-      }
-      const nowStr = getQueryString(req, "now", res);
-      if (nowStr === null) return;
-      const now = nowStr ? new Date(nowStr) : new Date();
-      const rawActiveEvent = await storage.getCurrentEventForScreen(screen.id, now);
-
-      const allowed = getAllowedClientIds(req);
-      const screenClientId = screen.clientId ?? null;
-      const visibleActiveEvent = rawActiveEvent &&
-        canAccessBooking(screenClientId, rawActiveEvent.clientId ?? null, allowed)
-          ? rawActiveEvent
-          : null;
-
-      const blocks: Array<{
-        id: string;
-        name: string;
-        timeRules: TimeRule[] | null;
-        priority: number | null;
-      }> = [];
-      if (visibleActiveEvent) {
-        const screenGroupIds = await storage.getScreenGroupIds(screen.id);
-        const screenGroupSet = new Set(screenGroupIds);
-
-        const programmes = await storage.getProgrammes();
-        const eventProgrammeIds = programmes
-          .filter(p => p.eventId === visibleActiveEvent.id)
-          .map(p => p.id);
-        if (eventProgrammeIds.length > 0) {
-          const allVersions = await storage.getProgrammeVersions();
-          const publishedVersions = allVersions.filter(
-            v => v.status === "published" && eventProgrammeIds.includes(v.programmeId),
-          );
-          for (const version of publishedVersions) {
-            const versionBlocks = await storage.getScheduleBlocks(version.id);
-            for (const block of versionBlocks) {
-              const targets = (block.targets as ScheduleTarget[] | null) || [];
-              const fires =
-                targets.length === 0 ||
-                targets.some(
-                  t =>
-                    (t.type === "screen" && t.id === screen.id) ||
-                    (t.type === "group" && screenGroupSet.has(t.id)),
-                );
-              if (fires) {
-                blocks.push({
-                  id: block.id,
-                  name: block.name,
-                  timeRules: (block.timeRules as TimeRule[] | null) || null,
-                  priority: block.priority ?? null,
-                });
-              }
-            }
-          }
-        }
-      }
-
-      const tz = screenClientId
-        ? (await storage.getClient(screenClientId))?.timezone || DEFAULT_SCHEDULE_TIMEZONE_FALLBACK
-        : DEFAULT_SCHEDULE_TIMEZONE_FALLBACK;
-      const status = derivePlaybackStatus(blocks, !!visibleActiveEvent, now, tz);
-
-      const allForScreen = await storage.getScreenEventBookings({ screenId: screen.id });
-      const futureBookings = allForScreen
-        .filter(b => new Date(b.startsAt) > now)
-        .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
-
-      let visibleNextBooking: typeof futureBookings[number] | undefined;
-      let visibleNextEvent: Awaited<ReturnType<typeof storage.getEvent>> | undefined;
-      for (const b of futureBookings) {
-        const ev = await storage.getEvent(b.eventId);
-        if (!ev) continue;
-        if (!canAccessBooking(screenClientId, ev.clientId ?? null, allowed)) continue;
-        visibleNextBooking = b;
-        visibleNextEvent = ev;
-        break;
-      }
-
-      res.json({
-        now: now.toISOString(),
-        activeEvent: visibleActiveEvent
-          ? { id: visibleActiveEvent.id, name: visibleActiveEvent.name }
-          : null,
-        block: status,
-        nextBooking: visibleNextBooking && visibleNextEvent
-          ? {
-              eventId: visibleNextEvent.id,
-              eventName: visibleNextEvent.name,
-              startsAt: visibleNextBooking.startsAt,
-            }
-          : null,
-      });
-    } catch (error) {
-      console.error("Error deriving playback status:", error);
-      res.status(500).json({ error: "Failed to derive playback status" });
-    }
-  });
+  app.get(
+    "/api/screens/:id/playback",
+    requireAuth,
+    loadUserContext,
+    buildScreenPlaybackHandler({
+      storage,
+      resolverDeps: contentResolverDeps,
+      getAllowedClientIds,
+      canAccessClient,
+    }),
+  );
 
   app.get("/api/screens/:screenId/bookings", requireAuth, loadUserContext, async (req, res) => {
     try {

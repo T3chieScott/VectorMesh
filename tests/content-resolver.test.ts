@@ -14,6 +14,10 @@ import type {
   ScheduleBlock,
   Screen,
 } from "../shared/schema";
+import {
+  derivePlaybackSchedule,
+  timeRuleWindowAt,
+} from "../shared/playback-derivation";
 
 function makeScreen(overrides: Partial<Screen> = {}): Screen {
   return {
@@ -157,6 +161,70 @@ test("no booking, no fallback → outcome is nothing and trace explains why", as
   assert.equal(eventStep!.kind === "active-event" && eventStep.matched, false);
   const outcome = result.trace.find((s) => s.kind === "outcome");
   assert.equal(outcome?.kind === "outcome" && outcome.source, "nothing");
+});
+
+test("resolver and reporting share canonical admission and effective windows", async () => {
+  const cases = [
+    ["conventional inside", "2026-04-25T12:00:00Z", { startTime: "09:00", endTime: "17:00" }, true],
+    ["conventional end exclusive", "2026-04-25T17:00:00Z", { startTime: "09:00", endTime: "17:00" }, false],
+    ["overnight before midnight", "2026-04-25T23:00:00Z", { startTime: "22:00", endTime: "02:00" }, true],
+    ["overnight end exclusive", "2026-04-26T02:00:00Z", { startTime: "22:00", endTime: "02:00" }, false],
+    ["start only", "2026-04-25T12:00:00Z", { startTime: "09:00" }, true],
+    ["end only", "2026-04-25T12:00:00Z", { endTime: "17:00" }, true],
+    ["no bounds", "2026-04-25T12:00:00Z", {}, true],
+    ["weekday gate", "2026-04-25T12:00:00Z", { daysOfWeek: [1] }, false],
+    ["date gate", "2026-04-25T12:00:00Z", { startDate: "2026-05-01" }, false],
+  ] as const;
+
+  for (const [name, nowString, rule, expectedMatch] of cases) {
+    const event = makeEvent(`evt-${name}`);
+    const programme = makeProgramme(`prog-${name}`, event.id);
+    const version = makeVersion(`v-${name}`, programme.id);
+    const layout = makeLayout(`layout-${name}`, name);
+    const block = makeBlock({
+      id: `block-${name}`,
+      programmeVersionId: version.id,
+      layoutTemplateId: layout.id,
+      timeRules: [rule],
+    });
+    const now = new Date(nowString);
+    const resolved = await resolveScreenContent(
+      makeScreen(),
+      now,
+      makeDeps({
+        event,
+        programmes: [programme],
+        versions: [version],
+        blocksByVersion: { [version.id]: [block] },
+        layouts: { [layout.id]: layout },
+      }),
+      "UTC",
+    );
+    assert.equal(Boolean(resolved.layout), expectedMatch, name);
+    const outcome = resolved.trace.find((step) => step.kind === "outcome");
+    const winnerId =
+      outcome?.kind === "outcome" && outcome.source === "block"
+        ? outcome.blockId
+        : null;
+    const schedule = derivePlaybackSchedule(
+      [{ ...block, timeRules: [rule] }],
+      now,
+      "UTC",
+      winnerId,
+    );
+    const canonicalWindow = timeRuleWindowAt(rule, now, "UTC");
+    assert.equal(Boolean(canonicalWindow), expectedMatch, `${name} window`);
+    if (expectedMatch) {
+      assert.equal(schedule.current?.block.id, block.id, `${name} winner`);
+      assert.equal(
+        schedule.current?.endsAt?.toISOString() ?? null,
+        canonicalWindow!.end?.toISOString() ?? null,
+        `${name} effective end`,
+      );
+    } else {
+      assert.equal(schedule.current, null, `${name} no current`);
+    }
+  }
 });
 
 test("only-draft versions → block never even considered", async () => {

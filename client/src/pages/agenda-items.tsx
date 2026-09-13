@@ -18,7 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Pencil, Trash2, Upload, Download, Calendar, FileText, RefreshCw, AlertTriangle, CheckCircle2, Link2, Lock, WifiOff, Archive, Search, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, Download, Calendar, FileText, RefreshCw, AlertTriangle, CheckCircle2, Link2, Lock, WifiOff, Archive, Search, ChevronLeft, ChevronRight, LayoutGrid as AgendaCardsIcon, Table as AgendaTableIcon } from "lucide-react";
 import {
   AGENDA_STATUSES,
   AGENDA_SYNC_SOURCE_TYPES,
@@ -40,6 +40,11 @@ import {
   deriveAgendaFilterOptions,
   normalizeAgendaStatus,
 } from "@shared/agenda-filter-values";
+import {
+  AGENDA_SEARCH_MAX_LENGTH,
+  filterAgendaItemsBySearch,
+  normalizeAgendaSearchText,
+} from "@shared/agenda-item-search";
 
 const itemFormSchema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -402,6 +407,28 @@ function CsvImportDialog({ open, onOpenChange, clientId }: { open: boolean; onOp
 }
 
 type SourceType = typeof AGENDA_SYNC_SOURCE_TYPES[number];
+
+type AgendaItemsView = "cards" | "table";
+
+// This key is deliberately Agenda-specific. Do not reuse the Screens view
+// preference or any table-column preference: the two pages have independent
+// presentation settings and the Agenda table has a fixed, complete set of
+// columns.
+const AGENDA_ITEMS_VIEW_KEY = "vectormesh:agenda-items-view";
+
+function agendaItemsViewStorageKey(userId: string | null | undefined): string {
+  return userId ? `vectormesh:${userId}:agenda-items-view` : AGENDA_ITEMS_VIEW_KEY;
+}
+
+function loadAgendaItemsViewPreference(userId: string | null | undefined): AgendaItemsView {
+  try {
+    const value = localStorage.getItem(agendaItemsViewStorageKey(userId));
+    if (value === "cards" || value === "table") return value;
+  } catch {
+    // localStorage can be unavailable in privacy-restricted browsers.
+  }
+  return "cards";
+}
 
 const SOURCE_TYPE_LABELS: Record<SourceType, string> = {
   ics: "ICS / iCalendar URL",
@@ -2450,6 +2477,7 @@ function SyncSourcesSection({ clientId }: { clientId: string }) {
 
 export default function AgendaItemsPage() {
   const { selectedClientId, selectedClient } = useSiteContext();
+  const { user } = useAuth();
   const { toast } = useToast();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<AgendaItem | null>(null);
@@ -2458,6 +2486,23 @@ export default function AgendaItemsPage() {
   const [trackFilter, setTrackFilter] = useState<string>("__all__");
   const [statusFilter, setStatusFilter] = useState<string>("__all__");
   const [dateFilter, setDateFilter] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const userId = user?.id ?? null;
+  const [view, setView] = useState<AgendaItemsView>(() => loadAgendaItemsViewPreference(userId));
+
+  // Re-load after authentication resolves so a user-scoped preference never
+  // inherits the anonymous/default view. Persist only this page's preference.
+  useEffect(() => {
+    setView(loadAgendaItemsViewPreference(userId));
+  }, [userId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(agendaItemsViewStorageKey(userId), view);
+    } catch {
+      // Ignore unavailable or quota-limited localStorage.
+    }
+  }, [view, userId]);
 
   const queryConfig = useSiteFilteredQuery<AgendaItem[]>("/api/agenda");
   const { data: items = [], isLoading } = useQuery(queryConfig);
@@ -2500,18 +2545,28 @@ export default function AgendaItemsPage() {
     });
   }, [items, roomFilter, trackFilter, statusFilter, dateFilter]);
 
-  const sorted = useMemo(() =>
-    [...filtered].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()),
-    [filtered]);
+  // Search is intentionally applied after the existing facets so the
+  // displayed result count reflects the combined filter set. The helper
+  // returns input order; the existing date sort remains the page's order.
+  const searched = useMemo(
+    () => filterAgendaItemsBySearch(filtered, searchQuery),
+    [filtered, searchQuery],
+  );
 
+  const sorted = useMemo(() =>
+    [...searched].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()),
+    [searched]);
+
+  const searchActive = Boolean(normalizeAgendaSearchText(searchQuery));
   const filtersActive =
-    roomFilter !== "__all__" || trackFilter !== "__all__" || statusFilter !== "__all__" || !!dateFilter;
+    roomFilter !== "__all__" || trackFilter !== "__all__" || statusFilter !== "__all__" || !!dateFilter || searchActive;
 
   const clearFilters = () => {
     setRoomFilter("__all__");
     setTrackFilter("__all__");
     setStatusFilter("__all__");
     setDateFilter("");
+    setSearchQuery("");
   };
 
   // Export honours the active filter set — so operators can hand a
@@ -2552,6 +2607,36 @@ export default function AgendaItemsPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <div
+            className="inline-flex items-center rounded-md border bg-card p-0.5"
+            role="group"
+            aria-label="Agenda items view"
+          >
+            <Button
+              type="button"
+              size="sm"
+              variant={view === "cards" ? "secondary" : "ghost"}
+              className="h-8 gap-1.5"
+              onClick={() => setView("cards")}
+              aria-pressed={view === "cards"}
+              data-testid="button-agenda-view-cards"
+            >
+              <AgendaCardsIcon className="h-4 w-4" aria-hidden="true" />
+              Cards
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={view === "table" ? "secondary" : "ghost"}
+              className="h-8 gap-1.5"
+              onClick={() => setView("table")}
+              aria-pressed={view === "table"}
+              data-testid="button-agenda-view-table"
+            >
+              <AgendaTableIcon className="h-4 w-4" aria-hidden="true" />
+              Table
+            </Button>
+          </div>
           <Button
             variant="outline"
             onClick={downloadCsv}
@@ -2571,10 +2656,43 @@ export default function AgendaItemsPage() {
 
       <SyncSourcesSection clientId={selectedClientId} />
 
-      {/* Filter bar — room / track / status / date. Drives both the
-          rendered list and the CSV export. */}
+      {/* Filter bar — free text plus room / track / status / date. Drives
+          both the rendered list and the CSV export. */}
       <Card>
         <CardContent className="flex flex-wrap items-end gap-3 p-4">
+          <div className="flex min-w-[16rem] flex-1 flex-col gap-1">
+            <Label htmlFor="agenda-items-search" className="text-xs">Search agenda items</Label>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input
+                id="agenda-items-search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search title, description, presenter…"
+                maxLength={AGENDA_SEARCH_MAX_LENGTH}
+                aria-label="Search agenda items"
+                aria-describedby="agenda-items-search-help"
+                data-testid="input-agenda-search"
+                className="pl-9 pr-20"
+              />
+              {searchQuery && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-1 top-1/2 h-8 -translate-y-1/2 px-2"
+                  onClick={() => setSearchQuery("")}
+                  aria-label="Clear agenda item search"
+                  data-testid="button-clear-agenda-search"
+                >
+                  Clear
+                </Button>
+              )}
+            </div>
+            <span id="agenda-items-search-help" className="sr-only">
+              Searches all terms in any order across agenda item details.
+            </span>
+          </div>
           <div className="flex flex-col gap-1">
             <Label className="text-xs">Room</Label>
             <Select value={roomFilter} onValueChange={setRoomFilter}>
@@ -2621,7 +2739,11 @@ export default function AgendaItemsPage() {
             </Button>
           )}
           <p className="text-xs text-muted-foreground ml-auto">
-            Showing {sorted.length} of {items.length} item(s)
+            <span aria-live="polite" data-testid="agenda-search-count">
+              {searchActive
+                ? `${sorted.length} matching item(s)`
+                : `Showing ${sorted.length} of ${items.length} item(s)`}
+            </span>
           </p>
         </CardContent>
       </Card>
@@ -2634,9 +2756,17 @@ export default function AgendaItemsPage() {
         <Card className="py-12">
           <CardContent className="flex flex-col items-center text-center">
             <Calendar className="h-12 w-12 text-muted-foreground/50 mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No agenda items yet</h3>
+            <h3 className="text-lg font-semibold mb-2">
+              {items.length > 0
+                ? searchActive
+                  ? "No agenda items match your search"
+                  : "No agenda items match your filters"
+                : "No agenda items yet"}
+            </h3>
             <p className="text-sm text-muted-foreground max-w-sm mb-4">
-              Add sessions manually or paste a CSV from your event planning tool.
+              {items.length > 0
+                ? "Try a different search or clear the active filters."
+                : "Add sessions manually or paste a CSV from your event planning tool."}
             </p>
             <div className="flex gap-2">
               <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4 mr-2" />Add Item</Button>
@@ -2645,39 +2775,111 @@ export default function AgendaItemsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-2">
-          {sorted.map((item) => (
-            <Card key={item.id} className="hover-elevate" data-testid={`agenda-item-row-${item.id}`}>
-              <CardHeader className="flex flex-row items-start justify-between gap-4 py-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <CardTitle className="text-base">{item.title}</CardTitle>
-                    <Badge variant="outline" data-testid={`badge-status-${item.id}`}>{item.status}</Badge>
-                    {item.room && <Badge variant="secondary">📍 {item.room}</Badge>}
-                    {item.track && <Badge variant="secondary">🏷 {item.track}</Badge>}
+        view === "table" ? (
+          <div className="w-full overflow-x-auto rounded-md border" data-testid="agenda-items-table-view">
+            <table className="min-w-[980px] w-full text-sm" aria-label="Agenda items">
+              <thead className="border-b bg-muted/40">
+                <tr>
+                  <th scope="col" className="px-4 py-3 text-left font-medium">Title</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium">Schedule</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium">Room</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium">Track</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium">Status</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium">Sponsor</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium">Presenter</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium">Presenter company</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium">Status message</th>
+                  <th scope="col" className="px-4 py-3 text-right font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((item) => (
+                  <tr key={item.id} className="border-b last:border-0 hover:bg-muted/30" data-testid={`agenda-item-table-row-${item.id}`}>
+                    <th scope="row" className="px-4 py-3 text-left font-medium">{item.title}</th>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      {new Date(item.startsAt).toLocaleString()} → {new Date(item.endsAt).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3">{item.room || "—"}</td>
+                    <td className="px-4 py-3">{item.track || "—"}</td>
+                    <td className="px-4 py-3">{item.status}</td>
+                    <td className="px-4 py-3">{item.company || "—"}</td>
+                    <td className="px-4 py-3">{item.presenter || "—"}</td>
+                    <td className="px-4 py-3">{item.presenterCompany || "—"}</td>
+                    <td className="px-4 py-3">{item.statusMessage || "—"}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setEditing(item)}
+                          aria-label={`Edit ${item.title}`}
+                          data-testid={`button-edit-${item.id}`}
+                        >
+                          <Pencil className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => deleteMutation.mutate(item.id)}
+                          aria-label={`Delete ${item.title}`}
+                          data-testid={`button-delete-${item.id}`}
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="space-y-2" data-testid="agenda-items-card-view">
+            {sorted.map((item) => (
+              <Card key={item.id} className="hover-elevate" data-testid={`agenda-item-row-${item.id}`}>
+                <CardHeader className="flex flex-row items-start justify-between gap-4 py-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <CardTitle className="text-base">{item.title}</CardTitle>
+                      <Badge variant="outline" data-testid={`badge-status-${item.id}`}>{item.status}</Badge>
+                      {item.room && <Badge variant="secondary">📍 {item.room}</Badge>}
+                      {item.track && <Badge variant="secondary">🏷 {item.track}</Badge>}
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {new Date(item.startsAt).toLocaleString()} → {new Date(item.endsAt).toLocaleString()}
+                      {item.company && <> · Sponsor: {item.company}</>}
+                      {item.presenter && <> · Presenter: {item.presenter}</>}
+                      {item.presenterCompany && <> · Presenter company: {item.presenterCompany}</>}
+                    </p>
+                    {item.statusMessage && (
+                      <p className="text-sm italic mt-1">{item.statusMessage}</p>
+                    )}
                   </div>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {new Date(item.startsAt).toLocaleString()} → {new Date(item.endsAt).toLocaleString()}
-                    {item.company && <> · Sponsor: {item.company}</>}
-                    {item.presenter && <> · Presenter: {item.presenter}</>}
-                    {item.presenterCompany && <> · Presenter company: {item.presenterCompany}</>}
-                  </p>
-                  {item.statusMessage && (
-                    <p className="text-sm italic mt-1">{item.statusMessage}</p>
-                  )}
-                </div>
-                <div className="flex gap-1">
-                  <Button variant="ghost" size="icon" onClick={() => setEditing(item)} data-testid={`button-edit-${item.id}`}>
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button variant="ghost" size="icon" onClick={() => deleteMutation.mutate(item.id)} data-testid={`button-delete-${item.id}`}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </CardHeader>
-            </Card>
-          ))}
-        </div>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setEditing(item)}
+                      aria-label={`Edit ${item.title}`}
+                      data-testid={`button-edit-${item.id}`}
+                    >
+                      <Pencil className="h-4 w-4" aria-hidden="true" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => deleteMutation.mutate(item.id)}
+                      aria-label={`Delete ${item.title}`}
+                      data-testid={`button-delete-${item.id}`}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    </Button>
+                  </div>
+                </CardHeader>
+              </Card>
+            ))}
+          </div>
+        )
       )}
 
       {createOpen && <ItemDialog open={createOpen} onOpenChange={setCreateOpen} clientId={selectedClientId} persistedStatusOptions={persistedStatusOptions} />}
