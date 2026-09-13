@@ -69,6 +69,8 @@ async function seed(): Promise<Seed> {
     clientId, name: `${PREFIX}agenda`, displayMode: "full", layoutMode: "portrait",
     maxItemsPerPage: 3, rotationIntervalSeconds: 3, refreshIntervalSeconds: 5,
     eventName: `${PREFIX}event`, showEventName: true, showPresenter: true,
+    showPresenterCompany: true,
+    presenterColor: "#0055ff", presenterCompanyColor: "#00aa55",
     showSessionCount: true, showDescription: false,
     showRoom: false, showTrack: false,
     showStatus: false, showDuration: false,
@@ -78,7 +80,16 @@ async function seed(): Promise<Seed> {
     id: `${PREFIX}portrait-${index + 1}`, clientId,
     title: `${MARK}portrait-${index + 1} ${"conference programme session ".repeat(wordCount)}`,
     description: null,
-    presenter: `Presenter ${index + 1} ${"with professional credentials ".repeat(presenterWordCounts[index])}`,
+    presenter: index === 10
+      ? null
+      : `Presenter ${index + 1} ${"with professional credentials ".repeat(presenterWordCounts[index])}`,
+    presenterCompany: index === 9
+      ? null
+      : index === 10
+        ? "Company without presenter"
+        : index === 0
+          ? "A long company affiliation that wraps naturally with its presenter across the available card width"
+          : `Company ${index + 1}`,
     startsAt: new Date(now.getTime() + index * 3_600_000),
     endsAt: new Date(now.getTime() + (index + 1) * 3_600_000),
     status: "scheduled", sortOrder: index,
@@ -168,38 +179,210 @@ async function login(page: Page) {
   expect(user.email).toBe(rows[0].email);
 }
 
+type RectSnapshot = {
+  top: number;
+  left: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+};
+
+type PresenterPairSnapshot = {
+  combinedText: string;
+  presenterText: string;
+  companyText: string;
+  presenterCount: number;
+  presenterColor: string | null;
+  companyColor: string | null;
+  presenterViewport: string | null;
+  companyViewport: string | null;
+  pairRect: RectSnapshot;
+  presenterRect: RectSnapshot | null;
+  companyRect: RectSnapshot | null;
+  viewportRect: RectSnapshot | null;
+};
+
+type AgendaPageSnapshot = {
+  ids: string[];
+  indicator: string;
+  pageIndex: number;
+  pageCount: number;
+  pairs: Record<string, PresenterPairSnapshot>;
+};
+
+async function captureAgendaPage(
+  page: Page,
+  rootTestId: string,
+): Promise<AgendaPageSnapshot | null> {
+  return page.evaluate((testId) => {
+    const roots = Array.from(
+      document.querySelectorAll<HTMLElement>(`[data-testid="${testId}"]`),
+    );
+    const root = roots.find((candidate) => {
+      const style = getComputedStyle(candidate);
+      return (
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        candidate.getClientRects().length > 0
+      );
+    });
+    if (!root) return null;
+
+    const visible = (element: HTMLElement) => {
+      const style = getComputedStyle(element);
+      return (
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        element.getClientRects().length > 0
+      );
+    };
+    const rect = (element: HTMLElement) => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        top: bounds.top,
+        left: bounds.left,
+        right: bounds.right,
+        bottom: bounds.bottom,
+        width: bounds.width,
+        height: bounds.height,
+      };
+    };
+    const titleNodes = Array.from(
+      root.querySelectorAll<HTMLElement>("[data-testid^='agenda-title-']"),
+    ).filter(visible);
+    const count = root.querySelector<HTMLElement>("[data-testid='agenda-session-count']");
+    if (!titleNodes.length || !count || !visible(count)) return null;
+
+    const ids = titleNodes.map((node) => {
+      const id = node.dataset.testid!.replace("agenda-title-", "");
+      return id.match(/portrait-\d+$/)?.[0] ?? id;
+    });
+    const indicator = count.textContent?.trim() ?? "";
+    const pageMatch = indicator.match(/page (\d+)\/(\d+)$/);
+    if (!pageMatch) return null;
+
+    const pairs: Record<string, PresenterPairSnapshot> = {};
+    for (const id of ["portrait-1", "portrait-10", "portrait-11"]) {
+      if (!ids.includes(id)) continue;
+      const pair = Array.from(
+        root.querySelectorAll<HTMLElement>("[data-testid^='agenda-presenter-pair-']"),
+      ).find((candidate) => candidate.dataset.testid?.endsWith(id) && visible(candidate));
+      if (!pair) return null;
+      const presenter = pair.querySelector<HTMLElement>(
+        "[data-testid^='agenda-presenter-']:not([data-testid^='agenda-presenter-pair-']):not([data-testid^='agenda-presenter-company-']):not([data-testid^='agenda-presenter-viewport-'])",
+      );
+      const company = pair.querySelector<HTMLElement>(
+        "[data-testid^='agenda-presenter-company-']",
+      );
+      const presenterViewport = presenter?.closest<HTMLElement>(
+        "[data-testid^='agenda-presenter-viewport-']",
+      ) ?? null;
+      const companyViewport = company?.closest<HTMLElement>(
+        "[data-testid^='agenda-presenter-viewport-']",
+      ) ?? null;
+      const viewport = presenterViewport ?? companyViewport;
+      pairs[id] = {
+        combinedText: pair.textContent ?? "",
+        presenterText: presenter?.textContent ?? "",
+        companyText: company?.textContent ?? "",
+        presenterCount: pair.querySelectorAll(
+          "[data-testid^='agenda-presenter-']:not([data-testid^='agenda-presenter-pair-']):not([data-testid^='agenda-presenter-company-']):not([data-testid^='agenda-presenter-viewport-'])",
+        ).length,
+        presenterColor: presenter ? getComputedStyle(presenter).color : null,
+        companyColor: company ? getComputedStyle(company).color : null,
+        presenterViewport: presenterViewport?.dataset.testid ?? null,
+        companyViewport: companyViewport?.dataset.testid ?? null,
+        pairRect: rect(pair),
+        presenterRect: presenter ? rect(presenter) : null,
+        companyRect: company ? rect(company) : null,
+        viewportRect: viewport ? rect(viewport) : null,
+      };
+    }
+
+    return {
+      ids,
+      indicator,
+      pageIndex: Number(pageMatch[1]),
+      pageCount: Number(pageMatch[2]),
+      pairs,
+    };
+  }, rootTestId);
+}
+
 async function observe(page: Page, label: string, rootTestId: string): Promise<string[][]> {
-  const frame = page.getByTestId(rootTestId);
   const seen: string[][] = [];
   const indicators: string[] = [];
-  let previous = "";
-  let armed = false;
-  const deadline = Date.now() + 110_000;
-  while (Date.now() < deadline && seen.length < expected.length * 2) {
-    const ids = await frame.locator("[data-testid^='agenda-title-']").evaluateAll((nodes) =>
-      nodes.map((node) => {
-        const id = (node as HTMLElement).dataset.testid!.replace("agenda-title-", "");
-        return id.match(/portrait-\d+$/)?.[0] ?? id;
-      }),
-    ).catch(() => []);
-    const normalized = ids;
-    if (normalized.length) {
-      const key = normalized.join(",");
-      if (normalized.some((id) => !/^portrait-[1-9]$|^portrait-10$|^portrait-11$/.test(id))) {
-        throw new Error(`${label}: unexpected Agenda card id ${key}`);
-      }
-      if (!armed && key === expected[0].join(",")) {
-        armed = true;
-        previous = "";
-      }
-      if (armed && key !== previous) {
-        seen.push(normalized);
-        previous = key;
-      }
+  let sawInlinePair = false;
+  let sawPresenterWithoutCompany = false;
+  let sawCompanyWithoutPresenter = false;
+  for (let index = 0; index < expected.length * 2; index += 1) {
+    const expectedIds = expected[index % expected.length];
+    const expectedKey = expectedIds.join(",");
+    let matched: AgendaPageSnapshot | null = null;
+    await expect.poll(
+      async () => {
+        const snapshot = await captureAgendaPage(page, rootTestId);
+        if (!snapshot) return null;
+        const key = snapshot.ids.join(",");
+        if (key === expectedKey) matched = snapshot;
+        return key;
+      },
+      {
+        message: `${label} page ${index + 1} should match the canonical rotation`,
+        timeout: 110_000,
+        intervals: [50, 100, 200],
+      },
+    ).toBe(expectedKey);
+
+    const snapshot = matched;
+    expect(snapshot, `${label} stable page snapshot`).not.toBeNull();
+    if (!snapshot) throw new Error(`${label}: stable page snapshot was not retained`);
+    if (snapshot.ids.some((id) => !/^portrait-(?:[1-9]|10|11)$/.test(id))) {
+      throw new Error(`${label}: unexpected Agenda card id ${snapshot.ids.join(",")}`);
     }
-    const count = await frame.getByTestId("agenda-session-count").textContent().catch(() => null);
-    if (count) indicators.push(count);
-    await page.waitForTimeout(250);
+    expect(snapshot.pageIndex, `${label} page index`).toBe((index % expected.length) + 1);
+    expect(snapshot.pageCount, `${label} page count`).toBe(expected.length);
+    seen.push(snapshot.ids);
+    indicators.push(snapshot.indicator);
+
+    const inlinePair = snapshot.pairs["portrait-1"];
+    if (inlinePair) {
+      expect(inlinePair.combinedText, `${label} inline separator`).toContain(" — ");
+      expect(inlinePair.presenterText, `${label} presenter text`).toBeTruthy();
+      expect(inlinePair.companyText, `${label} company text`).toBeTruthy();
+      expect(inlinePair.presenterColor, `${label} presenter colour`).toBe("rgb(0, 85, 255)");
+      expect(inlinePair.companyColor, `${label} company colour`).toBe("rgb(0, 170, 85)");
+      expect(inlinePair.presenterViewport, `${label} presenter viewport`).toBeTruthy();
+      expect(inlinePair.companyViewport, `${label} shared inline viewport`)
+        .toBe(inlinePair.presenterViewport);
+      expect(inlinePair.presenterRect?.width, `${label} presenter geometry`).toBeGreaterThan(0);
+      expect(inlinePair.companyRect?.width, `${label} company geometry`).toBeGreaterThan(0);
+      expect(inlinePair.viewportRect?.width, `${label} viewport geometry`).toBeGreaterThan(0);
+      expect(inlinePair.presenterRect!.left, `${label} presenter inside viewport`)
+        .toBeGreaterThanOrEqual(inlinePair.viewportRect!.left - 1);
+      expect(inlinePair.companyRect!.right, `${label} company inside viewport`)
+        .toBeLessThanOrEqual(inlinePair.viewportRect!.right + 1);
+      sawInlinePair = true;
+    }
+
+    const presenterOnly = snapshot.pairs["portrait-10"];
+    if (presenterOnly) {
+      expect(presenterOnly.combinedText, `${label} blank company`).not.toContain(" — ");
+      expect(presenterOnly.presenterText, `${label} presenter without company`).toBeTruthy();
+      expect(presenterOnly.companyText, `${label} blank company text`).toBe("");
+      sawPresenterWithoutCompany = true;
+    }
+
+    const companyOnly = snapshot.pairs["portrait-11"];
+    if (companyOnly) {
+      expect(companyOnly.combinedText, `${label} hidden presenter`).not.toContain(" — ");
+      expect(companyOnly.presenterCount, `${label} hidden presenter element`).toBe(0);
+      expect(companyOnly.presenterText, `${label} hidden presenter text`).toBe("");
+      expect(companyOnly.companyText, `${label} company without presenter`)
+        .toContain("Company without presenter");
+      sawCompanyWithoutPresenter = true;
+    }
   }
   expect(seen, `${label} pagination`).toEqual(expected.concat(expected));
   expect(
@@ -207,6 +390,9 @@ async function observe(page: Page, label: string, rootTestId: string): Promise<s
     `${label} indicators`,
   ).toBe(true);
   expect(indicators.some((text) => /8\/5|0\/5|6\/5|7\/5/.test(text)), `${label} invalid indicators`).toBe(false);
+  expect(sawInlinePair, `${label} inline presenter/company pair`).toBe(true);
+  expect(sawPresenterWithoutCompany, `${label} presenter without company`).toBe(true);
+  expect(sawCompanyWithoutPresenter, `${label} company without presenter`).toBe(true);
   expect(await page.locator("body").innerText()).not.toMatch(/fallback|invalid|error/i);
   return seen;
 }

@@ -969,9 +969,9 @@ export function measurePresenterOverflow(
 }
 
 function PresenterViewport({
-  id, text, lines, fontSize, accentColor, onOverflow, resetTick, reducedMotion, suppressTestId,
+  id, text, children, lines, fontSize, accentColor, onOverflow, resetTick, reducedMotion, suppressTestId,
 }: {
-  id: string; text: string; lines: number; fontSize: number;
+  id: string; text: string; children?: React.ReactNode; lines: number; fontSize: number;
   accentColor?: string;
   onOverflow?: (id: string, px: number) => void; resetTick?: number; reducedMotion: boolean; suppressTestId?: boolean;
 }) {
@@ -1066,7 +1066,7 @@ function PresenterViewport({
           transition: transitionMs > 0 ? `transform ${transitionMs}ms linear` : "none",
           willChange: offset > 0 ? "transform" : "auto",
         }}
-      >{text}</span>
+      >{children ?? text}</span>
       {indicator && (
         <span
           aria-hidden="true"
@@ -1129,10 +1129,12 @@ function PresenterDetails({
   const pairs = resolveAgendaPresenterPairs(item);
   const showPresenter = config.showPresenter !== false;
   const showPresenterCompany = config.showPresenterCompany === true;
-  const visiblePairs = pairs.filter(
-    ({ presenter, presenterCompany }) =>
-      (showPresenter && presenter) || (showPresenterCompany && presenterCompany),
-  );
+  const visiblePairs = pairs
+    .map((pair, sourceIndex) => ({ ...pair, sourceIndex }))
+    .filter(
+      ({ presenter, presenterCompany }) =>
+        (showPresenter && presenter) || (showPresenterCompany && presenterCompany),
+    );
   if (!visiblePairs.length) return null;
 
   const bodyStyle = roleColors?.body ? { color: roleColors.body } : undefined;
@@ -1188,73 +1190,84 @@ function PresenterDetails({
       className="flex min-w-0 flex-col gap-1"
       data-testid={testId(`agenda-presenter-details-${item.id}`)}
     >
-      {visiblePairs.map(({ presenter, presenterCompany }, index) => {
+      {visiblePairs.map(({ presenter, presenterCompany, sourceIndex }, index) => {
         // Keep the first presenter on the legacy item id so existing
         // pagination/dwell observers continue to report presenter:<item>.
         const pairId = index === 0 ? item.id : `${item.id}:${index}`;
+        const presenterVisible = showPresenter && Boolean(presenter);
+        const companyVisible = showPresenterCompany && Boolean(presenterCompany);
+        const presenterTestId =
+          index === 0
+            ? `agenda-presenter-${item.id}`
+            : `agenda-presenter-${pairId}`;
+        const companyTestId =
+          index === 0
+            ? `agenda-presenter-company-${item.id}`
+            : `agenda-presenter-company-${pairId}`;
         return (
-          <div key={pairId} className="min-w-0">
-            {showPresenter && presenter && (
-              <div
-                className="flex min-w-0 items-start break-words"
-                style={{
-                  overflowWrap: "anywhere",
-                  ...(roleColors?.presenter
-                    ? { color: roleColors.presenter }
-                    : bodyStyle),
-                }}
-                data-testid={testId(
-                  index === 0
-                    ? `agenda-presenter-${item.id}`
-                    : `agenda-presenter-${pairId}`,
-                )}
-              >
-                {speakerMarker && (
-                  <span
-                    className="flex-none"
-                    style={{ width: scale * 1.35 }}
-                  >
-                    <SpeakerMarker
-                      config={config}
-                      accentColor={accentColor}
-                      testId={testId(`agenda-speaker-marker-${pairId}`)}
-                    />
-                  </span>
-                )}
-                <PresenterViewport
-                  id={pairId}
-                  text={presenter}
-                  lines={presenterVisibleLines}
-                  fontSize={scale}
-                  accentColor={resolveEffectiveAgendaIndicatorColor(
-                    config,
-                    "presenter-scroll-thumb",
-                    accentColor,
-                  )}
-                   onOverflow={(_, px) => onScrollOverflow?.(presenterPairMetricKey(item.id, index), px)}
-                  resetTick={scrollResetTick}
-                  reducedMotion={prefersReducedMotion ?? false}
-                  suppressTestId={suppressTestId}
+          <div
+            key={`${pairId}:${sourceIndex}`}
+            className="flex min-w-0 items-start break-words"
+            style={{ overflowWrap: "anywhere" }}
+            data-testid={testId(`agenda-presenter-pair-${pairId}`)}
+          >
+            {presenterVisible && speakerMarker && (
+              <span className="flex-none" style={{ width: scale * 1.35 }}>
+                <SpeakerMarker
+                  config={config}
+                  accentColor={accentColor}
+                  testId={testId(`agenda-speaker-marker-${pairId}`)}
                 />
-              </div>
+              </span>
             )}
-            {showPresenterCompany && presenterCompany && (
-              <div
-                className={`${presenter ? "pl-0.5" : ""} min-w-0 break-words opacity-80`}
-                style={{
-                  color: roleColors?.presenterCompany,
-                  fontSize: scale * 0.9,
-                  overflowWrap: "anywhere",
-                }}
-                data-testid={testId(
-                  index === 0
-                    ? `agenda-presenter-company-${item.id}`
-                    : `agenda-presenter-company-${pairId}`,
-                )}
-              >
-                {presenterCompany}
-              </div>
-            )}
+            <PresenterViewport
+              id={pairId}
+              text={[
+                presenterVisible ? presenter : null,
+                companyVisible ? presenterCompany : null,
+              ].filter(Boolean).join(" — ")}
+              lines={presenterVisibleLines}
+              fontSize={scale}
+              accentColor={resolveEffectiveAgendaIndicatorColor(
+                config,
+                "presenter-scroll-thumb",
+                accentColor,
+              )}
+              onOverflow={(_, px) =>
+                onScrollOverflow?.(
+                  presenterPairMetricKey(item.id, sourceIndex),
+                  px,
+                )
+              }
+              resetTick={scrollResetTick}
+              reducedMotion={prefersReducedMotion ?? false}
+              suppressTestId={suppressTestId}
+            >
+              {presenterVisible && (
+                <span
+                  style={
+                    roleColors?.presenter
+                      ? { color: roleColors.presenter }
+                      : bodyStyle
+                  }
+                  data-testid={testId(presenterTestId)}
+                >
+                  {presenter}
+                </span>
+              )}
+              {presenterVisible && companyVisible && (
+                <span aria-hidden="true"> — </span>
+              )}
+              {companyVisible && (
+                <span
+                  className="opacity-80"
+                  style={{ color: roleColors?.presenterCompany }}
+                  data-testid={testId(companyTestId)}
+                >
+                  {presenterCompany}
+                </span>
+              )}
+            </PresenterViewport>
           </div>
         );
       })}

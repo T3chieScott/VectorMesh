@@ -248,11 +248,22 @@ async function assertAgendaSurface(page: Page, rootTestId: string, fixture: Fixt
     `[data-testid="agenda-presenter-company-${fixture.itemIds[0]}:1"]`,
   ).evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim()));
   expect(pairOrder).toEqual([
-    `🎤${PREFIX}Alice`,
+    `${PREFIX}Alice`,
     `${PREFIX}Alpha`,
-    `🎤${PREFIX}Bob`,
+    `${PREFIX}Bob`,
     `${PREFIX}Beta`,
   ]);
+  const firstPair = root.getByTestId(`agenda-presenter-pair-${fixture.itemIds[0]}`);
+  await expect(firstPair).toContainText(`${PREFIX}Alice — ${PREFIX}Alpha`);
+  const firstPairGeometry = await firstPair.evaluate((node) => {
+    const presenter = node.querySelector<HTMLElement>("[data-testid^='agenda-presenter-']:not([data-testid^='agenda-presenter-pair-']):not([data-testid^='agenda-presenter-company-']):not([data-testid^='agenda-presenter-viewport-'])");
+    const company = node.querySelector<HTMLElement>("[data-testid^='agenda-presenter-company-']");
+    return {
+      presenterTop: presenter?.getBoundingClientRect().top,
+      companyTop: company?.getBoundingClientRect().top,
+    };
+  });
+  expect(Math.abs((firstPairGeometry.presenterTop ?? 0) - (firstPairGeometry.companyTop ?? 0))).toBeLessThan(2);
   await expect(root.getByTestId(`agenda-company-${fixture.itemIds[0]}`)).toHaveCSS("color", "rgb(255, 0, 170)");
   await expect(firstPresenter).toHaveCSS("color", "rgb(0, 85, 255)");
   await expect(firstCompany).toHaveCSS("color", "rgb(0, 170, 85)");

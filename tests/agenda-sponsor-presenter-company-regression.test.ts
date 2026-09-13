@@ -181,6 +181,77 @@ test("sponsor/presenter-company matrix is independent on the shared renderer", (
   }
 });
 
+test("presenter/company pairs render inline in source order with independent colours and visibility", () => {
+  const html = renderItem(
+    {
+      showPresenter: true,
+      showPresenterCompany: true,
+      presenterColor: "#123456",
+      presenterCompanyColor: "#abcdef",
+      speakerMarkerStyle: "none",
+    },
+    {
+      presenter: "Jane Smith\nPresenter without company\n\nA very long presenter name that must be allowed to wrap naturally",
+      presenterCompany: "Acme Ltd\n\nCompany without presenter\nA very long company name that must wrap with its presenter instead of becoming a detached block",
+    },
+  );
+
+  assert.match(
+    html,
+    /agenda-presenter-pair-item[\s\S]*agenda-presenter-item[\s\S]*Jane Smith<\/span><span aria-hidden="true"> — <\/span><span[^>]*agenda-presenter-company-item[^>]*>Acme Ltd/,
+  );
+  assert.match(
+    html,
+    /agenda-presenter-pair-item:1[\s\S]*Presenter without company<\/span>(?!<span aria-hidden="true"> — )/,
+  );
+  assert.match(
+    html,
+    /agenda-presenter-pair-item:2[\s\S]*agenda-presenter-company-item:2[^>]*>Company without presenter/,
+  );
+  assert.doesNotMatch(
+    html.slice(
+      html.indexOf('data-testid="agenda-presenter-pair-item:2"'),
+      html.indexOf('data-testid="agenda-presenter-pair-item:3"'),
+    ),
+    / — /,
+  );
+  assert.ok(
+    html.indexOf("Jane Smith") <
+      html.indexOf("Presenter without company") &&
+      html.indexOf("Presenter without company") <
+        html.indexOf("Company without presenter") &&
+      html.indexOf("Company without presenter") <
+        html.indexOf("A very long presenter name"),
+    "pairs should remain in source order",
+  );
+  assert.match(
+    html,
+    /style="color:#123456"[^>]*data-testid="agenda-presenter-item"/,
+  );
+  assert.match(
+    html,
+    /style="color:#abcdef"[^>]*data-testid="agenda-presenter-company-item"/,
+  );
+  assert.match(
+    html,
+    /agenda-presenter-viewport-item:3[\s\S]*A very long presenter name[\s\S]* — [\s\S]*A very long company name/,
+  );
+
+  const presenterOnly = renderItem(
+    { showPresenter: true, showPresenterCompany: false, speakerMarkerStyle: "none" },
+    { presenter: "Jane Smith", presenterCompany: "Acme Ltd" },
+  );
+  assert.match(presenterOnly, />Jane Smith</);
+  assert.doesNotMatch(presenterOnly, /Acme Ltd| — /);
+
+  const companyOnly = renderItem(
+    { showPresenter: false, showPresenterCompany: true, speakerMarkerStyle: "microphone" },
+    { presenter: "Jane Smith", presenterCompany: "Acme Ltd" },
+  );
+  assert.match(companyOnly, />Acme Ltd</);
+  assert.doesNotMatch(companyOnly, /Jane Smith| — |🎤/);
+});
+
 test("dedupe preserves ordered presenter/company pairs and removes only exact duplicate pairs", () => {
   const rows = [
     item({ id: "a", presenter: "Ada", presenterCompany: "Engine Co", company: "Sponsor B" }),
