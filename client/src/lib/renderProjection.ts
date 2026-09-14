@@ -268,6 +268,7 @@ function renderPlaylistItems(playlistItems: unknown): unknown {
         if (!item || typeof item !== "object") return item;
         const value = item as Record<string, unknown>;
         return canonical({
+          id: value.id,
           order: value.order,
           mediaAssetId: value.mediaAssetId,
           layoutTemplateId: value.layoutTemplateId,

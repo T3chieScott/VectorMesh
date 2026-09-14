@@ -11,7 +11,7 @@
 import { test, expect, type Browser, type Page } from "@playwright/test";
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { like, sql } from "drizzle-orm";
+import { eq, like, sql } from "drizzle-orm";
 import {
   agendaItems, agendaWidgetConfigs, clients, displayProfiles, events,
   layoutTemplates, mediaAssets, playlistItems, playlists, programmeVersions,
@@ -379,12 +379,16 @@ async function waitForMovement(page: Page, label: string, rootTestId: string) {
   await expect.poll(
     async () => {
       last = await readScrollSnapshot(page, rootTestId);
-      return Boolean(last && (last.descriptionOffset < -1 || last.presenterOffset < -1));
+      return Boolean(
+        last &&
+        last.descriptionOffset < -1 &&
+        last.presenterOffset < -1,
+      );
     },
     {
       timeout: 20_000,
       intervals: [100, 250, 500],
-      message: `${label} must observe the production transform leaving the top`,
+      message: `${label} must observe both production transforms leaving the top`,
     },
   ).toBe(true);
   return last!;
@@ -612,6 +616,74 @@ test.describe("actual Agenda scrolling acceptance", () => {
       // retained the same item and reached its final lines above.
       expect(resizedId).toBeTruthy();
       expect(initial.every((snapshot) => snapshot.id === resizedId)).toBe(true);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("oversized Full card stays contained and reveals its bottom without description auto-scroll", async ({ browser }) => {
+    test.setTimeout(120_000);
+    await db.update(agendaWidgetConfigs).set({
+      descriptionAutoScroll: false,
+      showDescription: false,
+      presenterVisibleLines: 20,
+    }).where(eq(agendaWidgetConfigs.id, s.configId));
+    await db.update(agendaItems).set({
+      title: `${MARK}${" Oversized title content".repeat(60)}`,
+      description: null,
+      presenter: Array.from({ length: 30 }, (_, index) =>
+        `Presenter ${index + 1}: ${"deliberately wide wrapped speaker name ".repeat(28)}`,
+      ).join("\n"),
+      presenterCompany: null,
+    }).where(eq(agendaItems.id, `${PREFIX}scroll-item`));
+
+    const context = await browser.newContext({ serviceWorkers: "block" });
+    try {
+      const page = await context.newPage();
+      await login(page);
+      await page.goto(`/simulator?at=${now.toISOString()}`, { waitUntil: "commit" });
+      await page.getByTestId("select-simulator-screen").click();
+      await page.getByRole("option", { name: `${PREFIX}screen`, exact: false }).click();
+      await page.getByTestId("select-simulator-layout").click();
+      await page.getByRole("option", { name: `${s.sceneName} (1 zones)`, exact: true }).click();
+
+      const root = page.getByTestId("player-display");
+      const card = page.getByTestId(`agenda-row-${PREFIX}scroll-item`);
+      await expect(card).toBeVisible({ timeout: 30_000 });
+      await expect.poll(async () => card.evaluate((element) => {
+        const rootElement = element.closest<HTMLElement>(
+          "[data-testid='agenda-display-root']",
+        );
+        return Boolean(
+          rootElement &&
+          element.scrollHeight - element.clientHeight > 1 &&
+          element.getBoundingClientRect().bottom <=
+            rootElement.getBoundingClientRect().bottom + 1,
+        );
+      }), { timeout: 30_000 }).toBe(true);
+      const ready = await card.evaluate((element) => ({
+        overflow: element.scrollHeight - element.clientHeight,
+        maxHeight: getComputedStyle(element).maxHeight,
+      }));
+      expect(ready.overflow).toBeGreaterThan(1);
+      expect(ready.maxHeight).not.toBe("none");
+
+      const settledHeights = new Set<number>();
+      for (let index = 0; index < 8; index += 1) {
+        settledHeights.add(await card.evaluate((element) => element.clientHeight));
+        await page.waitForTimeout(250);
+      }
+      expect(settledHeights.size).toBe(1);
+      await expect.poll(
+        async () => card.evaluate((element) => element.scrollTop),
+        { timeout: 20_000 },
+      ).toBeGreaterThan(1);
+      await expect.poll(
+        async () => card.evaluate((element) =>
+          element.scrollTop >= element.scrollHeight - element.clientHeight - 3),
+        { timeout: 20_000 },
+      ).toBe(true);
+      await expect(root).not.toContainText(/invalid|error/i);
     } finally {
       await context.close();
     }

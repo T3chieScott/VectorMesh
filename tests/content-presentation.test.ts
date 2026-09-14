@@ -120,6 +120,21 @@ test("presentation preserves media-only fallback and safely ignores deleted layo
   assert.equal(deleted.zones.length, 0);
 });
 
+test("direct scenes remain non-rotating without a playlist source", () => {
+  const presentation = buildContentPresentation({
+    layout: layout("direct"),
+    zoneSources: [],
+    playlistItems: {
+      unrelated: [{ id: "item", order: 1, layoutTemplateId: "other" }],
+    },
+    layoutTemplates: { other: layout("other") },
+  });
+  assert.equal(presentation.layout?.id, "direct");
+  assert.equal(presentation.isLayoutRotation, false);
+  assert.deepEqual(presentation.rotationItems, []);
+  assert.equal(shouldSchedulePresentationDwell(presentation, false), false);
+});
+
 test("shared epoch produces identical ordered scenes for late hosts and restart", () => {
   const payload = {
     layout: null, presentation: { revision: "r2", activationEpoch: 0 },
@@ -134,6 +149,35 @@ test("shared epoch produces identical ordered scenes for late hosts and restart"
   assert.equal(getPresentationRotationIndex(presentation, 4_999), 0);
   assert.equal(getPresentationRotationIndex(presentation, 5_000), 1);
   assert.equal(getPresentationRotationIndex(presentation, 12_000), 0);
+});
+
+test("three unequal playlist scenes advance A-B-C-A across two complete cycles", () => {
+  const payload = {
+    layout: null,
+    presentation: { revision: "r-three-scenes", activationEpoch: 0 },
+    zoneSources: [{ zoneId: "__fallback__", type: "playlist", playlistId: "p" }],
+    playlistItems: { p: [
+      { id: "item-a", order: 1, layoutTemplateId: "a", duration: 2 },
+      { id: "item-b", order: 2, layoutTemplateId: "b", duration: 3 },
+      { id: "item-c", order: 3, layoutTemplateId: "c", duration: 5 },
+    ] },
+    layoutTemplates: { a: layout("a"), b: layout("b"), c: layout("c") },
+  };
+  const expected = ["a", "b", "c", "a", "b", "c", "a"];
+  const indexes = [0, 2_000, 5_000, 10_000, 12_000, 15_000, 20_000]
+    .map((elapsed) =>
+      getPresentationRotationIndex(buildContentPresentation(payload), elapsed),
+    );
+  assert.deepEqual(
+    indexes.map((index) => buildContentPresentation(payload, index).layout?.id),
+    expected,
+  );
+  assert.deepEqual(
+    indexes.map((index) =>
+      getPresentationSceneDurationMs(buildContentPresentation(payload, index), index),
+    ),
+    [2_000, 3_000, 5_000, 2_000, 3_000, 5_000, 2_000],
+  );
 });
 
 test("local layout rotation keeps its authored dwell through equivalent polls and never schedules an Agenda scene", () => {

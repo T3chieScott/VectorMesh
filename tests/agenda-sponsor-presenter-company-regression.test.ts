@@ -234,7 +234,7 @@ test("presenter/company pairs render inline in source order with independent col
   );
   assert.match(
     html,
-    /agenda-presenter-viewport-item:3[\s\S]*A very long presenter name[\s\S]* — [\s\S]*A very long company name/,
+    /agenda-presenter-viewport-item[\s\S]*agenda-presenter-pair-item:3[\s\S]*A very long presenter name[\s\S]* — [\s\S]*A very long company name/,
   );
 
   const presenterOnly = renderItem(

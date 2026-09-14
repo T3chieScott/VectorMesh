@@ -16,6 +16,7 @@ import {
 } from "../shared/agenda-settings-clipboard";
 import {
   AgendaDisplayWidget,
+  measurePresenterVisibleRows,
   measurePresenterOverflow,
   resolveAgendaPresentationDwellMs,
   resolvePresenterVisibleLines,
@@ -74,7 +75,7 @@ test("clipboard carries bounded new presentation settings", () => {
 test("editor exposes session count and disabled speaker-line explanation", () => {
   const editor = readFileSync("client/src/pages/agenda-configs.tsx", "utf8");
   assert.match(editor, /showSessionCount/);
-  assert.match(editor, /Visible speaker lines before scrolling/);
+  assert.match(editor, /Visible speakers before scrolling/);
   assert.match(editor, /Enable Presenter to apply this limit/);
   assert.match(editor, /min=\{1\}/);
   assert.match(editor, /max=\{20\}/);
@@ -164,6 +165,42 @@ test("presenter overflow uses natural Range geometry when scrollHeight is clippe
   );
 });
 
+test("presenter threshold counts rows, including wrapped rows, not text lines", () => {
+  const viewport = document.createElement("span");
+  const content = document.createElement("span");
+  const rowBottoms = [36, 58, 78, 98, 118];
+  rowBottoms.forEach((bottom, index) => {
+    const row = document.createElement("span");
+    row.setAttribute("data-agenda-presenter-row", "true");
+    Object.defineProperties(row, {
+      offsetTop: {
+        configurable: true,
+        value: index === 0 ? 0 : rowBottoms[index - 1],
+      },
+      offsetHeight: {
+        configurable: true,
+        value: index === 0 ? bottom : bottom - rowBottoms[index - 1],
+      },
+    });
+    content.appendChild(row);
+  });
+  viewport.appendChild(content);
+  Object.defineProperties(viewport, {
+    clientHeight: { configurable: true, value: 100 },
+    getBoundingClientRect: {
+      configurable: true,
+      value: () => ({ top: 10, bottom: 110, height: 100 }),
+    },
+  });
+  // With a configured threshold N=3, N-1, N, N+1, and a long list all use
+  // row bottoms. The first row is intentionally taller (as a wrapped name
+  // would be), but it still counts as one presenter.
+  assert.equal(measurePresenterVisibleRows(viewport, content, 2), 58);
+  assert.equal(measurePresenterVisibleRows(viewport, content, 3), 78);
+  assert.equal(measurePresenterVisibleRows(viewport, content, 4), 98);
+  assert.equal(measurePresenterVisibleRows(viewport, content, 20), 118);
+});
+
 test("presenter reveal has stable gutter, active rail, and explicit timing phases", () => {
   const source = readFileSync(
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
@@ -188,11 +225,11 @@ test("presenter reveal has stable gutter, active rail, and explicit timing phase
   assert.match(presenter, /setTransitionMs\(0\)/);
   assert.match(
     presenter,
-    /Math\.abs\(lastReportedOverflowRef\.current - next\) >= 1/,
+    /Math\.abs\(lastReportedOverflowRef\.current - rowOverflow\) >= 1/,
   );
   assert.match(
     presenter,
-    /Math\.abs\(previous - next\) < 1 \? previous : next/,
+    /Math\.abs\(previous - rowOverflow\) < 1 \? previous : rowOverflow/,
   );
 });
 

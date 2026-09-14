@@ -744,6 +744,42 @@ export function resolveDescriptionViewportSizing({
   };
 }
 
+export interface FullAgendaCardSizing {
+  /** The card's fixed chrome cannot coexist with its minimum description. */
+  shouldContainCard: boolean;
+  /** Keep the card in its page allocation and let the card scroll internally. */
+  cardMaxHeight: number | null;
+}
+
+/**
+ * Full Agenda cards normally remain intrinsic and only their description
+ * viewport is bounded. An unusually large title/presenter block is different:
+ * applying that same description minimum would make the whole card escape the
+ * body and be cut off by the body clip. Contain only that exceptional card;
+ * fitting cards retain their intrinsic path and nested description viewport.
+ */
+export function resolveFullAgendaCardSizing(
+  allocatedCardHeight: number | null,
+  fixedCardHeight: number,
+  minimumDescriptionHeight: number,
+): FullAgendaCardSizing {
+  if (
+    allocatedCardHeight == null ||
+    !Number.isFinite(allocatedCardHeight) ||
+    !Number.isFinite(fixedCardHeight) ||
+    !Number.isFinite(minimumDescriptionHeight) ||
+    allocatedCardHeight <= 0
+  ) {
+    return { shouldContainCard: false, cardMaxHeight: null };
+  }
+  const shouldContainCard =
+    fixedCardHeight + Math.max(0, minimumDescriptionHeight) > allocatedCardHeight;
+  return {
+    shouldContainCard,
+    cardMaxHeight: shouldContainCard ? allocatedCardHeight : null,
+  };
+}
+
 export function isDescriptionAutoScrollMode(
   descriptionAutoScroll: boolean | null | undefined,
   descriptionLines: number | null | undefined,
@@ -993,6 +1029,35 @@ export function measurePresenterOverflow(
   return overflow > 1 ? overflow : 0;
 }
 
+/**
+ * Presenter limits count presenter records, rather than the browser's
+ * wrapped text lines.  Return the height at the bottom of the Nth record so
+ * a long name which wraps remains one row for the purposes of the limit.
+ *
+ * The row elements are deliberately queried from the rendered group instead
+ * of using line-height arithmetic: affiliations, custom fonts, and different
+ * marker glyphs can all make a row taller than one line.
+ */
+export function measurePresenterVisibleRows(
+  viewport: HTMLElement,
+  content: HTMLElement,
+  visibleRows: number,
+): number | null {
+  const rows = Array.from(
+    content.querySelectorAll<HTMLElement>("[data-agenda-presenter-row]"),
+  );
+  if (rows.length === 0) return null;
+  const row = rows[Math.min(rows.length, Math.max(1, visibleRows)) - 1];
+  if (!row) return null;
+
+  // Use layout coordinates rather than DOMRects. Player, Monitor, Builder and
+  // Simulator may all sit beneath transform:scale ancestors, and the content
+  // itself is translated while revealing later presenters. offsetTop/Height
+  // stay stable through both transforms.
+  const height = row.offsetTop + row.offsetHeight;
+  return Number.isFinite(height) && height > 0 ? height : null;
+}
+
 function PresenterViewport({
   id, text, children, lines, fontSize, accentColor, onOverflow, resetTick, reducedMotion, suppressTestId,
 }: {
@@ -1007,6 +1072,7 @@ function PresenterViewport({
   const [transitionMs, setTransitionMs] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [contentHeight, setContentHeight] = useState(0);
+  const [rowViewportHeight, setRowViewportHeight] = useState<number | null>(null);
   const lastReportedOverflowRef = useRef<number | undefined>(undefined);
   const lineHeight = 1.25;
   useLayoutEffect(() => {
@@ -1017,7 +1083,27 @@ function PresenterViewport({
        const next = measurePresenterOverflow(viewport, content);
        const nextViewportHeight = viewport.clientHeight;
        const nextContentHeight = nextViewportHeight + next;
-      setOverflow((previous) => Math.abs(previous - next) < 1 ? previous : next);
+       const nextRowViewportHeight = measurePresenterVisibleRows(
+         viewport,
+         content,
+         lines,
+       );
+       setRowViewportHeight((previous) =>
+         nextRowViewportHeight == null ||
+         Math.abs((previous ?? 0) - nextRowViewportHeight) < 1
+           ? previous
+           : nextRowViewportHeight,
+       );
+       // The viewport's row boundary is the actual overflow boundary. On a
+       // first paint it may still have the legacy line-height fallback; once
+       // rows have been laid out, use the measured Nth-row bottom instead.
+       const rowOverflow =
+         nextRowViewportHeight == null
+           ? next
+           : Math.max(0, nextContentHeight - nextRowViewportHeight);
+       setOverflow((previous) =>
+         Math.abs(previous - rowOverflow) < 1 ? previous : rowOverflow,
+       );
        setViewportHeight((previous) =>
          Math.abs(previous - nextViewportHeight) < 1 ? previous : nextViewportHeight,
        );
@@ -1026,16 +1112,22 @@ function PresenterViewport({
        );
        if (
          lastReportedOverflowRef.current === undefined ||
-         Math.abs(lastReportedOverflowRef.current - next) >= 1
+          Math.abs(lastReportedOverflowRef.current - rowOverflow) >= 1
        ) {
-         lastReportedOverflowRef.current = next;
-         onOverflow?.(`presenter:${id}`, next);
+          lastReportedOverflowRef.current = rowOverflow;
+          onOverflow?.(`presenter:${id}`, rowOverflow);
        }
     };
     measure();
+     const observedViewport = viewportRef.current;
+     const observedContent = contentRef.current;
+     if (!observedViewport || !observedContent) return;
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
-    observer?.observe(viewportRef.current!);
-    observer?.observe(contentRef.current!);
+     observer?.observe(observedViewport);
+     observer?.observe(observedContent);
+     observedContent
+       .querySelectorAll<HTMLElement>("[data-agenda-presenter-row]")
+       .forEach((row) => observer?.observe(row));
     const fonts =
       typeof document === "undefined"
         ? undefined
@@ -1071,11 +1163,28 @@ function PresenterViewport({
     overflow,
     offset,
   );
+  const fallbackMaxHeight = `${lines * lineHeight}em`;
   return (
     <span
       ref={viewportRef}
       className="block flex-1 min-w-0 relative"
-      style={{ display: "block", flex: "1 1 0%", minWidth: 0, lineHeight, maxHeight: `${lines * lineHeight}em`, overflow: "hidden" }}
+      style={{
+        display: "block",
+        flex: "1 1 0%",
+        minWidth: 0,
+        lineHeight,
+        // The fallback preserves the established first paint. It is replaced
+        // by the bottom of the Nth presenter row as soon as layout is known.
+        // Off-screen pagination copies must expose their full natural card
+        // height. The visible copy still gets the legacy first-paint fallback
+        // until its row geometry has settled.
+        maxHeight: suppressTestId
+          ? undefined
+          : rowViewportHeight == null
+            ? fallbackMaxHeight
+            : `${rowViewportHeight}px`,
+        overflow: "hidden",
+      }}
       data-testid={suppressTestId ? undefined : `agenda-presenter-viewport-${id}`}
     >
       <span
@@ -1166,108 +1275,87 @@ function PresenterDetails({
   const speakerMarker = resolveSpeakerMarker(config);
   const presenterVisibleLines = resolvePresenterVisibleLines(config.presenterVisibleLines);
   const testId = (value: string) => (suppressTestId ? undefined : value);
-
-  // Preserve the established single presenter viewport when affiliations are
-  // hidden. This keeps multiline speaker scrolling and its presenter:<item>
-  // measurement key unchanged for legacy displays.
-  if (showPresenter && !showPresenterCompany && item.presenter?.trim()) {
-    return (
-      <div
-        className="flex min-w-0 items-start break-words"
-        style={{
-          overflowWrap: "anywhere",
-          ...(roleColors?.presenter
-            ? { color: roleColors.presenter }
-            : bodyStyle),
-        }}
-        data-testid={testId(`agenda-presenter-${item.id}`)}
-      >
-        {speakerMarker && (
-          <span className="flex-none" style={{ width: scale * 1.35 }}>
-            <SpeakerMarker
-              config={config}
-              accentColor={accentColor}
-              testId={testId(`agenda-speaker-marker-${item.id}`)}
-            />
-          </span>
-        )}
-        <PresenterViewport
-          id={item.id}
-          text={item.presenter}
-          lines={presenterVisibleLines}
-          fontSize={scale}
-          accentColor={resolveEffectiveAgendaIndicatorColor(
-            config,
-            "presenter-scroll-thumb",
-            accentColor,
-          )}
-           onOverflow={(_, px) => onScrollOverflow?.(presenterPairMetricKey(item.id, 0), px)}
-          resetTick={scrollResetTick}
-          reducedMotion={prefersReducedMotion ?? false}
-          suppressTestId={suppressTestId}
-        />
-      </div>
-    );
-  }
+  const groupSpeakerMarker =
+    showPresenter && !showPresenterCompany && Boolean(speakerMarker);
 
   return (
     <div
-      className="flex min-w-0 flex-col gap-1"
+      className={
+        groupSpeakerMarker
+          ? "flex min-w-0 items-start break-words"
+          : "flex min-w-0 flex-col gap-1"
+      }
       data-testid={testId(`agenda-presenter-details-${item.id}`)}
     >
-      {visiblePairs.map(({ presenter, presenterCompany, sourceIndex }, index) => {
-        // Keep the first presenter on the legacy item id so existing
-        // pagination/dwell observers continue to report presenter:<item>.
-        const pairId = index === 0 ? item.id : `${item.id}:${index}`;
-        const presenterVisible = showPresenter && Boolean(presenter);
-        const companyVisible = showPresenterCompany && Boolean(presenterCompany);
-        const presenterTestId =
-          index === 0
-            ? `agenda-presenter-${item.id}`
-            : `agenda-presenter-${pairId}`;
-        const companyTestId =
-          index === 0
-            ? `agenda-presenter-company-${item.id}`
-            : `agenda-presenter-company-${pairId}`;
-        return (
-          <div
-            key={`${pairId}:${sourceIndex}`}
-            className="flex min-w-0 items-start break-words"
-            style={{ overflowWrap: "anywhere" }}
-            data-testid={testId(`agenda-presenter-pair-${pairId}`)}
-          >
-            {presenterVisible && speakerMarker && (
-              <span className="flex-none" style={{ width: scale * 1.35 }}>
-                <SpeakerMarker
-                  config={config}
-                  accentColor={accentColor}
-                  testId={testId(`agenda-speaker-marker-${pairId}`)}
-                />
-              </span>
-            )}
-            <PresenterViewport
-              id={pairId}
-              text={[
-                presenterVisible ? presenter : null,
-                companyVisible ? presenterCompany : null,
-              ].filter(Boolean).join(" — ")}
-              lines={presenterVisibleLines}
-              fontSize={scale}
-              accentColor={resolveEffectiveAgendaIndicatorColor(
-                config,
-                "presenter-scroll-thumb",
-                accentColor,
-              )}
-              onOverflow={(_, px) =>
-                onScrollOverflow?.(
-                  presenterPairMetricKey(item.id, sourceIndex),
-                  px,
-                )
-              }
-              resetTick={scrollResetTick}
-              reducedMotion={prefersReducedMotion ?? false}
-              suppressTestId={suppressTestId}
+      {groupSpeakerMarker && (
+        <span className="flex-none" style={{ width: scale * 1.35 }}>
+          <SpeakerMarker
+            config={config}
+            accentColor={accentColor}
+            testId={testId(`agenda-speaker-marker-${item.id}`)}
+          />
+        </span>
+      )}
+      <PresenterViewport
+        id={item.id}
+        text={visiblePairs.map(({ presenter, presenterCompany }) =>
+          [showPresenter ? presenter : null, showPresenterCompany ? presenterCompany : null]
+            .filter(Boolean)
+            .join(" — "),
+        ).join("\n")}
+        lines={presenterVisibleLines}
+        fontSize={scale}
+        accentColor={resolveEffectiveAgendaIndicatorColor(
+          config,
+          "presenter-scroll-thumb",
+          accentColor,
+        )}
+        onOverflow={(_, px) => {
+          // Presenter rows share one viewport. Keep reporting the
+          // established per-pair metric keys so dwell calculations and
+          // telemetry remain compatible with older displays.
+          visiblePairs.forEach(({ sourceIndex: metricSourceIndex }) =>
+            onScrollOverflow?.(
+              presenterPairMetricKey(item.id, metricSourceIndex),
+              px,
+            ),
+          );
+        }}
+        resetTick={scrollResetTick}
+        reducedMotion={prefersReducedMotion ?? false}
+        suppressTestId={suppressTestId}
+      >
+        {visiblePairs.map(({ presenter, presenterCompany, sourceIndex }, index) => {
+          // Keep the first presenter on the legacy item id so existing
+          // pagination/dwell observers continue to report presenter:<item>.
+          const pairId = index === 0 ? item.id : `${item.id}:${index}`;
+          const presenterVisible = showPresenter && Boolean(presenter);
+          const companyVisible = showPresenterCompany && Boolean(presenterCompany);
+          const presenterTestId =
+            index === 0
+              ? `agenda-presenter-${item.id}`
+              : `agenda-presenter-${pairId}`;
+          const companyTestId =
+            index === 0
+              ? `agenda-presenter-company-${item.id}`
+              : `agenda-presenter-company-${pairId}`;
+          return (
+            <span
+              key={`${pairId}:${sourceIndex}`}
+              className="flex min-w-0 items-start break-words"
+              style={{ overflowWrap: "anywhere" }}
+              data-testid={testId(`agenda-presenter-pair-${pairId}`)}
+              data-agenda-presenter-row="true"
             >
+              {presenterVisible && speakerMarker && !groupSpeakerMarker && (
+                <span className="flex-none" style={{ width: scale * 1.35 }}>
+                  <SpeakerMarker
+                    config={config}
+                    accentColor={accentColor}
+                    testId={testId(`agenda-speaker-marker-${pairId}`)}
+                  />
+                </span>
+              )}
               {presenterVisible && (
                 <span
                   style={
@@ -1292,10 +1380,10 @@ function PresenterDetails({
                   {presenterCompany}
                 </span>
               )}
-            </PresenterViewport>
-          </div>
-        );
-      })}
+            </span>
+          );
+        })}
+      </PresenterViewport>
     </div>
   );
 }
@@ -1412,6 +1500,8 @@ function AgendaRow({
       config.descriptionLines,
     ) &&
     Boolean(item.description);
+  const fullCardContainmentEnabled =
+    !suppressTestId && !nowNextMode && allocatedH != null && allocatedH > 0;
 
   // Task #382 — DOM refs for the description scroll viewport and inner text.
   // descViewportRef: the clipping outer div (flex:1 within the body column);
@@ -1427,6 +1517,11 @@ function AgendaRow({
   const [descriptionViewportMaxHeight, setDescriptionViewportMaxHeight] =
     useState<number | null>(null);
   const [descriptionIsBounded, setDescriptionIsBounded] = useState(false);
+  const [fullCardSizing, setFullCardSizing] = useState<FullAgendaCardSizing>({
+    shouldContainCard: false,
+    cardMaxHeight: null,
+  });
+  const [fullCardOverflowPx, setFullCardOverflowPx] = useState(0);
   const cardRef = useRef<HTMLDivElement | null>(null);
 
   // CSS transform state for the scrolling animation.
@@ -1445,6 +1540,12 @@ function AgendaRow({
     // elements so neither is affected by overflow:hidden on an ancestor.
     if (!viewport || !inner || viewport.clientHeight <= 0) return;
     if (nowNextMode && cardRef.current && allocatedH != null) {
+      setFullCardSizing((previous) =>
+        previous.shouldContainCard || previous.cardMaxHeight != null
+          ? { shouldContainCard: false, cardMaxHeight: null }
+          : previous,
+      );
+      setFullCardOverflowPx((previous) => (previous === 0 ? previous : 0));
       const fixedCardHeight = Math.max(
         0,
         cardRef.current.offsetHeight - viewport.clientHeight,
@@ -1471,11 +1572,11 @@ function AgendaRow({
         prev === sizing.shouldBound ? prev : sizing.shouldBound,
       );
     } else if (!nowNextMode && cardRef.current && allocatedH != null) {
-      // Full Agenda's original contract: the card itself remains intrinsic
-      // and only its description viewport receives the finite page budget.
+      // Full Agenda keeps the ordinary description viewport bounded. Card
+      // containment is measured separately from the capped card border box.
       const fixedCardHeight = Math.max(
         0,
-        cardRef.current.offsetHeight - viewport.clientHeight,
+        cardRef.current.scrollHeight - viewport.clientHeight,
       );
       const maxViewportHeight = resolveDescriptionViewportMaxHeight(
         allocatedH,
@@ -1521,6 +1622,120 @@ function AgendaRow({
     descriptionMinViewportPx,
     item.id,
     item.description,
+  ]);
+
+  // Full-card containment is independent from description auto-scroll.
+  // scrollHeight retains the intrinsic overflow extent after maxHeight is
+  // applied, so repeated ResizeObserver passes cannot toggle the state.
+  const measureFullCardRef = useRef<() => void>(() => {});
+  measureFullCardRef.current = () => {
+    const card = cardRef.current;
+    if (!card || !fullCardContainmentEnabled || allocatedH == null) {
+      setFullCardSizing((previous) =>
+        previous.shouldContainCard || previous.cardMaxHeight != null
+          ? { shouldContainCard: false, cardMaxHeight: null }
+          : previous,
+      );
+      setFullCardOverflowPx((previous) => (previous === 0 ? previous : 0));
+      return;
+    }
+
+    const viewport = descViewportRef.current;
+    const minimumDescriptionHeight =
+      scrollEnabled && viewport ? descriptionMinViewportPx : 0;
+    const fixedCardHeight =
+      scrollEnabled && viewport
+        ? Math.max(0, card.scrollHeight - viewport.clientHeight)
+        : card.scrollHeight;
+    const sizing = resolveFullAgendaCardSizing(
+      allocatedH,
+      fixedCardHeight,
+      minimumDescriptionHeight,
+    );
+    const overflow = sizing.shouldContainCard
+      ? Math.max(0, card.scrollHeight - allocatedH)
+      : 0;
+
+    setFullCardSizing((previous) =>
+      previous.shouldContainCard === sizing.shouldContainCard &&
+      previous.cardMaxHeight === sizing.cardMaxHeight
+        ? previous
+        : sizing,
+    );
+    setFullCardOverflowPx((previous) =>
+      Math.abs(previous - overflow) < 1 ? previous : overflow,
+    );
+    onScrollOverflow?.(`card:${item.id}`, overflow);
+  };
+
+  useLayoutEffect(() => {
+    measureFullCardRef.current();
+  }, [
+    fullCardContainmentEnabled,
+    allocatedH,
+    descriptionMinViewportPx,
+    item.id,
+    item.title,
+    item.presenter,
+    item.presenterCompany,
+    item.description,
+    scrollEnabled,
+  ]);
+
+  useEffect(() => {
+    if (!fullCardContainmentEnabled) return;
+    const card = cardRef.current;
+    if (!card) return;
+    const measure = () => measureFullCardRef.current();
+    const observer =
+      typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
+    observer?.observe(card);
+    const fonts =
+      typeof document === "undefined"
+        ? undefined
+        : (document.fonts as FontFaceSet | undefined);
+    fonts?.ready.then(measure).catch(() => {});
+    fonts?.addEventListener?.("loadingdone", measure);
+    return () => {
+      observer?.disconnect();
+      fonts?.removeEventListener?.("loadingdone", measure);
+    };
+  }, [fullCardContainmentEnabled]);
+
+  // An exceptional oversized Full card gets a bounded card-level viewport in
+  // addition to the normal description viewport. Reuse the same top-pause /
+  // final-position contract as description scrolling so all of the card's
+  // fixed chrome can be revealed without changing fitting-card behaviour.
+  useEffect(() => {
+    const card = cardRef.current;
+    if (
+      !card ||
+      !fullCardSizing.shouldContainCard ||
+      fullCardOverflowPx <= 0
+    ) {
+      if (card) card.scrollTop = 0;
+      return;
+    }
+    card.scrollTop = 0;
+    if (
+      prefersReducedMotion ||
+      (typeof window !== "undefined" &&
+        typeof window.matchMedia === "function" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+    ) {
+      card.scrollTop = fullCardOverflowPx;
+      return;
+    }
+    const start = window.setTimeout(() => {
+      card.scrollTo?.({ top: fullCardOverflowPx, behavior: "smooth" });
+      if (!card.scrollTo) card.scrollTop = fullCardOverflowPx;
+    }, TOP_PAUSE_MS);
+    return () => window.clearTimeout(start);
+  }, [
+    fullCardOverflowPx,
+    fullCardSizing.shouldContainCard,
+    prefersReducedMotion,
+    scrollResetTick,
   ]);
 
   // ---- ResizeObserver — post-layout remeasurement ----------------------
@@ -1636,9 +1851,23 @@ function AgendaRow({
       className={`flex ${nowNextMode && scrollEnabled ? "items-stretch" : "items-start"} gap-4 rounded-lg px-4 py-3`}
       style={{
         ...cardStyle,
-        ...(nowNextMode && descriptionIsBounded && allocatedH != null
-          ? { maxHeight: allocatedH, overflow: "hidden" }
-          : {}),
+         ...(nowNextMode && descriptionIsBounded && allocatedH != null
+           ? { maxHeight: allocatedH, overflow: "hidden" }
+           : {}),
+         // Full cards are intrinsic unless their fixed chrome alone leaves
+         // less than the minimum description viewport. In that exceptional
+         // case contain the card in its page slot and let its own scroll
+         // surface reveal the complete chrome/description without escaping
+         // the Agenda body clip.
+         ...(!nowNextMode &&
+         fullCardSizing.shouldContainCard &&
+         fullCardSizing.cardMaxHeight != null
+           ? {
+               maxHeight: fullCardSizing.cardMaxHeight,
+               overflow: "auto",
+               overflowX: "hidden",
+             }
+           : {}),
       }}
       data-testid={tid(`agenda-row-${item.id}`)}
       data-current={isCurrent ? "true" : undefined}
@@ -2433,6 +2662,10 @@ export function AgendaDisplayWidget({
       config.descriptionAutoScroll,
       config.descriptionLines,
     );
+  // Every Full Agenda card needs a finite body allocation so an unusually
+  // tall title/presenter/status block can be contained even when description
+  // auto-scroll is disabled or no description exists.
+  const fullCardContainmentActive = config.displayMode !== "now_next";
   const descScrollAnimationActive = isDescriptionAutoScrollAnimationActive(
     config.descriptionAutoScroll,
     config.descriptionLines,
@@ -3442,7 +3675,7 @@ export function AgendaDisplayWidget({
             highlightCurrent={highlightCurrent}
             roleColors={roleColors}
             showCardDate={multiDay}
-            scrollPageH={descScrollActive ? contentBox.h : undefined}
+            scrollPageH={fullCardContainmentActive ? contentBox.h : undefined}
             onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined}
             scrollResetTick={presentationScrollActive ? scrollResetTick : undefined}
             prefersReducedMotion={prefersReducedMotion}
@@ -3458,7 +3691,7 @@ export function AgendaDisplayWidget({
             highlightCurrent={highlightCurrent}
             roleColors={roleColors}
             showCardDate={multiDay}
-            scrollPageH={descScrollActive ? contentBox.h : undefined}
+            scrollPageH={fullCardContainmentActive ? contentBox.h : undefined}
             onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined}
             scrollResetTick={presentationScrollActive ? scrollResetTick : undefined}
             prefersReducedMotion={prefersReducedMotion}
@@ -3477,7 +3710,7 @@ export function AgendaDisplayWidget({
             highlightCurrent={highlightCurrent}
             roleColors={roleColors}
             showCardDate={multiDay}
-            scrollPageH={descScrollActive ? contentBox.h : undefined}
+            scrollPageH={fullCardContainmentActive ? contentBox.h : undefined}
             onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined}
             scrollResetTick={presentationScrollActive ? scrollResetTick : undefined}
             prefersReducedMotion={prefersReducedMotion}
