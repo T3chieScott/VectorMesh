@@ -43,6 +43,8 @@ import {
 } from "@/lib/contentPresentation";
 import type { AgendaPresentationState } from "@/components/agenda/AgendaDisplayWidget";
 import { getSceneTextScale } from "@/lib/scene-render-geometry";
+import { buildRenderProjection } from "@/lib/renderProjection";
+import { buildWeatherRequest, isCurrentWeatherGeneration } from "@/lib/weatherRequest";
 
 const TOKEN_KEY = "signage_device_token";
 const SCREEN_KEY = "signage_screen_id";
@@ -329,6 +331,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const [lastUpdate, setLastUpdate] = useState<string>("");
   const [zoneMediaIndices, setZoneMediaIndices] = useState<Record<string, number>>({});
   const [weatherTimezone, setWeatherTimezone] = useState<string | undefined>(undefined);
+  const weatherRequestGenerationRef = useRef(0);
   const [authError, setAuthError] = useState(false);
   const [layoutRotationIndex, setLayoutRotationIndex] = useState(0);
   const presentationReportRef = useRef<{
@@ -373,6 +376,9 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
   const [scale, setScale] = useState(1);
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Ordering is by request start, never response completion. A late response
+  // (including a late rejection) must not mutate any player state.
+  const contentRequestSequenceRef = useRef(0);
   const previousMediaUrlsRef = useRef<string[]>([]);
   const captureScreenshotRef = useRef<(() => Promise<void>) | null>(null);
   // Task #185 — Pi-side defense: a single 401/403 from /content can
@@ -588,6 +594,9 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     // also clear the interval inside the reload branch — this guard
     // is defense-in-depth in case any callers re-enter fetchContent.
     if (reloadingRef.current) return;
+    const requestSequence = ++contentRequestSequenceRef.current;
+    const isCurrentRequest = () =>
+      requestSequence === contentRequestSequenceRef.current;
     let res: Response;
     // Bracket the fetch with t1/t2 timestamps for the
     // NTP-style offset estimator. Captured here (not later) so the
@@ -605,6 +614,10 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
           : undefined,
       });
     } catch (err: any) {
+      // A stale outer error is just as unobservable as a stale success. In
+      // particular it must not turn a healthy player red after a newer poll
+      // has already started.
+      if (!isCurrentRequest()) return;
       // Network failure: leave strike count untouched so a later 401
       // after a network blip still escalates. See playerAuthStrike.ts.
       const outcome = evaluateAuthNetworkError(consecutiveAuthErrorsRef.current);
@@ -617,12 +630,16 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
     // Task #185: a poll can race a reload. If reload was initiated
     // while this request was in flight, drop the response on the
     // floor — neither incrementing nor resetting strike state.
+    if (!isCurrentRequest()) return;
     if (reloadingRef.current) {
       const outcome = evaluateAuthReloadingRace(consecutiveAuthErrorsRef.current);
       consecutiveAuthErrorsRef.current = outcome.newCount;
       return;
     }
     try {
+      // This guard deliberately precedes auth, connectivity, ETag and every
+      // other response side effect. Request start order is the sole winner.
+      if (!isCurrentRequest()) return;
       // Task #188 — when we're inside the post-reload grace window
       // (we just performed a controlled reload because the server
       // told us refreshRequested:true, which proves the deviceToken
@@ -670,6 +687,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
         // shows "Unpaired" (amber) instead of "Offline" (red). Best
         // effort; we proceed to clearAuth() either way.
         await notifyServerOfForfeit(screenId, token);
+        if (!isCurrentRequest()) return;
         clearAuth();
         setAuthError(true);
         return;
@@ -681,6 +699,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       // there's nothing to apply. Keep the current content; the 30s
       // heartbeat keeps the server-time offset warm.
       if (res.status === 304) {
+        if (!isCurrentRequest()) return;
         setIsConnected(true);
         setIsOffline(false);
         setError(null);
@@ -689,10 +708,12 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       if (!res.ok) {
         throw new Error(`Failed to fetch content: ${res.status}`);
       }
-      // Remember this payload's ETag to revalidate on the next poll.
+      const data: PlayerContentData = await res.json();
+      if (!isCurrentRequest()) return;
+      // Remember this payload's ETag only after the response has won the
+      // start-order race. A stale ETag can otherwise hide newer content.
       const respEtag = res.headers.get("ETag");
       if (respEtag) contentEtagRef.current = respEtag;
-      const data: PlayerContentData = await res.json();
       // t2 is captured after res.json() resolves; JSON parse time
       // is ~1ms for our payloads. The estimator's rolling-median
       // RTT outlier rejection drops any sample that stalls.
@@ -700,44 +721,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       if (typeof data.serverTime === "number") {
         feedSample(t1, data.serverTime, t2);
       }
-      const newHash = JSON.stringify({
-        layoutId: data.layout?.id,
-        layoutUpdatedAt: data.layout?.updatedAt,
-        layoutZones: data.layout?.zones,
-        liveOverrideId: data.liveOverride?.id,
-        liveOverrideActive: data.liveOverride?.isActive,
-        mediaIds: data.media.map((m: any) => m.id).sort(),
-        playlistItems: data.playlistItems,
-        layoutTemplates: data.layoutTemplates,
-        zoneSources: data.zoneSources,
-        screenName: data.screen?.name,
-        testPatternEnabled: data.screen?.testPatternEnabled,
-        showLiveBanner: data.screen?.showLiveBanner,
-        hideNoContentMessage: data.screen?.hideNoContentMessage,
-        canvasEnabled: data.screen?.canvasEnabled,
-        canvasWidth: data.screen?.canvasWidth,
-        canvasHeight: data.screen?.canvasHeight,
-        canvasX: data.screen?.canvasX,
-        canvasY: data.screen?.canvasY,
-        profileWidth: data.profile?.width,
-        profileHeight: data.profile?.height,
-        // Canvas composite (Task #173): include per-tile resolved
-        // pieces so a layout/zoneSource/override change on ANY tile
-        // (not just the seed) triggers a content refresh on this Pi.
-        canvasTiles: data.canvas?.tiles?.map(t => ({
-          id: t.screenId,
-          layoutId: t.layout?.id,
-          layoutUpdatedAt: t.layout?.updatedAt,
-          layoutZones: t.layout?.zones,
-          zoneSources: t.zoneSources,
-          liveOverrideId: t.liveOverride?.id,
-          liveOverrideActive: t.liveOverride?.isActive,
-          x: t.x,
-          y: t.y,
-          width: t.width,
-          height: t.height,
-        })),
-      });
+      const newHash = JSON.stringify(buildRenderProjection(data));
 
       if (data.refreshRequested) {
         // Task #185: stop polling BEFORE the reload so a follow-up
@@ -790,6 +774,7 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       setIsOffline(false);
       setError(null);
     } catch (err: any) {
+      if (!isCurrentRequest()) return;
       setIsConnected(false);
       setError(err.message || "Connection lost");
     }
@@ -1148,17 +1133,38 @@ function PlayerContent({ screenId, token }: { screenId: string; token: string })
       )),
   });
 
+  const weatherRequest = useMemo(
+    () => buildWeatherRequest(
+      "/api/player/widgets/weather",
+      zones,
+      content?.screen?.timezone,
+    ),
+    [zones, content?.screen?.timezone],
+  );
+  const weatherRequestIdentity = weatherRequest?.identity ?? null;
+
   useEffect(() => {
-    const weatherZone = zones.find(z => z.type === "weather" && z.weatherLat && z.weatherLng);
-    if (weatherZone && weatherZone.weatherLat && weatherZone.weatherLng) {
-      playerFetch(`/api/player/widgets/weather?lat=${weatherZone.weatherLat}&lng=${weatherZone.weatherLng}&unit=${weatherZone.weatherUnit || "celsius"}`, token)
-        .then(res => res.json())
-        .then(data => {
-          if (data.timezone) setWeatherTimezone(data.timezone);
-        })
-        .catch(() => {});
+    const generation = ++weatherRequestGenerationRef.current;
+    if (!weatherRequest) {
+      setWeatherTimezone(undefined);
+      return;
     }
-  }, [zones.length, layout?.id, token]);
+    const controller = new AbortController();
+    playerFetch(weatherRequest.url, token, { signal: controller.signal })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!isCurrentWeatherGeneration(
+          weatherRequestGenerationRef.current,
+          generation,
+          controller.signal.aborted,
+        )) return;
+        setWeatherTimezone(data.timezone || undefined);
+      })
+      .catch((error) => {
+        if (error?.name !== "AbortError") return;
+      });
+    return () => controller.abort();
+  }, [weatherRequestIdentity, token]);
 
   // Canvas composite (Task #173): when polled as the canvas owner the
   // payload also contains every sibling tile's resolved layout. Roll

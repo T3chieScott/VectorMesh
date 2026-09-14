@@ -28,6 +28,7 @@ export const AGENDA_DISPLAY_REFRESH_EVENT = "agenda-display-refresh";
 interface DisplayPayload {
   config: AgendaWidgetConfig;
   items: AgendaItem[];
+  payloadRevision: string;
   effectiveDay?: string | null;
   client: { id: string; name: string; timezone: string } | null;
   fonts?: CustomFontRef[];
@@ -218,6 +219,8 @@ export default function DisplayAgendaPage() {
         config={data.config}
         items={data.items}
         effectiveDay={data.effectiveDay}
+        presentationRevision={data.payloadRevision}
+        customFonts={data.fonts}
         timezone={data.client?.timezone || null}
         now={testNow}
       />

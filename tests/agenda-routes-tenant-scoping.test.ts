@@ -1,4 +1,5 @@
 import test from "node:test";
+import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import express from "express";
 import type { AddressInfo } from "node:net";
@@ -16,6 +17,7 @@ import type {
   AgendaFolder,
   AgendaSyncConfig,
   AgendaWidgetConfig,
+  CustomFont,
   Client,
   InsertAgendaItem,
   InsertAgendaFolder,
@@ -46,23 +48,29 @@ function makeFakeStorage(initial: {
   syncConfigs?: AgendaSyncConfig[];
   agendaFolders?: AgendaFolder[];
   clients?: Client[];
+  customFonts?: CustomFont[];
 }): AgendaRoutesStorage & {
   items: AgendaItem[];
   configs: AgendaWidgetConfig[];
   syncConfigs: AgendaSyncConfig[];
   agendaFolders: AgendaFolder[];
+  clients: Client[];
+  customFonts: CustomFont[];
 } {
   const items: AgendaItem[] = [...(initial.items ?? [])];
   const configs: AgendaWidgetConfig[] = [...(initial.configs ?? [])];
   const syncConfigs: AgendaSyncConfig[] = [...(initial.syncConfigs ?? [])];
   const agendaFolders: AgendaFolder[] = [...(initial.agendaFolders ?? [])];
   const clients: Client[] = [...(initial.clients ?? [])];
+  const customFonts: CustomFont[] = [...(initial.customFonts ?? [])];
 
   return {
     items,
     configs,
     syncConfigs,
     agendaFolders,
+    clients,
+    customFonts,
     async getAgendaItems(clientId) {
       return clientId ? items.filter((i) => i.clientId === clientId) : items.slice();
     },
@@ -233,7 +241,7 @@ function makeFakeStorage(initial: {
       return clients.find((c) => c.id === id);
     },
     async getCustomFonts() {
-      return [];
+      return customFonts.slice();
     },
   };
 }
@@ -259,6 +267,7 @@ function makeConfig(over: Partial<AgendaWidgetConfig> & { id: string; clientId: 
     accentColor: over.accentColor ?? "#0ea5e9",
     backgroundUrl: over.backgroundUrl ?? null,
     eventName: over.eventName ?? null,
+    fontFamily: over.fontFamily ?? null,
     showDescription: over.showDescription ?? true,
     showPresenter: over.showPresenter ?? true,
     showRoom: over.showRoom ?? true,
@@ -910,6 +919,169 @@ test("public display omits effective-day metadata while day headings are disable
       `${srv.base}/api/agenda/display/cfgLegacyDay?at=2026-09-10T10:00:00.000Z`,
     )).json() as Record<string, unknown>;
     assert.equal("effectiveDay" in body, false);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("public payloadRevision covers client/font presentation inputs but excludes serverTime", async () => {
+  const fixedNow = new Date("2026-06-01T10:00:00Z");
+  const config = makeConfig({
+    id: "cfgRevision",
+    clientId: "siteRevision",
+    showAgendaDayHeading: true,
+    fontFamily: "custom:font-family-a",
+  });
+  const agendaItem = makeItem({
+    id: "revision-item",
+    clientId: "siteRevision",
+    startsAt: new Date("2026-06-01T11:00:00Z"),
+    endsAt: new Date("2026-06-01T12:00:00Z"),
+  });
+  const storage = makeFakeStorage({
+    configs: [config],
+    items: [agendaItem],
+    clients: [{
+      id: "siteRevision",
+      name: "Revision venue",
+      timezone: "Europe/London",
+    } as Client],
+    customFonts: [{
+      id: "font-file-a",
+      clientId: "siteRevision",
+      familyId: "font-family-a",
+      name: "Revision Sans",
+      weight: 400,
+      style: "normal",
+      originalName: "revision.woff2",
+      storagePath: "siteRevision/revision.woff2",
+      format: "woff2",
+      fileSize: 42,
+      createdAt: fixedNow,
+    } as CustomFont],
+  });
+  const srv = await startTestServer({
+    storage,
+    user: null,
+    now: () => fixedNow,
+  });
+  const displayUrl = `${srv.base}/api/agenda/display/cfgRevision?at=${encodeURIComponent(fixedNow.toISOString())}`;
+  try {
+    const first = await (await fetch(displayUrl)).json() as {
+      config: Record<string, unknown>;
+      items: Array<Record<string, unknown>>;
+      effectiveDay?: string | null;
+      client: { name: string; timezone: string } | null;
+      fonts: unknown[];
+      payloadRevision: string;
+      serverTime: number;
+    };
+    const expectedRevision = createHash("sha256")
+      .update(JSON.stringify({
+        config: {
+          ...Object.fromEntries(
+            Object.entries(first.config).filter(
+              ([key]) => !["id", "name", "refreshIntervalSeconds", "eventName", "showEventName"].includes(key),
+            ),
+          ),
+          agendaHeading: first.config.showEventName
+            ? first.config.eventName || first.config.name
+            : null,
+        },
+        items: first.items,
+        effectiveDay: first.effectiveDay,
+        timezone: first.client?.timezone ?? null,
+        selectedFontRefs: first.fonts,
+      }))
+      .digest("hex");
+    assert.equal(first.payloadRevision, expectedRevision);
+    assert.match(first.payloadRevision, /^[a-f0-9]{64}$/);
+
+    // The response's volatile timestamp is not part of the revision input.
+    const revisionBeforeTimestampChange = first.payloadRevision;
+    first.serverTime += 60_000;
+    assert.equal(first.payloadRevision, revisionBeforeTimestampChange);
+
+    storage.clients[0].timezone = "America/Chicago";
+    const changedClient = await (await fetch(displayUrl)).json() as typeof first;
+    assert.notEqual(changedClient.payloadRevision, first.payloadRevision);
+
+    const unchangedForUnselectedFont = changedClient.payloadRevision;
+    storage.customFonts.push({
+      id: "font-file-unselected",
+      clientId: "siteRevision",
+      familyId: "font-family-unselected",
+      name: "Unselected Sans",
+      weight: 400,
+      style: "normal",
+      originalName: "unselected.woff2",
+      storagePath: "siteRevision/unselected.woff2",
+      format: "woff2",
+      fileSize: 42,
+      createdAt: fixedNow,
+    } as CustomFont);
+    const withUnselectedFont = await (await fetch(displayUrl)).json() as typeof first;
+    assert.equal(withUnselectedFont.payloadRevision, unchangedForUnselectedFont);
+
+    storage.customFonts[0].weight = 700;
+    const changedFont = await (await fetch(displayUrl)).json() as typeof first;
+    assert.notEqual(changedFont.payloadRevision, unchangedForUnselectedFont);
+
+    storage.clients[0].name = "Renamed venue";
+    const renamedClient = await (await fetch(displayUrl)).json() as typeof first;
+    assert.equal(renamedClient.payloadRevision, changedFont.payloadRevision);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("public payloadRevision includes only the effective agenda heading", async () => {
+  const fixedNow = new Date("2026-06-01T10:00:00Z");
+  const config = makeConfig({
+    id: "cfgHeadingRevision",
+    clientId: "siteHeadingRevision",
+    name: "Fallback One",
+    eventName: null,
+    showEventName: true,
+  });
+  const storage = makeFakeStorage({
+    configs: [config],
+    items: [makeItem({
+      id: "heading-revision-item",
+      clientId: "siteHeadingRevision",
+      startsAt: new Date("2026-06-01T11:00:00Z"),
+      endsAt: new Date("2026-06-01T12:00:00Z"),
+    })],
+    clients: [{ id: "siteHeadingRevision", name: "Heading venue", timezone: "UTC" } as Client],
+  });
+  const srv = await startTestServer({
+    storage,
+    user: null,
+    now: () => fixedNow,
+  });
+  const displayUrl = `${srv.base}/api/agenda/display/cfgHeadingRevision?at=${encodeURIComponent(fixedNow.toISOString())}`;
+  try {
+    const readRevision = async () => (await (await fetch(displayUrl)).json() as { payloadRevision: string }).payloadRevision;
+
+    const fallbackOne = await readRevision();
+    storage.configs[0].name = "Fallback Two";
+    const fallbackTwo = await readRevision();
+    assert.notEqual(fallbackTwo, fallbackOne, "a fallback heading rename changes the revision");
+
+    storage.configs[0].showEventName = false;
+    storage.configs[0].name = "Hidden One";
+    const hiddenOne = await readRevision();
+    storage.configs[0].name = "Hidden Two";
+    const hiddenTwo = await readRevision();
+    assert.equal(hiddenTwo, hiddenOne, "a hidden name change does not change the revision");
+
+    storage.configs[0].showEventName = true;
+    storage.configs[0].eventName = "Winning event";
+    storage.configs[0].name = "Shadowed One";
+    const winningOne = await readRevision();
+    storage.configs[0].name = "Shadowed Two";
+    const winningTwo = await readRevision();
+    assert.equal(winningTwo, winningOne, "a shadowed name change does not change the revision");
   } finally {
     await srv.close();
   }

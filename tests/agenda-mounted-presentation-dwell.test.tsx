@@ -14,6 +14,7 @@ import {
 } from "../client/src/components/agenda/AgendaDisplayWidget";
 import type { AgendaZoneBinding } from "../client/src/lib/agenda-scene-completion";
 import { insertAgendaWidgetConfigSchema, type AgendaItem, type AgendaWidgetConfig } from "../shared/schema";
+import type { CustomFontRef } from "../shared/fonts";
 
 const instant = new Date("2030-01-01T10:00:00Z");
 const reveal = (px: number) =>
@@ -476,6 +477,214 @@ test("mounted stale lifecycle callbacks cannot advance a reused activation or an
     assert.equal(reports.at(-1)?.page, 0);
     await timing.advanceDue(50_000 + reveal(56));
     await waitFor(() => assert.equal(reports.at(-1)?.page, 1));
+  } finally {
+    cleanup();
+  }
+});
+
+test("mounted uncontrolled equivalent refresh preserves page, cycle, deadline, and scroll origin", async () => {
+  const timing = scheduler();
+  const metrics = { "presenter:one": 56, "presenter:two": 56 };
+  const baseConfig = config({ maxItemsPerPage: 1 });
+  const firstItems = [item("one"), item("two")];
+  const reports: AgendaPresentationState[] = [];
+  const rendered = render(<AgendaDisplayWidget {...props(timing, metrics, {
+    config: baseConfig,
+    items: firstItems,
+    onPresentationState: (state) => reports.push(state),
+  })} />);
+  try {
+    await waitFor(() => assert.equal(timing.active()[0]?.due, reveal(56)));
+    await timing.advanceDue(1_000);
+    const firstDeadline = timing.active()[0];
+    assert.deepEqual(reports.at(-1), { stage: "page", page: 0, cycle: 0 });
+
+    // Fresh objects from a polling response are semantically equivalent.
+    rendered.rerender(<AgendaDisplayWidget {...props(timing, metrics, {
+      config: { ...baseConfig },
+      items: [item("one"), item("two")],
+      onPresentationState: (state) => reports.push(state),
+    })} />);
+    await waitFor(() => assert.equal(timing.active()[0]?.due, firstDeadline.due));
+    assert.equal(timing.active()[0].id, firstDeadline.id, "equivalent refresh retains the active timer");
+    assert.deepEqual(reports.at(-1), { stage: "page", page: 0, cycle: 0 });
+
+    await timing.advanceDue(firstDeadline.due);
+    await waitFor(() => assert.deepEqual(reports.at(-1), { stage: "page", page: 1, cycle: 0 }));
+    const secondDeadline = timing.active()[0];
+    rendered.rerender(<AgendaDisplayWidget {...props(timing, metrics, {
+      config: { ...baseConfig },
+      items: [item("one"), item("two")],
+      onPresentationState: (state) => reports.push(state),
+    })} />);
+    await waitFor(() => assert.equal(timing.active()[0]?.due, secondDeadline.due));
+    assert.equal(timing.active()[0].id, secondDeadline.id, "equivalent refresh retains page-two dwell");
+    assert.deepEqual(reports.at(-1), { stage: "page", page: 1, cycle: 0 });
+  } finally {
+    cleanup();
+  }
+});
+
+test("mounted mid-cycle fallback heading rename resets the agenda lifecycle", async () => {
+  const timing = scheduler();
+  const baseConfig = config({
+    maxItemsPerPage: 1,
+    showEventName: true,
+    eventName: null,
+    name: "Original fallback heading",
+  });
+  const rendered = render(<AgendaDisplayWidget {...props(timing, {}, {
+    config: baseConfig,
+    items: [item("one"), item("two")],
+  })} />);
+  try {
+    await waitFor(() => assert.equal(timing.active()[0]?.due, 3_000));
+    await timing.advanceDue(1_000);
+    const cancelled = timing.active()[0];
+
+    rendered.rerender(<AgendaDisplayWidget {...props(timing, {}, {
+      config: { ...baseConfig, name: "Renamed fallback heading" },
+      items: [item("one"), item("two")],
+    })} />);
+    await waitFor(() => assert.equal(timing.active()[0]?.due, 4_000));
+    assert.equal(cancelled.cancelled, true);
+    assert.equal(rendered.container.querySelector("[data-testid=agenda-event-title]")?.textContent,
+      "Renamed fallback heading");
+  } finally {
+    cleanup();
+  }
+});
+
+test("mounted uncontrolled same-count content and membership changes reset page zero and reject stale callbacks", async () => {
+  const timing = scheduler();
+  const metrics = { "presenter:one": 56, "presenter:two": 56 };
+  const baseConfig = config({ maxItemsPerPage: 1 });
+  const rendered = render(<AgendaDisplayWidget {...props(timing, metrics, {
+    config: baseConfig,
+    items: [item("one"), item("two")],
+  })} />);
+  try {
+    await waitFor(() => assert.equal(timing.active()[0]?.due, reveal(56)));
+    await timing.advanceDue(1_000);
+    const cancelled = timing.active()[0];
+
+    // Same count, but both rendered content and canonical order changed.
+    rendered.rerender(<AgendaDisplayWidget {...props(timing, metrics, {
+      config: { ...baseConfig },
+      items: [item("two", { title: "Changed session" }), item("one")],
+    })} />);
+    await waitFor(() => assert.equal(timing.active()[0]?.due, 1_000 + reveal(56)));
+    assert.equal(cancelled.cancelled, true);
+    assert.equal(timing.active()[0].id === cancelled.id, false);
+    await timing.invokeCancelled(cancelled);
+    assert.equal(timing.active()[0]?.due, 1_000 + reveal(56));
+  } finally {
+    cleanup();
+  }
+});
+
+test("mounted uncontrolled final page gets a full dwell before wrapping across two cycles", async () => {
+  const timing = scheduler();
+  const reports: AgendaPresentationState[] = [];
+  const rendered = render(<AgendaDisplayWidget {...props(timing, {}, {
+    config: config({ maxItemsPerPage: 1 }),
+    items: [item("one"), item("two")],
+    onPresentationState: (state) => reports.push(state),
+  })} />);
+  try {
+    await waitFor(() => assert.equal(timing.active()[0]?.due, 3_000));
+    await timing.advanceDue(3_000);
+    await waitFor(() => assert.deepEqual(reports.at(-1), { stage: "page", page: 1, cycle: 0 }));
+    assert.equal(timing.active()[0].due, 6_000);
+
+    await timing.advanceDue(5_999);
+    assert.deepEqual(reports.at(-1), { stage: "page", page: 1, cycle: 0 });
+    await timing.advanceDue(6_000);
+    await waitFor(() => assert.deepEqual(reports.at(-1), { stage: "page", page: 0, cycle: 1 }));
+
+    await timing.advanceDue(9_000);
+    await waitFor(() => assert.deepEqual(reports.at(-1), { stage: "page", page: 1, cycle: 1 }));
+    await timing.advanceDue(12_000);
+    await waitFor(() => assert.deepEqual(reports.at(-1), { stage: "page", page: 0, cycle: 2 }));
+  } finally {
+    cleanup();
+    void rendered;
+  }
+});
+
+test("mounted equivalent font rerender preserves pagination while a font or presentation change resets it", async () => {
+  const timing = scheduler();
+  const metrics = {};
+  const reports: AgendaPresentationState[] = [];
+  const selectedFont: CustomFontRef = {
+    id: "font-a",
+    familyId: "family-a",
+    name: "Family A",
+    weight: 400,
+    style: "normal",
+    format: "woff2",
+  };
+  const unrelatedFont: CustomFontRef = {
+    id: "font-unrelated",
+    familyId: "family-unrelated",
+    name: "Unrelated",
+    weight: 400,
+    style: "normal",
+    format: "woff2",
+  };
+  const baseConfig = config({ maxItemsPerPage: 1, fontFamily: "custom:family-a" });
+  const rendered = render(<AgendaDisplayWidget {...props(timing, metrics, {
+    config: baseConfig,
+    items: [item("one"), item("two")],
+    presentationRevision: "stable-presentation",
+    customFonts: [selectedFont, unrelatedFont],
+    onPresentationState: (state) => reports.push(state),
+  })} />);
+  try {
+    await waitFor(() => assert.equal(timing.active()[0]?.due, 3_000));
+    await timing.advanceDue(3_000);
+    assert.equal(timing.active()[0]?.due, 6_000);
+    const pageOneTimer = timing.active()[0];
+
+    rendered.rerender(<AgendaDisplayWidget {...props(timing, metrics, {
+      config: { ...baseConfig },
+      items: [item("one"), item("two")],
+      presentationRevision: "stable-presentation",
+      customFonts: [selectedFont, unrelatedFont, {
+        ...unrelatedFont,
+        id: "font-unrelated-2",
+      }],
+      onPresentationState: (state) => reports.push(state),
+    })} />);
+    await waitFor(() => assert.equal(timing.active()[0]?.due, 6_000));
+    assert.equal(timing.active()[0]?.id, pageOneTimer.id, "equivalent font-loaded refresh preserves dwell");
+
+    rendered.rerender(<AgendaDisplayWidget {...props(timing, metrics, {
+      config: { ...baseConfig, fontFamily: "custom:family-b" },
+      items: [item("one"), item("two")],
+      presentationRevision: "stable-presentation",
+      customFonts: [selectedFont, unrelatedFont],
+      onPresentationState: (state) => reports.push(state),
+    })} />);
+    await waitFor(() => assert.equal(timing.active()[0]?.due, 6_000));
+    assert.equal(pageOneTimer.cancelled, true);
+    assert.notEqual(timing.active()[0]?.id, pageOneTimer.id);
+    assert.deepEqual(reports.at(-1), { stage: "page", page: 0, cycle: 0 });
+
+    // A selected resource metadata change resets even if the parent revision
+    // is stale, while unrelated resources remain outside pixel identity.
+    const selectedResourceTimer = timing.active()[0];
+    rendered.rerender(<AgendaDisplayWidget {...props(timing, metrics, {
+      config: { ...baseConfig },
+      items: [item("one"), item("two")],
+      presentationRevision: "stable-presentation",
+      customFonts: [{ ...selectedFont, weight: 700 }, unrelatedFont],
+      onPresentationState: (state) => reports.push(state),
+    })} />);
+    await waitFor(() => assert.equal(timing.active()[0]?.due, 6_000));
+    assert.equal(selectedResourceTimer.cancelled, true);
+    assert.notEqual(timing.active()[0]?.id, selectedResourceTimer.id);
+    assert.deepEqual(reports.at(-1), { stage: "page", page: 0, cycle: 0 });
   } finally {
     cleanup();
   }

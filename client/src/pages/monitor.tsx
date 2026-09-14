@@ -55,6 +55,9 @@ import {
 import { PlayerClockProvider, usePlayerClock } from "@/lib/playerClock";
 import { getSceneTextScale } from "@/lib/scene-render-geometry";
 import { buildFontFaceCss } from "@/lib/fontFace";
+import { getRenderProjectionIdentity } from "@/lib/renderProjection";
+import { isLatestStarted } from "@/lib/responseOrdering";
+import { buildWeatherRequest, isCurrentWeatherGeneration } from "@/lib/weatherRequest";
 import { validatePreviewAtFormat } from "@shared/previewTime";
 import { TestPattern } from "@/components/test-pattern";
 // Import the canonical capability constants so this file is the live
@@ -173,6 +176,7 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
   // Layout rotation: index into the zoneSources-driven rotation list
   const [layoutRotationIndex, setLayoutRotationIndex] = useState(0);
   const [weatherTimezone, setWeatherTimezone] = useState<string | undefined>(undefined);
+  const weatherRequestGenerationRef = useRef(0);
   // One bounded token for the currently unresolved preparation. It changes
   // only when a newer physical report explicitly retries/supersedes that
   // candidate; ordinary same-scene page heartbeats never touch it.
@@ -185,6 +189,14 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
   const fetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const presentationFetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const presentationFetchInFlightRef = useRef(false);
+  // Content and presentation have independent winner orderings because they
+  // update different state. Authentication is the exception: both streams
+  // share this latest-started sequence so a late 401 from either endpoint
+  // cannot terminate a session after a newer authenticated request began.
+  const contentRequestSequenceRef = useRef(0);
+  const presentationRequestSequenceRef = useRef(0);
+  const authRequestSequenceRef = useRef(0);
+  const contentIdentityRef = useRef<string | null>(null);
   // Preview-time: read ?at= once on mount (stable across renders), track the
   // real-clock anchor so elapsed time can be computed on each subsequent poll.
   const previewAtRaw = useMemo(
@@ -398,27 +410,52 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
   // and stores the returned IANA timezone so weather widgets display
   // wall-clock times in the weather location's timezone — matching the
   // physical player's behaviour.
+  const weatherRequest = useMemo(
+    () => buildWeatherRequest(
+      "/api/monitor/widgets/weather",
+      zones,
+      content?.screen?.timezone,
+    ),
+    [zones, content?.screen?.timezone],
+  );
+  const weatherRequestIdentity = weatherRequest?.identity ?? null;
+
   useEffect(() => {
-    const weatherZone = zones.find(
-      (z) => z.type === "weather" && z.weatherLat && z.weatherLng,
-    );
-    if (weatherZone && weatherZone.weatherLat && weatherZone.weatherLng) {
-      fetch(
-        `/api/monitor/widgets/weather?lat=${weatherZone.weatherLat}&lng=${weatherZone.weatherLng}&unit=${weatherZone.weatherUnit || "celsius"}`,
-        { credentials: "same-origin" },
-      )
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.timezone) setWeatherTimezone(data.timezone);
-        })
-        .catch(() => {});
+    const generation = ++weatherRequestGenerationRef.current;
+    if (!weatherRequest) {
+      setWeatherTimezone(undefined);
+      return;
     }
-  }, [zones.length, layout?.id]);
+    const controller = new AbortController();
+    fetch(weatherRequest.url, {
+      credentials: "same-origin",
+      signal: controller.signal,
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!isCurrentWeatherGeneration(
+          weatherRequestGenerationRef.current,
+          generation,
+          controller.signal.aborted,
+        )) return;
+        setWeatherTimezone(data.timezone || undefined);
+      })
+      .catch((error) => {
+        if (error?.name !== "AbortError") return;
+      });
+    return () => controller.abort();
+  }, [weatherRequestIdentity]);
 
   // ── Content fetch ─────────────────────────────────────────────────────────
   // Authenticated by the HttpOnly monitor-session cookie.
   // No device-token header is ever sent (canPersistDeviceIdentity = false).
   const fetchContent = useCallback(async () => {
+    const contentSequence = ++contentRequestSequenceRef.current;
+    const authSequence = ++authRequestSequenceRef.current;
+    const isCurrentContent = () =>
+      isLatestStarted(contentRequestSequenceRef.current, contentSequence);
+    const isCurrentAuth = () =>
+      isLatestStarted(authRequestSequenceRef.current, authSequence);
     try {
       const t1 = Date.now();
       // Preview-time: append ?at= and elapsed_ms when a preview anchor is active.
@@ -434,6 +471,7 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
         cache: "no-store",
       });
       if (res.status === 401 || res.status === 403) {
+        if (!isCurrentAuth()) return;
         setAuthError(true);
         if (fetchIntervalRef.current) {
           clearInterval(fetchIntervalRef.current);
@@ -447,6 +485,9 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
       }
       if (!res.ok) return;
       const data: MonitorContentData = await res.json();
+      // A newer content request owns all content-derived side effects. This
+      // check precedes clock, preview, authority and content state updates.
+      if (!isCurrentContent()) return;
       const t2 = Date.now();
       if (typeof data.serverTime === "number") {
         feedSample(t1, data.serverTime, t2);
@@ -459,8 +500,13 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
       recordMonitorAuthority(data.playerPresentationState, t2, data.serverTime);
       // playerCommandsEnabled = false: intentionally ignore refreshRequested,
       // screenshotRequested, etc.  Server also strips these fields.
-      setContent(data);
+      const identity = getRenderProjectionIdentity(data);
+      if (contentIdentityRef.current !== identity) {
+        contentIdentityRef.current = identity;
+        setContent(data);
+      }
     } catch {
+      if (!isCurrentContent()) return;
       // Network error — keep last content on screen
     }
   }, [screenId, feedSample, previewAtRaw, recordMonitorAuthority]);
@@ -470,12 +516,22 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
   const fetchPresentationObservation = useCallback(async () => {
     if (presentationFetchInFlightRef.current) return;
     presentationFetchInFlightRef.current = true;
+    const presentationSequence = ++presentationRequestSequenceRef.current;
+    const authSequence = ++authRequestSequenceRef.current;
+    const isCurrentPresentation = () =>
+      isLatestStarted(
+        presentationRequestSequenceRef.current,
+        presentationSequence,
+      );
+    const isCurrentAuth = () =>
+      isLatestStarted(authRequestSequenceRef.current, authSequence);
     try {
       const res = await fetch(`/api/monitor/${screenId}/presentation`, {
         credentials: "same-origin",
         cache: "no-store",
       });
       if (res.status === 401 || res.status === 403) {
+        if (!isCurrentAuth()) return;
         setAuthError(true);
         if (presentationFetchIntervalRef.current) {
           clearInterval(presentationFetchIntervalRef.current);
@@ -489,14 +545,20 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
       }
       if (!res.ok) throw new Error(`Presentation observation failed: ${res.status}`);
       const data = await res.json();
+      if (!isCurrentPresentation()) return;
       const receivedAt = Date.now();
       recordMonitorAuthority(data?.playerPresentationState, receivedAt, data?.serverTime);
     } catch {
+      if (!isCurrentPresentation()) return;
       // A failed read is not authority to replace a fresh authenticated lease.
       // The explicit lease timer is the sole fallback boundary.
       recordMonitorAuthority(null, Date.now());
     } finally {
-      presentationFetchInFlightRef.current = false;
+      // Normally only one presentation request is in flight. Keep this
+      // guarded anyway so a deferred old completion cannot reopen overlap.
+      if (isCurrentPresentation()) {
+        presentationFetchInFlightRef.current = false;
+      }
     }
   }, [screenId, recordMonitorAuthority]);
 
