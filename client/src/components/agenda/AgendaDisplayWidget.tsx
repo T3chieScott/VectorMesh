@@ -12,7 +12,11 @@ import {
   AGENDA_STATUSES,
 } from "@shared/schema";
 import { normalizeAgendaStatus } from "@shared/agenda-filter-values";
-import { resolveFontStack } from "@shared/fonts";
+import {
+  customFontIdFromKey,
+  resolveFontStack,
+  type CustomFontRef,
+} from "@shared/fonts";
 import {
   pickAgendaLayout,
   paginate,
@@ -159,6 +163,10 @@ export interface AgendaDisplayWidgetProps {
   now?: Date;
   /** Resolver-selected YYYY-MM-DD day supplied by the public display API. */
   effectiveDay?: string | null;
+  /** Public payload identity for the rendered agenda revision. */
+  presentationRevision?: string;
+  /** All client font refs needed by CSS; only the selected family affects pagination. */
+  customFonts?: CustomFontRef[];
   /** Present a finite, activation-scoped cycle when rendered by a playlist. */
   completionBinding?: AgendaZoneBinding;
   /** Passive position report for multiview followers; it never controls playback. */
@@ -188,6 +196,23 @@ export interface AgendaPaginationSnapshot {
 }
 
 export const AGENDA_PAGINATION_REFERENCE_HEIGHT = 720;
+
+function selectAgendaCustomFontRefs(
+  fontFamily: string | null | undefined,
+  fonts: readonly CustomFontRef[] | undefined,
+): CustomFontRef[] {
+  const selectedId = customFontIdFromKey(fontFamily);
+  if (!selectedId || !fonts?.length) return [];
+  return fonts
+    .filter((font) => font.familyId === selectedId || font.id === selectedId)
+    .slice()
+    .sort((a, b) =>
+      `${a.familyId}:${a.id}:${a.weight ?? ""}:${a.style ?? ""}:${a.format ?? ""}`
+        .localeCompare(
+          `${b.familyId}:${b.id}:${b.weight ?? ""}:${b.style ?? ""}:${b.format ?? ""}`,
+        ),
+    );
+}
 
 export function getCanonicalAgendaPaginationDimensions(
   authoredWidth: number,
@@ -2355,6 +2380,8 @@ export function AgendaDisplayWidget({
   timezone,
   now: nowProp,
   effectiveDay: effectiveDayProp,
+  presentationRevision,
+  customFonts,
   completionBinding,
   onPresentationState,
   followedPresentationState,
@@ -2862,6 +2889,149 @@ export function AgendaDisplayWidget({
     : pages;
   const presentationPageCount = Math.max(1, presentationPages?.length ?? 0);
 
+  // Polling returns freshly parsed item objects on every refresh. Use the
+  // public fields that the renderer actually consumes rather than object
+  // identity (or updatedAt), so an equivalent refresh cannot restart an
+  // uncontrolled presentation. Conversely, changing rendered content must
+  // restart the lifecycle even when the item count is unchanged.
+  const renderedItemsKey = useMemo(
+    () => JSON.stringify(displayItems.map((item) => ({
+      id: item.id,
+      title: item.title,
+      description: item.description,
+      room: item.room,
+      track: item.track,
+      presenter: item.presenter,
+      presenterCompany: item.presenterCompany,
+      company: item.company,
+      startsAt: item.startsAt,
+      endsAt: item.endsAt,
+      status: item.status,
+      statusMessage: item.statusMessage,
+    }))),
+    [displayItems],
+  );
+  // Config flags can change the rendered card content and its measured
+  // height without changing the item array. Exclude persistence metadata so
+  // a normal poll does not turn an unchanged display into a new lifecycle.
+  const effectiveAgendaHeading = config.showEventName
+    ? config.eventName || config.name
+    : null;
+  const presentationConfigKey = useMemo(
+    () => JSON.stringify({
+      // The config name is operational metadata except when it is the
+      // effective fallback heading actually rendered by the agenda header.
+      agendaHeading: effectiveAgendaHeading,
+      backgroundUrl: config.backgroundUrl,
+      accentColor: config.accentColor,
+      displayMode: config.displayMode,
+      layoutMode: config.layoutMode,
+      fontScale: config.fontScale,
+      density: config.density,
+      theme: config.theme,
+      roomFilter: config.roomFilter,
+      trackFilter: config.trackFilter,
+      statusFilter: config.statusFilter,
+      rotationIntervalSeconds: config.rotationIntervalSeconds,
+      maxItemsPerPage: config.maxItemsPerPage,
+      showDescription: config.showDescription,
+      showPresenter: config.showPresenter,
+      showCompany: config.showCompany,
+      showPresenterCompany: config.showPresenterCompany,
+      presenterVisibleLines: config.presenterVisibleLines,
+      showRoom: config.showRoom,
+      showTrack: config.showTrack,
+      showStatus: config.showStatus,
+      showCurrentTime: config.showCurrentTime,
+      showDayName: config.showDayName,
+      showDate: config.showDate,
+      showAgendaDayHeading: config.showAgendaDayHeading,
+      descriptionLines: config.descriptionLines,
+      descriptionAutoScroll: config.descriptionAutoScroll,
+      showDescriptionDivider: config.showDescriptionDivider,
+      speakerMarkerStyle: config.speakerMarkerStyle,
+      speakerCustomMarker: config.speakerCustomMarker,
+      descriptionTextAlign: config.descriptionTextAlign,
+      showNowNextLabel: config.showNowNextLabel,
+      singleGlobalNowNext: config.singleGlobalNowNext,
+      overrideNowNextColor: config.overrideNowNextColor,
+      nowNextColor: config.nowNextColor,
+      showSessionDuration: config.showSessionDuration,
+      showSessionCount: config.showSessionCount,
+      showSessionEndTime: config.showSessionEndTime,
+      sessionDurationPrefix: config.sessionDurationPrefix,
+      fontFamily: config.fontFamily,
+      titleColor: config.titleColor,
+      bodyColor: config.bodyColor,
+      timeColor: config.timeColor,
+      statusColor: config.statusColor,
+      displayBackgroundColor: config.displayBackgroundColor,
+      cardBackgroundColor: config.cardBackgroundColor,
+      sessionTitleColor: config.sessionTitleColor,
+      descriptionColor: config.descriptionColor,
+      presenterColor: config.presenterColor,
+      presenterCompanyColor: config.presenterCompanyColor,
+      companyColor: config.companyColor,
+      roomColor: config.roomColor,
+      trackColor: config.trackColor,
+      timeScale: config.timeScale,
+      dateScale: config.dateScale,
+      titleScale: config.titleScale,
+      bodyScale: config.bodyScale,
+      headerDateScale: config.headerDateScale,
+      headerClockScale: config.headerClockScale,
+    }),
+    [config, effectiveAgendaHeading],
+  );
+  const selectedCustomFontRefs = useMemo(
+    () => selectAgendaCustomFontRefs(config.fontFamily, customFonts),
+    [config.fontFamily, customFonts],
+  );
+  const presentationContextKey = useMemo(
+    () => JSON.stringify({
+      // These values are display inputs even when the item/config arrays are
+      // unchanged: timezone changes formatting, while effectiveDay controls
+      // the resolver-selected day heading.
+      timezone: timezone ?? null,
+      effectiveDay: effectiveDay ?? null,
+      selectedCustomFontRefs,
+      presentationRevision: presentationRevision ?? null,
+    }),
+    [timezone, effectiveDay, selectedCustomFontRefs, presentationRevision],
+  );
+  // Page membership is deliberately ordered. A same-count reorder or a
+  // repack caused by changed content is a new presentation, even if the
+  // number of pages remains constant.
+  const orderedPageMembershipKey = useMemo(
+    () => JSON.stringify(pages.map((page) => page.map((item) => item.id))),
+    [pages],
+  );
+  const uncontrolledLifecycleKey = useMemo(
+    () => JSON.stringify([
+      presentationConfigKey,
+      presentationContextKey,
+      renderedItemsKey,
+      orderedPageMembershipKey,
+    ]),
+    [presentationConfigKey, presentationContextKey, renderedItemsKey, orderedPageMembershipKey],
+  );
+  const presentationLifecycleIdentity =
+    `${controlledActivationId ?? "uncontrolled"}\u0000${uncontrolledLifecycleKey}`;
+  const presentationLifecycleIdentityRef = useRef(presentationLifecycleIdentity);
+  if (presentationLifecycleIdentityRef.current !== presentationLifecycleIdentity) {
+    presentationLifecycleIdentityRef.current = presentationLifecycleIdentity;
+  }
+  const uncontrolledLifecycleKeyRef = useRef(uncontrolledLifecycleKey);
+  if (uncontrolledLifecycleKeyRef.current !== uncontrolledLifecycleKey) {
+    // This synchronous guard closes the commit/effect gap: a callback from a
+    // cancelled timer must not advance a newly reset lifecycle.
+    uncontrolledLifecycleKeyRef.current = uncontrolledLifecycleKey;
+  }
+  const committedUncontrolledLifecycleKeyRef = useRef<string | null>(null);
+  const committedRenderedItemsKeyRef = useRef<string | null>(null);
+  const committedPresentationConfigKeyRef = useRef<string | null>(null);
+  const hadControlledLifecycleRef = useRef(Boolean(controlledActivationId));
+
   const paginationReadyRef = useRef(onPaginationReady);
   paginationReadyRef.current = onPaginationReady;
   useEffect(() => {
@@ -2875,11 +3045,42 @@ export function AgendaDisplayWidget({
   // Reset page index and scroll state whenever the item set or page layout
   // changes (e.g. real-time agenda updates while the screen is showing).
   useEffect(() => {
+    const wasControlled = hadControlledLifecycleRef.current;
+    hadControlledLifecycleRef.current = Boolean(controlledActivationId);
     if (controlledActivationId) return;
+    // Detaching from a controlled activation is itself a lifecycle reset,
+    // even when the first uncontrolled page has the same membership key.
+    if (
+      committedUncontrolledLifecycleKeyRef.current === uncontrolledLifecycleKey &&
+      !wasControlled
+    ) {
+      return;
+    }
+    const renderedContentChanged =
+      committedRenderedItemsKeyRef.current !== renderedItemsKey;
+    const presentationConfigChanged =
+      committedPresentationConfigKeyRef.current !== presentationConfigKey;
+    committedUncontrolledLifecycleKeyRef.current = uncontrolledLifecycleKey;
+    committedRenderedItemsKeyRef.current = renderedItemsKey;
+    committedPresentationConfigKeyRef.current = presentationConfigKey;
     setPageIndex(0);
+    setPresentationCycle(0);
+    // Keep intrinsic card measurements when only the packer's canonical page
+    // membership changed. Clearing them here would make autoPages fall back
+    // to the count-based model, flip the membership key, and oscillate
+    // forever. Genuine rendered-content changes invalidate those measurements.
+    if (renderedContentChanged || presentationConfigChanged) {
+      setCardHeights({});
+      setMeasuredFontTick(-1);
+    }
     setScrollMetrics({});
     setScrollResetTick(0);
-  }, [displayItems.length, pages.length, controlledActivationId]);
+    uncontrolledPageDeadlineRef.current = null;
+    // Invalidate callbacks synchronously in addition to the effect cleanup.
+    // Test schedulers (and a browser timer firing at the same boundary) may
+    // still invoke a cancelled callback.
+    ++dwellTimerGenerationRef.current;
+  }, [uncontrolledLifecycleKey, controlledActivationId]);
 
   // safePageIndex / pageItems must be declared before the rotation effect so
   // the effect closure can capture them for the effectiveDwellMs computation.
@@ -2994,7 +3195,8 @@ export function AgendaDisplayWidget({
       return () => clearCurrentTimer(id);
     }
 
-    const uncontrolledDwellKey = `${pageIndex}:${presentationCycle}:${scrollResetTick}`;
+    const uncontrolledDwellKey =
+      `${uncontrolledLifecycleKey}:${pageIndex}:${presentationCycle}:${scrollResetTick}`;
     let uncontrolledDeadline = uncontrolledPageDeadlineRef.current;
     if (uncontrolledDeadline?.key !== uncontrolledDwellKey) {
       uncontrolledDeadline = {
@@ -3015,7 +3217,10 @@ export function AgendaDisplayWidget({
        if (!presentationScrollAnimationActive) return;
       const id = timingSetTimeout(
         () => {
-          if (dwellTimerGenerationRef.current === timerGeneration) {
+           if (
+             dwellTimerGenerationRef.current === timerGeneration &&
+             presentationLifecycleIdentityRef.current === presentationLifecycleIdentity
+           ) {
             setScrollResetTick((t) => t + 1);
           }
         },
@@ -3027,7 +3232,10 @@ export function AgendaDisplayWidget({
     // Multi-page: advance to the next page after the effective dwell.
     const id = timingSetTimeout(
       () => {
-        if (dwellTimerGenerationRef.current !== timerGeneration) return;
+        if (
+          dwellTimerGenerationRef.current !== timerGeneration ||
+          presentationLifecycleIdentityRef.current !== presentationLifecycleIdentity
+        ) return;
         setPageIndex((i) => {
           const next = (i + 1) % pages.length;
           if (next === 0) setPresentationCycle((cycle) => cycle + 1);
@@ -3038,7 +3246,7 @@ export function AgendaDisplayWidget({
     );
     return () => clearCurrentTimer(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-   }, [pageIndex, scrollResetTick, pages.length, config.rotationIntervalSeconds, presentationScrollAnimationActive, timingMetrics, timingNow, timingSetTimeout, timingClearTimeout, controlledActivationId, controlledPages, hasCurrentControlledPlan, safePageIndex, followedState]);
+   }, [pageIndex, scrollResetTick, pages.length, config.rotationIntervalSeconds, presentationScrollAnimationActive, timingMetrics, timingNow, timingSetTimeout, timingClearTimeout, controlledActivationId, controlledPages, hasCurrentControlledPlan, safePageIndex, followedState, uncontrolledLifecycleKey, presentationLifecycleIdentity]);
 
   // In now_next mode every layout (not only totem/room_door) gets a
   // strong "live now" highlight on the currently-running row(s).
@@ -3086,9 +3294,7 @@ export function AgendaDisplayWidget({
   const titleStyle = roleColors.title ? { color: roleColors.title } : undefined;
   const timeStyle = timeRoleStyle(config, roleColors.time);
   const bodyStyle = roleColors.body ? { color: roleColors.body } : undefined;
-  const showHeaderTitle = Boolean(
-    config.showEventName && (config.eventName || config.name),
-  );
+  const showHeaderTitle = Boolean(effectiveAgendaHeading);
   const showHeaderCount = config.showSessionCount !== false;
   const showHeaderMeta = Boolean(config.showCurrentTime || config.showDate);
   const showHeader = showHeaderTitle || showHeaderCount || showHeaderMeta;
@@ -3145,7 +3351,7 @@ export function AgendaDisplayWidget({
               style={{ fontSize: scale * 1.5, ...titleStyle }}
               data-testid="agenda-event-title"
             >
-              {config.eventName || config.name}
+              {effectiveAgendaHeading}
             </h1>
               )}
               {showHeaderCount && (

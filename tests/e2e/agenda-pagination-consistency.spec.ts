@@ -13,9 +13,9 @@ import { like, sql } from "drizzle-orm";
 import {
   agendaItems, agendaWidgetConfigs, clients, displayProfiles, layoutTemplates,
   mediaAssets, playlistItems, playlists, programmeVersions, programmes,
-  events, scheduleBlocks, screens, screenEventBookings, users,
+  events, scheduleBlocks, screens, screenEventBookings, users, customFonts,
 } from "../../shared/schema";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
@@ -25,9 +25,20 @@ const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL! });
 const db = drizzle(pool, { schema: {
   agendaItems, agendaWidgetConfigs, clients, displayProfiles, layoutTemplates,
   mediaAssets, playlistItems, playlists, programmeVersions, programmes,
-  events, scheduleBlocks, screens, screenEventBookings, users,
+  events, scheduleBlocks, screens, screenEventBookings, users, customFonts,
 } });
 const video = readFileSync(path.resolve("tests/e2e/fixtures/tiny-loop.webm"));
+// Use a real installed font rather than a synthetic response. The route below
+// only makes the disposable fixture available through the production font-file
+// endpoint, just as an uploaded font would be on an operator's site.
+const customFontPath = [
+  "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+  "/usr/local/share/fonts/DejaVuSans.ttf",
+].find(existsSync);
+if (!customFontPath) {
+  throw new Error("The Agenda E2E fixture requires an installed TTF font");
+}
+const customFont = readFileSync(customFontPath);
 const titleWordCounts = [34, 50, 39, 39, 38, 42, 45, 75, 7, 9, 8];
 const presenterWordCounts = [12, 8, 14, 10, 9, 13, 7, 15, 2, 3, 2];
 const expected = [
@@ -40,13 +51,14 @@ const globalPhaseOnly = process.env.AGENDA_GLOBAL_PHASE_ONLY === "1";
 type Seed = {
   clientId: string; configId: string; sceneId: string; playlistId: string;
   screenId: string; token: string; assetId: string; sceneName: string;
-  mismatchSceneName: string;
+  mismatchSceneName: string; customFontId: string;
 };
 
 async function cleanup() {
   await db.delete(scheduleBlocks).where(like(scheduleBlocks.name, `${MARK}%`));
   await db.delete(agendaItems).where(like(agendaItems.title, `${MARK}%`));
   await db.delete(agendaWidgetConfigs).where(like(agendaWidgetConfigs.name, `${MARK}%`));
+  await db.delete(customFonts).where(like(customFonts.originalName, `${MARK}%`));
   await db.delete(playlistItems).where(sql`${playlistItems.playlistId} in
     (select id from playlists where name like ${`${MARK}%`})`);
   await db.delete(playlists).where(like(playlists.name, `${MARK}%`));
@@ -65,6 +77,17 @@ async function seed(): Promise<Seed> {
   const [{ id: profileId }] = await db.insert(displayProfiles).values({
     clientId, name: `${PREFIX}portrait`, width: 1080, height: 1920,
   }).returning({ id: displayProfiles.id });
+  const customFontId = crypto.randomUUID();
+  await db.insert(customFonts).values({
+    id: customFontId,
+    clientId,
+    familyId: customFontId,
+    name: `${PREFIX}DejaVu Sans`,
+    originalName: `${MARK}DejaVuSans.ttf`,
+    storagePath: `${PREFIX}DejaVuSans.ttf`,
+    format: "ttf",
+    fileSize: customFont.byteLength,
+  });
   const [{ id: configId }] = await db.insert(agendaWidgetConfigs).values({
     clientId, name: `${PREFIX}agenda`, displayMode: "full", layoutMode: "portrait",
     maxItemsPerPage: 3, rotationIntervalSeconds: 3, refreshIntervalSeconds: 5,
@@ -141,7 +164,7 @@ async function seed(): Promise<Seed> {
     timeRules: [{ startDate: "2031-07-03", endDate: "2031-07-05" }],
     zoneSources: [],
   });
-  return { clientId, configId, sceneId, playlistId, screenId, token, assetId,
+  return { clientId, configId, sceneId, playlistId, screenId, token, assetId, customFontId,
     sceneName: `${PREFIX}portrait-scene`,
     mismatchSceneName: `${PREFIX}landscape-mismatch` };
 }
@@ -313,6 +336,8 @@ async function captureAgendaPage(
 async function observe(page: Page, label: string, rootTestId: string): Promise<string[][]> {
   const seen: string[][] = [];
   const indicators: string[] = [];
+  const finalDwellsMs: number[] = [];
+  let finalPageStartedAt: number | null = null;
   let sawInlinePair = false;
   let sawPresenterWithoutCompany = false;
   let sawCompanyWithoutPresenter = false;
@@ -320,13 +345,15 @@ async function observe(page: Page, label: string, rootTestId: string): Promise<s
     const expectedIds = expected[index % expected.length];
     const expectedKey = expectedIds.join(",");
     let matched: AgendaPageSnapshot | null = null;
+    let consecutiveMatches = 0;
     await expect.poll(
       async () => {
         const snapshot = await captureAgendaPage(page, rootTestId);
         if (!snapshot) return null;
         const key = snapshot.ids.join(",");
-        if (key === expectedKey) matched = snapshot;
-        return key;
+        consecutiveMatches = key === expectedKey ? consecutiveMatches + 1 : 0;
+        if (consecutiveMatches >= 2) matched = snapshot;
+        return consecutiveMatches >= 2 ? key : null;
       },
       {
         message: `${label} page ${index + 1} should match the canonical rotation`,
@@ -343,6 +370,14 @@ async function observe(page: Page, label: string, rootTestId: string): Promise<s
     }
     expect(snapshot.pageIndex, `${label} page index`).toBe((index % expected.length) + 1);
     expect(snapshot.pageCount, `${label} page count`).toBe(expected.length);
+    const settledAt = Date.now();
+    if (finalPageStartedAt !== null) {
+      finalDwellsMs.push(settledAt - finalPageStartedAt);
+      finalPageStartedAt = null;
+    }
+    if (index === expected.length - 1 || index === expected.length * 2 - 1) {
+      finalPageStartedAt = settledAt;
+    }
     seen.push(snapshot.ids);
     indicators.push(snapshot.indicator);
 
@@ -383,6 +418,24 @@ async function observe(page: Page, label: string, rootTestId: string): Promise<s
         .toContain("Company without presenter");
       sawCompanyWithoutPresenter = true;
     }
+  }
+  // A second-cycle final page must also be allowed to complete. Waiting for
+  // the next canonical page makes both dwell measurements transition-driven;
+  // neither is inferred from a fixed sleep.
+  if (finalPageStartedAt !== null) {
+    await expect.poll(
+      async () => (await captureAgendaPage(page, rootTestId))?.ids.join(",") ?? null,
+      {
+        timeout: 30_000,
+        message: `${label} second-cycle final page must dwell before page one`,
+      },
+    ).toBe(expected[0].join(","));
+    finalDwellsMs.push(Date.now() - finalPageStartedAt);
+  }
+  expect(finalDwellsMs, `${label} must measure both final-page dwells`).toHaveLength(2);
+  for (const dwell of finalDwellsMs) {
+    expect(dwell, `${label} final page dwell must not be reset by polling`).toBeGreaterThan(1_500);
+    expect(dwell, `${label} final page dwell must be finite`).toBeLessThan(30_000);
   }
   expect(seen, `${label} pagination`).toEqual(expected.concat(expected));
   expect(
@@ -632,6 +685,44 @@ async function capturePageModel(page: Page, label: string, rootTestId: string): 
   return model;
 }
 
+async function expectCustomFontAndCanonicalPages(
+  page: Page,
+  label: string,
+  rootTestId: string,
+  fontId: string,
+  verifyPages = true,
+) {
+  const family = `vmfont-${fontId}`;
+  await expect.poll(
+    async () => page.getByTestId(rootTestId).evaluate((root) => {
+      const title = root.querySelector<HTMLElement>("[data-testid^='agenda-title-']");
+      return title ? getComputedStyle(title).fontFamily : "";
+    }),
+    {
+      timeout: 30_000,
+      message: `${label} must reflow using the uploaded custom font`,
+    },
+  ).toContain(family);
+  await page.evaluate(() => document.fonts.ready);
+  if (!verifyPages) return;
+  const model = await capturePageModel(page, `${label} after custom font`, rootTestId);
+  expect(model, `${label} must retain every canonical page after font reflow`).toEqual(expected);
+}
+
+function trackProductionAgendaPolls(page: Page): () => number {
+  let successfulPolls = 0;
+  page.on("response", (response) => {
+    const url = response.url();
+    const isAgendaPoll = url.includes("/api/agenda/display/");
+    const isPlayerPoll = url.includes("/api/player/content");
+    const isMonitorPoll = /\/api\/monitor\/[^/]+\/(?:content|presentation)/.test(url);
+    if ((isAgendaPoll || isPlayerPoll || isMonitorPoll) && response.status() < 500) {
+      successfulPolls += 1;
+    }
+  });
+  return () => successfulPolls;
+}
+
 test.describe("portrait Agenda pagination consistency", () => {
   let s: Seed;
   test.beforeAll(async () => { await cleanup(); s = await seed(); });
@@ -642,6 +733,14 @@ test.describe("portrait Agenda pagination consistency", () => {
     // Scene Builder, direct Simulator, playlist Simulator, Player, and Monitor.
     test.setTimeout(360_000);
     const ctx = await browser.newContext({ serviceWorkers: "block" });
+    await ctx.route(`**/api/fonts/${s.customFontId}/file*`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "font/ttf",
+        body: customFont,
+        headers: { "Cache-Control": "no-store" },
+      }),
+    );
     const sceneBuilder = await ctx.newPage();
     await login(sceneBuilder);
     await sceneBuilder.goto("/layouts", { waitUntil: "commit" });
@@ -674,11 +773,13 @@ test.describe("portrait Agenda pagination consistency", () => {
     );
     expect(sceneBuilderBaseline, "Scene Builder must establish the canonical fixture")
       .toEqual(expected);
+    const sceneBuilderPolls = trackProductionAgendaPolls(sceneBuilder);
     if (!globalPhaseOnly) {
       await observe(sceneBuilder, "Scene Builder", "interactive-layout-preview");
     }
 
     const simulator = await ctx.newPage();
+    const simulatorPolls = trackProductionAgendaPolls(simulator);
     await login(simulator);
     await simulator.goto(`/simulator?at=2031-07-04T09:00:00Z`, { waitUntil: "commit" });
     await simulator.getByTestId("select-simulator-screen").click();
@@ -721,6 +822,7 @@ test.describe("portrait Agenda pagination consistency", () => {
     }
 
     const playlist = await ctx.newPage();
+    const playlistPolls = trackProductionAgendaPolls(playlist);
     await login(playlist);
     await playlist.goto(`/simulator?playlistId=${s.playlistId}&at=2031-07-04T09:00:00Z`, { waitUntil: "commit" });
     await expect(playlist.getByTestId("player-display")).toBeVisible({ timeout: 20_000 });
@@ -734,6 +836,7 @@ test.describe("portrait Agenda pagination consistency", () => {
     }
 
     const player = await ctx.newPage();
+    const playerPolls = trackProductionAgendaPolls(player);
     await player.addInitScript(({ token, screenId }) => {
       localStorage.setItem("signage_device_token", token);
       localStorage.setItem("signage_screen_id", screenId);
@@ -754,6 +857,7 @@ test.describe("portrait Agenda pagination consistency", () => {
 
     const monitor = await ctx.newPage();
     await login(monitor);
+    const monitorPolls = trackProductionAgendaPolls(monitor);
     const create = await monitor.request.post(`/api/operations/screens/${s.screenId}/monitor-session`, {
       data: { clientType: "multiview", clientName: `${MARK}monitor` },
     });
@@ -773,8 +877,47 @@ test.describe("portrait Agenda pagination consistency", () => {
       : await observe(monitor, "Monitor", "screen-render-committed-frame");
     if (!globalPhaseOnly) {
       expect(monitorPages, "Monitor must follow the Player's ordered page sequence").toEqual(playerPages);
+      for (const [label, count] of [
+        ["Scene Builder", sceneBuilderPolls()],
+        ["Direct Simulator", simulatorPolls()],
+        ["Playlist Simulator", playlistPolls()],
+        ["Player", playerPolls()],
+        ["Monitor", monitorPolls()],
+      ] as const) {
+        expect(
+          count,
+          `${label} must receive equivalent production refresh polls during both cycles`,
+        ).toBeGreaterThanOrEqual(2);
+      }
     }
     await expect(monitor.locator("body")).not.toContainText("Monitor session expired");
+
+    // A real font file is served through the production font route. Once the
+    // config poll applies it, every surface must settle its font measurement
+    // pass without dropping the last page.
+    const selectCustomFont = await sceneBuilder.request.patch(`/api/agenda/configs/${s.configId}`, {
+      data: {
+        fontFamily: `custom:${s.customFontId}`,
+      },
+    });
+    expect(selectCustomFont.status(), await selectCustomFont.text()).toBe(200);
+    if (!globalPhaseOnly) {
+      await expectCustomFontAndCanonicalPages(
+        sceneBuilder, "Scene Builder", "interactive-layout-preview", s.customFontId,
+      );
+      await expectCustomFontAndCanonicalPages(
+        simulator, "Direct Simulator", "player-display", s.customFontId, false,
+      );
+      await expectCustomFontAndCanonicalPages(
+        playlist, "Playlist Simulator", "player-display", s.customFontId, false,
+      );
+      await expectCustomFontAndCanonicalPages(
+        player, "Player", "screen-render-committed-frame", s.customFontId,
+      );
+      await expectCustomFontAndCanonicalPages(
+        monitor, "Monitor", "screen-render-committed-frame", s.customFontId,
+      );
+    }
 
     // Reuse the same production surfaces for the optional cross-room mode.
     // The first three adjacent sessions alternate rooms, so legacy mode keeps

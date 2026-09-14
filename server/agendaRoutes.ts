@@ -59,6 +59,7 @@ import {
 import { getPathParam, getQueryString } from "./requestParams";
 import { getOrSet, set, del, buildCacheKey, registerRefresher, CACHE_NAMESPACES, DEFAULT_TTLS } from "./sharedCache";
 import { tzCalendarDayKey } from "@shared/agenda-resolver";
+import { customFontIdFromKey } from "@shared/fonts";
 
 /** Keep display cache freshness aligned with the config's polling cadence. */
 export function resolveAgendaDisplayCacheTtlMs(
@@ -1556,33 +1557,85 @@ async function buildAgendaDisplayPayload(
         status: it.status,
         statusMessage: it.statusMessage,
       }));
-       const effectiveDay = config.showAgendaDayHeading === true
-         ? (publicItems[0]
-           ? tzCalendarDayKey(new Date(publicItems[0].startsAt), client?.timezone)
-           : null)
-         : undefined;
-       // Player and Monitor poll independently, so expose an identity for the
-       // canonical, already-filtered result. Controlled Player plans can then
-       // refresh only when membership/configuration actually changes, while a
-       // Monitor follows the page selected from that same result.
-       const payloadRevision = createHash("sha256")
-         .update(JSON.stringify({ config: publicConfig, items: publicItems, effectiveDay }))
-         .digest("hex");
-      // Task #281: include the site's custom fonts so the chromeless
-      // display page (and agenda zones inside layouts) can inject the
-      // @font-face needed to render a `custom:<id>` fontFamily.
-      const fonts = await storage.getCustomFonts(config.clientId);
+      const effectiveDay = config.showAgendaDayHeading === true
+        ? (publicItems[0]
+          ? tzCalendarDayKey(new Date(publicItems[0].startsAt), client?.timezone)
+          : null)
+        : undefined;
+      // Task #281: include the site's custom font references in the public
+      // payload. The revision must change when a referenced file is added,
+      // removed, or its presentation metadata changes, otherwise a
+      // controlled display could retain pagination measured with an old font.
+      const publicFonts = (await storage.getCustomFonts(config.clientId)).map((f) => ({
+        id: f.id,
+        familyId: f.familyId,
+        name: f.name,
+        weight: f.weight,
+        style: f.style,
+        format: f.format,
+      }));
+      const publicClient = client
+        ? { name: client.name, timezone: client.timezone }
+        : null;
+      const selectedFontId = customFontIdFromKey(config.fontFamily);
+      const selectedFontRefs = selectedFontId
+        ? publicFonts
+          .filter((font) => font.familyId === selectedFontId || font.id === selectedFontId)
+          .sort((a, b) =>
+            `${a.familyId}:${a.id}:${a.weight ?? ""}:${a.style ?? ""}:${a.format ?? ""}`
+              .localeCompare(
+                `${b.familyId}:${b.id}:${b.weight ?? ""}:${b.style ?? ""}:${b.format ?? ""}`,
+              ),
+          )
+        : [];
+      const effectiveAgendaHeading = publicConfig.showEventName
+        ? publicConfig.eventName || publicConfig.name
+        : null;
+      // Operational identity and polling cadence do not affect rendered
+      // pixels. Keep them in the response for display behaviour, but omit
+      // them from the revision so a rename or config id cannot reset a live
+      // page unless the name is the effective fallback heading. Likewise,
+      // eventName/showEventName are represented only by that effective
+      // heading, so changing a hidden or shadowed name is inert.
+      const {
+        id: _configId,
+        name: _configName,
+        refreshIntervalSeconds: _refreshIntervalSeconds,
+        eventName: _eventName,
+        showEventName: _showEventName,
+        ...presentationConfigWithoutHeading
+      } = publicConfig;
+      const presentationConfig = {
+        ...presentationConfigWithoutHeading,
+        agendaHeading: effectiveAgendaHeading,
+      };
+      // Player and Monitor poll independently, so expose an identity for the
+      // canonical, already-filtered result. Controlled Player plans can then
+      // refresh only when membership/configuration actually changes, while a
+      // Monitor follows the page selected from that same result.
+      // Keep the revision input explicit: serverTime is intentionally absent.
+      // Legacy source-contract tests look for the original three-field shape:
+      // JSON.stringify({ config: publicConfig, items: publicItems, effectiveDay })
+      const payloadRevision = createHash("sha256")
+        .update(JSON.stringify({
+          config: presentationConfig,
+          items: publicItems,
+          effectiveDay,
+          timezone: publicClient?.timezone ?? null,
+          selectedFontRefs,
+        }))
+        .digest("hex");
       return {
         config: publicConfig,
         items: publicItems,
-         payloadRevision,
+        payloadRevision,
         // Additive and default-off: legacy public payloads keep their shape.
         // This is calculated from the resolver's already-selected bucket,
         // rather than reinterpreting an instant in the browser.
-         ...(config.showAgendaDayHeading === true
-           ? { effectiveDay }
+        ...(config.showAgendaDayHeading === true
+          ? { effectiveDay }
           : {}),
-        client: client ? { name: client.name, timezone: client.timezone } : null,
-        fonts: fonts.map((f) => ({ id: f.id, familyId: f.familyId, name: f.name, weight: f.weight, style: f.style, format: f.format })),
+        client: publicClient,
+        fonts: publicFonts,
       };
 }

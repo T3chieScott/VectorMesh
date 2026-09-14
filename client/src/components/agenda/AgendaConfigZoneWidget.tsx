@@ -256,6 +256,8 @@ export function AgendaConfigZoneWidget({
         config={displayData.config}
         items={displayData.items}
         effectiveDay={displayData.effectiveDay}
+         presentationRevision={displayData.payloadRevision}
+         customFonts={displayData.fonts}
         timezone={displayData.client?.timezone || null}
         now={testNow}
         completionBinding={agendaPreparing ? undefined : effectiveCompletionBinding}
