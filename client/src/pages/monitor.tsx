@@ -65,7 +65,7 @@ import { TestPattern } from "@/components/test-pattern";
 // are not used in runtime conditions — each capability is enforced by
 // the absence of the corresponding code (see module-level comment above).
 import { MONITOR_CAPABILITIES } from "@/pages/player";
-import { buildContentPresentation, getPresentationRotationIndex, getPresentationTransitionMs } from "@/lib/contentPresentation";
+import { buildContentPresentation, getPresentationRotationIndex, getPresentationTransitionMs, scheduleWallClockRotation } from "@/lib/contentPresentation";
 import type { AgendaPresentationState } from "@/components/agenda/AgendaDisplayWidget";
 
 export const MONITOR_PRESENTATION_POLL_MS = 600;
@@ -185,7 +185,6 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
   const committedFrameIdentityRef = useRef<string | null>(null);
   const desiredFrameIdentityRef = useRef<string | null>(null);
   const [, setCommittedFrameIdentity] = useState<string | null>(null);
-  const layoutRotationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const presentationFetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const presentationFetchInFlightRef = useRef(false);
@@ -280,15 +279,19 @@ function MonitorContentInner({ screenId }: { screenId: string }) {
     if (matchingPlayerScene) return;
     // Lease expiry hands selection back immediately, independently of whether
     // the physical candidate committed, resolved empty, or failed preparation.
-    setLayoutRotationIndex(getPresentationRotationIndex(presentation, getSyncedNow()));
-    const delay = getPresentationTransitionMs(presentation, getSyncedNow());
-    if (delay === null) return;
-    layoutRotationTimerRef.current = setTimeout(() => {
-      setLayoutRotationIndex(getPresentationRotationIndex(presentation, getSyncedNow()));
-    }, delay + 5);
-    return () => {
-      if (layoutRotationTimerRef.current) clearTimeout(layoutRotationTimerRef.current);
-    };
+    // Self-recursive (see scheduleWallClockRotation's own doc comment): a
+    // React effect that only re-arms because `layoutRotationIndex` changed
+    // can permanently stall if a clock-sync correction between arming and
+    // firing makes a fire recompute the same index the caller already has
+    // (setState(sameValue) is a no-op, so nothing re-runs this effect again).
+    const stop = scheduleWallClockRotation(
+      presentation,
+      getSyncedNow,
+      setLayoutRotationIndex,
+      (callback, delayMs) => setTimeout(callback, delayMs),
+      (handle) => clearTimeout(handle),
+    );
+    return stop;
   }, [presentation.revision, presentation.activationEpoch, layoutRotationItems, layoutRotationIndex,
     isFrameCommitted, observedRotationIndex,
     matchingPlayerScene?.processGeneration, matchingPlayerScene?.processId,

@@ -210,6 +210,47 @@ export function getPresentationTransitionMs(
   return Math.max(1, before + durations[index] - elapsed);
 }
 
+/**
+ * Task #403: drives the Monitor's wall-clock scene rotation via direct
+ * self-recursion, rather than a React effect that only re-arms its timer
+ * because `rotationIndex` state changed. That distinction matters because
+ * `getSyncedNow()`'s offset can shift between when a timer is armed and when
+ * it fires (a fresh clock-sync sample lands in between — see
+ * client/src/lib/playerClock.tsx's `feedSample`), and a shift large enough to
+ * move the recomputed index back across a scene boundary makes this fire
+ * recompute the *same* index the caller already has. A plain
+ * `setState(sameValue)` is a no-op in React, so an effect that only re-runs
+ * because its `rotationIndex` dependency changed would never re-arm — the
+ * whole rotation freezes on that scene forever, even though later polls keep
+ * succeeding and every other input is fine. Self-recursion has no such
+ * failure mode: every fire always computes the next delay and reschedules
+ * itself, whether or not the index it reports actually changed.
+ *
+ * Returns a `stop()` function; call it from the owning effect's cleanup.
+ */
+export function scheduleWallClockRotation(
+  presentation: Pick<ContentPresentation, "rotationItems" | "activationEpoch">,
+  getNow: () => number,
+  onIndex: (index: number) => void,
+  schedule: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>,
+  cancel: (handle: ReturnType<typeof setTimeout>) => void,
+): () => void {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const tick = () => {
+    if (stopped) return;
+    onIndex(getPresentationRotationIndex(presentation, getNow()));
+    const delay = getPresentationTransitionMs(presentation, getNow());
+    if (delay === null) return;
+    timer = schedule(tick, delay + 5);
+  };
+  tick();
+  return () => {
+    stopped = true;
+    if (timer !== null) cancel(timer);
+  };
+}
+
 export const playerProcessGenerationKey = (screenId: string) =>
   `vm_player_process_generation_${screenId}`;
 

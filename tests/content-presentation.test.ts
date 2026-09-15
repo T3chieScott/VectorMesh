@@ -6,7 +6,9 @@ import {
   getPresentationRotationIndex,
   getPresentationSceneDurationMs,
   getPresentationSequenceIdentity,
+  getPresentationTransitionMs,
   scheduleDebouncedPresentationHeartbeat,
+  scheduleWallClockRotation,
   shouldSchedulePresentationDwell,
 } from "../client/src/lib/contentPresentation";
 
@@ -285,4 +287,86 @@ test("presentation heartbeat scheduler promptly coalesces initial, static, and A
   assert.equal(queue(), false);
   fire();
   assert.deepEqual(sent.at(-1), { sceneId: "agenda-scene", agenda: [{ page: 2 }] });
+});
+
+// Task #403: reproduces the actual event sequence captured from a stalled
+// Electron Multiview tile. Monitor's rotation timer is armed from
+// `getSyncedNow()` (client/src/lib/playerClock.tsx), whose offset can shift
+// between arm-time and fire-time because a fresh clock-sync sample lands in
+// between (every successful content/presentation poll feeds one, regardless
+// of whether the content itself changed). A shift large enough to move the
+// recomputed "now" back across a scene boundary makes the fire recompute the
+// *same* index the caller already had. Before this fix, Monitor scheduled its
+// timer from inside a `useEffect` that only re-armed because its
+// `layoutRotationIndex` *state* dependency changed — and `setState(sameValue)`
+// is a no-op in React, so that recompute silently killed the whole rotation:
+// no later poll ever re-triggered it, because every other effect input
+// (content identity, matchingPlayerScene, observedRotationIndex) is also
+// stable for an unchanged fallback playlist. `scheduleWallClockRotation`
+// fixes this by always rescheduling itself directly, independent of whether
+// the index it reports actually changed.
+test("wall-clock rotation keeps rescheduling even when a fire recomputes the same index (task #403 stall)", () => {
+  const rotationItems = [
+    { id: "scene-a", layoutTemplateId: "scene-a", duration: 6 },
+    { id: "scene-b", layoutTemplateId: "scene-b", duration: 10 },
+    { id: "scene-c", layoutTemplateId: "scene-c", duration: 4 },
+  ];
+  const presentation = { rotationItems, activationEpoch: 0 };
+
+  let simulatedNow = 0;
+  const getNow = () => simulatedNow;
+  const reported: number[] = [];
+  const pending = new Map<number, () => void>();
+  const cancelled: number[] = [];
+  const delays: number[] = [];
+  let nextTimer = 1;
+  const schedule = (callback: () => void, delayMs: number) => {
+    const id = nextTimer++;
+    pending.set(id, callback);
+    delays.push(delayMs);
+    return id as unknown as ReturnType<typeof setTimeout>;
+  };
+  const cancel = (handle: ReturnType<typeof setTimeout>) => {
+    cancelled.push(handle as unknown as number);
+    pending.delete(handle as unknown as number);
+  };
+  const fireOldest = () => {
+    const [id, callback] = [...pending.entries()][0];
+    pending.delete(id);
+    callback();
+  };
+
+  // t=0: mid-scene-A (index 0). Sanity check against the real helper so this
+  // test's setup matches what the effect actually computes.
+  assert.equal(getPresentationRotationIndex(presentation, simulatedNow), 0);
+  assert.equal(getPresentationTransitionMs(presentation, simulatedNow), 6000);
+
+  const stop = scheduleWallClockRotation(presentation, getNow, (i) => reported.push(i), schedule, cancel);
+  assert.deepEqual(reported, [0], "ticks immediately on start, reporting the current scene");
+  assert.equal(pending.size, 1, "arms exactly one timer for the next transition");
+  assert.equal(delays[0], 6005);
+
+  // Simulate the demonstrated failure: the clock-sync offset corrects
+  // backward between arm and fire, so the fire's fresh getNow() still lands
+  // in scene A's window instead of having crossed into scene B's.
+  simulatedNow = 3000;
+  fireOldest();
+  assert.deepEqual(reported, [0, 0], "fire recomputed the same index — this exact case is what silently killed the old effect-driven timer");
+  assert.equal(pending.size, 1, "must still reschedule itself even though the reported index did not change");
+
+  // Real time keeps moving forward regardless of the earlier correction; the
+  // next fire must recompute correctly once the wall clock genuinely crosses
+  // into scene B's window.
+  simulatedNow = 6010;
+  fireOldest();
+  assert.deepEqual(reported, [0, 0, 1], "recovers and advances to scene B once real elapsed time actually crosses the boundary");
+  assert.equal(pending.size, 1);
+
+  simulatedNow = 16050; // well into scene C (6000 + 10000 + a bit)
+  fireOldest();
+  assert.deepEqual(reported, [0, 0, 1, 2]);
+
+  stop();
+  assert.equal(pending.size, 0, "stop() cancels the outstanding timer");
+  assert.equal(cancelled.length, 1);
 });
