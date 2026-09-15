@@ -28,7 +28,7 @@
  * 24.  Scroll is not active when descriptionLines is not null.
  * 25.  Scroll is not active when descriptionAutoScroll is false.
  * 26.  configFormSchema includes descriptionAutoScroll as boolean field.
- * 27.  Single-page loop increments scrollResetTick after effectiveDwellMs.
+ * 27.  Single-page loop advances the presentation generation after effectiveDwellMs.
  * 28.  effectiveDwellMs accounts for maxOverflow across all page items.
  */
 
@@ -37,11 +37,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { insertAgendaWidgetConfigSchema } from "../shared/schema";
 import {
+  BOTTOM_PAUSE_MS as AGENDA_BOTTOM_PAUSE_MS,
   getDescriptionScrollIndicator,
   isDescriptionAutoScrollAnimationActive,
   isDescriptionAutoScrollMode,
+  resolveAgendaPresentationDwellMs,
   resolveDescriptionViewportMaxHeight,
   resolveDescriptionViewportSizing,
+  TOP_PAUSE_MS as AGENDA_TOP_PAUSE_MS,
 } from "../client/src/components/agenda/AgendaDisplayWidget";
 
 // ---------------------------------------------------------------------------
@@ -265,6 +268,39 @@ test("__TEST_S382__ effectiveDwellMs === configuredMs when descScrollActive is f
     false, // scroll not active
   );
   assert.equal(result, 5_000);
+});
+
+test("__TEST_S382__ card overflow extends dwell even when inner scrolling is inactive", () => {
+  const outerCycle =
+    AGENDA_TOP_PAUSE_MS + descScrollDurationMs(56) + AGENDA_BOTTOM_PAUSE_MS;
+  assert.equal(
+    resolveAgendaPresentationDwellMs(
+      3_000,
+      ["item1"],
+      { "card:item1": 56 },
+      false,
+    ),
+    outerCycle,
+  );
+});
+
+test("__TEST_S382__ outer card and inner reveal cycles are staged, while cards share each stage", () => {
+  const cycle = (overflow: number) =>
+    AGENDA_TOP_PAUSE_MS + descScrollDurationMs(overflow) + AGENDA_BOTTOM_PAUSE_MS;
+  assert.equal(
+    resolveAgendaPresentationDwellMs(
+      3_000,
+      ["first", "second"],
+      {
+        "card:first": 56,
+        "description:first": 28,
+        "card:second": 28,
+        "presenter:second": 112,
+      },
+      true,
+    ),
+    cycle(56) + cycle(112),
+  );
 });
 
 test("__TEST_S382__ configuredMs > scroll cycle → configuredMs wins (criterion 9)", () => {
@@ -569,14 +605,15 @@ test("__TEST_S382__ rotation timer uses setTimeout not setInterval in renderer",
   );
 });
 
-test("__TEST_S382__ single-page loop uses scrollResetTick", () => {
+test("__TEST_S382__ single-page loop advances the monotonic presentation generation", () => {
   const src = readFileSync(
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
     "utf-8",
   );
   assert.ok(
-    src.includes("scrollResetTick") && src.includes("setScrollResetTick"),
-    "Single-page loop should increment scrollResetTick",
+    src.includes("presentationGeneration") &&
+      src.includes("setPresentationReplayBump((bump) => bump + 1)"),
+    "Single-page loop should advance the presentation generation",
   );
 });
 

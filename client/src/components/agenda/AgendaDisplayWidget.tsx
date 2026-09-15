@@ -524,6 +524,28 @@ export function descScrollDurationMs(overflowPx: number): number {
   return Math.ceil((overflowPx / SCROLL_PX_PER_SEC) * 1_000);
 }
 
+export function hasReachedAgendaCardBottom(
+  scrollTop: number,
+  scrollHeight: number,
+  clientHeight: number,
+): boolean {
+  if (
+    !Number.isFinite(scrollTop) ||
+    !Number.isFinite(scrollHeight) ||
+    !Number.isFinite(clientHeight)
+  ) return false;
+  const maxScrollTop = Math.max(0, scrollHeight - clientHeight);
+  if (maxScrollTop <= 0) return true;
+  // A zero scrollTop is never evidence that an overflowing card reached its
+  // bottom, even when the overflow is only a few pixels. Native scrolling
+  // quantises scrollTop, so permit the observed two-pixel Chrome boundary
+  // only after the card has made positive progress; ordinary release remains
+  // within one pixel of the clamped maximum.
+  if (scrollTop <= 0) return false;
+  const remaining = maxScrollTop - scrollTop;
+  return remaining <= 1 || (remaining <= 2 && Number.isInteger(scrollTop));
+}
+
 /** Validate legacy/public presenter viewport values at the rendering boundary. */
 export function resolvePresenterVisibleLines(value: number | null | undefined): number {
   return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 20
@@ -538,12 +560,17 @@ export function resolveAgendaPresentationDwellMs(
   scrollMetrics: Record<string, number>,
   scrollAnimationActive: boolean,
 ): number {
-  if (!scrollAnimationActive || itemIds.length === 0) return configuredMs;
+  if (itemIds.length === 0) return configuredMs;
   // Descriptions and presenters are independent viewports for the same card.
   // A metric is associated with an item by an exact key; never infer the
   // owner by splitting a delimiter, since item IDs may contain delimiters.
   const metricBelongsToItem = (key: string, id: string): boolean => {
-    if (key === id || key === `description:${id}` || key === `presenter:${id}`) return true;
+    if (
+      key === id ||
+      key === `card:${id}` ||
+      key === `description:${id}` ||
+      key === `presenter:${id}`
+    ) return true;
     try {
       const parsed = JSON.parse(key) as { kind?: string; itemId?: string };
       return parsed.kind === "presenter" && parsed.itemId === id;
@@ -551,15 +578,26 @@ export function resolveAgendaPresentationDwellMs(
       return false;
     }
   };
-  const overflow = Math.max(0, ...itemIds.map((id) => Math.max(
-    ...Object.entries(scrollMetrics)
-      .filter(([key]) => metricBelongsToItem(key, id))
-      .map(([, value]) => value ?? 0),
-    0,
-  )));
-  return overflow > 0
-    ? Math.max(configuredMs, TOP_PAUSE_MS + descScrollDurationMs(overflow) + BOTTOM_PAUSE_MS)
-    : configuredMs;
+  let cardOverflow = 0;
+  let innerOverflow = 0;
+  for (const id of itemIds) {
+    for (const [key, value] of Object.entries(scrollMetrics)) {
+      if (!metricBelongsToItem(key, id)) continue;
+      if (key === `card:${id}`) cardOverflow = Math.max(cardOverflow, value ?? 0);
+      else if (scrollAnimationActive) innerOverflow = Math.max(innerOverflow, value ?? 0);
+    }
+  }
+  const cycle = (overflow: number) =>
+    overflow > 0
+      ? TOP_PAUSE_MS + descScrollDurationMs(overflow) + BOTTOM_PAUSE_MS
+      : 0;
+  // A contained card is the outer viewport for its inner viewports. Reveal
+  // it first, then reveal the presenter/description, rather than allowing
+  // two scroll surfaces to move at the same time. Card overflow is always
+  // timed, even when reduced motion or description auto-scroll disables the
+  // inner animation.
+  const revealMs = cycle(cardOverflow) + cycle(innerOverflow);
+  return revealMs > 0 ? Math.max(configuredMs, revealMs) : configuredMs;
 }
 
 type PresentationDeadlineState = {
@@ -580,7 +618,8 @@ function advancePresentationDeadline(
   const currentValues = Object.fromEntries(
     Object.entries(scrollMetrics).filter(([key]) =>
       [...visibleIds].some((id) =>
-        key === id || key === `description:${id}` || key === `presenter:${id}` ||
+        key === id || key === `card:${id}` ||
+        key === `description:${id}` || key === `presenter:${id}` ||
         (() => {
           try {
             const parsed = JSON.parse(key) as { kind?: string; itemId?: string };
@@ -592,15 +631,23 @@ function advancePresentationDeadline(
       ),
     ),
   );
-  if (scrollAnimationActive) {
-    for (const [key, value] of Object.entries(currentValues)) {
-      if (value > 0 && state.metricValues[key] !== value) {
-        state.absoluteDeadline = Math.max(
-          state.absoluteDeadline,
-          observedAt + TOP_PAUSE_MS + descScrollDurationMs(value) + BOTTOM_PAUSE_MS,
-        );
-      }
-    }
+  const cycle = (overflow: number) =>
+    overflow > 0
+      ? TOP_PAUSE_MS + descScrollDurationMs(overflow) + BOTTOM_PAUSE_MS
+      : 0;
+  let cardOverflow = 0;
+  let innerOverflow = 0;
+  let metricChanged = false;
+  for (const [key, value] of Object.entries(currentValues)) {
+    if (value > 0 && state.metricValues[key] !== value) metricChanged = true;
+    if (key.startsWith("card:")) cardOverflow = Math.max(cardOverflow, value);
+    else if (scrollAnimationActive) innerOverflow = Math.max(innerOverflow, value);
+  }
+  if (metricChanged && (cardOverflow > 0 || innerOverflow > 0)) {
+    state.absoluteDeadline = Math.max(
+      state.absoluteDeadline,
+      observedAt + cycle(cardOverflow) + cycle(innerOverflow),
+    );
   }
   state.metricValues = currentValues;
 }
@@ -1058,12 +1105,34 @@ export function measurePresenterVisibleRows(
   return Number.isFinite(height) && height > 0 ? height : null;
 }
 
+/** Keep equivalent row-boundary measurements from causing another layout pass. */
+export function resolvePresenterRowViewportHeight(
+  previous: number | null,
+  measured: number | null,
+): number | null {
+  return measured == null ||
+    (previous != null && Math.abs(previous - measured) < 1)
+    ? previous
+    : measured;
+}
+
+function resetAgendaCardScroll(card: HTMLElement | null): void {
+  if (!card) return;
+  // Explicitly switch back to an instant scroll before assigning scrollTop:
+  // Chromium can otherwise let an in-flight native smooth-scroll animation
+  // write its stale position after replacement content has mounted.
+  card.scrollTo?.({ top: 0, behavior: "auto" });
+  card.scrollTop = 0;
+}
+
 function PresenterViewport({
-  id, text, children, lines, fontSize, accentColor, onOverflow, resetTick, reducedMotion, suppressTestId,
+  id, text, children, lines, fontSize, accentColor, onOverflow, presentationGeneration, reducedMotion,
+  blocked, suppressTestId,
 }: {
   id: string; text: string; children?: React.ReactNode; lines: number; fontSize: number;
   accentColor?: string;
-  onOverflow?: (id: string, px: number) => void; resetTick?: number; reducedMotion: boolean; suppressTestId?: boolean;
+  onOverflow?: (id: string, px: number) => void; presentationGeneration?: number; reducedMotion: boolean;
+  blocked?: boolean; suppressTestId?: boolean;
 }) {
   const viewportRef = useRef<HTMLSpanElement>(null);
   const contentRef = useRef<HTMLSpanElement>(null);
@@ -1088,12 +1157,9 @@ function PresenterViewport({
          content,
          lines,
        );
-       setRowViewportHeight((previous) =>
-         nextRowViewportHeight == null ||
-         Math.abs((previous ?? 0) - nextRowViewportHeight) < 1
-           ? previous
-           : nextRowViewportHeight,
-       );
+        setRowViewportHeight((previous) =>
+          resolvePresenterRowViewportHeight(previous, nextRowViewportHeight),
+        );
        // The viewport's row boundary is the actual overflow boundary. On a
        // first paint it may still have the legacy line-height fallback; once
        // rows have been laid out, use the measured Nth-row bottom instead.
@@ -1138,16 +1204,36 @@ function PresenterViewport({
       observer?.disconnect();
       fonts?.removeEventListener?.("loadingdone", measure);
     };
-  }, [id, lines, fontSize, text, onOverflow, resetTick]);
+  }, [id, lines, fontSize, text, onOverflow, presentationGeneration]);
+  useLayoutEffect(() => {
+    setOffset(0);
+    setTransitionMs(0);
+  }, [presentationGeneration]);
   useEffect(() => {
     const timers: number[] = [];
     setOffset(0);
     setTransitionMs(0);
-    if (!overflow || reducedMotion) {
-      if (reducedMotion && overflow) setOffset(overflow);
+    if (blocked || !overflow) {
       return () => timers.forEach(clearTimeout);
     }
+    const reduced =
+      reducedMotion ||
+      (typeof window !== "undefined" &&
+        typeof window.matchMedia === "function" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches);
     const duration = descScrollDurationMs(overflow);
+    if (reduced) {
+      // Reduced motion still reveals the content in readable stages. Do not
+      // jump directly to the bottom, which hides the intermediate presenters.
+      const midpoint = Math.ceil(overflow / 2);
+      const middle = window.setTimeout(() => setOffset(midpoint), TOP_PAUSE_MS);
+      const bottom = window.setTimeout(
+        () => setOffset(overflow),
+        TOP_PAUSE_MS + Math.max(1, Math.ceil(duration / 2)),
+      );
+      timers.push(middle, bottom);
+      return () => timers.forEach(window.clearTimeout);
+    }
     const start = window.setTimeout(() => {
       setTransitionMs(duration);
       setOffset(overflow);
@@ -1156,7 +1242,7 @@ function PresenterViewport({
     }, TOP_PAUSE_MS);
     timers.push(start);
     return () => timers.forEach(window.clearTimeout);
-  }, [overflow, resetTick, reducedMotion]);
+  }, [blocked, overflow, presentationGeneration, reducedMotion]);
   const indicator = getDescriptionScrollIndicator(
     viewportHeight,
     contentHeight,
@@ -1246,8 +1332,9 @@ function PresenterDetails({
   roleColors,
   accentColor,
   onScrollOverflow,
-  scrollResetTick,
+  presentationGeneration,
   prefersReducedMotion,
+  blocked,
   suppressTestId,
 }: {
   item: AgendaItem;
@@ -1256,8 +1343,9 @@ function PresenterDetails({
   roleColors?: RoleColors;
   accentColor?: string;
   onScrollOverflow?: (id: string, px: number) => void;
-  scrollResetTick?: number;
+  presentationGeneration?: number;
   prefersReducedMotion?: boolean;
+  blocked?: boolean;
   suppressTestId?: boolean;
 }) {
   const pairs = resolveAgendaPresenterPairs(item);
@@ -1269,6 +1357,22 @@ function PresenterDetails({
       ({ presenter, presenterCompany }) =>
         (showPresenter && presenter) || (showPresenterCompany && presenterCompany),
     );
+  // PresenterViewport uses this callback as a measurement-effect dependency.
+  // Keep it stable across equivalent parent renders (polls, dwell updates and
+  // ResizeObserver-driven layout state) so a measurement cannot continuously
+  // tear down/re-run itself while the row-boundary maxHeight is settling.
+  const visibleMetricSourceIndices = visiblePairs.map(
+    ({ sourceIndex }) => sourceIndex,
+  );
+  const visibleMetricSourceKey = visibleMetricSourceIndices.join(",");
+  const reportOverflow = useCallback((_: string, px: number) => {
+    visibleMetricSourceIndices.forEach((metricSourceIndex) =>
+      onScrollOverflow?.(
+        presenterPairMetricKey(item.id, metricSourceIndex),
+        px,
+      ),
+    );
+  }, [item.id, onScrollOverflow, visibleMetricSourceKey]);
   if (!visiblePairs.length) return null;
 
   const bodyStyle = roleColors?.body ? { color: roleColors.body } : undefined;
@@ -1310,19 +1414,10 @@ function PresenterDetails({
           "presenter-scroll-thumb",
           accentColor,
         )}
-        onOverflow={(_, px) => {
-          // Presenter rows share one viewport. Keep reporting the
-          // established per-pair metric keys so dwell calculations and
-          // telemetry remain compatible with older displays.
-          visiblePairs.forEach(({ sourceIndex: metricSourceIndex }) =>
-            onScrollOverflow?.(
-              presenterPairMetricKey(item.id, metricSourceIndex),
-              px,
-            ),
-          );
-        }}
-        resetTick={scrollResetTick}
+        onOverflow={reportOverflow}
+        presentationGeneration={presentationGeneration}
         reducedMotion={prefersReducedMotion ?? false}
+        blocked={blocked}
         suppressTestId={suppressTestId}
       >
         {visiblePairs.map(({ presenter, presenterCompany, sourceIndex }, index) => {
@@ -1401,7 +1496,7 @@ function AgendaRow({
   pageItemCount,
   suppressTestId,
   onScrollOverflow,
-  scrollResetTick,
+  presentationGeneration,
   prefersReducedMotion = false,
   nowNextLabel,
   nowNextSessionDate,
@@ -1424,7 +1519,7 @@ function AgendaRow({
   pageH?: number;
   pageItemCount?: number;
   onScrollOverflow?: (id: string, px: number) => void;
-  scrollResetTick?: number;
+  presentationGeneration?: number;
   prefersReducedMotion?: boolean;
   nowNextLabel?: NowNextItemLabel;
   nowNextSessionDate?: string;
@@ -1523,10 +1618,25 @@ function AgendaRow({
   });
   const [fullCardOverflowPx, setFullCardOverflowPx] = useState(0);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  // ResizeObserver and font callbacks can report the same positive overflow
+  // repeatedly. Keep a measurement generation so those equivalent reports
+  // cannot re-block an outer reveal that already completed. A changed
+  // overflow or containment shape is a new generation and intentionally
+  // restarts the staged card reveal.
+  const fullCardMeasurementRef = useRef<{
+    overflow: number;
+    shouldContainCard: boolean;
+    cardMaxHeight: number | null;
+  } | null>(null);
 
   // CSS transform state for the scrolling animation.
   const [translateY, setTranslateY] = useState(0);
   const [transitionMs, setTransitionMs] = useState(0);
+  const [cardScrollComplete, setCardScrollComplete] = useState(true);
+  const innerScrollBlocked =
+    fullCardContainmentEnabled &&
+    fullCardOverflowPx > 0 &&
+    !cardScrollComplete;
 
   // ---- Stable measurement ref ------------------------------------------
   // Written every render so ResizeObserver and useLayoutEffect always call
@@ -1631,6 +1741,7 @@ function AgendaRow({
   measureFullCardRef.current = () => {
     const card = cardRef.current;
     if (!card || !fullCardContainmentEnabled || allocatedH == null) {
+      fullCardMeasurementRef.current = null;
       setFullCardSizing((previous) =>
         previous.shouldContainCard || previous.cardMaxHeight != null
           ? { shouldContainCard: false, cardMaxHeight: null }
@@ -1655,6 +1766,17 @@ function AgendaRow({
     const overflow = sizing.shouldContainCard
       ? Math.max(0, card.scrollHeight - allocatedH)
       : 0;
+    const previousMeasurement = fullCardMeasurementRef.current;
+    const measurementChanged =
+      previousMeasurement == null ||
+      Math.abs(previousMeasurement.overflow - overflow) >= 1 ||
+      previousMeasurement.shouldContainCard !== sizing.shouldContainCard ||
+      previousMeasurement.cardMaxHeight !== sizing.cardMaxHeight;
+    fullCardMeasurementRef.current = {
+      overflow,
+      shouldContainCard: sizing.shouldContainCard,
+      cardMaxHeight: sizing.cardMaxHeight,
+    };
 
     setFullCardSizing((previous) =>
       previous.shouldContainCard === sizing.shouldContainCard &&
@@ -1665,6 +1787,7 @@ function AgendaRow({
     setFullCardOverflowPx((previous) =>
       Math.abs(previous - overflow) < 1 ? previous : overflow,
     );
+    if (measurementChanged) setCardScrollComplete(overflow <= 0);
     onScrollOverflow?.(`card:${item.id}`, overflow);
   };
 
@@ -1713,29 +1836,81 @@ function AgendaRow({
       !fullCardSizing.shouldContainCard ||
       fullCardOverflowPx <= 0
     ) {
-      if (card) card.scrollTop = 0;
+      resetAgendaCardScroll(card);
+      setCardScrollComplete(true);
       return;
     }
-    card.scrollTop = 0;
-    if (
+    setCardScrollComplete(false);
+    resetAgendaCardScroll(card);
+    const reduced =
       prefersReducedMotion ||
       (typeof window !== "undefined" &&
         typeof window.matchMedia === "function" &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches)
-    ) {
-      card.scrollTop = fullCardOverflowPx;
-      return;
-    }
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    const duration = descScrollDurationMs(fullCardOverflowPx);
+    const timers: number[] = [];
+    let frame: number | null = null;
+    let completed = false;
+    const completeAfterBottomPause = () => {
+      if (completed) return;
+      completed = true;
+      const finish = window.setTimeout(
+        () => setCardScrollComplete(true),
+        BOTTOM_PAUSE_MS,
+      );
+      timers.push(finish);
+    };
     const start = window.setTimeout(() => {
-      card.scrollTo?.({ top: fullCardOverflowPx, behavior: "smooth" });
-      if (!card.scrollTo) card.scrollTop = fullCardOverflowPx;
+      if (reduced) {
+        card.scrollTop = Math.ceil(fullCardOverflowPx / 2);
+        const bottom = window.setTimeout(
+          () => { card.scrollTop = fullCardOverflowPx; },
+          Math.max(1, Math.ceil(duration / 2)),
+        );
+        const finish = window.setTimeout(
+          () => setCardScrollComplete(true),
+          Math.max(1, Math.ceil(duration / 2)) + BOTTOM_PAUSE_MS,
+        );
+        timers.push(bottom, finish);
+      } else {
+        card.scrollTo?.({ top: fullCardOverflowPx, behavior: "smooth" });
+        if (!card.scrollTo) card.scrollTop = fullCardOverflowPx;
+        // Native smooth-scroll duration is browser-controlled and can be much
+        // shorter than the nominal readability duration. Waiting for
+        // `TOP_PAUSE + descScrollDuration` here can therefore leave the
+        // nested presenter blocked for minutes on a tall card, even though
+        // the card has visibly reached its bottom. Poll the real scroll
+        // container instead; the page clock still accounts for both stages.
+        const waitForBottom = () => {
+          // scrollTop is quantised to whole CSS pixels while clientHeight and
+          // scrollHeight can retain fractional layout values. Accept the same
+          // small rounding window used by the actual-readability checks;
+          // otherwise a card that is visibly at its bottom can remain blocked
+          // forever two pixels shy of its mathematical maximum.
+          if (hasReachedAgendaCardBottom(
+            card.scrollTop,
+            card.scrollHeight,
+            card.clientHeight,
+          )) {
+            completeAfterBottomPause();
+            return;
+          }
+          frame = window.requestAnimationFrame(waitForBottom);
+        };
+        frame = window.requestAnimationFrame(waitForBottom);
+      }
     }, TOP_PAUSE_MS);
-    return () => window.clearTimeout(start);
+    timers.push(start);
+    return () => {
+      timers.forEach(window.clearTimeout);
+      if (frame != null) window.cancelAnimationFrame(frame);
+    };
   }, [
     fullCardOverflowPx,
     fullCardSizing.shouldContainCard,
+    fullCardSizing.cardMaxHeight,
     prefersReducedMotion,
-    scrollResetTick,
+    presentationGeneration,
   ]);
 
   // ---- ResizeObserver — post-layout remeasurement ----------------------
@@ -1761,26 +1936,34 @@ function AgendaRow({
     const timers: ReturnType<typeof setTimeout>[] = [];
     const clear = () => { timers.forEach(clearTimeout); };
 
-    // Reset position — handles page-change and scrollResetTick cases.
+    // Reset position before every semantic presentation generation.
     setTranslateY(0);
     setTransitionMs(0);
 
-    if (!scrollEnabled || overflowPx <= 0) return clear;
+    if (innerScrollBlocked || !scrollEnabled || overflowPx <= 0) return clear;
     // Honour prefers-reduced-motion with a live matchMedia read so the
     // reduced-motion preference takes effect immediately without a
     // re-render cycle.
-    if (
-      (
-        typeof window !== "undefined" &&
+    const scrollDuration = descScrollDurationMs(overflowPx);
+    const reduced =
+      prefersReducedMotion ||
+      (typeof window !== "undefined" &&
         typeof window.matchMedia === "function" &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches
-      ) ||
-      prefersReducedMotion
-    ) {
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    if (reduced) {
+      // Reduced motion still reveals long descriptions in readable stages;
+      // avoid both a continuous transform and an immediate jump to the end.
+      const middle = setTimeout(
+        () => setTranslateY(Math.ceil(overflowPx / 2)),
+        TOP_PAUSE_MS,
+      );
+      const bottom = setTimeout(
+        () => setTranslateY(overflowPx),
+        TOP_PAUSE_MS + Math.max(1, Math.ceil(scrollDuration / 2)),
+      );
+      timers.push(middle, bottom);
       return clear;
     }
-
-    const scrollDuration = descScrollDurationMs(overflowPx);
 
     // Phase 1: top-pause — card stays at translateY(0) for TOP_PAUSE_MS.
     const t1 = setTimeout(() => {
@@ -1802,10 +1985,11 @@ function AgendaRow({
   }, [
     descriptionContentHeight,
     descriptionViewportHeight,
+    innerScrollBlocked,
     overflowPx,
     prefersReducedMotion,
     scrollEnabled,
-    scrollResetTick,
+    presentationGeneration,
   ]);
   // ---- End Task #382 ---------------------------------------------------
 
@@ -1988,8 +2172,9 @@ function AgendaRow({
                 roleColors={roleColors}
                 accentColor={accentColor}
                 onScrollOverflow={onScrollOverflow}
-                scrollResetTick={scrollResetTick}
+                presentationGeneration={presentationGeneration}
                 prefersReducedMotion={prefersReducedMotion}
+                blocked={innerScrollBlocked}
                 suppressTestId={suppressTestId}
               />
             )}
@@ -2141,11 +2326,11 @@ interface RowGridProps {
   highlightCurrent: boolean;
   roleColors: RoleColors;
   showCardDate?: boolean;
-  // Task #382 — auto-scroll coordination. Passed only when
-  // descriptionAutoScroll is active in the parent widget.
+  // Presentation-cycle coordination. This is also passed for card-only
+  // containment so a single-page cycle can reset the outer card viewport.
   scrollPageH?: number;
   onScrollOverflow?: (id: string, px: number) => void;
-  scrollResetTick?: number;
+  presentationGeneration?: number;
   prefersReducedMotion?: boolean;
   // Column count for BoundedScrollGrid (landscape=2, ultrawide=3|4).
   // UltraWideGrid reads this from the parent because the value depends on
@@ -2169,7 +2354,7 @@ function ColumnFlow({
   showCardDate,
   scrollPageH,
   onScrollOverflow,
-  scrollResetTick,
+  presentationGeneration,
   prefersReducedMotion,
   columnsClass,
 }: RowGridProps & { columnsClass: string }) {
@@ -2187,7 +2372,7 @@ function ColumnFlow({
             roleColors={roleColors}
             showCardDate={showCardDate}
             onScrollOverflow={onScrollOverflow}
-            scrollResetTick={scrollResetTick}
+            presentationGeneration={presentationGeneration}
             prefersReducedMotion={prefersReducedMotion}
             nowNextLabel={resolveNowNextItemLabel(config, it, now)}
             nowNextSessionDate={formatNextSessionDate(it.startsAt, now, tz) ?? undefined}
@@ -2224,7 +2409,7 @@ function BoundedScrollGrid({
   showCardDate,
   scrollPageH,
   onScrollOverflow,
-  scrollResetTick,
+  presentationGeneration,
   prefersReducedMotion,
 }: RowGridProps) {
   const cols = numCols ?? 2;
@@ -2268,7 +2453,7 @@ function BoundedScrollGrid({
           pageH={scrollPageH}
           pageItemCount={numRows}
           onScrollOverflow={onScrollOverflow}
-          scrollResetTick={scrollResetTick}
+           presentationGeneration={presentationGeneration}
           prefersReducedMotion={prefersReducedMotion}
           nowNextLabel={resolveNowNextItemLabel(config, it, now)}
           nowNextSessionDate={formatNextSessionDate(it.startsAt, now, tz) ?? undefined}
@@ -2285,7 +2470,7 @@ function LandscapeGrid(props: RowGridProps) {
     : <ColumnFlow {...props} columnsClass="columns-2" />;
 }
 
-function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, roleColors, showCardDate, scrollPageH, onScrollOverflow, scrollResetTick, prefersReducedMotion }: RowGridProps) {
+function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, roleColors, showCardDate, scrollPageH, onScrollOverflow, presentationGeneration, prefersReducedMotion }: RowGridProps) {
   if (scrollPageH != null) {
     // Full-description scroll uses the same intrinsic-minimum bounded
     // layout in portrait as it does in landscape. This avoids a second
@@ -2302,7 +2487,7 @@ function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, ro
         showCardDate={showCardDate}
         scrollPageH={scrollPageH}
         onScrollOverflow={onScrollOverflow}
-        scrollResetTick={scrollResetTick}
+         presentationGeneration={presentationGeneration}
         prefersReducedMotion={prefersReducedMotion}
         numCols={1}
       />
@@ -2322,7 +2507,7 @@ function PortraitCards({ pageItems, config, tz, scale, now, highlightCurrent, ro
           roleColors={roleColors}
           showCardDate={showCardDate}
           onScrollOverflow={onScrollOverflow}
-          scrollResetTick={scrollResetTick}
+           presentationGeneration={presentationGeneration}
           prefersReducedMotion={prefersReducedMotion}
           nowNextLabel={resolveNowNextItemLabel(config, it, now)}
           nowNextSessionDate={formatNextSessionDate(it.startsAt, now, tz) ?? undefined}
@@ -2348,7 +2533,7 @@ function TotemNowNext({
   roleColors,
   showCardDate,
   onScrollOverflow,
-  scrollResetTick,
+  presentationGeneration,
   prefersReducedMotion = false,
   followedStage,
 }: {
@@ -2360,7 +2545,7 @@ function TotemNowNext({
   roleColors: RoleColors;
   showCardDate?: boolean;
   onScrollOverflow?: (id: string, px: number) => void;
-  scrollResetTick?: number;
+  presentationGeneration?: number;
   prefersReducedMotion?: boolean;
   followedStage?: string;
 }) {
@@ -2390,7 +2575,7 @@ function TotemNowNext({
           Now
         </h2>
         {currentItems.map((item) => (
-          <AgendaRow key={item.id} item={item} config={config} tz={tz} scale={scale * 1.3} roleColors={roleColors} showCardDate={showCardDate} onScrollOverflow={onScrollOverflow} scrollResetTick={scrollResetTick} prefersReducedMotion={prefersReducedMotion} />
+          <AgendaRow key={item.id} item={item} config={config} tz={tz} scale={scale * 1.3} roleColors={roleColors} showCardDate={showCardDate} onScrollOverflow={onScrollOverflow} presentationGeneration={presentationGeneration} prefersReducedMotion={prefersReducedMotion} />
         ))}
       </section>}
       {(!hasSemanticStage || !showingNow) && <section className="flex-1 overflow-hidden">
@@ -2411,7 +2596,7 @@ function TotemNowNext({
         )}
         <div className="flex flex-col gap-2">
           {next.map((it) => (
-            <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} roleColors={roleColors} showCardDate={showCardDate} onScrollOverflow={onScrollOverflow} scrollResetTick={scrollResetTick} prefersReducedMotion={prefersReducedMotion} />
+            <AgendaRow key={it.id} item={it} config={config} tz={tz} scale={scale} roleColors={roleColors} showCardDate={showCardDate} onScrollOverflow={onScrollOverflow} presentationGeneration={presentationGeneration} prefersReducedMotion={prefersReducedMotion} />
           ))}
         </div>
       </section>}
@@ -2428,7 +2613,7 @@ function RoomDoor({
   roleColors,
   showCardDate,
   onScrollOverflow,
-  scrollResetTick,
+  presentationGeneration,
   prefersReducedMotion = false,
   followedStage,
 }: {
@@ -2440,7 +2625,7 @@ function RoomDoor({
   roleColors: RoleColors;
   showCardDate?: boolean;
   onScrollOverflow?: (id: string, px: number) => void;
-  scrollResetTick?: number;
+  presentationGeneration?: number;
   prefersReducedMotion?: boolean;
   followedStage?: string;
 }) {
@@ -2525,7 +2710,7 @@ function RoomDoor({
                   roleColors={roleColors}
                   accentColor={config.accentColor}
                   onScrollOverflow={onScrollOverflow}
-                  scrollResetTick={scrollResetTick}
+                  presentationGeneration={presentationGeneration}
                   prefersReducedMotion={prefersReducedMotion}
                 />
               </div>
@@ -2590,7 +2775,7 @@ function RoomDoor({
             roleColors={roleColors}
             accentColor={config.accentColor}
             onScrollOverflow={onScrollOverflow}
-            scrollResetTick={scrollResetTick}
+            presentationGeneration={presentationGeneration}
             prefersReducedMotion={prefersReducedMotion}
           />
         </div>
@@ -2627,14 +2812,14 @@ export function AgendaDisplayWidget({
   const [pageIndex, setPageIndex] = useState(0);
   const [presentationCycle, setPresentationCycle] = useState(0);
 
-  // Task #382 — reduced-motion preference, scroll metrics, and reset tick.
+  // Task #382 — reduced-motion preference and presentation generation.
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(() =>
     typeof window !== "undefined" && typeof window.matchMedia === "function"
       ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
       : false,
   );
   const [scrollMetrics, setScrollMetrics] = useState<Record<string, number>>({});
-  const [scrollResetTick, setScrollResetTick] = useState(0);
+  const [presentationReplayBump, setPresentationReplayBump] = useState(0);
   const bindingRef = useRef(completionBinding);
   bindingRef.current = completionBinding;
   const controlledActivationId = completionBinding?.activationId;
@@ -3087,7 +3272,6 @@ export function AgendaDisplayWidget({
     setControlledPages(plan);
     setPageIndex(0);
     setScrollMetrics({});
-    setScrollResetTick(0);
     const configuredMs = Math.max(3, config.rotationIntervalSeconds) * 1_000;
     const readyTotal = plan.some((page) => page.length > 0) ? plan.length * configuredMs : 0;
     bindingRef.current?.ready(readyTotal);
@@ -3307,7 +3491,6 @@ export function AgendaDisplayWidget({
       setMeasuredFontTick(-1);
     }
     setScrollMetrics({});
-    setScrollResetTick(0);
     uncontrolledPageDeadlineRef.current = null;
     // Invalidate callbacks synchronously in addition to the effect cleanup.
     // Test schedulers (and a browser timer firing at the same boundary) may
@@ -3324,6 +3507,39 @@ export function AgendaDisplayWidget({
     ? Math.min(followedState.page, Math.max(0, (presentationPages?.length ?? 1) - 1))
     : localSafePageIndex;
   const pageItems = presentationPages?.[safePageIndex] ?? [];
+  // A monotonic token is shared by every resettable viewport. Its semantic key
+  // changes for a real lifecycle/content/page/follower transition, while
+  // equivalent polling retains the same token. The replay bump handles the
+  // single-page cycle without relying on a setState(0) no-op.
+  const semanticGenerationIdentity = controlledActivationId
+    ? `controlled:${controlledActivationId}`
+    : `uncontrolled:${uncontrolledLifecycleKey}`;
+  const presentationGenerationKey = [
+    semanticGenerationIdentity,
+    pageIndex,
+    presentationCycle,
+    followedState?.stage ?? "",
+    followedState?.page ?? "",
+    followedState?.cycle ?? "",
+  ].join("\u0000");
+  const presentationGenerationRef = useRef({ key: "", value: 0 });
+  if (presentationGenerationRef.current.key !== presentationGenerationKey) {
+    presentationGenerationRef.current = {
+      key: presentationGenerationKey,
+      value: presentationGenerationRef.current.value + 1,
+    };
+  }
+  const presentationGeneration =
+    presentationGenerationRef.current.value + presentationReplayBump;
+  const pageCardRevealMs = Math.max(
+    0,
+    ...pageItems.map((item) => {
+      const overflow = timingMetrics[`card:${item.id}`] ?? 0;
+      return overflow > 0
+        ? TOP_PAUSE_MS + descScrollDurationMs(overflow) + BOTTOM_PAUSE_MS
+        : 0;
+    }),
+  );
   const presentationStage = followedState?.stage ??
     (usesSemanticNowNextPages
       ? (pageItems[0] && isCurrentlyRunning(pageItems[0], controlledActivationId ? planNow : now) ? "now" : "next")
@@ -3358,7 +3574,7 @@ export function AgendaDisplayWidget({
 
   // Page-rotation timer: replaced from setInterval to setTimeout so each
   // page can carry a variable effective dwell time. Effect re-arms on each
-  // pageIndex / scrollResetTick change (the "loop" for single-page widgets).
+  // pageIndex / replay generation change (the "loop" for single-page widgets).
   //
   // pageItems is intentionally NOT in the deps array — it is read via
   // pageItemsRef so that the periodic JSON re-fetch in AgendaConfigZoneWidget
@@ -3429,7 +3645,7 @@ export function AgendaDisplayWidget({
     }
 
     const uncontrolledDwellKey =
-      `${uncontrolledLifecycleKey}:${pageIndex}:${presentationCycle}:${scrollResetTick}`;
+      `${uncontrolledLifecycleKey}:${pageIndex}:${presentationCycle}:${presentationGeneration}`;
     let uncontrolledDeadline = uncontrolledPageDeadlineRef.current;
     if (uncontrolledDeadline?.key !== uncontrolledDwellKey) {
       uncontrolledDeadline = {
@@ -3447,14 +3663,14 @@ export function AgendaDisplayWidget({
     if (pages.length <= 1) {
       // Single-page: loop scroll animations via the reset tick after the
       // effective dwell. No timer when auto-scroll is off (legacy no-op).
-       if (!presentationScrollAnimationActive) return;
+      if (!presentationScrollAnimationActive && pageCardRevealMs <= 0) return;
       const id = timingSetTimeout(
         () => {
            if (
              dwellTimerGenerationRef.current === timerGeneration &&
              presentationLifecycleIdentityRef.current === presentationLifecycleIdentity
            ) {
-            setScrollResetTick((t) => t + 1);
+             setPresentationReplayBump((bump) => bump + 1);
           }
         },
         remainingMs,
@@ -3479,7 +3695,7 @@ export function AgendaDisplayWidget({
     );
     return () => clearCurrentTimer(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-   }, [pageIndex, scrollResetTick, pages.length, config.rotationIntervalSeconds, presentationScrollAnimationActive, timingMetrics, timingNow, timingSetTimeout, timingClearTimeout, controlledActivationId, controlledPages, hasCurrentControlledPlan, safePageIndex, followedState, uncontrolledLifecycleKey, presentationLifecycleIdentity]);
+   }, [pageIndex, presentationGeneration, pageCardRevealMs, pages.length, config.rotationIntervalSeconds, presentationScrollAnimationActive, timingMetrics, timingNow, timingSetTimeout, timingClearTimeout, controlledActivationId, controlledPages, hasCurrentControlledPlan, safePageIndex, followedState, uncontrolledLifecycleKey, presentationLifecycleIdentity]);
 
   // In now_next mode every layout (not only totem/room_door) gets a
   // strong "live now" highlight on the currently-running row(s).
@@ -3676,8 +3892,16 @@ export function AgendaDisplayWidget({
             roleColors={roleColors}
             showCardDate={multiDay}
             scrollPageH={fullCardContainmentActive ? contentBox.h : undefined}
-            onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined}
-            scrollResetTick={presentationScrollActive ? scrollResetTick : undefined}
+            onScrollOverflow={
+              fullCardContainmentActive || presentationScrollActive
+                ? handleScrollOverflow
+                : undefined
+            }
+            presentationGeneration={
+              fullCardContainmentActive || presentationScrollActive
+                ? presentationGeneration
+                : undefined
+            }
             prefersReducedMotion={prefersReducedMotion}
             numCols={numCols}
           />
@@ -3692,14 +3916,22 @@ export function AgendaDisplayWidget({
             roleColors={roleColors}
             showCardDate={multiDay}
             scrollPageH={fullCardContainmentActive ? contentBox.h : undefined}
-            onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined}
-            scrollResetTick={presentationScrollActive ? scrollResetTick : undefined}
+            onScrollOverflow={
+              fullCardContainmentActive || presentationScrollActive
+                ? handleScrollOverflow
+                : undefined
+            }
+            presentationGeneration={
+              fullCardContainmentActive || presentationScrollActive
+                ? presentationGeneration
+                : undefined
+            }
             prefersReducedMotion={prefersReducedMotion}
           />
         ) : layout === "totem" ? (
-          <TotemNowNext items={displayItems} config={config} tz={timezone} scale={scale} now={presentationNow} roleColors={roleColors} showCardDate={multiDay} onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined} scrollResetTick={scrollResetTick} prefersReducedMotion={prefersReducedMotion} />
+          <TotemNowNext items={displayItems} config={config} tz={timezone} scale={scale} now={presentationNow} roleColors={roleColors} showCardDate={multiDay} onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined} presentationGeneration={presentationGeneration} prefersReducedMotion={prefersReducedMotion} />
         ) : layout === "room_door" ? (
-          <RoomDoor items={displayItems} config={config} tz={timezone} scale={scale} now={presentationNow} roleColors={roleColors} showCardDate={multiDay} onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined} scrollResetTick={scrollResetTick} prefersReducedMotion={prefersReducedMotion} />
+          <RoomDoor items={displayItems} config={config} tz={timezone} scale={scale} now={presentationNow} roleColors={roleColors} showCardDate={multiDay} onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined} presentationGeneration={presentationGeneration} prefersReducedMotion={prefersReducedMotion} />
         ) : (
           <LandscapeGrid
             pageItems={pageItems}
@@ -3711,8 +3943,16 @@ export function AgendaDisplayWidget({
             roleColors={roleColors}
             showCardDate={multiDay}
             scrollPageH={fullCardContainmentActive ? contentBox.h : undefined}
-            onScrollOverflow={presentationScrollActive ? handleScrollOverflow : undefined}
-            scrollResetTick={presentationScrollActive ? scrollResetTick : undefined}
+            onScrollOverflow={
+              fullCardContainmentActive || presentationScrollActive
+                ? handleScrollOverflow
+                : undefined
+            }
+            presentationGeneration={
+              fullCardContainmentActive || presentationScrollActive
+                ? presentationGeneration
+                : undefined
+            }
             prefersReducedMotion={prefersReducedMotion}
           />
         ))}

@@ -11,9 +11,9 @@
 import { test, expect, type Browser, type Page } from "@playwright/test";
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { eq, like, sql } from "drizzle-orm";
+import { eq, inArray, like, sql } from "drizzle-orm";
 import {
-  agendaItems, agendaWidgetConfigs, clients, displayProfiles, events,
+  agendaItems, agendaWidgetConfigs, auditLogs, clients, displayProfiles, events,
   layoutTemplates, mediaAssets, playlistItems, playlists, programmeVersions,
   programmes, scheduleBlocks, screens, screenEventBookings, users,
 } from "../../shared/schema";
@@ -22,6 +22,7 @@ import path from "node:path";
 
 const MARK = "ZZTEST-ACTUAL-SCROLL-";
 const PREFIX = `${MARK}${Math.random().toString(36).slice(2, 9)}-`;
+const ADMIN_EMAIL = `${PREFIX.toLowerCase()}admin@example.test`;
 const now = new Date("2031-07-04T09:00:00Z");
 const descriptionFinal = `${MARK}DESCRIPTION-FINAL-LINE`;
 const presenterFinal = `${MARK}PRESENTER-COMPANY-FINAL-LINE`;
@@ -30,7 +31,7 @@ const video = readFileSync(path.resolve("tests/e2e/fixtures/tiny-loop.webm"));
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL! });
 const db = drizzle(pool, {
   schema: {
-    agendaItems, agendaWidgetConfigs, clients, displayProfiles, events,
+    agendaItems, agendaWidgetConfigs, auditLogs, clients, displayProfiles, events,
     layoutTemplates, mediaAssets, playlistItems, playlists, programmeVersions,
     programmes, scheduleBlocks, screens, screenEventBookings, users,
   },
@@ -48,6 +49,13 @@ type Seed = {
 };
 
 async function cleanup() {
+  const ownedUsers = await db.select({ id: users.id }).from(users)
+    .where(eq(users.email, ADMIN_EMAIL));
+  if (ownedUsers.length) {
+    await db.delete(auditLogs).where(
+      inArray(auditLogs.userId, ownedUsers.map((row) => row.id)),
+    );
+  }
   await db.delete(scheduleBlocks).where(like(scheduleBlocks.name, `${MARK}%`));
   await db.delete(agendaItems).where(like(agendaItems.title, `${MARK}%`));
   await db.delete(agendaWidgetConfigs).where(like(agendaWidgetConfigs.name, `${MARK}%`));
@@ -62,6 +70,7 @@ async function cleanup() {
   await db.delete(screens).where(like(screens.name, `${MARK}%`));
   await db.delete(displayProfiles).where(like(displayProfiles.name, `${MARK}%`));
   await db.delete(clients).where(like(clients.name, `${MARK}%`));
+  await db.delete(users).where(eq(users.email, ADMIN_EMAIL));
 }
 
 function repeatedLines(label: string, count: number, suffix: string) {
@@ -198,12 +207,24 @@ async function seed(): Promise<Seed> {
   };
 }
 
+async function seedAdmin() {
+  await db.insert(users).values({
+    email: ADMIN_EMAIL,
+    firstName: "Actual Scroll",
+    lastName: "Acceptance",
+    role: "admin",
+    isActive: true,
+    mustChangePassword: false,
+    twoFactorEnabled: true,
+    // Test-only nonempty marker: the test-login route accepts this seeded
+    // account without needing a real credential.
+    passwordHash: `${PREFIX}test-only-password-hash`,
+  });
+}
+
 async function login(page: Page) {
-  const rows = await db.select({ email: users.email }).from(users)
-    .where(sql`${users.role} = 'admin' AND ${users.isActive} = true`).limit(1);
-  expect(rows.length, "an active admin is required for test auth").toBe(1);
   const response = await page.request.post("/api/auth/test-login", {
-    data: { email: rows[0].email },
+    data: { email: ADMIN_EMAIL },
     headers: { "Content-Type": "application/json", Accept: "application/json" },
   });
   const body = await response.text();
@@ -472,10 +493,153 @@ async function openMonitor(browser: Browser, s: Seed) {
   return { context, page, polls };
 }
 
+async function openSimulator(browser: Browser, s: Seed) {
+  const context = await browser.newContext({ serviceWorkers: "block" });
+  const page = await context.newPage();
+  await login(page);
+  await page.goto(`/simulator?at=${now.toISOString()}`, { waitUntil: "commit" });
+  const screenSelect = page.getByTestId("select-simulator-screen");
+  await expect(screenSelect).toBeVisible({ timeout: 30_000 });
+  await screenSelect.click();
+  await page.getByRole("option", { name: `${PREFIX}screen`, exact: false }).click();
+  await page.getByTestId("select-simulator-layout").click();
+  await page.getByRole("option", { name: `${s.sceneName} (1 zones)`, exact: true }).click();
+  await expect(page.getByTestId("player-display")).toBeVisible({ timeout: 20_000 });
+  await page.evaluate(() => document.fonts.ready);
+  return { context, page };
+}
+
+type CardRevealSnapshot = {
+  cardScrollTop: number;
+  cardOverflow: number;
+  cardClientHeight: number;
+  cardScrollHeight: number;
+  cardMaxHeight: string;
+  cardOverflowY: string;
+  cardContained: boolean;
+  cardTransformY: number;
+  innerViewportCount: number;
+  nonIdentityTransforms: string[];
+  presenterOverflow: number;
+  presenterOffset: number;
+  presenterTransformY: number;
+  presenterFirstReadable: boolean;
+  presenterIntermediateReadable: boolean;
+  presenterFinalReadable: boolean;
+  statusFinalReadable: boolean;
+};
+
+/**
+ * Read the two independent reveal surfaces without changing either one. The
+ * row's own scrollTop is the whole-card contract; the presenter offset is the
+ * nested contract. Range geometry is used for readability because textContent
+ * remains present while an ancestor clips it.
+ */
+async function readCardRevealSnapshot(
+  page: Page,
+  itemId: string,
+): Promise<CardRevealSnapshot> {
+  return page.getByTestId(`agenda-row-${itemId}`).evaluate((card) => {
+    const element = card as HTMLElement;
+    const root = element.closest<HTMLElement>("[data-testid='agenda-display-root']");
+    const transformY = (node: HTMLElement | null) => {
+      if (!node) return 0;
+      const value = getComputedStyle(node).transform;
+      if (value === "none") return 0;
+      try {
+        return new DOMMatrixReadOnly(value).m42;
+      } catch {
+        return 0;
+      }
+    };
+    const nonIdentityTransforms = [element, ...element.querySelectorAll<HTMLElement>("*")]
+      .map((node) => {
+        const value = getComputedStyle(node).transform;
+        if (value === "none") return null;
+        try {
+          const matrix = new DOMMatrixReadOnly(value);
+          return Math.abs(matrix.a - 1) < 0.001 &&
+            Math.abs(matrix.d - 1) < 0.001 &&
+            Math.abs(matrix.b) < 0.001 &&
+            Math.abs(matrix.c) < 0.001 &&
+            Math.abs(matrix.e) < 0.001 &&
+            Math.abs(matrix.f) < 0.001
+            ? null
+            : value;
+        } catch {
+          return value;
+        }
+      })
+      .filter((value): value is string => value != null);
+    const cardRect = element.getBoundingClientRect();
+    const readable = (node: HTMLElement | null, viewport: HTMLElement | null) => {
+      if (!node || !viewport) return false;
+      const rect = node.getBoundingClientRect();
+      const viewportRect = viewport.getBoundingClientRect();
+      return rect.top >= viewportRect.top - 1.5 &&
+        rect.bottom <= viewportRect.bottom + 1.5 &&
+        rect.top >= cardRect.top - 1.5 &&
+        rect.bottom <= cardRect.bottom + 1.5;
+    };
+    const presenterViewport = element.querySelector<HTMLElement>(
+      "[data-testid^='agenda-presenter-viewport-']",
+    );
+    const presenter = presenterViewport?.firstElementChild as HTMLElement | null;
+    const presenterRows = presenter
+      ? [...presenter.querySelectorAll<HTMLElement>("[data-agenda-presenter-row]")]
+      : [];
+    const presenterOverflow = presenter && presenterViewport
+      ? Math.max(0, presenter.scrollHeight - presenterViewport.clientHeight)
+      : 0;
+    const status = element.querySelector<HTMLElement>("[data-testid^='agenda-status-msg-']");
+    const statusText = status?.lastChild;
+    let statusFinalReadable = false;
+    if (status && statusText?.nodeType === Node.TEXT_NODE && statusText.textContent) {
+      const range = document.createRange();
+      range.selectNodeContents(statusText);
+      const finalLine = [...range.getClientRects()].at(-1);
+      statusFinalReadable = Boolean(
+        finalLine &&
+        finalLine.top >= cardRect.top - 1.5 &&
+        finalLine.bottom <= cardRect.bottom + 1.5,
+      );
+    }
+    return {
+      cardScrollTop: element.scrollTop,
+      cardOverflow: Math.max(0, element.scrollHeight - element.clientHeight),
+      cardClientHeight: element.clientHeight,
+      cardScrollHeight: element.scrollHeight,
+      cardMaxHeight: getComputedStyle(element).maxHeight,
+      cardOverflowY: getComputedStyle(element).overflowY,
+      cardContained: Boolean(
+        root &&
+        cardRect.bottom <= root.getBoundingClientRect().bottom + 1.5,
+      ),
+      cardTransformY: transformY(element),
+      innerViewportCount: element.querySelectorAll(
+        "[data-testid^='agenda-description-viewport-'], " +
+        "[data-testid^='agenda-presenter-viewport-']",
+      ).length,
+      nonIdentityTransforms,
+      presenterOverflow,
+      presenterOffset: transformY(presenter),
+      presenterTransformY: transformY(presenter),
+      presenterFirstReadable: readable(presenterRows[0] ?? null, presenterViewport),
+      presenterIntermediateReadable: readable(
+        presenterRows[Math.floor(presenterRows.length / 2)] ?? null,
+        presenterViewport,
+      ),
+      presenterFinalReadable: readable(presenterRows.at(-1) ?? null, presenterViewport),
+      statusFinalReadable,
+    };
+  });
+}
+
 test.describe("actual Agenda scrolling acceptance", () => {
   let s: Seed;
   test.beforeAll(async () => {
     await cleanup();
+    await seedAdmin();
     s = await seed();
   });
   test.afterAll(async () => {
@@ -684,6 +848,319 @@ test.describe("actual Agenda scrolling acceptance", () => {
         { timeout: 20_000 },
       ).toBe(true);
       await expect(root).not.toContainText(/invalid|error/i);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("title/status-only card uses finite whole-card scrolling with no inner mechanism", async ({ browser }) => {
+    test.setTimeout(120_000);
+    await db.update(agendaWidgetConfigs).set({
+      descriptionAutoScroll: false,
+      showDescription: false,
+      showPresenter: false,
+      showPresenterCompany: false,
+      showStatus: true,
+      presenterVisibleLines: 2,
+      titleScale: 2,
+      bodyScale: 2,
+    }).where(eq(agendaWidgetConfigs.id, s.configId));
+    await db.update(agendaItems).set({
+      // The portrait simulator's logical card is tall, so keep this fixture
+      // deliberately beyond that finite allocation.  The authored fields are
+      // still only title/status; the extra length is what makes the outer
+      // scroll path measurable instead of relying on an inactive inner mode.
+      title: `${MARK}TITLE-ONLY ${"long title content ".repeat(280)}${MARK}TITLE-FINAL`,
+      description: null,
+      presenter: null,
+      presenterCompany: null,
+      status: "delayed",
+      statusMessage: `${MARK}STATUS-BEGIN ${"status detail ".repeat(120)}${MARK}STATUS-FINAL`,
+    }).where(eq(agendaItems.id, `${PREFIX}scroll-item`));
+
+    const { context, page } = await openSimulator(browser, s);
+    try {
+      const root = page.getByTestId("player-display");
+      const card = page.getByTestId(`agenda-row-${PREFIX}scroll-item`);
+      await expect(card).toBeVisible({ timeout: 30_000 });
+      await expect(root).toContainText(`${MARK}TITLE-FINAL`);
+      await expect(root).toContainText(`${MARK}STATUS-FINAL`);
+      await expect.poll(
+        () => readCardRevealSnapshot(page, `${PREFIX}scroll-item`),
+        {
+          timeout: 30_000,
+          intervals: [100, 250, 500, 1_000],
+          message: "title/status-only card must settle into finite whole-card overflow",
+        },
+      ).toMatchObject({
+        cardContained: true,
+        innerViewportCount: 0,
+        cardOverflowY: "auto",
+      });
+      const ready = await readCardRevealSnapshot(page, `${PREFIX}scroll-item`);
+      expect(ready.cardOverflow).toBeGreaterThan(1);
+      expect(ready.cardMaxHeight).not.toBe("none");
+      expect(ready.nonIdentityTransforms).toEqual([]);
+
+      const settledHeights = new Set<number>();
+      for (let index = 0; index < 8; index += 1) {
+        const snapshot = await readCardRevealSnapshot(page, `${PREFIX}scroll-item`);
+        settledHeights.add(snapshot.cardClientHeight);
+        expect(snapshot.cardContained).toBe(true);
+        expect(snapshot.innerViewportCount).toBe(0);
+        expect(snapshot.nonIdentityTransforms).toEqual([]);
+        await page.waitForTimeout(250);
+      }
+      expect(settledHeights.size).toBe(1);
+      await expect.poll(
+        () => readCardRevealSnapshot(page, `${PREFIX}scroll-item`).then((snapshot) =>
+          snapshot.cardScrollTop,
+        ),
+        { timeout: 30_000, intervals: [100, 250, 500, 1_000] },
+      ).toBeGreaterThan(1);
+      await expect.poll(
+        () => readCardRevealSnapshot(page, `${PREFIX}scroll-item`).then((snapshot) =>
+          snapshot.cardScrollTop >= snapshot.cardOverflow - 3 &&
+          snapshot.statusFinalReadable,
+        ),
+        {
+          timeout: 30_000,
+          intervals: [100, 250, 500, 1_000],
+          message: "whole-card scrollTop must advance to the bottom and reveal status",
+        },
+      ).toBe(true);
+      const finish = await readCardRevealSnapshot(page, `${PREFIX}scroll-item`);
+      expect(finish.cardScrollTop).toBeGreaterThanOrEqual(finish.cardOverflow - 3);
+      expect(finish.cardContained).toBe(true);
+      expect(finish.innerViewportCount).toBe(0);
+      expect(finish.nonIdentityTransforms).toEqual([]);
+      expect(finish.cardTransformY).toBe(0);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("whole-card reveal precedes the nested presenter reveal", async ({ browser }) => {
+    test.setTimeout(240_000);
+    await db.update(agendaWidgetConfigs).set({
+      descriptionAutoScroll: false,
+      showDescription: false,
+      showPresenter: true,
+      showPresenterCompany: false,
+      showStatus: true,
+      presenterVisibleLines: 2,
+      titleScale: 2,
+      bodyScale: null,
+    }).where(eq(agendaWidgetConfigs.id, s.configId));
+    await db.update(agendaItems).set({
+      // The title is intentionally large enough to overflow the card's finite
+      // share independently of the nested presenter viewport.
+      title: `${MARK}OUTER-FIRST ${"title chrome that must reveal before presenters ".repeat(260)}${MARK}OUTER-FINAL`,
+      description: null,
+      presenter: Array.from({ length: 14 }, (_, index) =>
+        `${MARK}INNER-${index === 0 ? "FIRST" : index === 13 ? "FINAL" : `ROW-${index + 1}`} ` +
+        "presenter content remains readable in authored order",
+      ).join("\n"),
+      presenterCompany: null,
+      status: "delayed",
+      statusMessage: `${MARK}OUTER-STATUS`,
+    }).where(eq(agendaItems.id, `${PREFIX}scroll-item`));
+
+    const { context, page } = await openSimulator(browser, s);
+    try {
+      const root = page.getByTestId("player-display");
+      const itemId = `${PREFIX}scroll-item`;
+      const card = page.getByTestId(`agenda-row-${itemId}`);
+      await expect(card).toBeVisible({ timeout: 30_000 });
+      await expect(root).toContainText(`${MARK}OUTER-FINAL`);
+      await expect(root).toContainText(`${MARK}INNER-FINAL`);
+      await expect.poll(
+        () => readCardRevealSnapshot(page, itemId).then((snapshot) =>
+          snapshot.cardOverflow > 1 &&
+          snapshot.presenterOverflow > 1 &&
+          snapshot.cardContained &&
+          snapshot.cardMaxHeight !== "none",
+        ),
+        {
+          timeout: 30_000,
+          intervals: [100, 250, 500, 1_000],
+          message: "presenter and card overflow must both settle after resize measurement",
+        },
+      ).toBe(true);
+
+      // The first readable intermediate frame is intentionally outer-only:
+      // the card has completed its own reveal before the nested presenter is
+      // allowed to move. This encodes the production contract (card, then
+      // presenter), not the earlier explorer ordering.
+      await expect.poll(
+        () => readCardRevealSnapshot(page, itemId).then((snapshot) =>
+          snapshot.cardScrollTop >= snapshot.cardOverflow - 3 &&
+          snapshot.presenterOffset > -1 &&
+          snapshot.presenterFirstReadable &&
+          !snapshot.presenterFinalReadable &&
+          snapshot.cardTransformY === 0,
+        ),
+        {
+          timeout: 90_000,
+          intervals: [100, 250, 500, 1_000],
+          message: "outer card reveal must produce an intermediate readable frame first",
+        },
+      ).toBe(true);
+      const intermediate = await readCardRevealSnapshot(page, itemId);
+      expect(intermediate.cardScrollTop).toBeGreaterThanOrEqual(intermediate.cardOverflow - 3);
+      expect(intermediate.presenterOffset).toBeGreaterThan(-1);
+      expect(intermediate.presenterFirstReadable).toBe(true);
+      expect(intermediate.presenterFinalReadable).toBe(false);
+      expect(intermediate.cardTransformY).toBe(0);
+
+      // Replace the same item ID with deliberately equal-length content while
+      // the staged reveal is active. The semantic generation must reset the
+      // outer scrollTop and nested presenter transform immediately rather
+      // than treating this as an equivalent poll.
+      await db.update(agendaItems).set({
+        title: `${MARK}RESET-FIRST ${"title chrome that must reveal before presenters ".repeat(260)}${MARK}RESET-FINAL`,
+        presenter: Array.from({ length: 14 }, (_, index) =>
+          `${MARK}RESET-${index === 0 ? "FIRST" : index === 13 ? "FINAL" : `ROW-${index + 1}`} ` +
+          "presenter content remains readable in authored order",
+        ).join("\n"),
+      }).where(eq(agendaItems.id, `${PREFIX}scroll-item`));
+      await expect(root).toContainText(`${MARK}RESET-FINAL`, { timeout: 30_000 });
+      await expect.poll(
+        () => readCardRevealSnapshot(page, itemId).then((snapshot) =>
+          snapshot.cardScrollTop <= 1 &&
+          snapshot.presenterOffset > -1 &&
+          !snapshot.presenterFinalReadable,
+        ),
+        {
+          timeout: 30_000,
+          intervals: [100, 250, 500],
+          message: "same-ID equal-height content must reset card and presenter to the top",
+        },
+      ).toBe(true);
+
+      const finalSamples: CardRevealSnapshot[] = [];
+      await expect.poll(
+        () => readCardRevealSnapshot(page, itemId).then((snapshot) => {
+          finalSamples.push(snapshot);
+          return snapshot.presenterOffset < -1 &&
+            snapshot.presenterFinalReadable &&
+            snapshot.cardTransformY === 0;
+        }),
+        {
+          timeout: 120_000,
+          intervals: [100, 250, 500, 1_000],
+          message: "presenter must eventually reach a readable final frame after outer reveal",
+        },
+      ).toBe(true);
+      const finish = await readCardRevealSnapshot(page, itemId);
+      expect(finish.presenterOffset).toBeLessThan(-1);
+      expect(finish.presenterFinalReadable).toBe(true);
+      expect(finish.cardTransformY).toBe(0);
+      // Card scrollTop is a DOM scroll phase and may reset as the production
+      // lifecycle hands control to the nested phase. The ordering proof above
+      // is the completed outer snapshot followed by this eventual inner
+      // snapshot; no CSS transform may be active on the card in either phase.
+      expect(finalSamples.every((snapshot) => snapshot.cardTransformY === 0)).toBe(true);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("reduced motion reveals an intermediate presenter frame before its final frame", async ({ browser }) => {
+    test.setTimeout(120_000);
+    await db.update(agendaWidgetConfigs).set({
+      descriptionAutoScroll: false,
+      showDescription: false,
+      showPresenter: true,
+      showPresenterCompany: false,
+      showStatus: false,
+      presenterVisibleLines: 2,
+      titleScale: null,
+      bodyScale: null,
+    }).where(eq(agendaWidgetConfigs.id, s.configId));
+    await db.update(agendaItems).set({
+      title: `${MARK}REDUCED-MOTION-TITLE`,
+      description: null,
+      presenter: Array.from({ length: 20 }, (_, index) =>
+        `${MARK}REDUCED-${index === 0 ? "FIRST" : index === 19 ? "FINAL" : `ROW-${index + 1}`} ` +
+        "presenter text remains readable while reduced motion stages",
+      ).join("\n"),
+      presenterCompany: null,
+      status: "scheduled",
+      statusMessage: null,
+    }).where(eq(agendaItems.id, `${PREFIX}scroll-item`));
+
+    const { context, page } = await openSimulator(browser, s);
+    try {
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.reload({ waitUntil: "commit" });
+      // Reload is deliberate: the preference must be observed by the mounted
+      // production widget, rather than only by a test-side media override.
+      await page.getByTestId("select-simulator-screen").click();
+      await page.getByRole("option", { name: `${PREFIX}screen`, exact: false }).click();
+      await page.getByTestId("select-simulator-layout").click();
+      await page.getByRole("option", { name: `${s.sceneName} (1 zones)`, exact: true }).click();
+      const itemId = `${PREFIX}scroll-item`;
+      const card = page.getByTestId(`agenda-row-${itemId}`);
+      await expect(card).toBeVisible({ timeout: 30_000 });
+      await expect.poll(
+        () => readCardRevealSnapshot(page, itemId).then((snapshot) =>
+          snapshot.cardOverflow <= 1 &&
+          snapshot.presenterOverflow > 1 &&
+          snapshot.presenterOffset > -1 &&
+          snapshot.presenterFirstReadable,
+        ),
+        {
+          timeout: 30_000,
+          intervals: [100, 250, 500, 1_000],
+          message: "reduced-motion presenter geometry must settle after resize measurement",
+        },
+      ).toBe(true);
+      const initial = await readCardRevealSnapshot(page, itemId);
+      expect(initial.cardOverflow).toBeLessThanOrEqual(1);
+      expect(initial.presenterOffset).toBeGreaterThan(-1);
+
+      await expect.poll(
+        () => readCardRevealSnapshot(page, itemId).then((snapshot) =>
+          snapshot.presenterOffset < -1 &&
+          snapshot.presenterOffset > -(snapshot.presenterOverflow - 3) &&
+          snapshot.presenterIntermediateReadable &&
+          !snapshot.presenterFinalReadable &&
+          snapshot.cardScrollTop === 0 &&
+          snapshot.cardTransformY === 0,
+        ),
+        {
+          timeout: 30_000,
+          intervals: [100, 250, 500, 1_000],
+          message: "reduced motion must expose staged intermediate presenter content",
+        },
+      ).toBe(true);
+      const intermediate = await readCardRevealSnapshot(page, itemId);
+      expect(intermediate.presenterFinalReadable).toBe(false);
+      expect(intermediate.presenterIntermediateReadable).toBe(true);
+      expect(intermediate.presenterOffset).toBeLessThan(-1);
+      expect(intermediate.presenterOffset).toBeGreaterThan(
+        -(intermediate.presenterOverflow - 3),
+      );
+
+      await expect.poll(
+        () => readCardRevealSnapshot(page, itemId).then((snapshot) =>
+          snapshot.presenterOffset <= -(snapshot.presenterOverflow - 3) &&
+          snapshot.presenterFinalReadable &&
+          snapshot.cardScrollTop === 0 &&
+          snapshot.cardTransformY === 0,
+        ),
+        {
+          timeout: 30_000,
+          intervals: [100, 250, 500, 1_000],
+          message: "reduced motion must eventually reveal the final presenter content",
+        },
+      ).toBe(true);
+      const finish = await readCardRevealSnapshot(page, itemId);
+      expect(finish.presenterFinalReadable).toBe(true);
+      expect(finish.presenterOffset).toBeLessThanOrEqual(-(finish.presenterOverflow - 3));
+      expect(finish.cardScrollTop).toBe(0);
+      expect(finish.cardTransformY).toBe(0);
     } finally {
       await context.close();
     }
