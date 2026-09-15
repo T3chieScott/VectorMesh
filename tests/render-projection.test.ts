@@ -176,6 +176,56 @@ test("layout and playlist rotation preserve metadata but invalidate visual chang
   );
 });
 
+test("playlist item identity survives projection while volatile metadata remains ignored", () => {
+  const base = payload({
+    playlistItems: {
+      rotation: [{
+        id: "item-a",
+        order: 1,
+        mediaAssetId: "asset",
+        duration: 5,
+        updatedAt: "old",
+        createdAt: "old",
+      }],
+    },
+  });
+  const projection = buildRenderProjection(base) as {
+    playlistItems: Record<string, Array<Record<string, unknown>>>;
+  };
+  assert.deepEqual(projection.playlistItems.rotation, [{
+    id: "item-a",
+    order: 1,
+    mediaAssetId: "asset",
+    duration: 5,
+  }]);
+
+  const baseline = getRenderProjectionIdentity(base);
+  assert.notEqual(
+    baseline,
+    getRenderProjectionIdentity({
+      ...base,
+      playlistItems: {
+        rotation: [{ ...base.playlistItems.rotation[0], id: "item-b" }],
+      },
+    }),
+  );
+  assert.equal(
+    baseline,
+    getRenderProjectionIdentity({
+      ...base,
+      playlistItems: {
+        rotation: [{
+          ...base.playlistItems.rotation[0],
+          updatedAt: "new",
+          createdAt: "new",
+          lastSeen: "new",
+          videoStatsUpdatedAt: "new",
+        }],
+      },
+    }),
+  );
+});
+
 test("fallback, live override, Agenda, weather, and player variables each invalidate", () => {
   const fallback = payload({
     layout: null,

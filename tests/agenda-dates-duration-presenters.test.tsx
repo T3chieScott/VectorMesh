@@ -221,17 +221,20 @@ test("Task #395 presenter marker has a fixed column and does not split names", (
   const html = render({ speakerMarkerStyle: "square" });
   assert.match(
     html,
-    /data-testid="agenda-presenter-session"[^>]*><span class="flex-none" style="width:[^"]+">/,
+    /agenda-presenter-details-session[^>]*><span class="flex-none" style="width:[^"]+">/,
   );
   assert.match(html, /agenda-presenter-viewport-session/);
   assert.match(html, /max-height:5em;overflow:hidden/);
-  assert.match(html, /whitespace-pre-line[^>]*>Ada Lovelace, Grace Hopper/);
+  assert.match(
+    html,
+    /whitespace-pre-line[\s\S]*data-agenda-presenter-row="true"[^>]*>[\s\S]*Ada Lovelace, Grace Hopper/,
+  );
   assert.equal((html.match(/agenda-speaker-marker-session/g) ?? []).length, 1);
 });
 
 test("Task #395 None removes the marker column and spacing", () => {
   const html = render({ speakerMarkerStyle: "none" });
-  const presenterStart = html.indexOf('data-testid="agenda-presenter-session"');
+  const presenterStart = html.indexOf('data-testid="agenda-presenter-details-session"');
   const presenterEnd = html.indexOf("</div>", presenterStart);
   const presenter = html.slice(presenterStart, presenterEnd);
   assert.equal(presenter.includes("agenda-speaker-marker-session"), false);

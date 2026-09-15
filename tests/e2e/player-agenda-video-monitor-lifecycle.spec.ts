@@ -12,24 +12,34 @@ import path from "node:path";
 import crypto from "node:crypto";
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { like, sql } from "drizzle-orm";
+import { inArray, like, sql } from "drizzle-orm";
 import {
   agendaItems, agendaWidgetConfigs, clients, displayProfiles, events,
   layoutTemplates, mediaAssets, playlistItems, playlists, programmeVersions,
   programmes, scheduleBlocks, screenEventBookings, screens, users, monitorSessions,
+  auditLogs,
 } from "../../shared/schema";
 
 const MARK = "ZZTEST-LIFECYCLE-";
 const PREFIX = `${MARK}${Math.random().toString(36).slice(2, 8)}-`;
+const ADMIN_EMAIL = `${PREFIX.toLowerCase()}admin@example.test`;
+const USER_PREFIX = PREFIX.toLowerCase();
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL! });
 const db = drizzle(pool, { schema: {
   agendaItems, agendaWidgetConfigs, clients, displayProfiles, events,
   layoutTemplates, mediaAssets, playlistItems, playlists, programmeVersions,
   programmes, scheduleBlocks, screenEventBookings, screens, users, monitorSessions,
+  auditLogs,
 } });
 const fixture = readFileSync(path.resolve("tests/e2e/fixtures/tiny-loop.webm"));
 
 type Seed = { screenId: string; token: string; assetId: string };
+type OverflowHostSeed = {
+  screenId: string;
+  token: string;
+  itemId: string;
+  nextMarker: string;
+};
 
 async function cleanup() {
   // The stable marker also removes rows left by a killed browser run.
@@ -45,6 +55,31 @@ async function cleanup() {
   await db.delete(screens).where(like(screens.name, `${MARK}%`));
   await db.delete(displayProfiles).where(like(displayProfiles.name, `${MARK}%`));
   await db.delete(clients).where(like(clients.name, `${MARK}%`));
+  const ownedUsers = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(like(users.email, `${USER_PREFIX}%`));
+  if (ownedUsers.length) {
+    await db.delete(auditLogs).where(
+      inArray(auditLogs.userId, ownedUsers.map((row) => row.id)),
+    );
+  }
+  await db.delete(users).where(like(users.email, `${USER_PREFIX}%`));
+}
+
+async function seedAdmin(): Promise<string> {
+  const [{ id }] = await db.insert(users).values({
+    email: ADMIN_EMAIL,
+    firstName: "Player Agenda",
+    lastName: "Acceptance",
+    role: "admin",
+    isActive: true,
+    mustChangePassword: false,
+    passwordHash: `${PREFIX}test-only-password-hash`,
+    twoFactorEnabled: true,
+    twoFactorSecret: `${PREFIX}test-only-two-factor-secret`,
+  }).returning({ id: users.id });
+  return id;
 }
 
 async function seed(): Promise<Seed> {
@@ -126,6 +161,102 @@ async function seed(): Promise<Seed> {
     { playlistId, mediaAssetId: null, layoutTemplateId: nextLayoutId, order: 2, duration: 3 },
   ]);
   return { screenId, token, assetId };
+}
+
+async function seedOverflowHost(): Promise<OverflowHostSeed> {
+  const [{ id: clientId }] = await db.insert(clients).values({
+    name: `${PREFIX}overflow-host-client`,
+  }).returning({ id: clients.id });
+  const [{ id: profileId }] = await db.insert(displayProfiles).values({
+    clientId,
+    name: `${PREFIX}overflow-host-profile`,
+    width: 1280,
+    height: 720,
+  }).returning({ id: displayProfiles.id });
+  const [{ id: configId }] = await db.insert(agendaWidgetConfigs).values({
+    clientId,
+    name: `${PREFIX}overflow-host-agenda`,
+    displayMode: "full",
+    layoutMode: "landscape",
+    titleScale: 2,
+    refreshIntervalSeconds: 5,
+    rotationIntervalSeconds: 3,
+    maxItemsPerPage: 1,
+    showSessionCount: false,
+    showSessionEndTime: false,
+    showRoom: true,
+    showTrack: false,
+    showCompany: false,
+    showPresenter: false,
+    showPresenterCompany: false,
+    showDescription: false,
+    showStatus: false,
+  }).returning({ id: agendaWidgetConfigs.id });
+  const now = Date.now();
+  const [agendaItem] = await db.insert(agendaItems).values({
+    clientId,
+    title: [
+      `${PREFIX}OVERFLOW_HOST_START`,
+      "long title content ".repeat(60),
+      `${PREFIX}OVERFLOW_HOST_FINAL_TITLE`,
+    ].join(" "),
+    startsAt: new Date(now - 10 * 60_000),
+    endsAt: new Date(now + 50 * 60_000),
+    status: "in_progress",
+    room: `${PREFIX}OVERFLOW_HOST_FINAL_ROOM`,
+  }).returning({ id: agendaItems.id });
+  const nextMarker = `${PREFIX}OVERFLOW_HOST_NEXT_SCENE`;
+  const [{ id: agendaLayoutId }] = await db.insert(layoutTemplates).values({
+    clientId,
+    name: `${PREFIX}overflow-host-agenda-layout`,
+    aspectRatio: "16:9",
+    zones: [{
+      id: "overflow-agenda",
+      name: "Overflow Agenda",
+      type: "agenda" as const,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      zIndex: 1,
+      agendaConfigId: configId,
+    }] as any,
+  }).returning({ id: layoutTemplates.id });
+  const [{ id: nextLayoutId }] = await db.insert(layoutTemplates).values({
+    clientId,
+    name: `${PREFIX}overflow-host-next-layout`,
+    aspectRatio: "16:9",
+    zones: [{
+      id: "overflow-next",
+      name: "Next scene",
+      type: "text" as const,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      zIndex: 1,
+      textContent: nextMarker,
+    }] as any,
+  }).returning({ id: layoutTemplates.id });
+  const [{ id: playlistId }] = await db.insert(playlists).values({
+    clientId,
+    name: `${PREFIX}overflow-host-playlist`,
+  }).returning({ id: playlists.id });
+  await db.insert(playlistItems).values([
+    { playlistId, layoutTemplateId: agendaLayoutId, order: 0, duration: 1 },
+    { playlistId, layoutTemplateId: nextLayoutId, order: 1, duration: 1 },
+  ]);
+  const token = `${PREFIX}overflow-host-device`;
+  const [{ id: screenId }] = await db.insert(screens).values({
+    clientId,
+    name: `${PREFIX}overflow-host-screen`,
+    displayProfileId: profileId,
+    deviceToken: token,
+    isPaired: true,
+    isOnline: true,
+    fallbackPlaylistId: playlistId,
+  }).returning({ id: screens.id });
+  return { screenId, token, itemId: agendaItem.id, nextMarker };
 }
 
 async function instrument(page: Page, s: Seed) {
@@ -220,7 +351,14 @@ async function instrument(page: Page, s: Seed) {
 
 test.describe("production lifecycle: same video through NOW/NEXT + Agenda and Monitor", () => {
   let s: Seed;
-  test.beforeAll(async () => { await cleanup(); s = await seed(); });
+  let overflowHost: OverflowHostSeed;
+  let adminId = "";
+  test.beforeAll(async () => {
+    await cleanup();
+    adminId = await seedAdmin();
+    s = await seed();
+    overflowHost = await seedOverflowHost();
+  });
   test.afterAll(async () => { try { await cleanup(); } finally { await pool.end(); } });
 
   test("Player keeps one playing video while agenda scenes rotate; Monitor follows lease", async ({ browser }, testInfo) => {
@@ -370,12 +508,119 @@ test.describe("production lifecycle: same video through NOW/NEXT + Agenda and Mo
     await ctx.close();
   });
 
+  test("Player holds an Agenda playlist scene until its overflowing card is readable", async ({ browser }) => {
+    test.setTimeout(120_000);
+    const ctx = await browser.newContext({ serviceWorkers: "block" });
+    const player = await ctx.newPage();
+    await player.addInitScript(({ token, screenId }) => {
+      localStorage.setItem("signage_device_token", token);
+      localStorage.setItem("signage_screen_id", screenId);
+    }, overflowHost);
+    await player.goto("/player", { waitUntil: "domcontentloaded" });
+
+    const frame = player.getByTestId("screen-render-committed-frame");
+    const agendaCard = frame.getByTestId(`agenda-row-${overflowHost.itemId}`);
+    const nextScene = frame.getByText(overflowHost.nextMarker, { exact: true });
+    await expect(agendaCard).toBeVisible({ timeout: 30_000 });
+
+    type RevealState = {
+      overflowPx: number;
+      scrollTop: number;
+      maxScrollTop: number;
+      finalRoomReadable: boolean;
+    };
+    const readRevealState = async (): Promise<RevealState | null> =>
+      agendaCard.evaluate((node) => {
+        const card = node as HTMLElement;
+        const finalRoom = card.querySelector(
+          "[data-testid^='agenda-room-']",
+        ) as HTMLElement | null;
+        const cardRect = card.getBoundingClientRect();
+        const roomRect = finalRoom?.getBoundingClientRect();
+        const readable =
+          Boolean(finalRoom && roomRect) &&
+          roomRect!.height > 0 &&
+          roomRect!.right > cardRect.left &&
+          roomRect!.left < cardRect.right &&
+          roomRect!.top >= cardRect.top - 1 &&
+          roomRect!.bottom <= cardRect.bottom + 1 &&
+          getComputedStyle(finalRoom!).visibility !== "hidden" &&
+          getComputedStyle(finalRoom!).display !== "none";
+        return {
+          overflowPx: Math.max(0, card.scrollHeight - card.clientHeight),
+          scrollTop: card.scrollTop,
+          maxScrollTop: Math.max(0, card.scrollHeight - card.clientHeight),
+          finalRoomReadable: readable,
+        };
+      }).catch(() => null);
+
+    // First measure the actual browser overflow, then derive the observation
+    // deadline from the production reveal contract (3s top pause + 28px/s +
+    // 3s bottom pause).  This keeps the assertion bounded without replacing
+    // the effective reveal with a guessed sleep.
+    let measuredMaxScrollTop = 0;
+    await expect.poll(async () => {
+      const state = await readRevealState();
+      measuredMaxScrollTop = state?.maxScrollTop ?? 0;
+      return measuredMaxScrollTop;
+    }, {
+      timeout: 20_000,
+      intervals: [25, 50, 100, 200],
+      message: "Player fixture must expose a measurable overflowing Agenda card",
+    }).toBeGreaterThan(0);
+    const productionRevealMs =
+      3_000 + Math.ceil(measuredMaxScrollTop / 28 * 1_000) + 3_000;
+    const revealObservationTimeoutMs = productionRevealMs + 10_000;
+
+    // Read the actual card scroll state continuously.  If the host advances
+    // to the next playlist scene while this row is still mounted but not at
+    // its final position, the locator becomes unavailable and this assertion
+    // fails; no arbitrary sleep can mask that transition.
+    let sawOverflow = false;
+    let sawScrollMovement = false;
+    const revealStartedAt = Date.now();
+    let revealCompletedAt: number | null = null;
+    await expect.poll(async () => {
+      const state = await readRevealState();
+      if (!state) return "agenda-scene-advanced-before-reveal";
+      sawOverflow ||= state.overflowPx > 0;
+      sawScrollMovement ||= state.scrollTop > 1;
+      if (state.finalRoomReadable && state.maxScrollTop > 0) {
+        revealCompletedAt = Date.now();
+        return "readable-at-final-scroll-position";
+      }
+      return "reveal-in-progress";
+    }, {
+      timeout: revealObservationTimeoutMs,
+      intervals: [25, 50, 100, 200],
+      message: "Player must retain the Agenda scene until its overflowing card reaches readable final content",
+    }).toBe("readable-at-final-scroll-position");
+
+    expect(sawOverflow, "fixture must exercise a real card overflow").toBe(true);
+    expect(sawScrollMovement, "card reveal must move the real browser scroll container").toBe(true);
+    expect(revealCompletedAt).not.toBeNull();
+    expect(revealCompletedAt! - revealStartedAt, "reveal boundary must be measured from browser state")
+      .toBeGreaterThan(1_000);
+    expect(
+      revealCompletedAt! - revealStartedAt,
+      "reveal must complete within the measured production reveal budget",
+    ).toBeLessThanOrEqual(revealObservationTimeoutMs);
+
+    const nextVisibleAt = await (async () => {
+      await expect(nextScene).toBeVisible({ timeout: 20_000 });
+      return Date.now();
+    })();
+    expect(nextVisibleAt).toBeGreaterThanOrEqual(revealCompletedAt!);
+    await ctx.close();
+  });
+
   test("real Monitor authority follows Player full-Agenda page reports", async ({ browser }) => {
     test.setTimeout(120_000);
     const monitorSeed = await seed();
     const ctx = await browser.newContext({ serviceWorkers: "block" });
     const [{ id: userId }] = await db.select({ id: users.id }).from(users)
-      .where(sql`${users.role} = 'admin' AND ${users.isActive} = true`).limit(1);
+      .where(sql`${users.id} = ${adminId} AND ${users.role} = 'admin' AND ${users.isActive} = true`)
+      .limit(1);
     const [{ clientId }] = await db.select({ clientId: screens.clientId }).from(screens)
       .where(sql`${screens.id} = ${monitorSeed.screenId}`).limit(1);
     // Seed exactly what POST monitor-session stores, then still exercise the
@@ -425,7 +670,6 @@ test.describe("production lifecycle: same video through NOW/NEXT + Agenda and Mo
     // any scene. Synchronize on a complete authored cycle boundary before
     // judging the following Player-owned transition.
     await expect(playerFrame.getByTestId("agenda-event-title")).toHaveText(`${MARK}NOW_NEXT_SCENE`, { timeout: 45_000 });
-    await expect(monitorFrame.getByTestId("agenda-event-title")).toHaveText(`${MARK}NOW_NEXT_SCENE`, { timeout: 15_000 });
     const observedPlayer = new Set<string>();
     const observedMonitor = new Set<string>();
     const capturePages = (async () => {

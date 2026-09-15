@@ -533,10 +533,14 @@ function ConfigEditor({
             Choose which agenda sessions to show and how they should appear.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid min-h-0 flex-1 gap-6 overflow-hidden lg:grid-cols-2">
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="flex min-h-0 flex-col">
-              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1">
+        <Form {...form}>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="grid min-h-0 flex-1 grid-rows-2 gap-6 overflow-hidden lg:grid-cols-2 lg:grid-rows-1">
+              <form
+                id="agenda-config-editor"
+                onSubmit={form.handleSubmit((v) => mutation.mutate(v))}
+                className="min-h-0 space-y-3 overflow-y-auto overscroll-contain pr-1"
+              >
               <div className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2">
                 <p className="mr-auto text-xs text-muted-foreground">
                   Reuse presentation settings between Agenda Displays.
@@ -860,7 +864,7 @@ function ConfigEditor({
               </div>
               <FormField control={form.control} name="presenterVisibleLines" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Visible speaker lines before scrolling</FormLabel>
+                  <FormLabel>Visible speakers before scrolling</FormLabel>
                   <FormControl>
                     <Input
                       type="number"
@@ -1077,17 +1081,12 @@ function ConfigEditor({
                 )} />
               </div>
 
-              </div>
-              <div className="flex shrink-0 justify-end gap-2 border-t bg-background pt-3">
-                <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-                <Button type="submit" disabled={mutation.isPending || !globalNowNextValidation.valid} data-testid="button-save-config">
-                  {mutation.isPending ? "Saving…" : "Save"}
-                </Button>
-              </div>
-            </form>
-          </Form>
+              </form>
 
-          <div className="space-y-2">
+              <div
+                className="min-h-0 min-w-0 space-y-2 overflow-y-auto overscroll-contain pr-1"
+                data-testid="agenda-config-preview-pane"
+              >
             <Label>Live preview</Label>
             {/* Quick-switch buttons — one click per signage form factor,
                 no dropdown to fight. */}
@@ -1171,7 +1170,11 @@ function ConfigEditor({
                 instead would size text for a full-size screen and overflow
                 this small preview, clipping titles/details (only the times
                 survived). */}
-            <div className="border rounded-md overflow-hidden bg-black" style={{ aspectRatio: `${dims.w} / ${dims.h}` }}>
+            <div
+              className="max-h-[42dvh] overflow-hidden rounded-md border bg-black"
+              style={{ aspectRatio: `${dims.w} / ${dims.h}` }}
+              data-testid="agenda-config-preview"
+            >
               <div style={{ width: "100%", height: "100%" }}>
                 <AgendaDisplayWidget
                   config={previewConfig}
@@ -1184,8 +1187,16 @@ function ConfigEditor({
             <p className="text-xs text-muted-foreground">
               {previewItems.length} item(s) match the current filters.
             </p>
+              </div>
+            </div>
           </div>
-        </div>
+          <DialogFooter className="shrink-0 border-t bg-background pt-3">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type="submit" form="agenda-config-editor" disabled={mutation.isPending || !globalNowNextValidation.valid} data-testid="button-save-config">
+              {mutation.isPending ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </Form>
       </DialogContent>
     </Dialog>
   );

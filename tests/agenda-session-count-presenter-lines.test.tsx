@@ -16,9 +16,12 @@ import {
 } from "../shared/agenda-settings-clipboard";
 import {
   AgendaDisplayWidget,
+  measurePresenterVisibleRows,
   measurePresenterOverflow,
+  resolvePresenterRowViewportHeight,
   resolveAgendaPresentationDwellMs,
   resolvePresenterVisibleLines,
+  hasReachedAgendaCardBottom,
   sanitizeAgendaPresentationState,
 } from "../client/src/components/agenda/AgendaDisplayWidget";
 import { PUBLIC_AGENDA_CONFIG_FIELDS } from "../server/agendaRoutes";
@@ -74,7 +77,7 @@ test("clipboard carries bounded new presentation settings", () => {
 test("editor exposes session count and disabled speaker-line explanation", () => {
   const editor = readFileSync("client/src/pages/agenda-configs.tsx", "utf8");
   assert.match(editor, /showSessionCount/);
-  assert.match(editor, /Visible speaker lines before scrolling/);
+  assert.match(editor, /Visible speakers before scrolling/);
   assert.match(editor, /Enable Presenter to apply this limit/);
   assert.match(editor, /min=\{1\}/);
   assert.match(editor, /max=\{20\}/);
@@ -164,6 +167,50 @@ test("presenter overflow uses natural Range geometry when scrollHeight is clippe
   );
 });
 
+test("presenter threshold counts rows, including wrapped rows, not text lines", () => {
+  const viewport = document.createElement("span");
+  const content = document.createElement("span");
+  const rowBottoms = [36, 58, 78, 98, 118];
+  rowBottoms.forEach((bottom, index) => {
+    const row = document.createElement("span");
+    row.setAttribute("data-agenda-presenter-row", "true");
+    Object.defineProperties(row, {
+      offsetTop: {
+        configurable: true,
+        value: index === 0 ? 0 : rowBottoms[index - 1],
+      },
+      offsetHeight: {
+        configurable: true,
+        value: index === 0 ? bottom : bottom - rowBottoms[index - 1],
+      },
+    });
+    content.appendChild(row);
+  });
+  viewport.appendChild(content);
+  Object.defineProperties(viewport, {
+    clientHeight: { configurable: true, value: 100 },
+    getBoundingClientRect: {
+      configurable: true,
+      value: () => ({ top: 10, bottom: 110, height: 100 }),
+    },
+  });
+  // With a configured threshold N=3, N-1, N, N+1, and a long list all use
+  // row bottoms. The first row is intentionally taller (as a wrapped name
+  // would be), but it still counts as one presenter.
+  assert.equal(measurePresenterVisibleRows(viewport, content, 2), 58);
+  assert.equal(measurePresenterVisibleRows(viewport, content, 3), 78);
+  assert.equal(measurePresenterVisibleRows(viewport, content, 4), 98);
+  assert.equal(measurePresenterVisibleRows(viewport, content, 20), 118);
+});
+
+test("presenter row viewport measurement is idempotent across equivalent fractional passes", () => {
+  assert.equal(resolvePresenterRowViewportHeight(null, 42.25), 42.25);
+  assert.equal(resolvePresenterRowViewportHeight(42.25, 42.75), 42.25);
+  assert.equal(resolvePresenterRowViewportHeight(42.25, 43.25), 43.25);
+  assert.equal(resolvePresenterRowViewportHeight(42.25, null), 42.25);
+  assert.equal(resolvePresenterRowViewportHeight(null, null), null);
+});
+
 test("presenter reveal has stable gutter, active rail, and explicit timing phases", () => {
   const source = readFileSync(
     "client/src/components/agenda/AgendaDisplayWidget.tsx",
@@ -188,12 +235,50 @@ test("presenter reveal has stable gutter, active rail, and explicit timing phase
   assert.match(presenter, /setTransitionMs\(0\)/);
   assert.match(
     presenter,
-    /Math\.abs\(lastReportedOverflowRef\.current - next\) >= 1/,
+    /Math\.abs\(lastReportedOverflowRef\.current - rowOverflow\) >= 1/,
   );
   assert.match(
     presenter,
-    /Math\.abs\(previous - next\) < 1 \? previous : next/,
+    /Math\.abs\(previous - rowOverflow\) < 1 \? previous : rowOverflow/,
   );
+  assert.match(presenter, /onOverflow=\{reportOverflow\}/);
+  assert.match(presenter, /const reportOverflow = useCallback\(/);
+  assert.match(presenter, /useLayoutEffect\(\(\) => \{\s*setOffset\(0\);\s*setTransitionMs\(0\);[\s\S]*presentationGeneration/);
+});
+
+test("whole-card reveal hands off on the real scroll boundary without coupling to page dwell", () => {
+  const source = readFileSync(
+    "client/src/components/agenda/AgendaDisplayWidget.tsx",
+    "utf8",
+  );
+  const rowStart = source.indexOf("function AgendaRow");
+  const layoutStart = source.indexOf("// ---- Layout components", rowStart);
+  const row = source.slice(rowStart, layoutStart);
+
+  // Native smooth-scroll duration is browser-controlled. A nominal duration
+  // based on a very tall title can be minutes longer than the actual scroll,
+  // so the nested presenter must be released from the real bottom boundary.
+  assert.match(row, /const waitForBottom = \(\) =>/);
+  assert.match(row, /hasReachedAgendaCardBottom\(/);
+  assert.match(row, /window\.requestAnimationFrame\(waitForBottom\)/);
+  assert.match(row, /completeAfterBottomPause\(\)/);
+  assert.match(row, /resetAgendaCardScroll\(card\)/);
+  assert.match(source, /behavior: "auto"/);
+  // Polls/resizes may update the page-level dwell, but must not keep a card's
+  // nested viewport blocked or restart its outer animation.
+  assert.match(row, /!cardScrollComplete/);
+  assert.doesNotMatch(row, /pageCardRevealMs/);
+});
+
+test("whole-card bottom release tolerates fractional layout rounding", () => {
+  assert.equal(hasReachedAgendaCardBottom(9549, 11356, 1805), true);
+  assert.equal(hasReachedAgendaCardBottom(9547, 11356, 1805), false);
+  assert.equal(hasReachedAgendaCardBottom(0, 101, 100), false);
+  assert.equal(hasReachedAgendaCardBottom(0, 102, 100), false);
+  assert.equal(hasReachedAgendaCardBottom(1, 102, 100), true);
+  assert.equal(hasReachedAgendaCardBottom(9547, 11356, 1805), false, "four pixels short stays blocked");
+  assert.equal(hasReachedAgendaCardBottom(0, 100, 100), true);
+  assert.equal(hasReachedAgendaCardBottom(Number.NaN, 100, 50), false);
 });
 
 test("header date prefixes weekday and clock remains time only", () => {

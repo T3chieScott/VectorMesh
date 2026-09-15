@@ -14,6 +14,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { AgendaItem, AgendaWidgetConfig } from "../shared/schema";
 import {
   AgendaDisplayWidget,
+  resolveFullAgendaCardSizing,
   resolveDescriptionViewportSizing,
 } from "../client/src/components/agenda/AgendaDisplayWidget";
 
@@ -129,13 +130,16 @@ function openTag(html: string, testId: string): string {
   return match[0];
 }
 
-test("Task #399 renders all six newline-separated presenters with one first-line marker", () => {
+test("Task #399 renders six measured presenter rows with one fixed marker", () => {
   const html = render();
-  assert.ok(html.includes(SIX_PRESENTERS));
+  for (const presenter of SIX_PRESENTERS.split("\n")) {
+    assert.ok(html.includes(presenter));
+  }
+  assert.equal((html.match(/data-agenda-presenter-row="true"/g) ?? []).length, 6);
   assert.equal((html.match(/agenda-speaker-marker-session-399/g) ?? []).length, 1);
   assert.match(
     html,
-    /agenda-presenter-session-399[\s\S]*<span class="flex-none" style="width:[^"]+">[\s\S]*agenda-presenter-viewport-session-399[\s\S]*Ada Lovelace\nGrace Hopper/,
+    /agenda-presenter-details-session-399[^>]*><span class="flex-none" style="width:[^"]+">[\s\S]*agenda-presenter-viewport-session-399[\s\S]*Ada Lovelace[\s\S]*Grace Hopper/,
   );
 });
 
@@ -206,6 +210,25 @@ test("Task #400 only bounds a card after measured description overflow", () => {
     minimumViewportHeight: 18,
   });
   assert.deepEqual(overflowing, { shouldBound: true, viewportMaxHeight: 140 });
+});
+
+test("Full Agenda contains only cards whose fixed chrome exceeds the allocation", () => {
+  assert.deepEqual(
+    resolveFullAgendaCardSizing(300, 180, 24),
+    { shouldContainCard: false, cardMaxHeight: null },
+  );
+  assert.deepEqual(
+    resolveFullAgendaCardSizing(300, 280, 24),
+    { shouldContainCard: true, cardMaxHeight: 300 },
+  );
+  assert.deepEqual(
+    resolveFullAgendaCardSizing(120, 140, 24),
+    { shouldContainCard: true, cardMaxHeight: 120 },
+  );
+  assert.deepEqual(
+    resolveFullAgendaCardSizing(null, 280, 24),
+    { shouldContainCard: false, cardMaxHeight: null },
+  );
 });
 
 test("Task #400 portrait 1080x1920 preserves semantic NEXT and intrinsic first paint", () => {

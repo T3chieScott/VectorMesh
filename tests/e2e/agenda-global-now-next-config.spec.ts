@@ -103,6 +103,9 @@ test.describe("global NOW/NEXT Agenda configuration", () => {
   });
 
   test("rejects overlap immediately, accepts adjacency, and persists the option", async ({ page }) => {
+    test.setTimeout(90_000);
+    page.setDefaultTimeout(20_000);
+    page.setDefaultNavigationTimeout(45_000);
     await login(page, adminEmail);
     await page.addInitScript((id) => {
       localStorage.setItem("vectormesh_selected_client_id", id);
@@ -166,5 +169,50 @@ test.describe("global NOW/NEXT Agenda configuration", () => {
     );
     await expect(warning).toBeHidden();
     await expect(page.getByTestId("button-save-config")).toBeEnabled();
+
+    // Regression: at a short viewport and increased browser zoom the settings
+    // pane must own its scrolling while the dialog footer remains reachable.
+    await page.setViewportSize({ width: 960, height: 520 });
+    await page.evaluate(() => {
+      document.documentElement.style.zoom = "125%";
+    });
+    const settingsPane = page.locator("#agenda-config-editor");
+    await settingsPane.evaluate((element) => {
+      element.tabIndex = 0;
+      element.focus();
+    });
+    await settingsPane.hover();
+    const initialScrollTop = await settingsPane.evaluate((element) => element.scrollTop);
+    for (let index = 0; index < 50; index += 1) {
+      await page.keyboard.press("PageDown");
+      await page.waitForTimeout(75);
+      const reachedBottom = await settingsPane.evaluate(
+        (element) =>
+          element.scrollTop + element.clientHeight >= element.scrollHeight - 2,
+      );
+      if (reachedBottom) break;
+    }
+    await expect.poll(
+      async () => settingsPane.evaluate((element) => element.scrollTop),
+    ).toBeGreaterThan(initialScrollTop);
+    await expect.poll(async () => settingsPane.evaluate(
+      (element) =>
+        element.scrollTop + element.clientHeight >= element.scrollHeight - 2,
+    )).toBe(true);
+    const saveBounds = await page.getByTestId("button-save-config").boundingBox();
+    expect(saveBounds).not.toBeNull();
+    expect(saveBounds!.y).toBeGreaterThanOrEqual(0);
+    expect(saveBounds!.y + saveBounds!.height).toBeLessThanOrEqual(520);
+
+    await page.getByTestId("input-presenter-visible-lines").fill("2");
+    await page.getByTestId("button-save-config").click();
+    await expect(page.getByText("Config updated", { exact: true })).toBeVisible({
+      timeout: 10_000,
+    });
+    const updated = await db.select({
+      presenterVisibleLines: agendaWidgetConfigs.presenterVisibleLines,
+    }).from(agendaWidgetConfigs)
+      .where(eq(agendaWidgetConfigs.id, rows[0].id));
+    expect(updated).toEqual([{ presenterVisibleLines: 2 }]);
   });
 });

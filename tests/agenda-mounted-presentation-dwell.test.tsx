@@ -277,6 +277,88 @@ test("mounted no-overflow page completes at the configured deadline", async () =
   }
 });
 
+test("mounted card overflow extends the deadline even when inner animation is inactive", async () => {
+  const timing = scheduler();
+  const completion = binding("card-only", timing);
+  const rendered = render(<AgendaDisplayWidget {...props(timing, { "card:one": 56 }, {
+    config: config({
+      descriptionAutoScroll: false,
+      showPresenter: false,
+    }),
+    completionBinding: completion.value,
+  })} />);
+  try {
+    await waitFor(() => assert.equal(timing.active()[0]?.due, reveal(56)));
+    assert.equal(completion.registered.at(-1)?.value, reveal(56));
+    const initialTimer = timing.active()[0];
+    await timing.advanceDue(1_000);
+    // A post-layout/font remeasurement with the same card overflow must not
+    // restart or re-block the already scheduled outer reveal.
+    rendered.rerender(<AgendaDisplayWidget {...props(timing, { "card:one": 56 }, {
+      config: config({
+        descriptionAutoScroll: false,
+        showPresenter: false,
+      }),
+      completionBinding: completion.value,
+    })} />);
+    await waitFor(() => assert.equal(timing.active()[0]?.due, reveal(56)));
+    assert.equal(initialTimer.cancelled, true);
+    assert.equal(
+      timing.active()[0]?.due,
+      reveal(56),
+      "equivalent card remeasurement preserves the absolute dwell deadline",
+    );
+    await timing.advanceDue(reveal(56) - 1);
+    assert.deepEqual(completion.completed, []);
+    await timing.advanceDue(reveal(56));
+    assert.deepEqual(completion.completed, [reveal(56)]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("mounted card-only overflow replays from the top on a single-page cycle", async () => {
+  const timing = scheduler();
+  const rendered = render(<AgendaDisplayWidget {...props(timing, {
+    "card:one": 56,
+  })} />);
+  try {
+    await waitFor(() => assert.equal(timing.active()[0]?.due, reveal(56)));
+    const firstDeadline = reveal(56);
+    await timing.advanceDue(firstDeadline);
+    await waitFor(() => assert.equal(timing.active().length, 1));
+    assert.equal(
+      timing.active()[0].due,
+      firstDeadline + reveal(56),
+      "the card-only cycle gets a fresh outer reveal deadline",
+    );
+    // Keep the mounted instance alive through the replay so its row receives
+    // the reset tick even though no inner viewport reports overflow.
+    assert.ok(rendered.container.querySelector("[data-testid]"));
+  } finally {
+    cleanup();
+  }
+});
+
+test("mounted card reveal precedes inner reveal while cards on a page remain concurrent", async () => {
+  const timing = scheduler();
+  const completion = binding("staged-card", timing);
+  render(<AgendaDisplayWidget {...props(timing, {
+    "card:one": 56,
+    "description:one": 28,
+  }, {
+    completionBinding: completion.value,
+  })} />);
+  try {
+    await waitFor(() =>
+      assert.equal(timing.active()[0]?.due, reveal(56) + reveal(28)),
+    );
+    assert.equal(completion.registered.at(-1)?.value, reveal(56) + reveal(28));
+  } finally {
+    cleanup();
+  }
+});
+
 test("mounted reduced-motion page ignores large metrics and completes at the configured finite deadline", async () => {
   const original = window.matchMedia;
   window.matchMedia = (() => ({
@@ -576,6 +658,34 @@ test("mounted uncontrolled same-count content and membership changes reset page 
     await waitFor(() => assert.equal(timing.active()[0]?.due, 1_000 + reveal(56)));
     assert.equal(cancelled.cancelled, true);
     assert.equal(timing.active()[0].id === cancelled.id, false);
+    await timing.invokeCancelled(cancelled);
+    assert.equal(timing.active()[0]?.due, 1_000 + reveal(56));
+  } finally {
+    cleanup();
+  }
+});
+
+test("mounted same-ID equal-height content replacement gets a fresh presentation generation", async () => {
+  const timing = scheduler();
+  const metrics = { "presenter:one": 56 };
+  const baseConfig = config({ maxItemsPerPage: 1 });
+  const rendered = render(<AgendaDisplayWidget {...props(timing, metrics, {
+    config: baseConfig,
+    items: [item("one", { title: "Original title" })],
+  })} />);
+  try {
+    await waitFor(() => assert.equal(timing.active()[0]?.due, reveal(56)));
+    await timing.advanceDue(1_000);
+    const cancelled = timing.active()[0];
+
+    // The replacement deliberately keeps the same ID and measured overflow;
+    // lifecycle generation must still advance from rendered content.
+    rendered.rerender(<AgendaDisplayWidget {...props(timing, metrics, {
+      config: { ...baseConfig },
+      items: [item("one", { title: "Replacement title" })],
+    })} />);
+    await waitFor(() => assert.equal(timing.active()[0]?.due, 1_000 + reveal(56)));
+    assert.equal(cancelled.cancelled, true);
     await timing.invokeCancelled(cancelled);
     assert.equal(timing.active()[0]?.due, 1_000 + reveal(56));
   } finally {
